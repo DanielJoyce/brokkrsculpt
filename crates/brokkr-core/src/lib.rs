@@ -34,6 +34,7 @@ pub mod mask;
 pub mod merge;
 pub mod mesh;
 pub mod orientation;
+pub mod paint;
 pub mod part;
 pub mod pattern;
 pub mod primitive;

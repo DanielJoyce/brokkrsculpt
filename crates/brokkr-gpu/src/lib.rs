@@ -11,6 +11,7 @@ pub mod frustum;
 pub mod matcap;
 pub mod mesh_pool;
 pub mod overlay;
+mod paints;
 pub mod renderer;
 pub mod thumbnail;
 
@@ -20,5 +21,6 @@ pub use mesh_pool::{
     TOTAL_INDEX_CAPACITY, TOTAL_VERTEX_CAPACITY, VERTEX_CAPACITY,
 };
 pub use overlay::{OverlayBatch, OverlayRenderer, OverlayVertex};
+pub use paints::{PAINT_SLOTS, PaintBlock};
 pub use renderer::{PALETTE_SLOTS, PixelRect, SculptRenderer, UNKNOWN_FILAMENT, Uniforms};
 pub use thumbnail::{THUMBNAIL_BACKGROUND, THUMBNAIL_SIZE, ThumbnailAtlas, background_texel};

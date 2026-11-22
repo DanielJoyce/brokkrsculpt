@@ -463,6 +463,8 @@ impl ThumbnailAtlas {
         bounds: (Vec3, Vec3),
         srgb_target: bool,
         palette: &[[f32; 4]; PALETTE_SLOTS],
+        paints: &crate::PaintBlock,
+        crease_gain: f32,
     ) {
         let (view_projection, view) = framing(bounds);
         let uniforms = Uniforms {
@@ -474,10 +476,15 @@ impl ThumbnailAtlas {
             // Paint is document state where the mask is view state, so the
             // list shows it whatever the viewport's toggle says.
             paint_shown: 1,
-            // Off: a thumbnail is of the body, and this is how the viewport
-            // happens to be drawing it.
-            cavity: [0.0; 4],
+            // Off as a view: a thumbnail is of the body, and drawn creases
+            // are how the viewport happens to be showing it. But the gain is
+            // the viewport's, because a paint's wash is shaded from the same
+            // signal and a paint is what a body IS. A thumbnail's mesh
+            // carries the signal only if the viewport's does, so this costs
+            // nothing when it does not.
+            cavity: [0.0, crease_gain, 0.0, 0.0],
             palette: *palette,
+            paints: *paints,
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
     }

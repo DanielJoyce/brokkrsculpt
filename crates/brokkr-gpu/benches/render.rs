@@ -284,6 +284,7 @@ fn main() {
             // Off, as the application ships it.
             cavity: [0.0; 4],
             palette: Uniforms::default().palette,
+            paints: brokkr_gpu::PaintBlock::default(),
         };
         renderer.write_uniforms(&queue, &uniforms);
 

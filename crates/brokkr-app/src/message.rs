@@ -98,6 +98,76 @@ impl std::fmt::Display for ExportDetail {
 
 /// One setting of the key a parting puts between two parts.
 ///
+/// One of a paint's three coats, in the order a painter lays them down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PaintCoat {
+    /// The colour of the paint itself.
+    #[default]
+    Base,
+    /// The thin film that runs into the recesses.
+    Wash,
+    /// The lighter colour caught on the edges.
+    Highlight,
+}
+
+impl PaintCoat {
+    pub const ALL: [PaintCoat; 3] = [PaintCoat::Base, PaintCoat::Wash, PaintCoat::Highlight];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PaintCoat::Base => "Base",
+            PaintCoat::Wash => "Wash",
+            PaintCoat::Highlight => "Highlight",
+        }
+    }
+}
+
+/// A wash as a painter would ask for one, before any slider is touched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WashKind {
+    /// No wash.
+    None,
+    /// A dark film in the recesses that leaves the flats nearly clean.
+    Shade,
+    /// One coat that tints, shades and thins on the edges.
+    Contrast,
+}
+
+impl WashKind {
+    pub const ALL: [WashKind; 3] = [WashKind::None, WashKind::Shade, WashKind::Contrast];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            WashKind::None => "None",
+            WashKind::Shade => "Shade",
+            WashKind::Contrast => "Contrast",
+        }
+    }
+}
+
+/// One change to the chosen paint.
+///
+/// The colour goes to whichever coat the editor is showing, which is why it
+/// names no coat of its own: the swatches and the three sliders are one set
+/// of controls looking at one coat at a time.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PaintEdit {
+    Name(String),
+    Finish(brokkr_core::paint::Finish),
+    /// The whole colour of the coat shown, sRGB.
+    Colour([u8; 3]),
+    /// One channel of it: 0 red, 1 green, 2 blue.
+    Channel(usize, u8),
+    /// Replace the wash with a ready-made one, in a colour worked out from
+    /// the base coat.
+    WashKind(WashKind),
+    WashStain(f32),
+    WashFlow(f32),
+    WashEdge(f32),
+    HighlightAmount(f32),
+    HighlightStart(f32),
+}
+
 /// One message with a payload, on [`SpaceMouseSetting`]'s pattern, so that
 /// four controls are four values of one thing and not four entries in the
 /// message table. Settings of the application and not of the document: the
@@ -791,6 +861,18 @@ pub enum Message {
     ExportDetailChanged(ExportDetail),
     /// Change the key the next parting uses. It changes no voxel.
     KeySettingChanged(KeySetting),
+    /// Start using paints in this document: one plain paint per filament
+    /// slot, in the filament's colour, so nothing already painted changes
+    /// colour. See [`brokkr_core::paint`] for what a paint is.
+    PaintsStarted,
+    /// Add one more paint to the rack and take it up.
+    PaintAdded,
+    /// Which of the chosen paint's three coats the editor shows. View state.
+    PaintCoatChosen(PaintCoat),
+    /// Change the chosen paint. It changes no voxel: every voxel already
+    /// painted with it is redrawn the new way, which is the point of a paint
+    /// being a recipe.
+    PaintEdited(PaintEdit),
     /// Put the camera back on the active body, keeping the angles.
     ///
     /// The recovery half of a free camera. A camera that can go anywhere can
