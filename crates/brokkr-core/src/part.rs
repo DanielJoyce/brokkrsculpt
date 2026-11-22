@@ -90,6 +90,24 @@ pub enum KeyKind {
     MagnetPocket,
 }
 
+impl KeyKind {
+    pub const ALL: [KeyKind; 3] = [KeyKind::Peg, KeyKind::PinHole, KeyKind::MagnetPocket];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            KeyKind::Peg => "Peg and socket",
+            KeyKind::PinHole => "Pin hole",
+            KeyKind::MagnetPocket => "Magnet pocket",
+        }
+    }
+}
+
+impl std::fmt::Display for KeyKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
 /// The size and fit of a key.
 ///
 /// All in millimetres. The clearance belongs to the printer and not to the
