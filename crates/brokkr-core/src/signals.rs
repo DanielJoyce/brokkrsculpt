@@ -121,7 +121,7 @@ pub fn decode_cavity(byte: u8) -> f32 {
 /// The order of every sum below is fixed and is part of the contract. Two
 /// bricks evaluating this for one cell must get the same bits.
 #[inline]
-fn cell_cavity(sample: impl Fn(i32, i32, i32) -> f32) -> Option<f32> {
+pub(crate) fn cell_cavity(sample: impl Fn(i32, i32, i32) -> f32) -> Option<f32> {
     let mut laplacian = 0.0;
     let mut gradient = Vec3::ZERO;
     let mut measured = true;

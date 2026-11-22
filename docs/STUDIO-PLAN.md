@@ -16,7 +16,7 @@ was built and what was measured.
 | S0 Groundwork | **Done**, 2026-11-22 (sections 5 and 6) | *show creases* in the viewport. The rest is foundations |
 | S1a Decimated export | **Done**, 2026-11-22 (section 7.1) | A *Detail* choice on export: Full, Fine, Standard, Draft |
 | S1b Parting with keys | **Done but for a preview**, 2026-11-22 (section 7.2) | Cut tool with **alt** held: the body becomes two, with pegs and sockets |
-| S2 Mini painting | **Recipes done**, 2026-11-22 (section 8); gated strokes, occlusion and export next | Paint brush: *Mix paints*, then a rack of paints, each with a wash and an edge highlight |
+| S2 Mini painting | **Recipes, drybrush and sponge done**, 2026-11-22 (section 8); fills, occlusion and coloured export next | Paint brush: *Mix paints*, then a rack of paints, each with a wash and an edge highlight; *Loaded*, *Drybrush* and *Sponge* strokes |
 | S3 Brush engine, surfaced | Not started | |
 | S4 Form tools | Not started | |
 | S5 Unwrap and bake | Not started | |
@@ -893,16 +893,23 @@ number.
 | Wash, shade | Recipe: the wash | **Built** |
 | Contrast or speed paint | Recipe: the wash with a stain, over a pale base | **Built**, one click |
 | Edge highlight, overall drybrush | Recipe: the highlight | **Built** |
-| Drybrush as a stroke | Gated brush: writes a lighter paint only on convex voxels, in streaks along the stroke | S2.2 |
-| Sponge or stipple | Gated brush: cellular noise per stamp, optional edge bias | S2.2 |
+| Drybrush as a stroke | Gated brush: writes the paint in hand only on what stands up, more on the side the brush comes at, in bristle streaks, until it runs out | **Built** (S2.2) |
+| Sponge or stipple | Gated brush: a speckle covering a set share of the surface, optionally more on edges. With the eraser it chips paint off | **Built** (S2.2) |
 | Zenithal prime | Recipe term: lighten by normal against a direction, times broad occlusion | S2.3, needs the occlusion byte |
-| Fill: body, mask, crease-bounded | Whole-body slot writes, with the mask as the only weight | S2.2 |
+| Fill: body, mask, crease-bounded | Whole-body slot writes, with the mask as the only weight | S2.3 |
 
 "Slapchop" is then a paint: pale base, contrast wash, a near-white highlight
 with a low `start`. One click on *Contrast* and one slider.
 
 **One stroke is one coat**, which the first draft needed a coverage buffer to
-guarantee, is free here: writing a slot twice is writing it once.
+guarantee, is free for a loaded brush: writing a slot twice is writing it
+once. For a gated brush it is a rule the gate has to keep. A voxel under a
+stroke is under eight or so overlapping stamps, and if each rolled its own
+dice a sponge set to cover a tenth of the surface would cover more than half.
+So nothing in a gate is random per stamp: whether a voxel is caught is a
+function of where it is, of the shape there, and of a seed fixed from the
+press to the release. Two stamps over one voxel agree. A second stroke has a
+second seed and adds to the first, as a second pass with a real sponge does.
 
 ### 8.4 The two copies of the arithmetic
 
@@ -954,6 +961,51 @@ undercoat).
 - **Editing a paint is not in the undo history yet**, and a paint cannot be
   removed. Both are recorded in `brokkr-app/src/app/paints.rs` with the
   reason.
+
+#### Built, 2026-11-22 (S2.2): drybrush and sponge
+
+`brokkr-core/src/paint/touch.rs`. Three buttons over the rack: *Loaded*,
+*Drybrush*, *Sponge*, each of the last two with its sliders. They work on
+filament slots too, without any paints mixed.
+
+- **Loaded** is upstream's paint stamp, called and not copied.
+- **Drybrush** catches a voxel when `raised * (0.5 + 0.5 * facing) * load`
+  is more than `(1 - catch) + streak * (bristle - 0.5)`. `raised` is the
+  crease signal's convex half at the viewport's gain, so the brush catches
+  what *show creases* lights. `facing` is 1 where the surface faces into the
+  stroke. `bristle` is noise sampled twelve times more slowly along the
+  stroke than across it. `load` runs from 1 to 0 over a set distance. A flat
+  is never caught, whatever the sliders say.
+- **Sponge** catches where smooth noise falls under the density. The noise is
+  passed through its own measured distribution first, so the density is a
+  share of area: 30% asked for covers 30% of a flat, to within the 8 points
+  the test allows on a patch of about 250 specks.
+
+Three things building it found, each now a test:
+
+- **Noise on a lattice plane is different noise.** A flat face along the
+  world's axes can cut value noise exactly on one of its lattice planes,
+  where it is a blend of four numbers and not eight. A sponge at 60% covered
+  50% of the test cube's top. The texture is now turned by a fixed rotation
+  before it is sampled.
+- **"The cell above" is not mirror-symmetric.** The gate asks its question at
+  the surface point nearest each voxel, in the cell that holds the point. A
+  point exactly on a lattice plane is in two cells, on a lattice point in
+  eight. Picking one made a mirrored drybrush differ from its twin by one
+  voxel in 29 along a cube's edge. Such a point now takes the mean of every
+  cell it is in, summed in sorted order because a mirror visits them in
+  another.
+- **The gate is asked at the surface, for the whole band.** Paint is written
+  through the band so it survives the surface moving a voxel. Every voxel on
+  a line through the band gets the answer of the surface point under it, so
+  the speckle at depth is the same speckle.
+
+**Cost, measured** (`what_a_gated_stamp_costs`, release, one core of the
+build container): on a brush 12 voxels in radius, 0.4 ms a stamp against
+0.04 ms loaded. On a brush 40 voxels in radius, 5.5 ms against 0.7 ms. That
+is under one frame a stamp at any brush size a painter is likely to hold,
+and over one for two or three stamps of the largest. It is all on the stroke
+path, per voxel, single threaded, and has not been optimised.
 
 #### Built, 2026-11-22 (S2.1)
 

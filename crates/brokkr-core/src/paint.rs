@@ -63,6 +63,8 @@
 //! darker AND more saturated, which is what a wash does and what multiplying
 //! by grey does not.
 
+pub mod touch;
+
 /// The most paints a document can hold, not counting "unpainted".
 ///
 /// A slot is a byte, so 255 is the ceiling the storage allows. This is the
