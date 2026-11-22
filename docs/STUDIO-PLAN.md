@@ -146,10 +146,11 @@ slot does: a sparse RGB plus finish field inside `Volume`. Paint therefore
 survives every cut, merge, move, warp and resample, which no UV or vertex
 scheme does when the topology changes under it.
 
-**D3. One derived structure, the coverage pyramid, serves three features.** A
-mip chain of "how solid is this neighbourhood" gives occlusion for washes,
-smooth base normals for detail preserving volume tools, and seam hiding for the
-unwrapper. One piece of work, three customers.
+**D3. One derived structure, the form pyramid, serves three features.** The
+same solid at two, four, eight times the voxel size gives depth below the form
+for washes, smooth base normals for detail preserving volume tools, and seam
+hiding for the unwrapper. One piece of work, three customers. (First drawn as
+a pyramid of coverage; see section 5.2 for why it is distance fields.)
 
 **D4. The mini painting techniques are not special tools. They are the brush
 engine with geometry gates.** A wash is a multiply brush whose deposit follows
@@ -201,7 +202,7 @@ flowchart TB
     end
 
     subgraph DER["Derived: never saved, rebuilt lazily"]
-        CP["Coverage pyramid  NEW<br/>solid fraction at 2x, 4x, 8x ..."]
+        CP["Form pyramid  NEW<br/>the same solid at 2x, 4x, 8x ..."]
         SIG["Signals  NEW<br/>cavity, occlusion, form normal"]
     end
 
@@ -267,46 +268,63 @@ A generic `SparseField<T: Pod>` is written **for the new fields only**. The
 existing two are left exactly as they are (D6); folding them in is a refactor
 to offer upstream, not one to carry on a fork.
 
-### 5.2 The coverage pyramid
+### 5.2 The form pyramid
+
+**Built 2026-11-22, and not as first drawn.** This section originally
+described a pyramid of *coverage*: one byte a cell holding the fraction of it
+that is solid. That was worked through before any of it was written and
+dropped, for a defect on the simplest input there is. On a flat face the solid
+fraction is a ramp across one cell, and a trilinear read of that ramp at the
+face is not one half: it swings 0.0625 either side as the face moves across
+the lattice, which is 0.125 of occlusion against about 0.5 for a real crease.
+A wash painted from it would have drawn the voxel grid on every incline.
+
+What is built instead, in `pyramid.rs`: **each level is a complete distance
+field of the same solid at twice the voxel size of the one below.** The
+distance to a plane is linear and trilinear interpolation reproduces a linear
+function exactly, so a flat face reads zero at every level whatever its phase.
 
 The distance band is 3 voxels deep (`brick.rs:30`), so the field alone cannot
 answer any question at a scale wider than that. The cavity mask already hits
-this wall: it reads curvature from a 7 point Laplacian
-(`generate.rs:29`), which sees crevices a voxel or two wide and nothing
-broader.
+this wall: it reads curvature from a 7 point Laplacian (`generate.rs:29`),
+which sees crevices a voxel or two wide and nothing broader. Level `k` of the
+pyramid has its own 3 voxel band, which reaches `3 * 2^k` voxels of the
+original.
 
-The pyramid answers the broader questions without widening the band:
-
-- **Level 0** is implicit: coverage `c = clamp(0.5 - d, 0, 1)` from the stored
-  distance `d` in voxels. A uniform inside brick is 1, an absent brick is 0.
-- **Level k+1** is the mean of 2x2x2 cells of level k, stored as one `u8` per
-  cell in a `SparseField<u8>`, sparse in the same way: only bricks that are
-  neither all solid nor all empty at that level exist.
-
-Sampling level `k` at a point on the surface gives the fraction of a box of
-side `2^k` voxels that is solid: **0.5 on a flat, above 0.5 in a concavity,
-below 0.5 on a ridge.** That number is the volume integral invariant of
-Pottmann et al., and it has the property this engine needs most: it depends
-only on which side of the surface a voxel is on. The brushes let the gradient
-drift from one (`brush.rs:57-62`); the sign is always right.
+- **A level is made** by taking each coarse voxel as the tent weighted mean of
+  the 27 fine voxels round it (centred, so every level shares the document's
+  lattice origin; exact on a plane; a low pass, so a groove narrower than the
+  level is bridged instead of aliased). `redistance` then rebuilds the band
+  outward, and the voxels the mean got exactly right are put back afterwards.
+- **Solid interior stays one value per brick** and empty space stays absent,
+  as in the field.
 
 Three things are read from it:
 
 | Signal | Definition | Customer |
 |---|---|---|
-| Occlusion at scale `k` | `max(0, 2 * (V_k(p) - 0.5))` | Washes, zenithal, seam placement |
-| Form normal at scale `k` | `-normalize(grad V_k(p))` | Volume tools (section 9) |
-| Base surface at scale `k` | The `V_k = 0.5` level set | Detail gain (section 9) |
+| Relief at level `k` | The level's distance at a point on the fine surface: negative in a recess the level bridges, positive on a protrusion, zero on a flat | Washes, zenithal, seam placement |
+| Form normal at level `k` | The level's gradient | Volume tools (section 9) |
+| Base surface at level `k` | The level's zero set | Detail gain (section 9) |
 
-**Cost, estimate:** surface bricks scale with area, so level `k` holds about
-`4^-k` as many bricks as the field, at 32 KiB each against the field's 128 KiB.
-Levels 1 to 6 together come to roughly 8% of the field's memory. Replaced by a
-measurement on the reference dragon in S0.
+**Measured, release build, a shared four core container:**
+
+| | |
+|---|---|
+| Relief on a flat face, worst over four tilts and five phases | 0.020 voxels of the level (the coverage design: 0.125 by construction) |
+| A slot 4 voxels wide and 12 deep, read at its floor | 0.0, -0.6, -3.6, -9.6 mm at levels of 2, 4, 8 and 16 voxels |
+| Memory, six levels | **36% of the field** (the estimate here was 8%, for bytes; these are `f32`) |
+| Build, 1,154 brick ball | 1.7 s |
+
+The memory figure is four times the estimate and is recorded in the module with
+the two ways down from it: store a built level as one byte a voxel, or drop the
+first level's storage once the second has been derived from it. Neither is
+taken yet.
 
 **Freshness.** The pyramid is derived, never saved and never in an undo entry.
-A dirty fine brick invalidates its ancestors; they are rebuilt when a consumer
-next asks (entering paint mode, pressing a form brush, exporting), never in the
-per-frame path.
+It is rebuilt whole by whoever needs it (entering paint mode, pressing a form
+brush, exporting), never in the per-frame path. Rebuilding only what an edit
+touched is the obvious next step and is not built.
 
 ### 5.3 The fine cavity signal
 
@@ -784,8 +802,8 @@ applied to everything.**
 flowchart TB
     subgraph LOCK["At the press: lock"]
         D0["Field D0<br/>as it is now"]
-        V["Coverage pyramid level k<br/>k = log2(sigma / voxel)"]
-        NF["Form normal<br/>n = -normalize(grad V_k)<br/>smooth over the detail"]
+        V["Form pyramid level k<br/>k = log2(sigma / voxel)"]
+        NF["Form normal<br/>n = the gradient of level k<br/>smooth over the detail"]
         D0 --> V --> NF
     end
     subgraph DRAG["Each pointer event"]
@@ -944,7 +962,7 @@ measured baselines when its milestone opens.
 
 | Rank | Milestone | What ships | Size | Why here |
 |---|---|---|---|---|
-| 1 | **S0 Groundwork** | Brush seam (no behaviour change), `SparseField`, coverage pyramid, signals, cavity shading toggle, branch and CI hygiene | 2 to 3 | Everything stands on it. Zero user-facing risk. Cavity shading is a visible win by itself |
+| 1 | **S0 Groundwork** | Brush engine (no behaviour change), `SparseField`, form pyramid, signals, cavity shading toggle, branch and CI hygiene | 2 to 3 | Everything stands on it. Zero user-facing risk. Cavity shading is a visible win by itself |
 | 2 | **S1a Decimated export** | Tolerance in mm, field verified, slot boundaries held, report | 2 | Smallest, independent, fixes a pain that exists today, prerequisite for S5, upstream candidate |
 | 3 | **S1b Parting with keys** | Plane part, four key kinds, auto placement, clearance, preview | 2 to 3 | Independent. The engine makes it nearly free. Upstream candidate |
 | 4 | **S2 Mini painting** | Paint field and view, prime, opaque and glaze, wash and contrast, drybrush, sponge, zenithal, edge highlight, whole-body versions, paint to slots, PLY | 5 to 7 | The headline. Largest. Needs S0's signals and gates |
@@ -1013,9 +1031,10 @@ changes; the dependency graph allows it.
    the engine run against the test, six caught and two shown to be equivalent.
    A recorded hash was the first idea and was dropped: the patterns take roots,
    so a hash is a statement about one machine.
-2. **Coverage pyramid and signals, with the cavity view toggle**, measured on
-   the reference models for memory and build time, and held by an offscreen
-   pixel test.
+2. **The form pyramid.** *Done, 2026-11-22*, as distance fields rather than
+   coverage (section 5.2). Still to come in this increment: the fine cavity
+   signal as a shared function, the two per-vertex bytes, and the cavity view
+   toggle held by an offscreen pixel test.
 3. **Decimation phase 0:** measure what export costs today (triangles, bytes,
    seconds, slicer load time) at three voxel sizes, so the milestone's claims
    have a baseline.

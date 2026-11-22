@@ -37,6 +37,7 @@ pub mod orientation;
 pub mod pattern;
 pub mod primitive;
 pub mod project;
+pub mod pyramid;
 pub mod raycast;
 pub mod redistance;
 pub mod region;
@@ -79,6 +80,7 @@ pub use project::{
     Keyframe, MAX_NAME_BYTES, MAX_VOLUME_BYTES, Outline, ProjectError, ProjectState, View,
     name_that_fits,
 };
+pub use pyramid::FormPyramid;
 pub use raycast::{Hit, SolidSpans, Span, first_solid_spans, raycast};
 pub use region::FieldRegion;
 pub use similarity::{Bake, Similarity};
