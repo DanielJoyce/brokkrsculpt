@@ -38,6 +38,30 @@ The short answers, before the long ones:
 | Volume with detail | **Yes.** See section 9 | Domain warps carry detail by construction, and the engine already prefers them | Each warp is one lossy resample; one gesture is bounded by invertibility |
 | UV unwrapping | Yes, as an **export artefact only** | Baking needs no cage and no ray casts | It is the newest mathematics here, and the upstream spec forbids it |
 
+### The north star, stated by the maintainer on 2026-11-22
+
+> *"I still want it to be a 3d printing app but I want the sculpting and
+> painting to be improved. This will then drive improvements to the printing
+> part (full color printing, slicing etc.)."*
+
+This stays a printing application. Sculpting and painting are being improved
+**so that there is more worth printing**, and each improvement is expected to
+pull a printing capability after it:
+
+| Studio work | The printing work it drives |
+|---|---|
+| RGB paint (S2) | Full colour output: quantising paint to loaded filaments first, then formats full colour printers and services accept |
+| Decimation (S1a) | Files a slicer loads in seconds; later, handing a slicer geometry sized to the process |
+| Parting and keys (S1b) | Parts sized to a bed and oriented to print without support |
+| Detail gain (S4) | Detail exaggerated to survive a given nozzle or layer height |
+| Unwrap and bake (S5) | Textured output for full colour processes that take an atlas |
+
+When a design choice is between a better picture on screen and a better object
+off the printer, the object wins. Slicing itself stays out of this plan: the
+application hands off to slicers (`README.md`, "Printing"), and whether it
+should ever slice is a decision to take once full colour output shows what the
+existing slicers cannot be told.
+
 ---
 
 ## 2. What is already here
@@ -309,12 +333,24 @@ offscreen pixel tests (`brokkr-gpu/tests/offscreen.rs`) can hold it.
 
 ### 5.5 The brush seam
 
-The refactor of section 6, landed with **no new behaviour**: the eight existing
-kinds routed through the new pipeline and pinned bit for bit against the old
-one, in the idiom `Skipping::On` against `Skipping::Off` already uses
-(`brush.rs:1221-1225`). The budget benchmark is the second gate. If the new
-path cannot hold 4 ms per stamp at 20 mm (`README.md`, measured table), it does
-not land.
+The engine of section 6, landed with **no new behaviour**: the six stamping
+kinds implemented a second time in `brush/engine.rs` and pinned bit for bit
+against the untouched original, in the idiom `Skipping::On` against
+`Skipping::Off` already uses (`brush.rs:1221-1225`). A ratio benchmark,
+`benches/engine.rs`, is the second gate: the engine may not be slower than the
+brush it stands beside.
+
+**Amended 2026-11-22, when this was built.** The first draft of this section
+said the existing kinds would be *routed through* the new pipeline. They are
+not, and that is deliberate. `brush.rs` is left exactly as upstream wrote it,
+apart from one line declaring the child module, and the old stamp path is the
+**live oracle** the new one is compared against. Two things follow. Upstream
+changes to `brush.rs` merge without conflict (D6). And when upstream changes
+what a brush does, the equivalence test fails and names the brush, which is the
+moment to bring the engine back into step on purpose. The application keeps
+calling `Brush` for the classic brushes; new operators, gates and tips exist
+only in the engine. Move and Paint have no engine form: Move is a gesture, and
+Paint writes another channel that arrives with S2.
 
 ---
 
@@ -971,10 +1007,12 @@ changes; the dependency graph allows it.
 
 ### 11.3 The first three increments
 
-1. **Brush equivalence harness, then the seam.** A test that drives every kind,
-   falloff, pattern and mirror combination through the current path and hashes
-   the field, committed *before* the refactor, so the refactor has something
-   honest to be compared against.
+1. **The brush engine, held to the brush.** *Done, 2026-11-22.* Every stamping
+   kind, falloff, pattern, direction, pressure, mask state and mirror through
+   both paths, same field and same undo entry bit for bit; eight mutations of
+   the engine run against the test, six caught and two shown to be equivalent.
+   A recorded hash was the first idea and was dropped: the patterns take roots,
+   so a hash is a statement about one machine.
 2. **Coverage pyramid and signals, with the cavity view toggle**, measured on
    the reference models for memory and build time, and held by an offscreen
    pixel test.

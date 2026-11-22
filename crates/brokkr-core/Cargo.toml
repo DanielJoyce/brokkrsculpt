@@ -36,3 +36,8 @@ harness = false
 name = "import"
 harness = false
 
+# The brush engine against the brush it stands beside. A ratio gate.
+[[bench]]
+name = "engine"
+harness = false
+

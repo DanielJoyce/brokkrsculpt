@@ -69,6 +69,8 @@ use crate::pattern::{Pattern, Prepared};
 use crate::region::FieldRegion;
 use crate::volume::{BrickPreview, BrickVerdict, Volume};
 
+pub mod engine;
+
 /// How far outside the surface the clay plane sits, as a fraction of radius.
 ///
 /// Zero would make clay identical to flatten. Too large and it stops following
