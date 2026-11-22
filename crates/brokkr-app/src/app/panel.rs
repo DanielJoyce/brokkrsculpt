@@ -26,7 +26,9 @@ use glam::Vec2;
 
 use crate::app::{MaskCard, SizingTarget, Tool};
 use crate::icon;
-use crate::message::{ConfirmChoice, ExportFormat, MaskGenerator, Message, PanelSection, TopMenu};
+use crate::message::{
+    ConfirmChoice, ExportDetail, ExportFormat, MaskGenerator, Message, PanelSection, TopMenu,
+};
 use crate::spacemouse::{self, ButtonAction};
 use crate::tablet::Diagnosis;
 use crate::theme;
@@ -3685,7 +3687,18 @@ impl Brokkr {
                 .into()
         };
 
-        column![buttons, status].spacing(theme::S2).into()
+        // How finely to mesh it, above the buttons it governs. In
+        // millimetres, because that is what a print is measured in.
+        let detail = row![
+            text("Detail").size(theme::CAPTION_SIZE).color(theme::TEXT_DIM),
+            pick_list(ExportDetail::ALL, Some(self.export_detail), Message::ExportDetailChanged)
+                .text_size(theme::CAPTION_SIZE)
+                .width(Length::Fill),
+        ]
+        .spacing(theme::S2)
+        .align_y(iced::Alignment::Center);
+
+        column![detail, buttons, status].spacing(theme::S2).into()
     }
 
     /// Pen controls, plus enough of a live readout that a user can tell whether

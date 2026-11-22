@@ -40,6 +40,62 @@ impl ExportFormat {
     }
 }
 
+/// How finely an export is meshed.
+///
+/// A tolerance in millimetres, named for what it is good for, because that is
+/// the question somebody exporting is asking. A percentage of triangles says
+/// nothing about a print; "no point of this file is further than a
+/// hundredth of a millimetre from what you sculpted" does. See
+/// `brokkr_core::export::decimate`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExportDetail {
+    /// Every triangle the mesher made: one vertex a voxel. What an export was
+    /// before there was a choice, and still the default, so that nothing
+    /// about an existing workflow changes until this is touched.
+    #[default]
+    Full,
+    /// Within 0.01 mm. Finer than a resin printer's pixel.
+    Fine,
+    /// Within 0.03 mm. Well under what a 0.4 mm nozzle resolves.
+    Standard,
+    /// Within 0.1 mm. For a quick look in a slicer.
+    Draft,
+}
+
+impl ExportDetail {
+    pub const ALL: [ExportDetail; 4] =
+        [ExportDetail::Full, ExportDetail::Fine, ExportDetail::Standard, ExportDetail::Draft];
+
+    /// The tolerance to decimate to, or `None` to leave the mesh as it is.
+    ///
+    /// The decimator clamps this to one voxel, so on a coarse sculpt Draft and
+    /// Standard can come to the same thing. The status line reports the
+    /// tolerance that was actually used.
+    pub fn tolerance_mm(self) -> Option<f32> {
+        match self {
+            ExportDetail::Full => None,
+            ExportDetail::Fine => Some(0.01),
+            ExportDetail::Standard => Some(0.03),
+            ExportDetail::Draft => Some(0.1),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ExportDetail::Full => "Full (every triangle)",
+            ExportDetail::Fine => "Fine (0.01 mm)",
+            ExportDetail::Standard => "Standard (0.03 mm)",
+            ExportDetail::Draft => "Draft (0.1 mm)",
+        }
+    }
+}
+
+impl std::fmt::Display for ExportDetail {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
 /// Which pointer button an event refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PointerButton {
@@ -712,6 +768,10 @@ pub enum Message {
     /// remeshes every body with it and switching it OFF remeshes without. It
     /// changes no voxel and does not dirty the document.
     ShowCavityToggled,
+    /// How finely the next export is meshed. A setting of the application and
+    /// not of the document: it changes no voxel and is not saved with a
+    /// sculpt.
+    ExportDetailChanged(ExportDetail),
     /// Put the camera back on the active body, keeping the angles.
     ///
     /// The recovery half of a free camera. A camera that can go anywhere can

@@ -23,8 +23,8 @@ use crate::cut;
 use crate::cut_preview;
 use crate::gizmo;
 use crate::message::{
-    ConfirmChoice, ExportFormat, MaskGenerator, Message, PanelSection, PointerButton, PointerEvent,
-    SpaceMouseSetting, TopMenu,
+    ConfirmChoice, ExportDetail, ExportFormat, MaskGenerator, Message, PanelSection, PointerButton,
+    PointerEvent, SpaceMouseSetting, TopMenu,
 };
 use crate::navcube;
 use crate::spacemouse::{
@@ -880,6 +880,8 @@ pub struct Brokkr {
     /// marks everything dirty so the choice reaches every brick. Off costs a
     /// user who never looks at it nothing at all.
     show_cavity: bool,
+    /// How finely an export is meshed. See [`ExportDetail`].
+    export_detail: ExportDetail,
     /// How strong the tint is when it is shown at all, 0..1.
     ///
     /// The shader has its own floor under this (`0.30 + 0.70 * m`), which is
@@ -2125,6 +2127,7 @@ impl Brokkr {
             paint_slot: 1,
             show_paint: true,
             show_cavity: false,
+            export_detail: ExportDetail::default(),
             mask_tint: DEFAULT_MASK_TINT,
             mask_peek: false,
             mask_filter: MaskFilter::Blur,
@@ -7191,7 +7194,18 @@ impl Brokkr {
         let started = Instant::now();
         let mut visible = Vec::new();
         self.doc.saved_visibility(&mut visible);
-        let bodies = self.doc.export_bodies(&visible);
+        // Decimated or not, what comes back is welded, validated and judged
+        // by the same verdict below. A decimated body that would not print is
+        // handed back at full density by the decimator itself, and says so.
+        let (bodies, decimated) = match self.export_detail.tolerance_mm() {
+            None => (self.doc.export_bodies(&visible), None),
+            Some(tolerance_mm) => {
+                let spec = brokkr_core::export::decimate::DecimateSpec::within(tolerance_mm);
+                let (bodies, reports) = self.doc.export_bodies_decimated(&visible, spec);
+                let total = brokkr_core::export::decimate::DecimateReport::summed(&reports);
+                (bodies, Some(total))
+            }
+        };
         let omitted = self.doc.body_count().saturating_sub(bodies.len());
 
         // Per body, never over the union: a document whose second body is
@@ -7249,8 +7263,13 @@ impl Brokkr {
                 // like the application broke their slicer rather than like a
                 // setting that could not be read.
                 let unbound = matches!(format, ExportFormat::ThreeMf) && settings.is_none();
+                // What the decimation did, in the decimator's own words, or
+                // nothing at all for a full export: the line an existing
+                // export writes is unchanged.
+                let decimation =
+                    decimated.map(|report| format!("; {}", report.summary())).unwrap_or_default();
                 self.status = format!(
-                    "exported {} of {} bodies; {omitted} hidden{} -- {summary} to {} \
+                    "exported {} of {} bodies; {omitted} hidden{} -- {summary}{decimation} to {} \
                      ({:.1} MB, {:.0} ms){}",
                     parts.len(),
                     self.doc.body_count(),
@@ -10170,6 +10189,7 @@ impl Brokkr {
             // on, every brick has to be measured, and off, every brick has to
             // stop paying for bytes nothing reads. No voxel changes, so no
             // undo entry and no dirtied document.
+            Message::ExportDetailChanged(detail) => self.export_detail = detail,
             Message::ShowCavityToggled => {
                 self.show_cavity = !self.show_cavity;
                 self.doc.mark_everything_dirty();
@@ -15973,6 +15993,58 @@ mod export_tests {
     /// something was hidden, silence means either "nothing was hidden" or "the
     /// count was never worked out", and those are the two readings the count
     /// exists to keep apart.
+    /// **The export detail reaches the file**, and a full export is still
+    /// exactly what it was.
+    ///
+    /// Two halves, because the setting has a default that must change
+    /// nothing: at Full the file and the status line are what they were
+    /// before the setting existed, and at anything else the file is smaller,
+    /// still passes the verdict, and the status line says what was done to it
+    /// in millimetres.
+    #[test]
+    fn the_export_detail_decimates_the_file_and_full_leaves_it_alone() {
+        let directory = scratch("export-detail");
+        let full = directory.join("full.stl");
+        let draft = directory.join("draft.stl");
+        let mut app = app();
+
+        assert_eq!(
+            app.export_detail,
+            ExportDetail::Full,
+            "a fresh application should not decimate"
+        );
+        app.export(ExportFormat::Stl, &full);
+        assert!(app.status.contains("exported 1 of 1 bodies"), "{}", app.status);
+        assert!(
+            !app.status.contains("within"),
+            "a full export's status line mentions a tolerance: {}",
+            app.status
+        );
+
+        update(&mut app, Message::ExportDetailChanged(ExportDetail::Draft));
+        assert_eq!(app.export_detail, ExportDetail::Draft, "the setting did not arrive");
+        app.export(ExportFormat::Stl, &draft);
+        assert!(app.status.contains("exported 1 of 1 bodies"), "{}", app.status);
+        assert!(
+            app.status.contains("triangles, within") && app.status.contains("mm of the sculpt"),
+            "a decimated export's status line does not say what was done: {}",
+            app.status
+        );
+
+        let full_bytes = std::fs::metadata(&full).expect("the full export was written").len();
+        let draft_bytes = std::fs::metadata(&draft).expect("the draft export was written").len();
+        assert!(
+            draft_bytes * 4 < full_bytes,
+            "the draft is {draft_bytes} bytes against {full_bytes}: it was not decimated"
+        );
+        // A binary STL is 84 bytes and then 50 a triangle, so the size is the
+        // triangle count and a decimated file still has to be a whole number
+        // of them.
+        assert_eq!((draft_bytes - 84) % 50, 0, "the draft is not a well formed binary STL");
+
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
     #[test]
     fn a_document_with_nothing_hidden_still_names_the_count() {
         let directory = scratch("export-none-hidden");

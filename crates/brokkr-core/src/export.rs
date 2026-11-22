@@ -37,6 +37,7 @@
 //! [`crate::orientation`] for why that rotation is not the axis swap it looks
 //! like.
 
+pub mod decimate;
 pub mod obj;
 pub mod stl;
 pub mod threemf;
