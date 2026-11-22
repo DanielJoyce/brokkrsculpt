@@ -6,6 +6,21 @@ Status: **proposed, 2026-11-22.** Nothing in here is built. This is the design
 for the long-lived `feature/studio` branch, written before any code, in the
 manner of [`CUT-TOOL-PLAN.md`](CUT-TOOL-PLAN.md).
 
+## Where it stands
+
+Kept current as milestones land. Each row links to the section that says what
+was built and what was measured.
+
+| Milestone | State | What a user gets |
+|---|---|---|
+| S0 Groundwork | **Done**, 2026-11-22 (sections 5 and 6) | *show creases* in the viewport. The rest is foundations |
+| S1a Decimated export | **Done**, 2026-11-22 (section 7.1) | A *Detail* choice on export: Full, Fine, Standard, Draft |
+| S1b Parting with keys | Next | |
+| S2 Mini painting | Not started | |
+| S3 Brush engine, surfaced | Not started | |
+| S4 Form tools | Not started | |
+| S5 Unwrap and bake | Not started | |
+
 On numbers: every figure is either **sourced** (a `file:line` in this
 repository, or the README's measured tables) or explicitly labelled
 **estimate**. Estimates are there to be replaced by measurements, and each
@@ -571,6 +586,64 @@ triangles. It runs in an iced `Task` with progress and cancel, never on the
 drawing thread. If measurement says it must be faster, bricks give a natural
 parallel pre-pass: decimate each brick's interior with its seam vertices
 locked, then run one global pass over what is left.
+
+
+#### Built, 2026-11-22, and what building it found
+
+`brokkr-core/src/export/decimate.rs`, and a *Detail* choice in the export
+panel: **Full** (every triangle, the default, and byte for byte what an export
+was), **Fine** (0.01 mm), **Standard** (0.03 mm), **Draft** (0.1 mm).
+
+**Measured**, release build, one thread, a 60 mm ball:
+
+| voxel | full mesh | at 0.01 mm | at 0.03 mm | at 0.1 mm | time |
+|---|---|---|---|---|---|
+| 0.5 | 135,324 | 24,464 | 8,146 | 2,466 | about 2 s |
+| 0.25 | 542,556 | 24,830 | 8,520 | 2,658 | about 7 s |
+| 0.125 | 2,170,860 | 26,632 | 9,294 | 2,788 | 30 s |
+
+The result barely depends on the voxel size, which is the claim that the
+tolerance belongs to the shape and the print. A cube of 18,252 triangles comes
+back as the 12 triangles of a cube, with every corner nearer its true place
+than the full mesh has it.
+
+Five things in the design above turned out wrong or incomplete, each found by a
+test and each recorded in the module:
+
+1. **The field can judge one direction only.** "The new surface is near the
+   sculpt" does not imply "the sculpt is near the new surface", and the
+   difference is a corner: the first version took a cube to 12 triangles with
+   one corner 0.84 of a voxel out and every check passing. Each collapse is now
+   held the other way too, through four witness points per vertex.
+2. **The mesher and the field disagree about where the surface is**, by up to
+   a third of a voxel (surface nets averages; the field interpolates). Every
+   vertex is stood on the field before anything is collapsed, or a tight
+   tolerance could collapse nothing.
+3. **A triangle has to be sampled densely.** Its middle and the middles of its
+   edges are enough when it is a voxel across and not when it is twenty. An
+   independent reading found results 16% past the tolerance until triangles
+   were sampled every half voxel.
+4. **The distance correction for brush drift may only go one way.** Dividing by
+   a slope above one flatters the result; two estimates of such a slope
+   disagreed by 60% at a kink.
+5. **It is not fast.** About 14 microseconds a triangle of input, almost all
+   of it item 3: the eleven million triangle case would take two and a half
+   minutes. The estimate above said tens of seconds. Parallelising over bricks
+   is the next thing to do to it.
+
+Taking the witness check OUT again was also tried, when a cube and two balls
+said it had stopped mattering. A cone said otherwise: without it a sharp tip
+lost up to 156% of the tolerance.
+
+Every check in the decimator has a test that fails without it: fifteen
+mutations were run against the suite, and the suite was extended until all
+fifteen were caught. Halving the witnesses to save memory let three of those
+checks be deleted unnoticed, which is how the tests' slack came down from a
+twentieth to a fiftieth.
+
+**Still to do here:** the export runs on the update thread, as every export
+already did, so a large decimation freezes the window for its length. Moving
+exports to a task is its own piece of work and is the first thing owed.
 
 ### 7.2 Parting with keys
 
