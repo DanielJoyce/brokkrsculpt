@@ -426,6 +426,7 @@ fn uniforms(distance: f32) -> Uniforms {
         mask_inverted: 0,
         mask_tint: 1.0,
         paint_shown: 1,
+        cavity: [0.0; 4],
         palette: red_palette(),
     }
 }
@@ -2408,5 +2409,200 @@ fn the_gizmo_pass_occludes_its_own_far_side() {
         differing, 0,
         "the gizmo pass is resolving overlap by draw order rather than by depth: \
          {differing} pixels changed when the two quads were submitted the other way round"
+    );
+}
+
+/// Mesh everything WITH the cavity signal and upload it. The path the
+/// application takes when creases are shown.
+fn upload_all_with_cavity(
+    renderer: &mut SculptRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    volume: &mut Volume,
+) -> usize {
+    volume.mark_everything_dirty();
+    let mut scratch = MeshScratch::new();
+    let mut mesh = BrickMesh::default();
+    let mut dirty: Vec<BrickCoord> = Vec::new();
+    let mut measured = 0;
+    volume.take_dirty(&mut dirty);
+    for &coord in &dirty {
+        volume.mesh_brick(coord, &mut scratch, &mut mesh);
+        volume.cavity_at_vertices(coord, scratch.apron(), &mut mesh);
+        measured += mesh.cavity.len();
+        renderer.upload_brick(device, queue, SlotKey { body: THE_ONLY_BODY, coord }, &mesh);
+    }
+    measured
+}
+
+/// Rec. 709 luma of each pixel, which is the quantity the shading multiplies.
+fn luma(pixels: &[u8]) -> Vec<i32> {
+    pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|p| (2126 * p[0] as i32 + 7152 * p[1] as i32 + 722 * p[2] as i32) / 10000)
+        .collect()
+}
+
+/// A cube with a square slot cut down the middle of the face the camera sees.
+///
+/// One fixture with all three things the shading has to tell apart: the slot's
+/// two inside corners are creases, the cube's own edges and the slot's rim are
+/// edges, and everything between is flat.
+fn slotted_cube() -> Volume {
+    let half = MODEL_RADIUS * 0.6;
+    let mut volume = Volume::new(VOXEL_SIZE);
+    seed_cube(&mut volume, half);
+    let slot = [
+        brokkr_core::ClipPlane { point: Vec3::new(-3.0, 0.0, 0.0), normal: Vec3::X },
+        brokkr_core::ClipPlane { point: Vec3::new(3.0, 0.0, 0.0), normal: -Vec3::X },
+        brokkr_core::ClipPlane { point: Vec3::new(0.0, 0.0, half - 5.0), normal: Vec3::Z },
+    ];
+    volume.clip_convex(&slot);
+    volume
+}
+
+/// Creases are drawn darker, edges lighter, flats exactly as they were, and
+/// with the strength at zero the whole body exactly as it was.
+///
+/// The last is the claim that lets this ship switched off: a mesh that carries
+/// the signal, drawn at strength zero, is byte for byte the mesh that does
+/// not. The first three are the claim that it does anything, measured in the
+/// shader and the attribute buffer together, which no core test can see: a
+/// `@location` slip, the byte landing in the wrong lane of the `Unorm8x4`, or
+/// the sign of the curvature backwards would each compile and pass every
+/// numeric test, and draw the creases bright.
+#[test]
+fn creases_are_drawn_darker_and_edges_lighter_and_flats_are_left_alone() {
+    let Some(harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the cavity shading test");
+        return;
+    };
+
+    let distance = MODEL_RADIUS * 3.0;
+    let mut renderer = SculptRenderer::new(&harness.device, &harness.queue, TARGET_FORMAT);
+    renderer.resize(&harness.device, WIDTH, HEIGHT);
+    let off = uniforms(distance);
+    // A feature four voxels across reads as a full crease.
+    let on = Uniforms { cavity: [1.0, 1.0, 0.0, 0.0], ..off };
+
+    // Without the signal in the mesh at all: the picture before any of this.
+    let mut volume = slotted_cube();
+    upload_all(&mut renderer, &harness.device, &harness.queue, &mut volume);
+    renderer.write_uniforms(&harness.queue, &off);
+    let plain = harness.frame(&renderer);
+    // Switched on over a mesh that carries nothing, which must also change
+    // nothing: byte zero is "not measured", and it draws as flat.
+    renderer.write_uniforms(&harness.queue, &on);
+    let on_without_signal = harness.frame(&renderer);
+    assert_eq!(
+        on_without_signal, plain,
+        "creases switched on over a mesh with no cavity bytes changed the picture"
+    );
+
+    // With the signal, strength zero.
+    let measured =
+        upload_all_with_cavity(&mut renderer, &harness.device, &harness.queue, &mut volume);
+    assert!(measured > 1000, "the fixture measured cavity at only {measured} vertices");
+    // Strength zero with the gain LEFT ON, which is what the application
+    // publishes when the toggle is off. Zeroing both would pass a shader that
+    // ignored the strength altogether, since a gain of zero flattens the
+    // signal by itself: that mutation survived the first version of this.
+    renderer.write_uniforms(&harness.queue, &Uniforms { cavity: [0.0, 1.0, 0.0, 0.0], ..off });
+    let carried_but_off = harness.frame(&renderer);
+    assert_eq!(
+        carried_but_off, plain,
+        "a mesh carrying the signal, drawn at strength zero, is not the mesh without it"
+    );
+
+    // With the signal, shown.
+    renderer.write_uniforms(&harness.queue, &on);
+    let shaded = harness.frame(&renderer);
+    dump("cavity-off", &plain);
+    dump("cavity-on", &shaded);
+    assert_eq!(mask(&shaded), mask(&plain), "shading creases changed the silhouette");
+
+    let drawn = mask(&plain);
+    let before = luma(&plain);
+    let after = luma(&shaded);
+    let mut darker = 0;
+    let mut lighter = 0;
+    let mut same = 0;
+    let mut total = 0;
+    for ((was, now), drawn) in before.iter().zip(&after).zip(&drawn) {
+        if !drawn {
+            continue;
+        }
+        total += 1;
+        match now - was {
+            // Several levels, so that rounding in an 8 bit channel cannot be
+            // counted as shading.
+            d if d <= -6 => darker += 1,
+            d if d >= 6 => lighter += 1,
+            d if d.abs() <= 1 => same += 1,
+            _ => {}
+        }
+    }
+    assert!(total > 5000, "the fixture drew only {total} pixels");
+    assert!(darker > 40, "only {darker} of {total} pixels got darker: the slot's corners did not");
+    assert!(lighter > 200, "only {lighter} of {total} pixels got lighter: the edges did not");
+    assert!(
+        same * 10 > total * 6,
+        "only {same} of {total} pixels are unchanged, so the flats are being shaded"
+    );
+
+    // WHICH got darker, because the counts above cannot say: with the sign of
+    // the curvature backwards the edges darken and the corners lighten, and
+    // both counts still clear their bars. That mutation survived too. So two
+    // points whose answer is known are projected to the screen and the change
+    // in luma is read in a few pixels round each.
+    let half = MODEL_RADIUS * 0.6;
+    let change_near = |point: Vec3| {
+        let clip = view_projection(distance) * point.extend(1.0);
+        let ndc = clip.truncate() / clip.w;
+        let px = ((ndc.x * 0.5 + 0.5) * WIDTH as f32).round() as i32;
+        let py = ((0.5 - ndc.y * 0.5) * HEIGHT as f32).round() as i32;
+        let mut range = (i32::MAX, i32::MIN);
+        for dy in -3..=3 {
+            for dx in -3..=3 {
+                let (x, y) = (px + dx, py + dy);
+                if x < 0 || y < 0 || x >= WIDTH as i32 || y >= HEIGHT as i32 {
+                    continue;
+                }
+                let index = (y * WIDTH as i32 + x) as usize;
+                if drawn[index] {
+                    let delta = after[index] - before[index];
+                    range = (range.0.min(delta), range.1.max(delta));
+                }
+            }
+        }
+        range
+    };
+    // Where the slot's floor meets the wall the camera can see into.
+    let (corner_darkest, corner_lightest) = change_near(Vec3::new(-3.0, 0.0, half - 5.0));
+    assert!(
+        corner_darkest <= -6 && corner_lightest < 6,
+        "the slot's inside corner changed by {corner_darkest} to {corner_lightest} levels;          a crease must get darker and nothing beside it lighter"
+    );
+    // The cube's own edge between the two faces the camera sees.
+    let (edge_darkest, edge_lightest) = change_near(Vec3::new(half, 0.0, half));
+    assert!(
+        edge_lightest >= 6 && edge_darkest > -6,
+        "the cube's edge changed by {edge_darkest} to {edge_lightest} levels;          an edge must get lighter and nothing beside it darker"
+    );
+    // And the strength is a strength. Zero and one are the two values a
+    // shader that ignored it altogether would still get right, so the claim
+    // is made in the middle: half strength moves the picture about half as
+    // far.
+    let moved = |frame: &[u8]| -> i64 {
+        luma(frame).iter().zip(&before).map(|(now, was)| i64::from((now - was).abs())).sum()
+    };
+    renderer.write_uniforms(&harness.queue, &Uniforms { cavity: [0.5, 1.0, 0.0, 0.0], ..off });
+    let halfway = moved(&harness.frame(&renderer));
+    let full = moved(&shaded);
+    assert!(
+        halfway * 4 > full && halfway * 4 < full * 3,
+        "half strength moved the picture by {halfway} against {full} at full strength"
     );
 }

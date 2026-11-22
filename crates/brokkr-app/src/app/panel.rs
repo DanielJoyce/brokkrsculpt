@@ -3644,6 +3644,13 @@ impl Brokkr {
                 .label("show paint")
                 .on_toggle(|_| Message::ShowPaintToggled)
                 .text_size(theme::CAPTION_SIZE),
+            // The other thing drawn onto the surface that is not the surface.
+            // Here for now because this is where the view toggles for it are;
+            // it moves when the paint mode gives them a home of their own.
+            checkbox(self.show_cavity)
+                .label("show creases")
+                .on_toggle(|_| Message::ShowCavityToggled)
+                .text_size(theme::CAPTION_SIZE),
         ]
         .spacing(theme::S2)
         .into()

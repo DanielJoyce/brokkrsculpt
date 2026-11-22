@@ -328,26 +328,50 @@ touched is the obvious next step and is not built.
 
 ### 5.3 The fine cavity signal
 
-The 7 point Laplacian divided by the gradient length, exactly as
-`generate.rs` computes it and in the same millimetre-stable units, promoted
-from "one mask recipe" to a shared function. Brushes evaluate it on the fly
-from the stamp snapshot, which is already grown by one voxel for this purpose
-(`region.rs:12`). Global operations evaluate it per brick from the apron.
+**Built 2026-11-22**, in `signals.rs`. The Laplacian divided by the gradient
+length, as `generate.rs` computes it, made available per mesh vertex.
 
-**Open question for S0, to be settled by measurement:** whether the per-vertex
-cavity byte the shader wants is computed at mesh time or cached as a
-`SparseField<u8>` (+25% of field memory, only while a consumer is active). The
-apron is 34 cubed and a Laplacian at its low face needs a 35th sample, so
-"compute at mesh time" is not free either.
+The open question this section used to end on is settled, and by neither of
+the two answers it offered. The signal is **computed at mesh time and cached
+nowhere**, at the centre of each vertex's lattice cell: the mean of the
+stencil over the cell's eight corners, which comes out as a compact form over
+the 4x4x4 block round the cell. Nearly all of that block is in the apron the
+mesher has already gathered. Where it overhangs, by one voxel on the cells
+along a brick's faces, the missing samples are read from the volume. Both
+bricks either side of a seam therefore evaluate one expression over the same
+32 stored values, and a test holds them to the same byte.
 
-### 5.4 The first visible payoff: cavity shading
+It costs 32 reads a vertex, so it is **off unless asked for**:
+`Document::mesh_dirty_with_cavity` sits beside `mesh_dirty` and a mesh made
+without it carries an empty run that every reader takes as flat.
 
-The attribute buffer has two free bytes per vertex. S0 fills them with cavity
-and occlusion and adds a **view toggle** that darkens crevices and lifts
-ridges, the way ZBrush's cavity matcaps and Blender's viewport cavity do. It is
-a view, like the mask tint: it changes nothing a stroke does. It is also the
-harness that proves the signals are right before paint depends on them, and the
-offscreen pixel tests (`brokkr-gpu/tests/offscreen.rs`) can hold it.
+One byte, 128 for flat, on a square root curve so that the nearly flat part of
+the range, which is most of a real surface, gets most of the levels.
+
+Brushes will evaluate the same measurement per voxel from the stamp snapshot,
+which is already grown by one voxel for this purpose (`region.rs:12`). That
+arrives with the first brush that gates on it.
+
+### 5.4 The first visible payoff: crease shading
+
+**Built 2026-11-22.** A view toggle, *show creases*, that darkens creases and
+lifts edges, the way ZBrush's cavity matcaps and Blender's viewport cavity do.
+It is a view, like the mask tint: it changes nothing a stroke does, no voxel,
+no undo entry, and it does not dirty the document.
+
+- The cavity byte travels in byte 2 of the per-vertex attribute, which was
+  free. Byte 3 is still free, and is where the broad relief from the pyramid
+  goes when paint mode needs it.
+- The setting is a feature size in millimetres (1.0, the finest thing a
+  filament printer resolves), so it means the same thing at every voxel size.
+- Switching it on or off remeshes every body, because the signal is in the
+  mesh. That is the one way it differs from the mask and paint toggles, which
+  are a uniform write.
+- An offscreen pixel test holds it: creases darker, edges lighter, flats
+  unchanged, strength zero byte for byte the picture without it. Six shader
+  mutations were run against that test; two survived its first version (the
+  sign of the curvature backwards, and the strength ignored) and the test was
+  strengthened until both were caught.
 
 ### 5.5 The brush seam
 
@@ -1031,10 +1055,10 @@ changes; the dependency graph allows it.
    the engine run against the test, six caught and two shown to be equivalent.
    A recorded hash was the first idea and was dropped: the patterns take roots,
    so a hash is a statement about one machine.
-2. **The form pyramid.** *Done, 2026-11-22*, as distance fields rather than
-   coverage (section 5.2). Still to come in this increment: the fine cavity
-   signal as a shared function, the two per-vertex bytes, and the cavity view
-   toggle held by an offscreen pixel test.
+2. **The form pyramid, the cavity signal and crease shading.** *Done,
+   2026-11-22* (sections 5.2 to 5.4). The pyramid is distance fields rather
+   than coverage; the cavity signal is measured at mesh time and cached
+   nowhere; *show creases* is the first thing in this plan a user can see.
 3. **Decimation phase 0:** measure what export costs today (triangles, bytes,
    seconds, slicer load time) at three voxel sizes, so the milestone's claims
    have a baseline.

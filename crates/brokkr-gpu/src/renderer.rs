@@ -92,6 +92,19 @@ pub struct Uniforms {
     /// with it ON regardless of the viewport's toggle, because paint is what a
     /// body IS where the mask is how it is being shown.
     pub paint_shown: u32,
+    /// How creases and edges are drawn: `[strength, gain, 0, 0]`.
+    ///
+    /// A VIEW setting on [`Uniforms::mask_tint`]'s terms. Strength zero draws
+    /// every body exactly as it was drawn before the cavity signal existed,
+    /// whatever its vertices carry. Gain is what turns the stored curvature,
+    /// in 1/voxel, into "this much of a full crease": the application sets it
+    /// from a feature size in millimetres and the voxel size, so the same
+    /// setting means the same thing at every resolution.
+    ///
+    /// An array because the four scalars above fill their 16 byte row. Every
+    /// construction site has to name it, which is the property the note on
+    /// this struct is about.
+    pub cavity: [f32; 4],
     /// Linear RGB per filament slot, indexed by the stored slot byte.
     ///
     /// Slot 0 is never read -- unpainted is the clay. Every entry the
@@ -117,7 +130,7 @@ pub const PALETTE_SLOTS: usize = 16;
 pub const UNKNOWN_FILAMENT: [f32; 4] = [1.0, 0.0, 1.0, 1.0];
 
 const _: () = assert!(
-    size_of::<Uniforms>() == 144 + 16 * PALETTE_SLOTS,
+    size_of::<Uniforms>() == 160 + 16 * PALETTE_SLOTS,
     "Uniforms must stay in step with the WGSL struct in sculpt.wgsl"
 );
 
@@ -136,6 +149,9 @@ impl Default for Uniforms {
             // Shown, for the same reason the tint is: a painted body that
             // reads as bare clay is the failure, not the other way round.
             paint_shown: 1,
+            // Off. Unlike the two above there is nothing a user needs warning
+            // of here, and a mesh carries no cavity until something asks.
+            cavity: [0.0; 4],
             palette: [UNKNOWN_FILAMENT; PALETTE_SLOTS],
         }
     }
@@ -923,5 +939,37 @@ mod tests {
             "sculpt.wgsl clamps the slot to something other than {}",
             super::PALETTE_SLOTS - 1
         );
+    }
+
+    #[test]
+    fn the_shader_decodes_cavity_the_way_the_engine_encodes_it() {
+        use brokkr_core::signals::{CAVITY_ABSENT, CAVITY_FLAT, CAVITY_RANGE, decode_cavity};
+
+        let shader = include_str!("shaders/sculpt.wgsl");
+        // The range, read out of the source.
+        assert!(
+            shader.contains(&format!("const CAVITY_RANGE: f32 = {CAVITY_RANGE:.1};")),
+            "sculpt.wgsl's CAVITY_RANGE is not the engine's {CAVITY_RANGE}"
+        );
+        // And the decode itself. The two lines below are the shader's, and
+        // the closure is those two lines transcribed: if either is edited the
+        // `contains` fails, and if the engine's curve is edited the loop does.
+        assert!(shader.contains("let t = (cavity_byte - 128.0) / 127.0;"));
+        assert!(
+            shader.contains(
+                "out.cavity = select(CAVITY_RANGE * t * abs(t), 0.0, cavity_byte < 0.5);"
+            )
+        );
+        let shader_decode = |byte: u8| {
+            let cavity_byte = f32::from(byte);
+            let t = (cavity_byte - 128.0) / 127.0;
+            if cavity_byte < 0.5 { 0.0 } else { CAVITY_RANGE * t * t.abs() }
+        };
+        for byte in 0..=u8::MAX {
+            assert_eq!(shader_decode(byte), decode_cavity(byte), "byte {byte}");
+        }
+        assert_eq!(shader_decode(CAVITY_ABSENT), 0.0);
+        assert_eq!(shader_decode(CAVITY_FLAT), 0.0);
+        assert_eq!(CAVITY_FLAT, 128, "the shader hardcodes 128 as flat");
     }
 }

@@ -143,6 +143,23 @@ impl Default for PaintView {
     }
 }
 
+/// What the sculpt shader is told about creases and edges this frame.
+///
+/// View state, on the same terms as [`MaskView`] and [`PaintView`]. It differs
+/// from both in one way that matters to whoever sets it: the signal it draws
+/// is only in a mesh that was made with it, so switching this on has to come
+/// with a remesh, where the other two are a uniform write and nothing else.
+/// See `Brokkr::show_cavity`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct CavityView {
+    /// How strongly creases are darkened and edges lifted, 0..1. Zero is off
+    /// and is the default.
+    pub strength: f32,
+    /// What turns the stored curvature into a fraction of a full crease. See
+    /// [`brokkr_gpu::Uniforms::cavity`].
+    pub gain: f32,
+}
+
 /// The hand off between the application and the render callbacks.
 #[derive(Debug, Default)]
 pub struct SharedFrame {
@@ -190,6 +207,8 @@ pub struct SharedFrame {
     mask: Mutex<MaskView>,
     /// How paint is to be drawn. See [`PaintView`].
     paint: Mutex<PaintView>,
+    /// How creases and edges are to be drawn. See [`CavityView`].
+    cavity: Mutex<CavityView>,
     /// The one thumbnail waiting to be drawn.
     ///
     /// **Capacity one, so the per-frame cap IS the type.** "At most one body
@@ -421,6 +440,31 @@ impl SharedFrame {
     /// Replace what the shader is told about paint. See [`PaintView`].
     pub fn set_paint_view(&self, view: PaintView) {
         *self.paint.lock().expect("shared frame poisoned") = view;
+    }
+
+    /// Replace what the shader is told about creases. See [`CavityView`].
+    pub fn set_cavity_view(&self, view: CavityView) {
+        *self.cavity.lock().expect("shared frame poisoned") = view;
+    }
+
+    /// What the renderer will be told about creases, for the test that has to
+    /// tell "the toggle arrived" from "the toggle was flipped".
+    #[cfg(test)]
+    pub fn cavity_view(&self) -> CavityView {
+        *self.cavity.lock().expect("shared frame poisoned")
+    }
+
+    /// Vertex and cavity byte counts of every mesh waiting to be uploaded, in
+    /// the order they were published. For the test that has to see that the
+    /// crease toggle changed what the MESHES carry and not just a uniform.
+    #[cfg(test)]
+    pub fn pending_cavity_for_tests(&self) -> Vec<(usize, usize)> {
+        self.pending
+            .lock()
+            .expect("shared frame poisoned")
+            .iter()
+            .map(|upload| (upload.mesh.vertices.len(), upload.mesh.cavity.len()))
+            .collect()
     }
 
     /// What the renderer will be told about paint, for tests that have to
@@ -1033,6 +1077,7 @@ impl shader::Primitive for SculptPrimitive {
         let camera = *shared.camera.lock().expect("shared frame poisoned");
         let mask = *shared.mask.lock().expect("shared frame poisoned");
         let paint = *shared.paint.lock().expect("shared frame poisoned");
+        let cavity = *shared.cavity.lock().expect("shared frame poisoned");
         let aspect = bounds.width / bounds.height.max(1.0);
         let view = camera.view();
         let view_projection = camera.projection(aspect) * view;
@@ -1043,6 +1088,7 @@ impl shader::Primitive for SculptPrimitive {
             mask_inverted: u32::from(mask.inverted),
             mask_tint: mask.tint,
             paint_shown: u32::from(paint.shown),
+            cavity: [cavity.strength, cavity.gain, 0.0, 0.0],
             palette: paint.palette,
         };
         pipeline.renderer.write_uniforms(queue, &uniforms);
@@ -1451,6 +1497,7 @@ mod apply_tests {
             partners: Vec::new(),
             mask: vec![0; 64],
             colour: vec![0; 64],
+            cavity: Vec::new(),
         }
     }
 
@@ -1492,6 +1539,7 @@ mod apply_tests {
             partners: Vec::new(),
             mask: vec![0; 4],
             colour: vec![0; 4],
+            cavity: Vec::new(),
         }
     }
 

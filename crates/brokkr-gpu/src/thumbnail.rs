@@ -474,6 +474,9 @@ impl ThumbnailAtlas {
             // Paint is document state where the mask is view state, so the
             // list shows it whatever the viewport's toggle says.
             paint_shown: 1,
+            // Off: a thumbnail is of the body, and this is how the viewport
+            // happens to be drawing it.
+            cavity: [0.0; 4],
             palette: *palette,
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));

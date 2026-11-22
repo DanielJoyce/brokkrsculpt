@@ -281,6 +281,8 @@ fn main() {
             // Shown, on the same grounds: the paint branch is on by default
             // and every painted pixel takes it.
             paint_shown: 1,
+            // Off, as the application ships it.
+            cavity: [0.0; 4],
             palette: Uniforms::default().palette,
         };
         renderer.write_uniforms(&queue, &uniforms);
