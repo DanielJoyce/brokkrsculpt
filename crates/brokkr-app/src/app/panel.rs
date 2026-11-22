@@ -27,7 +27,8 @@ use glam::Vec2;
 use crate::app::{MaskCard, SizingTarget, Tool};
 use crate::icon;
 use crate::message::{
-    ConfirmChoice, ExportDetail, ExportFormat, MaskGenerator, Message, PanelSection, TopMenu,
+    ConfirmChoice, ExportDetail, ExportFormat, KeySetting, MaskGenerator, Message, PanelSection,
+    TopMenu,
 };
 use crate::spacemouse::{self, ButtonAction};
 use crate::tablet::Diagnosis;
@@ -3698,7 +3699,41 @@ impl Brokkr {
         .spacing(theme::S2)
         .align_y(iced::Alignment::Center);
 
-        column![detail, buttons, status].spacing(theme::S2).into()
+        // The key a parting uses. Here because it is a property of the
+        // print: the clearance is the printer's, and a pin or a magnet is a
+        // decision about how the printed parts go together.
+        let key = self.key_spec;
+        let reading = |label: String| text(label).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM);
+        let keys = column![
+            text("Parting keys: cut tool, alt held")
+                .size(theme::CAPTION_SIZE)
+                .color(theme::TEXT_DIM),
+            pick_list(brokkr_core::part::KeyKind::ALL, Some(key.kind), |kind| {
+                Message::KeySettingChanged(KeySetting::Kind(kind))
+            })
+            .text_size(theme::CAPTION_SIZE)
+            .width(Length::Fill),
+            reading(format!("Radius  {:.1} mm", key.radius_mm)),
+            slider(0.5..=6.0, key.radius_mm, |mm| {
+                Message::KeySettingChanged(KeySetting::Radius(mm))
+            })
+            .step(0.1_f32),
+            reading(format!("Depth  {:.1} mm", key.depth_mm)),
+            slider(0.5..=8.0, key.depth_mm, |mm| {
+                Message::KeySettingChanged(KeySetting::Depth(mm))
+            })
+            .step(0.1_f32),
+            // The one that belongs to the machine. About 0.2 for filament and
+            // under 0.1 for resin; a test print is the only real answer.
+            reading(format!("Clearance  {:.2} mm a side", key.clearance_mm)),
+            slider(0.0..=0.6, key.clearance_mm, |mm| {
+                Message::KeySettingChanged(KeySetting::Clearance(mm))
+            })
+            .step(0.05_f32),
+        ]
+        .spacing(theme::S1);
+
+        column![detail, buttons, status, keys].spacing(theme::S2).into()
     }
 
     /// Pen controls, plus enough of a live readout that a user can tell whether

@@ -15,7 +15,7 @@ was built and what was measured.
 |---|---|---|
 | S0 Groundwork | **Done**, 2026-11-22 (sections 5 and 6) | *show creases* in the viewport. The rest is foundations |
 | S1a Decimated export | **Done**, 2026-11-22 (section 7.1) | A *Detail* choice on export: Full, Fine, Standard, Draft |
-| S1b Parting with keys | **Engine and gesture done**, 2026-11-22 (section 7.2). Settings and preview owed | Cut tool with **alt** held: the body becomes two, with pegs and sockets |
+| S1b Parting with keys | **Done but for a preview**, 2026-11-22 (section 7.2) | Cut tool with **alt** held: the body becomes two, with pegs and sockets |
 | S2 Mini painting | Not started | |
 | S3 Brush engine, surfaced | Not started | |
 | S4 Form tools | Not started | |
@@ -751,10 +751,9 @@ turned out to change nothing.
 
 **Owed, in the order it is worth doing:**
 
-1. **Settings in the panel.** The key's kind, size and clearance are a field
-   of the application with one default (a 2 mm peg, 3 mm deep, 0.2 mm of
-   clearance). There is no control for them yet, so pin holes and magnet
-   pockets are built, tested and unreachable.
+1. ~~Settings in the panel.~~ **Done.** Kind, radius, depth and clearance
+   are in the EXPORT section, under *Parting keys*, and a test holds that
+   they reach what gets cut.
 2. **A preview before the release**: the cut faces, the keys, and what could
    not be keyed, drawn while the line is being dragged. Today the status line
    says it afterwards and undo is the way back.

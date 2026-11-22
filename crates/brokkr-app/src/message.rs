@@ -96,6 +96,23 @@ impl std::fmt::Display for ExportDetail {
     }
 }
 
+/// One setting of the key a parting puts between two parts.
+///
+/// One message with a payload, on [`SpaceMouseSetting`]'s pattern, so that
+/// four controls are four values of one thing and not four entries in the
+/// message table. Settings of the application and not of the document: the
+/// clearance in particular belongs to the printer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum KeySetting {
+    Kind(brokkr_core::part::KeyKind),
+    /// Radius at the cut face, in millimetres.
+    Radius(f32),
+    /// How far it reaches into the second part, in millimetres.
+    Depth(f32),
+    /// The gap left per side, in millimetres.
+    Clearance(f32),
+}
+
 /// Which pointer button an event refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PointerButton {
@@ -772,6 +789,8 @@ pub enum Message {
     /// not of the document: it changes no voxel and is not saved with a
     /// sculpt.
     ExportDetailChanged(ExportDetail),
+    /// Change the key the next parting uses. It changes no voxel.
+    KeySettingChanged(KeySetting),
     /// Put the camera back on the active body, keeping the angles.
     ///
     /// The recovery half of a free camera. A camera that can go anywhere can

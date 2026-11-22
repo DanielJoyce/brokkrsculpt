@@ -23,8 +23,8 @@ use crate::cut;
 use crate::cut_preview;
 use crate::gizmo;
 use crate::message::{
-    ConfirmChoice, ExportDetail, ExportFormat, MaskGenerator, Message, PanelSection, PointerButton,
-    PointerEvent, SpaceMouseSetting, TopMenu,
+    ConfirmChoice, ExportDetail, ExportFormat, KeySetting, MaskGenerator, Message, PanelSection,
+    PointerButton, PointerEvent, SpaceMouseSetting, TopMenu,
 };
 use crate::navcube;
 use crate::spacemouse::{
@@ -10282,6 +10282,14 @@ impl Brokkr {
             // stop paying for bytes nothing reads. No voxel changes, so no
             // undo entry and no dirtied document.
             Message::ExportDetailChanged(detail) => self.export_detail = detail,
+            // Clamped on arrival to the sliders' own ranges, so a value from
+            // anywhere else cannot ask the engine for a key of no size.
+            Message::KeySettingChanged(setting) => match setting {
+                KeySetting::Kind(kind) => self.key_spec.kind = kind,
+                KeySetting::Radius(mm) => self.key_spec.radius_mm = mm.clamp(0.5, 6.0),
+                KeySetting::Depth(mm) => self.key_spec.depth_mm = mm.clamp(0.5, 8.0),
+                KeySetting::Clearance(mm) => self.key_spec.clearance_mm = mm.clamp(0.0, 0.6),
+            },
             Message::ShowCavityToggled => {
                 self.show_cavity = !self.show_cavity;
                 self.doc.mark_everything_dirty();
@@ -13034,6 +13042,77 @@ mod tests {
         );
         let after = app.doc.volume(source).expect("the source is back under its own id").stats();
         assert_eq!(after.dense_bricks, before.dense_bricks, "the body came back a different size");
+    }
+
+    /// The key settings reach the parting. Without this the controls could
+    /// move a number on the panel and change nothing that gets cut.
+    #[test]
+    fn the_key_settings_decide_what_a_parting_cuts() {
+        use crate::message::KeySetting;
+        use brokkr_core::part::KeyKind;
+
+        let part = |app: &mut Brokkr| {
+            app.camera.yaw = 0.0;
+            app.camera.pitch = 0.0;
+            app.publish_camera();
+            update(app, Message::ToolChanged(Tool::Cut));
+            app.alt = true;
+            let middle_y = SIZE.y / 2.0;
+            press(app, Vector::new(SIZE.x * 0.1, middle_y));
+            app.on_pointer(PointerEvent::Moved {
+                position: Vector::new(SIZE.x * 0.9, middle_y),
+                size: SIZE,
+            });
+            release(app);
+            app.alt = false;
+            assert!(app.status.starts_with("parted "), "{}", app.status);
+        };
+        // Solid volume of every body together, by counting voxels that read
+        // inside.
+        let solid = |app: &Brokkr| -> usize {
+            app.doc
+                .nodes()
+                .iter()
+                .filter_map(|node| node.volume())
+                .map(|volume| {
+                    let (lo, hi) = volume.world_bounds().expect("a body has bricks");
+                    let (lo, hi) = volume.voxel_bounds(lo, hi);
+                    let mut inside = 0;
+                    for z in lo.z..=hi.z {
+                        for y in lo.y..=hi.y {
+                            for x in lo.x..=hi.x {
+                                inside += usize::from(
+                                    volume.sample_voxel(glam::IVec3::new(x, y, z)) < 0.0,
+                                );
+                            }
+                        }
+                    }
+                    inside
+                })
+                .sum()
+        };
+
+        // A peg adds to one part what it takes from the other, less the
+        // clearance. A pin hole only takes, from both.
+        let mut pegged = app();
+        part(&mut pegged);
+        let mut pinned = app();
+        update(&mut pinned, Message::KeySettingChanged(KeySetting::Kind(KeyKind::PinHole)));
+        assert_eq!(pinned.key_spec.kind, KeyKind::PinHole, "the setting did not arrive");
+        part(&mut pinned);
+        assert!(
+            solid(&pinned) + 50 < solid(&pegged),
+            "pin holes left {} voxels solid and pegs {}: the kind did not reach the cut",
+            solid(&pinned),
+            solid(&pegged)
+        );
+
+        // And a setting from outside the sliders' range is clamped, not
+        // passed on.
+        update(&mut pinned, Message::KeySettingChanged(KeySetting::Radius(-3.0)));
+        update(&mut pinned, Message::KeySettingChanged(KeySetting::Clearance(40.0)));
+        assert_eq!(pinned.key_spec.radius_mm, 0.5);
+        assert_eq!(pinned.key_spec.clearance_mm, 0.6);
     }
 
     /// A parting is one plane. A lasso with alt held parts nothing and says
