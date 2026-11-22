@@ -98,6 +98,51 @@ impl std::fmt::Display for ExportDetail {
 
 /// One setting of the key a parting puts between two parts.
 ///
+/// How the paint brush is put to the model. See
+/// [`brokkr_core::paint::touch`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PaintTouch {
+    /// Everything under the brush: a base coat, or detail.
+    #[default]
+    Loaded,
+    /// Only what stands up into a nearly dry brush.
+    Drybrush,
+    /// A speckle, as a dabbed sponge leaves.
+    Sponge,
+}
+
+impl PaintTouch {
+    pub const ALL: [PaintTouch; 3] = [PaintTouch::Loaded, PaintTouch::Drybrush, PaintTouch::Sponge];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PaintTouch::Loaded => "Loaded",
+            PaintTouch::Drybrush => "Drybrush",
+            PaintTouch::Sponge => "Sponge",
+        }
+    }
+}
+
+/// One setting of the drybrush or the sponge, on [`KeySetting`]'s pattern.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TouchSetting {
+    /// How lightly the drybrush has to touch to leave paint.
+    DryCatch(f32),
+    /// How broken into bristle lines its marks are.
+    DryStreak(f32),
+    /// How wide one bristle's mark is, in millimetres.
+    DryBristle(f32),
+    /// How far the drybrush goes before it runs out, in millimetres. Zero is
+    /// "never".
+    DryLoad(f32),
+    /// The share of a flat a sponge covers.
+    SpongeDensity(f32),
+    /// The size of one speck, in millimetres.
+    SpongeGrain(f32),
+    /// How much more of it lands on edges.
+    SpongeEdges(f32),
+}
+
 /// One of a paint's three coats, in the order a painter lays them down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PaintCoat {
@@ -869,6 +914,11 @@ pub enum Message {
     PaintAdded,
     /// Which of the chosen paint's three coats the editor shows. View state.
     PaintCoatChosen(PaintCoat),
+    /// How the paint brush touches the model: loaded, nearly dry, or a
+    /// sponge. A setting of the brush, not of the document.
+    PaintTouchChosen(PaintTouch),
+    /// One of the settings of the drybrush or the sponge.
+    PaintTouchChanged(TouchSetting),
     /// Change the chosen paint. It changes no voxel: every voxel already
     /// painted with it is redrawn the new way, which is the point of a paint
     /// being a recipe.

@@ -29,12 +29,14 @@
 //!   would have to be rewritten to match. Until that pass exists a paint,
 //!   once mixed, stays.
 
+use brokkr_core::paint::touch::{Coat, Drybrush, Sponge, Touch};
 use brokkr_core::paint::{Finish, MAX_PAINTS, Paint, Wash};
+use glam::Vec3;
 use iced::widget::{button, column, container, pick_list, row, slider, text, text_input};
 use iced::{Alignment, Element, Length, Padding};
 
 use super::Brokkr;
-use crate::message::{Message, PaintCoat, PaintEdit, WashKind};
+use crate::message::{Message, PaintCoat, PaintEdit, PaintTouch, TouchSetting, WashKind};
 use crate::theme;
 
 /// The pale coat a contrast paint goes over. A warm off-white: a contrast
@@ -55,6 +57,104 @@ pub(super) const FLOW_RANGE: std::ops::RangeInclusive<f32> = 0.0..=3.0;
 pub(super) const EDGE_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.5;
 pub(super) const AMOUNT_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
 pub(super) const START_RANGE: std::ops::RangeInclusive<f32> = 0.0..=0.95;
+
+/// How far a drybrush goes on one load by default, in millimetres. About the
+/// height of a 28 mm figure and a bit: one pass down a cloak.
+const DEFAULT_LOAD_MM: f32 = 40.0;
+
+/// The ranges of the touch sliders, which are also what a setting is clamped
+/// to on arrival.
+pub(super) const CATCH_RANGE: std::ops::RangeInclusive<f32> = 0.05..=1.0;
+pub(super) const STREAK_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
+pub(super) const BRISTLE_RANGE: std::ops::RangeInclusive<f32> = 0.1..=2.0;
+pub(super) const LOAD_RANGE: std::ops::RangeInclusive<f32> = 0.0..=200.0;
+pub(super) const DENSITY_RANGE: std::ops::RangeInclusive<f32> = 0.02..=1.0;
+pub(super) const GRAIN_RANGE: std::ops::RangeInclusive<f32> = 0.1..=4.0;
+pub(super) const EDGES_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
+
+/// How the paint brush touches the model, and the stroke in progress.
+///
+/// One struct on the application and not seven fields, so that upstream's
+/// `Brokkr` grows by a line. The settings are the brush's: they are not
+/// saved with a document and no document changes when they do.
+#[derive(Debug, Default)]
+pub(super) struct TouchState {
+    pub kind: PaintTouch,
+    pub dry: Drybrush,
+    pub sponge: Sponge,
+    /// How far a drybrush goes before it runs out, in millimetres. Zero for
+    /// one that never does.
+    pub load_mm: LoadMm,
+    /// How many strokes have begun, which is where each one's seed comes
+    /// from: a second stroke has to leave a different speckle from the
+    /// first, and the same one every time the same session is replayed.
+    strokes: u32,
+    /// Where the stroke in progress began, and its seed.
+    origin: Vec3,
+    seed: u32,
+    /// How far it has gone, and from where the next step is measured.
+    travelled: f32,
+    last: Vec3,
+    /// Scratch for the gate, kept so that a stroke does not allocate.
+    pub scratch: brokkr_core::paint::touch::TouchScratch,
+}
+
+/// A length in millimetres that defaults to [`DEFAULT_LOAD_MM`] and not to
+/// nothing, so that `TouchState` can derive its `Default`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct LoadMm(pub f32);
+
+impl Default for LoadMm {
+    fn default() -> Self {
+        Self(DEFAULT_LOAD_MM)
+    }
+}
+
+impl TouchState {
+    /// Change one setting, clamped to its slider's range.
+    pub(super) fn set(&mut self, setting: TouchSetting) {
+        match setting {
+            TouchSetting::DryCatch(value) => self.dry.catch = clamped(value, CATCH_RANGE),
+            TouchSetting::DryStreak(value) => self.dry.streak = clamped(value, STREAK_RANGE),
+            TouchSetting::DryBristle(mm) => self.dry.bristle_mm = clamped(mm, BRISTLE_RANGE),
+            TouchSetting::DryLoad(mm) => self.load_mm = LoadMm(clamped(mm, LOAD_RANGE)),
+            TouchSetting::SpongeDensity(value) => {
+                self.sponge.density = clamped(value, DENSITY_RANGE);
+            }
+            TouchSetting::SpongeGrain(mm) => self.sponge.grain_mm = clamped(mm, GRAIN_RANGE),
+            TouchSetting::SpongeEdges(value) => self.sponge.edges = clamped(value, EDGES_RANGE),
+        }
+    }
+
+    /// The coat for the stamp at `centre`. `first` is whether it is the
+    /// first stamp of a stroke, which is when the seed and the origin are
+    /// fixed and the load is full.
+    fn coat(&mut self, centre: Vec3, first: bool, crease_gain: f32) -> Coat {
+        if first {
+            self.strokes = self.strokes.wrapping_add(1);
+            // Spread, so that stroke 1 and stroke 2 do not differ in one bit
+            // of a hash's input.
+            self.seed = self.strokes.wrapping_mul(0x9e37_79b1) ^ 0x5bd1_e995;
+            self.origin = centre;
+            self.travelled = 0.0;
+        } else {
+            self.travelled += centre.distance(self.last);
+        }
+        self.last = centre;
+
+        let touch = match self.kind {
+            PaintTouch::Loaded => Touch::Loaded,
+            PaintTouch::Drybrush => Touch::Drybrush(self.dry),
+            PaintTouch::Sponge => Touch::Sponge(self.sponge),
+        };
+        let load = if self.load_mm.0 > 0.0 {
+            (1.0 - self.travelled / self.load_mm.0).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        Coat { touch, seed: self.seed, origin: self.origin, load, crease_gain }
+    }
+}
 
 /// A starting range of colours to pick from, so that mixing a paint begins
 /// with a click and the three sliders are for adjusting.
@@ -114,6 +214,101 @@ impl Brokkr {
         let count =
             if self.paints.is_empty() { self.palette.slots.len() } else { self.paints.len() };
         count.clamp(1, usize::from(u8::MAX)) as u8
+    }
+
+    /// The coat the paint stroke lays with the stamp at `centre`.
+    ///
+    /// The crease gain is the viewport's, so that what a drybrush catches is
+    /// what "show creases" lights.
+    pub(super) fn coat_for(&mut self, centre: Vec3, first: bool) -> Coat {
+        let gain = super::CAVITY_FEATURE_MM / self.doc.voxel_size() / 4.0;
+        self.touch.coat(centre, first, gain)
+    }
+
+    /// How the brush touches: three buttons, and the sliders of the one
+    /// chosen.
+    fn touch_picker(&self, settings: bool) -> Element<'_, Message> {
+        let reading = |label: String| text(label).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM);
+        let kinds =
+            PaintTouch::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, kind| {
+                assembled.push(
+                    button(text(kind.label()).size(theme::CAPTION_SIZE))
+                        .width(Length::Fill)
+                        .style(if kind == self.touch.kind {
+                            theme::tool_button_active
+                        } else {
+                            theme::tool_button
+                        })
+                        .on_press(Message::PaintTouchChosen(kind)),
+                )
+            });
+        let mut picker = column![kinds].spacing(theme::S1);
+        if !settings {
+            return picker.into();
+        }
+        let changed = |setting: TouchSetting| Message::PaintTouchChanged(setting);
+        match self.touch.kind {
+            PaintTouch::Loaded => {}
+            PaintTouch::Drybrush => {
+                let dry = self.touch.dry;
+                let load = self.touch.load_mm.0;
+                picker = picker
+                    .push(reading(format!("Catches  {:.2}", dry.catch)))
+                    .push(
+                        slider(CATCH_RANGE, dry.catch, move |v| changed(TouchSetting::DryCatch(v)))
+                            .step(0.01_f32),
+                    )
+                    .push(reading(format!("Streaks  {:.2}", dry.streak)))
+                    .push(
+                        slider(STREAK_RANGE, dry.streak, move |v| {
+                            changed(TouchSetting::DryStreak(v))
+                        })
+                        .step(0.01_f32),
+                    )
+                    .push(reading(format!("Bristle  {:.1} mm", dry.bristle_mm)))
+                    .push(
+                        slider(BRISTLE_RANGE, dry.bristle_mm, move |v| {
+                            changed(TouchSetting::DryBristle(v))
+                        })
+                        .step(0.1_f32),
+                    )
+                    .push(reading(if load > 0.0 {
+                        format!("Runs out after  {load:.0} mm")
+                    } else {
+                        "Never runs out".to_string()
+                    }))
+                    .push(
+                        slider(LOAD_RANGE, load, move |v| changed(TouchSetting::DryLoad(v)))
+                            .step(5.0_f32),
+                    );
+            }
+            PaintTouch::Sponge => {
+                let sponge = self.touch.sponge;
+                picker = picker
+                    .push(reading(format!("Covers  {:.0}%", sponge.density * 100.0)))
+                    .push(
+                        slider(DENSITY_RANGE, sponge.density, move |v| {
+                            changed(TouchSetting::SpongeDensity(v))
+                        })
+                        .step(0.01_f32),
+                    )
+                    .push(reading(format!("Speck  {:.1} mm", sponge.grain_mm)))
+                    .push(
+                        slider(GRAIN_RANGE, sponge.grain_mm, move |v| {
+                            changed(TouchSetting::SpongeGrain(v))
+                        })
+                        .step(0.1_f32),
+                    )
+                    .push(reading(format!("More on edges  {:.2}", sponge.edges)))
+                    .push(
+                        slider(EDGES_RANGE, sponge.edges, move |v| {
+                            changed(TouchSetting::SpongeEdges(v))
+                        })
+                        .step(0.01_f32),
+                    );
+            }
+        }
+        picker.into()
     }
 
     /// The paints belong to the document, so a new document has none: a
@@ -231,6 +426,7 @@ impl Brokkr {
     pub(super) fn paint_picker(&self, editing: bool) -> Element<'_, Message> {
         if self.paints.is_empty() {
             return column![
+                self.touch_picker(editing),
                 self.filament_picker(),
                 button(text("Mix paints").size(theme::TEXT_SIZE_SMALL))
                     .style(theme::tool_button)
@@ -267,6 +463,7 @@ impl Brokkr {
         let name =
             self.paints.paint(self.paint_slot).map(|paint| paint.name.as_str()).unwrap_or("none");
         let mut picker = column![
+            self.touch_picker(editing),
             text(format!("Paint  {}. {name}", self.paint_slot))
                 .size(theme::TEXT_SIZE_SMALL)
                 .color(theme::TEXT_DIM),
@@ -785,6 +982,189 @@ mod tests {
         // A slot the table does not have draws no editor and does not panic.
         app.paint_slot = 200;
         drop(app.paint_picker(true));
+    }
+
+    const SIZE: iced::Vector = iced::Vector { x: 800.0, y: 600.0 };
+
+    /// A short drag across the middle of the model, as the paint brush
+    /// tests upstream make it.
+    fn stroke(app: &mut Brokkr) {
+        use crate::message::{PointerButton, PointerEvent};
+        let centre = iced::Vector::new(SIZE.x / 2.0, SIZE.y / 2.0);
+        update(
+            app,
+            Message::Pointer(PointerEvent::Pressed {
+                button: PointerButton::Left,
+                position: centre,
+                size: SIZE,
+            }),
+        );
+        for step in 1..=4 {
+            let position = iced::Vector::new(centre.x + 12.0 * step as f32, centre.y);
+            update(app, Message::Pointer(PointerEvent::Moved { position, size: SIZE }));
+        }
+        update(app, Message::Pointer(PointerEvent::Released { button: PointerButton::Left }));
+    }
+
+    /// How many voxels of the active body are painted at all.
+    fn painted_voxels(app: &Brokkr) -> usize {
+        let volume = app.doc.active_volume();
+        let Some((low, high)) = volume.world_bounds() else {
+            return 0;
+        };
+        let (lo, hi) = volume.voxel_bounds(low, high);
+        let mut count = 0;
+        // The stroke is on the side of the ball facing the camera, so one
+        // sweep of the whole box is the simple way to find all of it.
+        for z in lo.z..=hi.z {
+            for y in lo.y..=hi.y {
+                for x in lo.x..=hi.x {
+                    if volume.colour().at(glam::IVec3::new(x, y, z)) != 0 {
+                        count += 1;
+                    }
+                }
+            }
+        }
+        count
+    }
+
+    /// A sponge stroke through the whole application: it paints a speckle
+    /// and not a stripe, it is one undo, and a second stroke over the same
+    /// place adds to the first.
+    #[test]
+    fn a_sponge_stroke_leaves_a_speckle_and_is_one_undo() {
+        let mut loaded = app();
+        stroke(&mut loaded);
+        let stripe = painted_voxels(&loaded);
+        assert!(stripe > 500, "the loaded stroke painted only {stripe} voxels");
+
+        let mut app = app();
+        update(&mut app, Message::PaintTouchChosen(PaintTouch::Sponge));
+        update(&mut app, Message::PaintTouchChanged(TouchSetting::SpongeDensity(0.3)));
+        update(&mut app, Message::PaintTouchChanged(TouchSetting::SpongeEdges(0.0)));
+        stroke(&mut app);
+        let speckle = painted_voxels(&app);
+        assert!(
+            speckle * 10 > stripe && speckle * 2 < stripe,
+            "a sponge at 30% painted {speckle} voxels where a loaded brush painted {stripe}"
+        );
+
+        stroke(&mut app);
+        let twice = painted_voxels(&app);
+        assert!(
+            twice > speckle + speckle / 5,
+            "a second sponge stroke added only {} voxels to {speckle}",
+            twice - speckle
+        );
+
+        update(&mut app, Message::Undo);
+        assert_eq!(painted_voxels(&app), speckle, "one undo did not take off exactly one stroke");
+        update(&mut app, Message::Undo);
+        assert_eq!(painted_voxels(&app), 0, "the first stroke was not one undo");
+    }
+
+    /// A drybrush leaves a smooth ball clean, because nothing on it stands
+    /// up. The plainest statement of what the tool is: it is not a way of
+    /// painting less, it is a way of painting edges.
+    #[test]
+    fn a_drybrush_leaves_a_smooth_ball_clean() {
+        let mut app = app();
+        update(&mut app, Message::PaintTouchChosen(PaintTouch::Drybrush));
+        update(&mut app, Message::PaintTouchChanged(TouchSetting::DryCatch(0.9)));
+        stroke(&mut app);
+        assert_eq!(painted_voxels(&app), 0, "a drybrush painted a surface with no edges on it");
+    }
+
+    /// A stroke keeps one seed and one origin from press to release, the
+    /// next stroke gets another, and the load runs down with the distance.
+    #[test]
+    fn a_stroke_keeps_its_seed_and_runs_its_load_down() {
+        let mut touch = TouchState { kind: PaintTouch::Drybrush, ..TouchState::default() };
+        touch.set(TouchSetting::DryLoad(20.0));
+        let first = touch.coat(Vec3::new(1.0, 2.0, 3.0), true, 0.5);
+        let next = touch.coat(Vec3::new(6.0, 2.0, 3.0), false, 0.5);
+        let last = touch.coat(Vec3::new(6.0, 14.0, 3.0), false, 0.5);
+        assert_eq!(first.load, 1.0, "a stroke did not begin with a full brush");
+        assert_eq!(first.origin, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(first.crease_gain, 0.5);
+        assert_eq!((next.seed, next.origin), (first.seed, first.origin));
+        assert_eq!((last.seed, last.origin), (first.seed, first.origin));
+        assert!((next.load - 0.75).abs() < 1e-6, "5 mm of 20 left a load of {}", next.load);
+        assert!((last.load - 0.15).abs() < 1e-6, "17 mm of 20 left a load of {}", last.load);
+        let spent = touch.coat(Vec3::new(6.0, 40.0, 3.0), false, 0.5);
+        assert_eq!(spent.load, 0.0, "the load went below nothing or stayed above it");
+
+        let second = touch.coat(Vec3::new(9.0, 9.0, 9.0), true, 0.5);
+        assert_ne!(second.seed, first.seed, "two strokes shared a seed");
+        assert_eq!(second.load, 1.0, "the brush was not reloaded for the next stroke");
+        assert_eq!(second.origin, Vec3::new(9.0, 9.0, 9.0));
+
+        // A load of zero is a brush that never runs out.
+        touch.set(TouchSetting::DryLoad(0.0));
+        touch.coat(Vec3::ZERO, true, 0.5);
+        assert_eq!(touch.coat(Vec3::splat(500.0), false, 0.5).load, 1.0);
+
+        // And the kind chosen is the kind laid.
+        assert!(matches!(first.touch, Touch::Drybrush(_)));
+        touch.kind = PaintTouch::Sponge;
+        assert!(matches!(touch.coat(Vec3::ZERO, true, 0.5).touch, Touch::Sponge(_)));
+        touch.kind = PaintTouch::Loaded;
+        assert!(matches!(touch.coat(Vec3::ZERO, true, 0.5).touch, Touch::Loaded));
+    }
+
+    /// What a drybrush calls a full edge is what the viewport calls one, so
+    /// the brush catches what "show creases" lights.
+    #[test]
+    fn the_brush_reads_edges_at_the_viewports_gain() {
+        let mut app = app();
+        let coat = app.coat_for(Vec3::ZERO, true);
+        assert_eq!(
+            coat.crease_gain,
+            app.shared.cavity_view().gain,
+            "the drybrush and the crease view disagree about what a full edge is"
+        );
+        assert!(coat.crease_gain > 0.0);
+    }
+
+    /// Each setting goes to its own field, clamped to its slider.
+    #[test]
+    fn touch_settings_land_where_they_say_and_are_clamped() {
+        let mut app = app();
+        let set = |app: &mut Brokkr, setting| update(app, Message::PaintTouchChanged(setting));
+        set(&mut app, TouchSetting::DryCatch(0.31));
+        set(&mut app, TouchSetting::DryStreak(0.32));
+        set(&mut app, TouchSetting::DryBristle(0.33));
+        set(&mut app, TouchSetting::DryLoad(34.0));
+        set(&mut app, TouchSetting::SpongeDensity(0.35));
+        set(&mut app, TouchSetting::SpongeGrain(0.36));
+        set(&mut app, TouchSetting::SpongeEdges(0.37));
+        let touch = &app.touch;
+        assert_eq!((touch.dry.catch, touch.dry.streak, touch.dry.bristle_mm), (0.31, 0.32, 0.33));
+        assert_eq!(touch.load_mm.0, 34.0);
+        assert_eq!(
+            (touch.sponge.density, touch.sponge.grain_mm, touch.sponge.edges),
+            (0.35, 0.36, 0.37)
+        );
+
+        set(&mut app, TouchSetting::DryCatch(9.0));
+        set(&mut app, TouchSetting::DryBristle(0.0));
+        set(&mut app, TouchSetting::DryLoad(-5.0));
+        set(&mut app, TouchSetting::SpongeDensity(f32::NAN));
+        set(&mut app, TouchSetting::SpongeGrain(0.0));
+        let touch = &app.touch;
+        assert_eq!(touch.dry.catch, *CATCH_RANGE.end());
+        assert_eq!(touch.dry.bristle_mm, *BRISTLE_RANGE.start(), "a bristle of no width");
+        assert_eq!(touch.load_mm.0, 0.0);
+        assert_eq!(touch.sponge.density, *DENSITY_RANGE.start(), "a NaN reached the sponge");
+        assert_eq!(touch.sponge.grain_mm, *GRAIN_RANGE.start(), "a speck of no size");
+
+        // The panel builds for each kind, with and without its sliders.
+        for kind in PaintTouch::ALL {
+            update(&mut app, Message::PaintTouchChosen(kind));
+            assert_eq!(app.touch.kind, kind);
+            drop(app.paint_picker(true));
+            drop(app.paint_picker(false));
+        }
     }
 
     /// The range is the starting colours a painter is offered, so two entries

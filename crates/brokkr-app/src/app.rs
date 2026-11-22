@@ -893,6 +893,9 @@ pub struct Brokkr {
     paints: brokkr_core::paint::PaintTable,
     /// Which coat of the paint in hand the editor shows. View state.
     paint_coat: crate::message::PaintCoat,
+    /// How the paint brush touches the model, its settings, and where the
+    /// stroke in progress has got to. See `app/paints.rs`.
+    touch: paints::TouchState,
     /// How strong the tint is when it is shown at all, 0..1.
     ///
     /// The shader has its own floor under this (`0.30 + 0.70 * m`), which is
@@ -2142,6 +2145,7 @@ impl Brokkr {
             key_spec: brokkr_core::part::KeySpec::peg(),
             paints: brokkr_core::paint::PaintTable::default(),
             paint_coat: crate::message::PaintCoat::default(),
+            touch: paints::TouchState::default(),
             mask_tint: DEFAULT_MASK_TINT,
             mask_peek: false,
             mask_filter: MaskFilter::Blur,
@@ -5555,13 +5559,18 @@ impl Brokkr {
             let normal = lean_normal(self.doc.active_volume().gradient_world(centre), lean);
             let stamp =
                 Stamp::new(centre, normal, direction).with_pressure(pressure).with_tangent(tangent);
-            brush.apply_paint_symmetric(
+            // A loaded brush is upstream's stamp, reached through the coat;
+            // a drybrush or a sponge is the same stamp asked one more
+            // question per voxel. See `app/paints.rs`.
+            let coat = self.coat_for(centre, start && index == 0);
+            coat.apply_symmetric(
+                &brush,
                 self.doc.active_volume_mut(),
                 &stamp,
                 slot,
                 self.symmetry,
                 MIRROR_CENTRE,
-                &mut self.brush_scratch,
+                &mut self.touch.scratch,
             );
         }
 
@@ -10322,6 +10331,8 @@ impl Brokkr {
             Message::PaintAdded => self.add_paint(),
             Message::PaintCoatChosen(coat) => self.paint_coat = coat,
             Message::PaintEdited(edit) => self.edit_paint(edit),
+            Message::PaintTouchChosen(touch) => self.touch.kind = touch,
+            Message::PaintTouchChanged(setting) => self.touch.set(setting),
             // And the verbs, which DO change protection and all of which are
             // undoable in one entry apiece.
             Message::MaskCleared => self.clear_mask(),
