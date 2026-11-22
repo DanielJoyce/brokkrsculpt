@@ -882,6 +882,9 @@ pub struct Brokkr {
     show_cavity: bool,
     /// How finely an export is meshed. See [`ExportDetail`].
     export_detail: ExportDetail,
+    /// The key a parting puts between two parts: its kind, its size, and the
+    /// clearance, which belongs to the printer. See `brokkr_core::part`.
+    key_spec: brokkr_core::part::KeySpec,
     /// How strong the tint is when it is shown at all, 0..1.
     ///
     /// The shader has its own floor under this (`0.30 + 0.70 * m`), which is
@@ -2128,6 +2131,7 @@ impl Brokkr {
             show_paint: true,
             show_cavity: false,
             export_detail: ExportDetail::default(),
+            key_spec: brokkr_core::part::KeySpec::peg(),
             mask_tint: DEFAULT_MASK_TINT,
             mask_peek: false,
             mask_filter: MaskFilter::Blur,
@@ -5186,6 +5190,10 @@ impl Brokkr {
             // going to do, and "PLANE CUT" over a lasso is a lie about which
             // material is about to go. Before a drag starts there is no shape
             // yet and it says what an unqualified cut is.
+            // Alt keeps both sides, and the card says so WHILE it is held,
+            // for the reason shift's preview is live: a verb read from a key
+            // at the release has to be visible before the release.
+            (Tool::Cut, _) if self.alt => "PART — KEEP BOTH".to_string(),
             (Tool::Cut, _) => self.live_cut_shape().label().to_string(),
             (Tool::Transform, _) => "MOVE".to_string(),
             (Tool::Sculpt, _) => self.effective_brush().kind.label().to_uppercase(),
@@ -6163,6 +6171,19 @@ impl Brokkr {
                 self.refresh_overlay();
                 return;
             }
+        }
+
+        // **Alt keeps both sides, and keys them.** The same drag as a cut,
+        // read at the release like ctrl and shift: instead of one side going,
+        // the body becomes two that register on each other. Before the depth
+        // cap and the mirror, because a parting is one whole plane through one
+        // body and neither applies to it.
+        if self.alt {
+            self.part_along(&planes, gesture.shape);
+            // One shot per arming, as the cut and the mask are.
+            self.tool = Tool::Sculpt;
+            self.refresh_overlay();
+            return;
         }
 
         // **Bounded by default, and shift is what asks for the old behaviour.**
@@ -8583,6 +8604,77 @@ impl Brokkr {
         if started.elapsed() > brokkr_core::SLOW_SPLIT {
             eprintln!("masked split of {name} took {} ms", outcome.elapsed.as_millis());
         }
+
+        self.refresh_model_radius();
+        self.remesh_dirty();
+        self.refresh_overlay();
+    }
+
+    /// Part the active body in two along a drawn line, with keys.
+    ///
+    /// The cut tool's own gesture with alt held: the plane is the one a cut
+    /// would have used, and instead of a side going the body becomes two
+    /// bodies with pegs on one and sockets in the other. See
+    /// `brokkr_core::part`.
+    ///
+    /// **The ACTIVE body and no other**, where a cut crosses everything
+    /// drawn. A cut is an eraser and parting is a decision about one part:
+    /// what its two halves are called, where their keys go, what its
+    /// neighbours do not get done to them. Every refusal names the body.
+    ///
+    /// The shape of everything after the plan is `split_the_mask_off`'s, for
+    /// that function's reasons: the source's slots are released in the frame
+    /// its halves are marked dirty, and the whole gesture is one undo entry.
+    fn part_along(&mut self, planes: &[brokkr_core::ClipPlane], shape: cut::CutShape) {
+        let source = self.doc.active();
+        let name = self.active_body_name();
+        let (cut::CutShape::Line, [plane]) = (shape, planes) else {
+            self.status = format!("not parted: parting {name} takes one straight line across it");
+            return;
+        };
+
+        let visible = self
+            .doc
+            .index_of(source)
+            .and_then(|index| self.shown.get(index).copied())
+            .unwrap_or(true);
+        if !visible {
+            self.status = format!(
+                "could not part {name}: it is not on screen, and its halves would not be either"
+            );
+            return;
+        }
+        if let Some(why) = self.doc.split_guard(source) {
+            self.status = format!("could not part {name}: {why}");
+            return;
+        }
+        let Some(volume) = self.doc.volume(source) else {
+            return;
+        };
+
+        // The plan first, and read only: it is what says whether the line
+        // meets the body at all, and what goes in the status line about the
+        // faces that could not be keyed.
+        let plan = volume.part_plan(*plane, self.key_spec);
+        if !plan.cuts() {
+            self.status = format!("not parted: the line misses {name}");
+            return;
+        }
+        let summary = plan.summary();
+        let Some(outcome) = self.doc.part(source, &plan) else {
+            // The plan found a face and the cut left one side empty, which a
+            // plane grazing the body can do.
+            self.status = format!("not parted: the line only grazes {name}");
+            return;
+        };
+        self.shared.forget_body(source);
+        self.doc.mark_everything_dirty();
+
+        let before = self.history.stats();
+        self.history.push(outcome.entry);
+        self.unsaved = true;
+        self.status = format!("parted {name} in two: {summary}");
+        self.record_history(before);
 
         self.refresh_model_radius();
         self.remesh_dirty();
@@ -12861,6 +12953,122 @@ mod tests {
     /// camera basis, and whether the pixel-to-NDC step flips Y. Get it backwards
     /// and the tool takes the half the user meant to keep -- which is
     /// destructive, and only obvious after the fact.
+    /// **Alt turns the cut into a parting**: the same line, and the body
+    /// becomes two that register on each other instead of losing a side.
+    ///
+    /// Driven through the pointer and not by calling the engine, because the
+    /// engine has its own tests and what can go wrong HERE is the wiring: the
+    /// modifier read at the wrong moment, the source's slots not released,
+    /// the tool left armed, the history given two entries or none.
+    #[test]
+    fn alt_parts_the_body_in_two_with_keys_and_one_undo_puts_it_back() {
+        let mut app = app();
+        app.camera.yaw = 0.0;
+        app.camera.pitch = 0.0;
+        app.publish_camera();
+        let source = app.doc.active();
+        let before = app.doc.active_volume().stats();
+        let undo_before = app.history.stats().undo_entries;
+
+        update(&mut app, Message::ToolChanged(Tool::Cut));
+        app.alt = true;
+        assert_eq!(
+            app.live_tool_label(),
+            "PART — KEEP BOTH",
+            "the card does not say what alt does"
+        );
+        let middle_y = SIZE.y / 2.0;
+        press(&mut app, Vector::new(SIZE.x * 0.1, middle_y));
+        app.on_pointer(PointerEvent::Moved {
+            position: Vector::new(SIZE.x * 0.9, middle_y),
+            size: SIZE,
+        });
+        release(&mut app);
+        app.alt = false;
+
+        assert_ne!(app.tool, Tool::Cut, "the tool stayed armed after parting");
+        assert!(app.status.starts_with("parted "), "{}", app.status);
+        assert!(app.status.contains("key"), "the status line says nothing of keys: {}", app.status);
+        assert!(app.unsaved, "a parting did not mark the document unsaved");
+        assert_eq!(app.doc.body_count(), 2, "the body did not become two");
+        assert!(app.doc.volume(source).is_none(), "the source is still in the document");
+        assert_eq!(
+            app.history.stats().undo_entries,
+            undo_before + 1,
+            "a parting should be exactly one undo entry"
+        );
+
+        // Both halves are real, printable, and on either side of the line.
+        let mut visible = Vec::new();
+        app.doc.saved_visibility(&mut visible);
+        let bodies = app.doc.export_bodies(&visible);
+        assert_eq!(bodies.len(), 2);
+        for (meta, _, report) in &bodies {
+            assert!(report.is_printable(), "{}: {}", meta.name, report.summary());
+        }
+        let above = Vec3::new(0.0, 12.0, 0.0);
+        let below = Vec3::new(0.0, -12.0, 0.0);
+        let holds = |at: Vec3| -> Vec<bool> {
+            app.doc
+                .nodes()
+                .iter()
+                .filter_map(|node| node.volume())
+                .map(|volume| volume.sample_world(at) < 0.0)
+                .collect()
+        };
+        assert_eq!(holds(above).iter().filter(|held| **held).count(), 1, "one part holds the top");
+        assert_eq!(
+            holds(below).iter().filter(|held| **held).count(),
+            1,
+            "one part holds the bottom"
+        );
+        assert_ne!(holds(above), holds(below), "one part holds both the top and the bottom");
+
+        // One undo, and the body that was there is there again.
+        update(&mut app, Message::Undo);
+        assert_eq!(
+            app.doc.body_count(),
+            1,
+            "undoing a parting left {} bodies",
+            app.doc.body_count()
+        );
+        let after = app.doc.volume(source).expect("the source is back under its own id").stats();
+        assert_eq!(after.dense_bricks, before.dense_bricks, "the body came back a different size");
+    }
+
+    /// A parting is one plane. A lasso with alt held parts nothing and says
+    /// why, where quietly cutting instead would take material the user asked
+    /// to keep.
+    #[test]
+    fn alt_over_a_lasso_parts_nothing_and_cuts_nothing() {
+        let mut app = app();
+        app.camera.yaw = 0.0;
+        app.camera.pitch = 0.0;
+        app.publish_camera();
+        let before = app.doc.active_volume().stats();
+
+        update(&mut app, Message::ToolChanged(Tool::Cut));
+        app.alt = true;
+        // A closed loop round the middle of the view.
+        let (cx, cy) = (SIZE.x / 2.0, SIZE.y / 2.0);
+        press(&mut app, Vector::new(cx + 80.0, cy));
+        for step in 1..=24 {
+            let angle = step as f32 / 24.0 * std::f32::consts::TAU;
+            app.on_pointer(PointerEvent::Moved {
+                position: Vector::new(cx + 80.0 * angle.cos(), cy + 80.0 * angle.sin()),
+                size: SIZE,
+            });
+        }
+        release(&mut app);
+        app.alt = false;
+
+        assert!(app.status.starts_with("not parted"), "{}", app.status);
+        assert_eq!(app.doc.body_count(), 1);
+        let after = app.doc.active_volume().stats();
+        assert_eq!(after.dense_bricks, before.dense_bricks, "the lasso cut the body after all");
+        assert_eq!(app.history.stats().undo_entries, 0, "a refused parting reached the history");
+    }
+
     #[test]
     fn a_left_to_right_drag_removes_a_consistent_side() {
         let mut app = app();
