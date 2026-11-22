@@ -43,6 +43,7 @@ pub mod redistance;
 pub mod region;
 pub mod resample;
 pub mod rotate;
+pub mod signals;
 pub mod similarity;
 pub mod split;
 pub mod stroke;

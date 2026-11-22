@@ -713,18 +713,26 @@ impl MeshPool {
             mesh.colour.is_empty() || mesh.colour.len() == mesh.vertices.len(),
             "colour must be one byte per vertex or absent entirely"
         );
+        debug_assert!(
+            mesh.cavity.is_empty() || mesh.cavity.len() == mesh.vertices.len(),
+            "cavity must be one byte per vertex or absent entirely"
+        );
         // Widened into the kept buffer before anything else is borrowed, so
         // that the three writes below can share `&self`. See `staging`.
         self.staging.clear();
-        // Byte 0 the mask, byte 1 the painted slot -- the layout `ATTRIBUTE_BYTES`
-        // reserved. Zipped rather than a second pass: `upload` runs inside
-        // `prepare` on the frame path, and `staging` is a kept buffer precisely
-        // so this allocates nothing.
+        // Byte 0 the mask, byte 1 the painted slot, byte 2 the cavity -- the
+        // layout `ATTRIBUTE_BYTES` reserved. Zipped rather than a second pass:
+        // `upload` runs inside `prepare` on the frame path, and `staging` is a
+        // kept buffer precisely so this allocates nothing.
+        //
+        // A mesh made without the cavity signal has an empty run and uploads
+        // zeros, which is `brokkr_core::signals::CAVITY_ABSENT` and draws flat.
         self.staging.extend(
             mesh.mask
                 .iter()
                 .zip(mesh.colour.iter().chain(std::iter::repeat(&0)))
-                .map(|(mask, slot)| [*mask, *slot, 0, 0]),
+                .zip(mesh.cavity.iter().chain(std::iter::repeat(&0)))
+                .map(|((mask, slot), cavity)| [*mask, *slot, *cavity, 0]),
         );
 
         let pair = &self.buffers[slot.vertices.buffer as usize];
@@ -1345,6 +1353,7 @@ mod tests {
             partners: Vec::new(),
             mask: vec![0; vertices],
             colour: vec![0; vertices],
+            cavity: Vec::new(),
         }
     }
 

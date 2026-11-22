@@ -98,6 +98,15 @@ pub struct BrickMesh {
     /// writes it into a shared buffer and a short run leaves the tail of a
     /// brick reading whatever the previous tenant left there.
     pub colour: Vec<u8>,
+    /// How concave the surface is at each vertex, as [`crate::signals`]
+    /// encodes it, one byte per vertex.
+    ///
+    /// **Empty unless something asked for it**, and that is the one way this
+    /// differs from `mask` and `colour`: [`crate::Volume::mesh_brick`] never
+    /// fills it, [`crate::Volume::cavity_at_vertices`] does, and a reader
+    /// takes an empty run as flat. Measuring it costs 32 reads a vertex, which
+    /// a user who is not looking at it should not pay.
+    pub cavity: Vec<u8>,
 }
 
 impl BrickMesh {
@@ -110,6 +119,7 @@ impl BrickMesh {
         self.partners.clear();
         self.mask.clear();
         self.colour.clear();
+        self.cavity.clear();
     }
 
     /// The weld key of vertex `at`: the two cells it sits between, in a fixed

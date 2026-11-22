@@ -704,6 +704,14 @@ pub enum Message {
     /// brick and does not dirty the document. See
     /// [`brokkr_gpu::Uniforms::paint_shown`].
     ShowPaintToggled,
+    /// Draw creases darker and edges lighter than the light alone draws them,
+    /// or stop.
+    ///
+    /// View state like the two toggles above, with one difference the handler
+    /// has to honour: the signal is carried by the mesh, so switching it ON
+    /// remeshes every body with it and switching it OFF remeshes without. It
+    /// changes no voxel and does not dirty the document.
+    ShowCavityToggled,
     /// Put the camera back on the active body, keeping the angles.
     ///
     /// The recovery half of a free camera. A camera that can go anywhere can

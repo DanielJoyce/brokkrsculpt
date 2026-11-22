@@ -146,6 +146,24 @@ pub(crate) const MASK_STRENGTH_SLOT: usize = BrushKind::ALL.len();
 /// is a different job from seeing where one is.
 pub(crate) const DEFAULT_MASK_TINT: f32 = 1.0;
 
+/// How strongly creases are darkened and edges lifted when that is shown.
+///
+/// Full strength in the shader takes a full crease 55% of the way to black,
+/// which reads as a drawing of the model and not as the model. This is the
+/// strength at which a fold is plainly darker than the matcap alone makes it
+/// and a flat is not visibly touched.
+pub(crate) const CAVITY_STRENGTH: f32 = 0.7;
+
+/// The feature size that draws as a full crease, in millimetres.
+///
+/// A size and not a curvature, for the reason the cavity MASK's slider is one:
+/// it means the same thing at every voxel size. Narrower features than this
+/// saturate; broader ones fade in proportion, so a fold four times as wide is
+/// drawn a quarter as dark. One millimetre is about the finest thing a
+/// filament printer resolves, which makes "drawn fully dark" and "will be a
+/// real crease in the print" roughly the same statement.
+pub(crate) const CAVITY_FEATURE_MM: f32 = 1.0;
+
 /// The feature size a cavity mask starts at, in millimetres.
 ///
 /// A millimetre and a half, which is the plan's own worked example and is about
@@ -853,6 +871,15 @@ pub struct Brokkr {
     /// changes what a stroke writes, and a document saved with it off carries
     /// every slot it was painted with.
     show_paint: bool,
+    /// Whether creases are drawn darker and edges lighter.
+    ///
+    /// View state, and the one view toggle that costs a remesh: the signal is
+    /// measured per vertex at mesh time (`brokkr_core::signals`) and a mesh
+    /// made while this was off does not carry it. [`Brokkr::remesh_dirty`]
+    /// reads this to choose which mesher to call, and the toggle's handler
+    /// marks everything dirty so the choice reaches every brick. Off costs a
+    /// user who never looks at it nothing at all.
+    show_cavity: bool,
     /// How strong the tint is when it is shown at all, 0..1.
     ///
     /// The shader has its own floor under this (`0.30 + 0.70 * m`), which is
@@ -2097,6 +2124,7 @@ impl Brokkr {
             show_mask: true,
             paint_slot: 1,
             show_paint: true,
+            show_cavity: false,
             mask_tint: DEFAULT_MASK_TINT,
             mask_peek: false,
             mask_filter: MaskFilter::Blur,
@@ -3384,7 +3412,11 @@ impl Brokkr {
         // document's worth of scattered dirty bricks onto a single thread. At
         // the sizes M2 targets the parallel path is the difference between a
         // remesh at 70 percent of its budget and one at under 10.
-        self.doc.mesh_dirty(&self.dirty, &mut self.mesh_buffers[..count]);
+        if self.show_cavity {
+            self.doc.mesh_dirty_with_cavity(&self.dirty, &mut self.mesh_buffers[..count]);
+        } else {
+            self.doc.mesh_dirty(&self.dirty, &mut self.mesh_buffers[..count]);
+        }
         for ((body, coord), mesh) in self.dirty.iter().zip(self.mesh_buffers.drain(..count)) {
             self.shared.publish(*body, *coord, mesh);
         }
@@ -7905,6 +7937,15 @@ impl Brokkr {
             shown: self.show_paint,
             palette: self.palette.shader_palette(),
         });
+        // The gain is what makes the setting a size in millimetres: a feature
+        // `w` voxels across reads a curvature of `4 / w`, so `w / 4` brings a
+        // feature of exactly that size to a full crease, and one twice as
+        // broad to half of one. The document's voxel size is in the ratio, so
+        // the same model at a finer voxel draws the same creases.
+        self.shared.set_cavity_view(crate::viewport::CavityView {
+            strength: if self.show_cavity { CAVITY_STRENGTH } else { 0.0 },
+            gain: CAVITY_FEATURE_MM / self.doc.voxel_size() / 4.0,
+        });
     }
 
     /// Rebuild the standing mask card, cheaply enough to do it every message.
@@ -10125,6 +10166,15 @@ impl Brokkr {
                 self.paint_slot = slot.clamp(1, last);
             }
             Message::ShowPaintToggled => self.show_paint = !self.show_paint,
+            // A remesh of everything, because the signal travels in the mesh:
+            // on, every brick has to be measured, and off, every brick has to
+            // stop paying for bytes nothing reads. No voxel changes, so no
+            // undo entry and no dirtied document.
+            Message::ShowCavityToggled => {
+                self.show_cavity = !self.show_cavity;
+                self.doc.mark_everything_dirty();
+                self.remesh_dirty();
+            }
             // And the verbs, which DO change protection and all of which are
             // undoable in one entry apiece.
             Message::MaskCleared => self.clear_mask(),
@@ -21351,6 +21401,63 @@ mod paint_brush_tests {
         // And the palette the shader sees is the machine's, slot by slot.
         let palette = app.shared.paint_view().palette;
         assert_eq!(palette[1], app.palette.slots[0].swatch().into_linear());
+    }
+
+    /// The crease toggle reaches the shader AND the meshes, and still touches
+    /// nothing a save or an undo would notice.
+    ///
+    /// The meshes are the half a uniform-only toggle would get wrong: the
+    /// signal is measured at mesh time, so a toggle that only wrote the
+    /// uniform would switch the shader on over vertices that carry nothing and
+    /// the model would not change at all. That shipped twice in this project's
+    /// history for other features, as a control that was green and dead.
+    #[test]
+    fn the_show_creases_toggle_remeshes_with_the_signal_and_changes_nothing_else() {
+        let mut app = app();
+        app.unsaved = false;
+        let undo_before = app.history.stats();
+        assert_eq!(app.shared.cavity_view().strength, 0.0, "creases should start hidden");
+        let published_off = app.shared.pending_cavity_for_tests();
+        assert!(
+            published_off.iter().any(|(vertices, _)| *vertices > 0),
+            "the fixture published no geometry at all"
+        );
+        assert!(
+            published_off.iter().all(|(_, cavity)| *cavity == 0),
+            "a mesh carried cavity bytes before anything asked for them"
+        );
+
+        update(&mut app, Message::ShowCavityToggled);
+        let view = app.shared.cavity_view();
+        assert_eq!(view.strength, CAVITY_STRENGTH, "the toggle did not reach the shared frame");
+        assert_eq!(
+            view.gain,
+            CAVITY_FEATURE_MM / app.doc.voxel_size() / 4.0,
+            "the gain is not the feature size over the voxel size"
+        );
+        let published_on = app.shared.pending_cavity_for_tests();
+        let fresh = &published_on[published_off.len()..];
+        let with_geometry = fresh.iter().filter(|(vertices, _)| *vertices > 0).count();
+        assert!(with_geometry > 0, "switching creases on remeshed nothing");
+        assert!(
+            fresh.iter().all(|(vertices, cavity)| vertices == cavity),
+            "a mesh published after the toggle does not carry one cavity byte per vertex"
+        );
+
+        assert!(!app.unsaved, "a view toggle dirtied the document");
+        assert_eq!(app.history.stats(), undo_before, "a view toggle reached the history");
+        assert_eq!(app.doc.active_volume().dirty_count(), 0, "the remesh left bricks dirty");
+
+        // And off again stops paying for it.
+        update(&mut app, Message::ShowCavityToggled);
+        assert_eq!(app.shared.cavity_view().strength, 0.0, "the toggle did not switch back off");
+        let published_again = app.shared.pending_cavity_for_tests();
+        let fresh = &published_again[published_on.len()..];
+        assert!(fresh.iter().any(|(vertices, _)| *vertices > 0), "switching off remeshed nothing");
+        assert!(
+            fresh.iter().all(|(_, cavity)| *cavity == 0),
+            "meshes still carry cavity bytes after the toggle was switched off"
+        );
     }
 }
 

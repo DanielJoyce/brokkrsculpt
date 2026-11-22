@@ -22,6 +22,16 @@ struct Uniforms {
     // Non zero when painted slots are drawn in their filament colours. A VIEW
     // toggle like the tint: zero draws every body as bare clay.
     paint_shown: u32,
+    // How the creases and edges are drawn. A VIEW setting like the two above:
+    // nothing about it changes what a stroke does.
+    //   x: strength, 0..1. Zero draws every body exactly as it was drawn
+    //      before this existed.
+    //   y: gain. The decoded curvature times this is 1.0 at the feature size
+    //      the application calls a full crease.
+    //   z, w: unused.
+    // A vec4 because a uniform struct aligns to 16 bytes and the four scalars
+    // above have filled their row.
+    cavity: vec4<f32>,
     // Linear RGB per filament slot, indexed by the stored slot byte. Slot 0 is
     // never read. Sixteen entries of 16 bytes, which keeps the struct's size a
     // multiple of 16 without a padding word; the Rust type asserts the total,
@@ -43,6 +53,17 @@ const MATCAP_BASE_LUMA: f32 = 0.384;
 // clips at the specular peak -- as white plastic does -- while the rest of the
 // lit quarter keeps its gradient rather than flattening to one value.
 const PAINT_EXPOSURE: f32 = 0.8;
+// The largest curvature the cavity byte carries, in 1/voxel. One fact in two
+// places: `brokkr_core::signals::CAVITY_RANGE` is the other, and
+// `renderer::tests::the_shader_decodes_cavity_the_way_the_engine_encodes_it`
+// reads this line to hold them together.
+const CAVITY_RANGE: f32 = 2.0;
+// How far a full crease is darkened and a full edge is lifted, as fractions of
+// the pixel's own colour. Uneven on purpose: a crease in shadow can go most of
+// the way to black and still read as a crease, and an edge lifted that far
+// would clip on the lit side.
+const CREASE_DARKEN: f32 = 0.55;
+const EDGE_LIFT: f32 = 0.30;
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var matcap_texture: texture_2d<f32>;
@@ -63,6 +84,12 @@ struct VertexOutput {
     // GL backend takes the LAST vertex, so on that one backend a boundary
     // triangle can draw in the other filament. One triangle wide, at most.
     @location(2) @interpolate(flat) slot: u32,
+    // How concave the surface is here, in 1/voxel: positive in a crease,
+    // negative on an edge, zero on a flat and on a mesh that was made without
+    // the signal. Byte 2 of the attribute buffer, decoded in the vertex stage
+    // and interpolated, which is right for a continuous quantity where it
+    // would be wrong for the slot.
+    @location(3) cavity: f32,
 }
 
 @vertex
@@ -79,6 +106,12 @@ fn vertex_main(
     out.mask = attributes.r;
     // `Unorm8x4` hands the byte back as `n / 255`; the round undoes it exactly.
     out.slot = u32(round(attributes.g * 255.0));
+    // Byte 0 means "not measured" and draws as flat. Anything else is 128 for
+    // flat on a square root curve either side, which the product with its own
+    // magnitude undoes.
+    let cavity_byte = round(attributes.b * 255.0);
+    let t = (cavity_byte - 128.0) / 127.0;
+    out.cavity = select(CAVITY_RANGE * t * abs(t), 0.0, cavity_byte < 0.5);
     return out;
 }
 
@@ -109,6 +142,17 @@ fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) ->
         // own, or every painted pixel on the key-lit side collapses to one
         // flat value and the form under the paint is gone.
         colour = filament * (luma / MATCAP_BASE_LUMA) * PAINT_EXPOSURE;
+    }
+
+    // The creases and edges, AFTER the paint so they model a painted surface
+    // the way they model clay, and BEFORE the mask so protection still reads
+    // on top of them. A multiply on the pixel's own colour: it deepens a
+    // shadow and brightens a highlight without moving the hue, which a blend
+    // toward black or white would.
+    if (uniforms.cavity.x > 0.0) {
+        let s = clamp(in.cavity * uniforms.cavity.y, -1.0, 1.0);
+        let shade = 1.0 - CREASE_DARKEN * max(s, 0.0) + EDGE_LIFT * max(-s, 0.0);
+        colour = colour * mix(1.0, shade, uniforms.cavity.x);
     }
 
     // The mask, as a CHROMA shift toward a cool blue the matcap cannot produce,
