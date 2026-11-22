@@ -131,6 +131,8 @@ impl Default for MaskView {
 pub struct PaintView {
     /// Whether painted slots are drawn at all.
     pub shown: bool,
+    /// Whether paint is drawn as its own colour, with no light on it.
+    pub flat: bool,
     /// Linear RGB per slot. See [`brokkr_gpu::Uniforms::palette`].
     pub palette: [[f32; 4]; brokkr_gpu::PALETTE_SLOTS],
     /// The document's paints, as the shader reads them. Unlike the palette
@@ -146,6 +148,7 @@ impl Default for PaintView {
     fn default() -> Self {
         Self {
             shown: true,
+            flat: false,
             palette: Uniforms::default().palette,
             paints: brokkr_gpu::PaintBlock::default(),
         }
@@ -1096,7 +1099,12 @@ impl shader::Primitive for SculptPrimitive {
             srgb_target: u32::from(pipeline.renderer.target_is_srgb()),
             mask_inverted: u32::from(mask.inverted),
             mask_tint: mask.tint,
-            paint_shown: u32::from(paint.shown),
+            // 0 hidden, 1 lit, 2 flat: see `Uniforms::paint_shown`.
+            paint_shown: match (paint.shown, paint.flat) {
+                (false, _) => 0,
+                (true, false) => 1,
+                (true, true) => 2,
+            },
             cavity: [cavity.strength, cavity.gain, 0.0, 0.0],
             palette: paint.palette,
             paints: paint.paints,

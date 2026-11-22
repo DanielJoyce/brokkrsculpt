@@ -84,7 +84,9 @@ pub struct Uniforms {
     /// the application's standing mask card is unconditional -- so "a mask is
     /// active and nothing on screen says so" is still unreachable.
     pub mask_tint: f32,
-    /// Non zero when painted slots are drawn in their filament colours.
+    /// Non zero when painted slots are drawn in their filament colours: 1
+    /// lit like the clay, 2 flat, as the paint's own colour with no light on
+    /// it, for judging a wash without the viewport's shading on top.
     ///
     /// A VIEW toggle on the same terms as [`Uniforms::mask_tint`]: nothing
     /// downstream of this word can change what a stroke writes, and zero draws

@@ -2798,7 +2798,44 @@ fn a_paint_is_drawn_with_its_wash_in_the_creases_and_its_highlight_on_the_edges(
         "a highlight landed in the crease"
     );
 
-    // 6. And a paint is paint: with paint hidden the body is clay, whatever
+    // 6. Flat: the paint's own colour with no light on it. A plain paint
+    // drawn flat is one colour over the whole body, the colour the engine
+    // says it is, where the lit frame of the same paint is hundreds.
+    let flat_frame = frame(Uniforms {
+        paint_shown: 2,
+        ..with(table(Paint::flat("plain", pale)), red_palette())
+    });
+    dump("paint-flat", &flat_frame);
+    let levels = |pixels: &[u8]| -> std::collections::BTreeSet<[u8; 3]> {
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(&drawn)
+            .filter(|(_, drawn)| **drawn)
+            .map(|(pixel, _)| [pixel[0], pixel[1], pixel[2]])
+            .collect()
+    };
+    let flat_levels = levels(&flat_frame);
+    assert_eq!(
+        flat_levels.into_iter().collect::<Vec<_>>(),
+        [pale],
+        "a plain paint drawn flat is not one colour, or not its own"
+    );
+    assert!(levels(&plain).len() > 50, "the lit control is flat too");
+    // And a wash still shows, which is what the view is for: the crease is
+    // darker than the flat with no light anywhere in the picture.
+    let flat_shade = frame(Uniforms {
+        paint_shown: 2,
+        ..with(table(Paint { wash: shade, ..Paint::flat("shaded", pale) }), red_palette())
+    });
+    let flat_luma = luma(&flat_shade);
+    assert!(
+        near(&flat_luma, crease) < near(&flat_luma, flat) - 10,
+        "a wash does not show in the flat view"
+    );
+
+    // 7. And a paint is paint: with paint hidden the body is clay, whatever
     // the table says.
     let hidden = frame(Uniforms {
         paint_shown: 0,
