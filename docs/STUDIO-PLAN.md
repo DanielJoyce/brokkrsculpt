@@ -15,7 +15,7 @@ was built and what was measured.
 |---|---|---|
 | S0 Groundwork | **Done**, 2026-11-22 (sections 5 and 6) | *show creases* in the viewport. The rest is foundations |
 | S1a Decimated export | **Done**, 2026-11-22 (section 7.1) | A *Detail* choice on export: Full, Fine, Standard, Draft |
-| S1b Parting with keys | Next | |
+| S1b Parting with keys | **Engine and gesture done**, 2026-11-22 (section 7.2). Settings and preview owed | Cut tool with **alt** held: the body becomes two, with pegs and sockets |
 | S2 Mini painting | Not started | |
 | S3 Brush engine, surfaced | Not started | |
 | S4 Form tools | Not started | |
@@ -716,6 +716,50 @@ predicts it and refuses by name.
 that a body has no transform and that adding one gives away the lattice
 property. The preview is a per-body offset uniform in the renderer, in the same
 category as the mask tint.
+
+#### Built, 2026-11-22
+
+`brokkr-core/src/part.rs`, and one gesture: **the cut tool with alt held**.
+The same straight drag as a cut, read at the release like ctrl and shift.
+Instead of a side going, the active body becomes two bodies named A and B,
+with pegs on the first and sockets in the second. The tool card reads
+*PART, KEEP BOTH* while alt is down. One undo puts the body back.
+
+What the engine does, each with a test:
+
+- **Both halves**, closed and printable, whose volumes add up to the body's
+  less the clearance round each socket.
+- **The clearance is the clearance.** Measured as the gap between a peg's
+  side and its socket's wall: within 0.3 of a voxel of what was asked.
+- **Islands.** A plane through two separate masses finds two cut faces and
+  keys each.
+- **A second key** on any island with room for one well clear of the first,
+  the same size as the first, to stop the parts turning.
+- **A key is checked against the solid it lives in**, on its axis and round
+  the rim of its socket's wall: shortened where the second part is thin, left
+  out and the island named where it is too thin or too narrow.
+- **Three kinds**: peg and socket, pin hole, magnet pocket.
+- **The lattice floor**: a key narrower than 3 voxels is refused.
+
+Thirteen mutations were run against its tests. Five survived the first pass
+and each was answered with a test; one of those tests found a real fault. A
+body parted under Mask All came back as **two whole copies of itself**,
+because the call that was meant to take the mask off a half leaves an empty
+mask *of the same polarity*, and an empty inverted mask protects everything.
+No test had a masked fixture until a mutation that deleted the unmasking
+turned out to change nothing.
+
+**Owed, in the order it is worth doing:**
+
+1. **Settings in the panel.** The key's kind, size and clearance are a field
+   of the application with one default (a 2 mm peg, 3 mm deep, 0.2 mm of
+   clearance). There is no control for them yet, so pin holes and magnet
+   pockets are built, tested and unreachable.
+2. **A preview before the release**: the cut faces, the keys, and what could
+   not be keyed, drawn while the line is being dragged. Today the status line
+   says it afterwards and undo is the way back.
+3. **The exploded view**, as a view-only offset.
+4. **The tolerance coupon.**
 
 **Deferred:** freeform parting surfaces (through `split_masked`, which needs a
 crisp boundary rather than a feathered one), dovetails, a "fit to bed"
