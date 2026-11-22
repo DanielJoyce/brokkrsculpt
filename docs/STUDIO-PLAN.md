@@ -16,7 +16,7 @@ was built and what was measured.
 | S0 Groundwork | **Done**, 2026-11-22 (sections 5 and 6) | *show creases* in the viewport. The rest is foundations |
 | S1a Decimated export | **Done**, 2026-11-22 (section 7.1) | A *Detail* choice on export: Full, Fine, Standard, Draft |
 | S1b Parting with keys | **Done but for a preview**, 2026-11-22 (section 7.2) | Cut tool with **alt** held: the body becomes two, with pegs and sockets |
-| S2 Mini painting | **Recipes, drybrush and sponge done**, 2026-11-22 (section 8); fills, occlusion and coloured export next | Paint brush: *Mix paints*, then a rack of paints, each with a wash and an edge highlight; *Loaded*, *Drybrush* and *Sponge* strokes |
+| S2 Mini painting | **Recipes, drybrush and sponge, coloured export done**, 2026-11-22 (section 8); fills, broad occlusion and zenithal next | Paint brush: *Mix paints*, then a rack of paints, each with a wash and an edge highlight; *Loaded*, *Drybrush* and *Sponge* strokes; export as PLY in colour, and 3MF by the filament each paint prints in |
 | S3 Brush engine, surfaced | Not started | |
 | S4 Form tools | Not started | |
 | S5 Unwrap and bake | Not started | |
@@ -65,7 +65,7 @@ pull a printing capability after it:
 
 | Studio work | The printing work it drives |
 |---|---|
-| Paints (S2) | Full colour output: each paint names the filament it prints in first, then formats full colour printers and services accept |
+| Paints (S2) | Full colour output: each paint names the filament it prints in (done), and a PLY with a colour a vertex for full colour processes (done); a textured file follows in S5 |
 | Decimation (S1a) | Files a slicer loads in seconds; later, handing a slicer geometry sized to the process |
 | Parting and keys (S1b) | Parts sized to a bed and oriented to print without support |
 | Detail gain (S4) | Detail exaggerated to survive a given nozzle or layer height |
@@ -961,6 +961,47 @@ undercoat).
 - **Editing a paint is not in the undo history yet**, and a paint cannot be
   removed. Both are recorded in `brokkr-app/src/app/paints.rs` with the
   reason.
+
+#### Built, 2026-11-22 (S2.3): a painted model in a file
+
+A paint is worked out on screen and stored nowhere, and a file has to hold
+something. There are two things it can hold, for two kinds of machine, and
+`brokkr-core/src/paint/bake.rs` makes both for one export and throws them
+away. Neither changes the document.
+
+```mermaid
+flowchart LR
+    S["Slot a voxel<br/>+ paint table"] --> M["Export mesh<br/>(dense or decimated),<br/>a slot a vertex"]
+    M --> C["Bake: Paint::shade at each vertex,<br/>from the field's own curvature there"]
+    M --> F["Bake: each paint to the filament<br/>it names, or the nearest"]
+    C --> PLY["PLY: a colour a vertex<br/>full colour processes and services"]
+    F --> TMF["3MF: a filament a triangle<br/>the writer that already existed"]
+```
+
+- **PLY, in colour** (`export/ply.rs`, the fourth export button). Binary,
+  little endian, in the layout MeshLab writes. Each vertex is the engine's
+  own `Paint::shade` of the curvature at that vertex, at the viewport's
+  gain, so a wash pools in the file where it pooled on screen. A body
+  painted by filament slot with no paints mixed is exported in its
+  filaments' colours. Unpainted surface is a clay grey.
+- **3MF, by filament.** A paint number is not a filament number, and with
+  paints in use the 3MF writer was being handed paint numbers. Each paint
+  now names the filament it prints in (*Prints in*, on the base coat), or
+  names none and takes the loaded filament nearest its colour on a flat.
+  Paints mixed from the filament slots name the slot they came from, so a
+  model painted by slot prints exactly as it did. A document with no paints
+  is not touched by any of this and writes the file it always wrote.
+
+The paint table's format went to version 2 for the filament byte. Version 1
+is still read.
+
+**Limits.** A colour belongs to a vertex and is blended across a triangle,
+so the edge between two paints is one triangle wide in a PLY where in a 3MF
+it is exact. Doubling the vertices along it would keep it sharp and open the
+mesh, which a print service checks first. And a decimated mesh has fewer
+vertices to hold a wash in: for a wash in a PLY, export at *Full* until S5
+bakes paint into a texture. A wash cannot survive a filament printer at all;
+the machine has four colours.
 
 #### Built, 2026-11-22 (S2.2): drybrush and sponge
 

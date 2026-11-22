@@ -7245,7 +7245,7 @@ impl Brokkr {
         // Decimated or not, what comes back is welded, validated and judged
         // by the same verdict below. A decimated body that would not print is
         // handed back at full density by the decimator itself, and says so.
-        let (bodies, decimated) = match self.export_detail.tolerance_mm() {
+        let (mut bodies, decimated) = match self.export_detail.tolerance_mm() {
             None => (self.doc.export_bodies(&visible), None),
             Some(tolerance_mm) => {
                 let spec = brokkr_core::export::decimate::DecimateSpec::within(tolerance_mm);
@@ -7263,6 +7263,11 @@ impl Brokkr {
             log::error!("refusing to export: {why}");
             return;
         }
+
+        // Paints are worked out on screen and stored nowhere, and a file has
+        // to hold something: a colour a vertex for a PLY, a filament a
+        // triangle for a 3MF. See `app/paints.rs`.
+        let colours = self.bake_for(format, &mut bodies);
 
         let summary =
             brokkr_core::MeshReport::summed(bodies.iter().map(|(_, _, report)| *report)).summary();
@@ -7294,6 +7299,17 @@ impl Brokkr {
                     },
                     &mut file,
                 )?,
+                ExportFormat::Ply => {
+                    let coloured: Vec<brokkr_core::export::ply::Coloured<'_>> = bodies
+                        .iter()
+                        .zip(&colours)
+                        .map(|((_, mesh, _), colours)| brokkr_core::export::ply::Coloured {
+                            mesh,
+                            colours,
+                        })
+                        .collect();
+                    brokkr_core::export::ply::write_all(&coloured, &mut file)?;
+                }
             }
             std::io::Write::flush(&mut file)
         };

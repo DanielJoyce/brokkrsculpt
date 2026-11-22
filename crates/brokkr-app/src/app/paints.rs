@@ -58,6 +58,25 @@ pub(super) const EDGE_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.5;
 pub(super) const AMOUNT_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
 pub(super) const START_RANGE: std::ops::RangeInclusive<f32> = 0.0..=0.95;
 
+/// The colour a PLY gives a surface nobody painted: the viewport's clay, as
+/// near as one flat colour can be to a lit material. A warm mid grey, so
+/// that an unpainted part of a model reads as "not painted" and not as a
+/// paint somebody chose.
+pub(super) const UNPAINTED: [u8; 3] = [168, 160, 150];
+
+/// One entry of the "prints in" list: a filament slot, or 0 for the nearest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PrintsIn {
+    slot: u8,
+    label: String,
+}
+
+impl std::fmt::Display for PrintsIn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.label)
+    }
+}
+
 /// How far a drybrush goes on one load by default, in millimetres. About the
 /// height of a 28 mm figure and a bit: one pass down a cloak.
 const DEFAULT_LOAD_MM: f32 = 40.0;
@@ -216,6 +235,64 @@ impl Brokkr {
         count.clamp(1, usize::from(u8::MAX)) as u8
     }
 
+    /// The machine's filaments as colours, slot 1 first.
+    fn filament_colours(&self) -> Vec<[u8; 3]> {
+        self.palette
+            .slots
+            .iter()
+            .map(|slot| {
+                let colour = slot.swatch().into_rgba8();
+                [colour[0], colour[1], colour[2]]
+            })
+            .collect()
+    }
+
+    /// What the paints have to become for a file of this format.
+    ///
+    /// For a PLY, one colour a vertex of each body, in the bodies' order.
+    /// For a 3MF, nothing is returned and each body's slots are rewritten in
+    /// place from paint numbers to the filaments the paints print in. A
+    /// slot with no paint is a filament slot already and maps to itself, so
+    /// a document with no paints comes through exactly as it was. STL and
+    /// OBJ carry neither.
+    ///
+    /// A wash is baked at the viewport's gain, so it pools in the file where
+    /// it pooled on screen.
+    pub(super) fn bake_for(
+        &self,
+        format: crate::message::ExportFormat,
+        bodies: &mut [brokkr_core::ExportedBody],
+    ) -> Vec<Vec<[u8; 3]>> {
+        use crate::message::ExportFormat;
+        let filaments = self.filament_colours();
+        let bake = brokkr_core::paint::bake::Bake {
+            table: &self.paints,
+            filaments: &filaments,
+            unpainted: UNPAINTED,
+            crease_gain: super::CAVITY_FEATURE_MM / self.doc.voxel_size() / 4.0,
+        };
+        match format {
+            ExportFormat::Ply => bodies
+                .iter()
+                .map(|(meta, mesh, _)| match self.doc.volume(meta.id) {
+                    Some(volume) => bake.vertex_colours(volume, mesh),
+                    // A body the document no longer holds cannot have been
+                    // exported in the first place. Clay, and not a panic.
+                    None => vec![UNPAINTED; mesh.positions.len()],
+                })
+                .collect(),
+            ExportFormat::ThreeMf => {
+                // With no paints every slot is a filament slot already and
+                // maps to itself, so this needs no "if there are paints".
+                for (_, mesh, _) in bodies.iter_mut() {
+                    mesh.slots = bake.filament_slots(mesh);
+                }
+                Vec::new()
+            }
+            ExportFormat::Stl | ExportFormat::Obj => Vec::new(),
+        }
+    }
+
     /// The coat the paint stroke lays with the stamp at `centre`.
     ///
     /// The crease gain is the viewport's, so that what a drybrush catches is
@@ -331,9 +408,14 @@ impl Brokkr {
         if !self.paints.is_empty() {
             return;
         }
-        for slot in self.palette.slots.iter().take(MAX_PAINTS) {
+        for (index, slot) in self.palette.slots.iter().take(MAX_PAINTS).enumerate() {
             let colour = slot.swatch().into_rgba8();
-            self.paints.add(Paint::flat(slot.name.clone(), [colour[0], colour[1], colour[2]]));
+            // Each names the filament it was, so a model painted by slot
+            // prints exactly as it did before its slots were paints.
+            self.paints.add(Paint {
+                filament: index as u8 + 1,
+                ..Paint::flat(slot.name.clone(), [colour[0], colour[1], colour[2]])
+            });
         }
         if self.paints.is_empty() {
             // A machine with no filament slots at all still gets something to
@@ -379,6 +461,7 @@ impl Brokkr {
         match edit {
             PaintEdit::Name(name) => paint.name = name,
             PaintEdit::Finish(finish) => paint.finish = finish,
+            PaintEdit::Filament(filament) => paint.filament = filament,
             PaintEdit::Colour(colour) => *coat_colour(paint, coat) = colour,
             PaintEdit::Channel(channel, level) => {
                 if let Some(slot) = coat_colour(paint, coat).get_mut(channel) {
@@ -484,6 +567,20 @@ impl Brokkr {
         picker.into()
     }
 
+    /// What a paint can be told to print in: the nearest filament, which is
+    /// first and is what an unnamed paint gets, then each slot the machine
+    /// has.
+    pub(super) fn prints_in_choices(&self) -> Vec<PrintsIn> {
+        let mut choices = vec![PrintsIn { slot: 0, label: "the nearest filament".to_string() }];
+        for (index, slot) in self.palette.slots.iter().take(usize::from(u8::MAX)).enumerate() {
+            choices.push(PrintsIn {
+                slot: index as u8 + 1,
+                label: format!("{}. {}", index + 1, slot.name),
+            });
+        }
+        choices
+    }
+
     /// The paint in hand: its name, and one coat at a time.
     fn paint_editor<'a>(&'a self, paint: &'a Paint) -> Element<'a, Message> {
         let reading = |label: String| text(label).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM);
@@ -548,16 +645,32 @@ impl Brokkr {
         );
 
         let amounts: Element<'_, Message> = match coat {
-            PaintCoat::Base => column![
-                reading("Finish".to_string()),
-                pick_list(Finish::ALL, Some(paint.finish), |finish| {
-                    Message::PaintEdited(PaintEdit::Finish(finish))
-                })
-                .text_size(theme::CAPTION_SIZE)
-                .width(Length::Fill),
-            ]
-            .spacing(theme::S1)
-            .into(),
+            PaintCoat::Base => {
+                let choices = self.prints_in_choices();
+                // A filament the machine does not have prints in the
+                // nearest, and the list says so by showing that.
+                let chosen = choices
+                    .iter()
+                    .find(|choice| choice.slot == paint.filament)
+                    .or(choices.first())
+                    .cloned();
+                column![
+                    reading("Finish".to_string()),
+                    pick_list(Finish::ALL, Some(paint.finish), |finish| {
+                        Message::PaintEdited(PaintEdit::Finish(finish))
+                    })
+                    .text_size(theme::CAPTION_SIZE)
+                    .width(Length::Fill),
+                    reading("Prints in".to_string()),
+                    pick_list(choices, chosen, |choice: PrintsIn| {
+                        Message::PaintEdited(PaintEdit::Filament(choice.slot))
+                    })
+                    .text_size(theme::CAPTION_SIZE)
+                    .width(Length::Fill),
+                ]
+                .spacing(theme::S1)
+                .into()
+            }
             PaintCoat::Wash => {
                 let kinds =
                     WashKind::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, kind| {
@@ -1165,6 +1278,185 @@ mod tests {
             drop(app.paint_picker(true));
             drop(app.paint_picker(false));
         }
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let directory = std::env::temp_dir().join(format!("brokkr-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("scratch directory");
+        directory
+    }
+
+    /// The colours of a PLY written by the application, read off its header
+    /// and its vertex records: 27 bytes each, the last three the colour.
+    fn ply_colours(bytes: &[u8]) -> Vec<[u8; 3]> {
+        let end = b"end_header\n";
+        let body =
+            bytes.windows(end.len()).position(|w| w == end).expect("no end_header") + end.len();
+        let header = std::str::from_utf8(&bytes[..body]).expect("the header is text");
+        let vertices: usize = header
+            .lines()
+            .find_map(|line| line.strip_prefix("element vertex "))
+            .expect("no vertex element")
+            .parse()
+            .expect("a count");
+        (0..vertices)
+            .map(|index| {
+                let at = body + index * 27 + 24;
+                [bytes[at], bytes[at + 1], bytes[at + 2]]
+            })
+            .collect()
+    }
+
+    /// A painted body exported as PLY: the stroke is in the file in the
+    /// paint's own colour, the rest is clay, and a paint with a wash bakes
+    /// something other than its flat colour somewhere.
+    #[test]
+    fn a_painted_body_exports_as_a_ply_in_its_paints_colours() {
+        let directory = scratch("ply");
+        let path = directory.join("painted.ply");
+        let mut app = app();
+        update(&mut app, Message::PaintAdded);
+        let colour = [20, 140, 200];
+        edit(&mut app, PaintEdit::Colour(colour));
+        stroke(&mut app);
+
+        app.export(crate::message::ExportFormat::Ply, &path);
+        assert!(app.status.starts_with("exported"), "{}", app.status);
+        let colours = ply_colours(&std::fs::read(&path).expect("the file should be there"));
+        let painted = colours.iter().filter(|c| **c == colour).count();
+        let clay = colours.iter().filter(|c| **c == UNPAINTED).count();
+        assert!(painted > 200, "only {painted} vertices of the PLY are the paint's colour");
+        assert!(clay > painted, "the unpainted ball is not clay: {clay} of {}", colours.len());
+        assert_eq!(painted + clay, colours.len(), "a colour nobody painted is in the file");
+
+        // With no paints mixed, a body painted by filament slot is still
+        // exported in colour: the filament's.
+        let mut plain = self::app();
+        stroke(&mut plain);
+        let slot = plain.palette.slots[usize::from(plain.paint_slot) - 1].swatch().into_rgba8();
+        let filament = [slot[0], slot[1], slot[2]];
+        assert_ne!(filament, UNPAINTED, "the fixture's filament is the clay colour");
+        plain.export(crate::message::ExportFormat::Ply, &path);
+        let colours = ply_colours(&std::fs::read(&path).expect("the file should be there"));
+        assert!(colours.iter().filter(|c| **c == filament).count() > 200);
+
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    /// The 3MF's `paint_color` code for each filament slot, from the table in
+    /// `brokkr_core::export::threemf`, for the slots these tests use.
+    fn code(filament: u8) -> &'static str {
+        ["4", "8", "0C", "1C", "2C", "3C"][usize::from(filament) - 1]
+    }
+
+    fn triangles_in(written: &str, filament: u8) -> usize {
+        written.matches(&format!("paint_color=\"{}\"", code(filament))).count()
+    }
+
+    /// A 3MF says which filament prints each triangle, and a paint number is
+    /// not a filament number. The stroke is painted with a paint past the
+    /// machine's last filament and told to print in filament 2: the file
+    /// names filament 2 for it and no other.
+    #[test]
+    fn a_3mf_names_the_filament_a_paint_prints_in_and_not_the_paints_number() {
+        let directory = scratch("paint-3mf");
+        let path = directory.join("painted.3mf");
+        let mut app = app();
+        update(&mut app, Message::PaintAdded);
+        let slot = app.paint_slot;
+        assert!(usize::from(slot) > app.palette.slots.len(), "the paint is not past the filaments");
+        edit(&mut app, PaintEdit::Filament(2));
+        assert_eq!(app.paints.paint(slot).unwrap().filament, 2);
+        stroke(&mut app);
+
+        let read = |app: &mut Brokkr| {
+            app.export(crate::message::ExportFormat::ThreeMf, &path);
+            assert!(app.status.starts_with("exported"), "{}", app.status);
+            String::from_utf8_lossy(&std::fs::read(&path).expect("the file should be there"))
+                .into_owned()
+        };
+        let written = read(&mut app);
+        let on_two = triangles_in(&written, 2);
+        assert!(on_two > 100, "only {on_two} triangles print in filament 2");
+        for other in [1, 3, 4] {
+            assert_eq!(triangles_in(&written, other), 0, "filament {other} prints something");
+        }
+
+        // Told to print in another, the same triangles move to it.
+        edit(&mut app, PaintEdit::Filament(3));
+        let written = read(&mut app);
+        assert_eq!(triangles_in(&written, 3), on_two, "the triangles did not follow the paint");
+        assert_eq!(triangles_in(&written, 2), 0);
+
+        // Told nothing, it takes the nearest: the paint is made the colour
+        // of filament 1 exactly, so that is the one.
+        edit(&mut app, PaintEdit::Filament(0));
+        let first = app.palette.slots[0].swatch().into_rgba8();
+        update(&mut app, Message::PaintCoatChosen(PaintCoat::Base));
+        edit(&mut app, PaintEdit::Colour([first[0], first[1], first[2]]));
+        let written = read(&mut app);
+        assert_eq!(triangles_in(&written, 1), on_two, "an unnamed paint did not take the nearest");
+
+        // And the export changed nothing in the document: the voxels still
+        // hold the paint's number.
+        assert!(painted_voxels(&app) > 0);
+        let volume = app.doc.active_volume();
+        let (low, high) = volume.world_bounds().unwrap();
+        let (lo, hi) = volume.voxel_bounds(low, high);
+        let mut seen = std::collections::BTreeSet::new();
+        for z in lo.z..=hi.z {
+            for y in lo.y..=hi.y {
+                for x in lo.x..=hi.x {
+                    seen.insert(volume.colour().at(glam::IVec3::new(x, y, z)));
+                }
+            }
+        }
+        assert_eq!(seen.into_iter().collect::<Vec<_>>(), [0, slot], "exporting rewrote the slots");
+
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    /// A document with no paints exports the 3MF it always did: its slots
+    /// are filament slots and nothing maps them.
+    #[test]
+    fn a_3mf_of_a_document_without_paints_is_untouched_by_all_this() {
+        let directory = scratch("plain-3mf");
+        let path = directory.join("plain.3mf");
+        let mut app = app();
+        update(&mut app, Message::PaintSlotChanged(3));
+        stroke(&mut app);
+        app.export(crate::message::ExportFormat::ThreeMf, &path);
+        let written =
+            String::from_utf8_lossy(&std::fs::read(&path).expect("the file should be there"))
+                .into_owned();
+        assert!(triangles_in(&written, 3) > 100, "slot 3 did not reach the file as filament 3");
+        for other in [1, 2, 4] {
+            assert_eq!(triangles_in(&written, other), 0);
+        }
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    /// Mixed paints name the filament they were, so mixing changes nothing
+    /// about how a model already painted by slot prints. And the list a
+    /// paint chooses from is the machine's filaments, after "the nearest".
+    #[test]
+    fn mixed_paints_print_in_the_filaments_they_came_from() {
+        let mut app = app();
+        update(&mut app, Message::PaintsStarted);
+        for (index, paint) in app.paints.paints().iter().enumerate() {
+            assert_eq!(usize::from(paint.filament), index + 1, "{}", paint.name);
+        }
+        let choices = app.prints_in_choices();
+        assert_eq!(choices.len(), app.palette.slots.len() + 1);
+        assert_eq!(choices[0].slot, 0);
+        assert!(choices[0].label.contains("nearest"));
+        for (index, choice) in choices.iter().enumerate().skip(1) {
+            assert_eq!(usize::from(choice.slot), index);
+            assert!(choice.label.contains(&app.palette.slots[index - 1].name));
+        }
+        // A new paint names none.
+        update(&mut app, Message::PaintAdded);
+        assert_eq!(app.paints.paint(app.paint_slot).unwrap().filament, 0);
     }
 
     /// The range is the starting colours a painter is offered, so two entries
