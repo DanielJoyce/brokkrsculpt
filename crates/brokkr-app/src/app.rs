@@ -4,6 +4,7 @@
 
 mod paints;
 mod panel;
+mod studio;
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -898,6 +899,9 @@ pub struct Brokkr {
     touch: paints::TouchState,
     /// Whether paint is drawn flat, with no light on it. View state.
     flat_paint: bool,
+    /// The studio brushes: an operator upstream has no brush for, a lazy
+    /// stroke, size from pressure. See `app/studio.rs`.
+    studio: studio::StudioState,
     /// How strong the tint is when it is shown at all, 0..1.
     ///
     /// The shader has its own floor under this (`0.30 + 0.70 * m`), which is
@@ -2149,6 +2153,7 @@ impl Brokkr {
             paint_coat: crate::message::PaintCoat::default(),
             touch: paints::TouchState::default(),
             flat_paint: false,
+            studio: studio::StudioState::default(),
             mask_tint: DEFAULT_MASK_TINT,
             mask_peek: false,
             mask_filter: MaskFilter::Blur,
@@ -5557,12 +5562,13 @@ impl Brokkr {
             self.remesh_dirty();
             return;
         }
-        let brush = self.brush;
         let lean = self.pen_lean();
         let tangent = self.stroke.direction().unwrap_or(Vec3::ZERO);
         // Pressure is sampled so the readout stays honest; the brush does not
-        // read it, because a slot has no half. See `BrushKind::Paint`.
+        // read it for strength, because a slot has no half. See
+        // `BrushKind::Paint`. It can size the brush: see `app/studio.rs`.
         let pressure = self.tablet.stamp_pressure(self.pressure_enabled, self.pressure_curve);
+        let brush = self.studio.sized(self.brush, pressure);
 
         for index in 0..self.stamp_centres.len() {
             let centre = self.stamp_centres[index];
@@ -5598,6 +5604,9 @@ impl Brokkr {
             self.move_to(pixel, start);
             return;
         }
+        // After Move, which wants the pointer itself: every stamping brush
+        // can be led. See `app/studio.rs`.
+        let pixel = self.studio.follow(pixel, start);
         // Paint has no field path either. `effective_brush` so that shift
         // still smooths with the paint brush selected, as it does with every
         // other.
@@ -5658,13 +5667,9 @@ impl Brokkr {
                 let stamp = Stamp::new(centre, normal, direction)
                     .with_pressure(pressure)
                     .with_tangent(tangent);
-                brush.apply_symmetric(
-                    self.doc.active_volume_mut(),
-                    &stamp,
-                    self.symmetry,
-                    MIRROR_CENTRE,
-                    &mut self.brush_scratch,
-                );
+                // Upstream's stamp, or a studio operator with the same
+                // brush's size, strength and tip. See `app/studio.rs`.
+                self.stamp_field(brush, &stamp);
             }
             self.perf.stamps = self.stamp_centres.len();
         }
@@ -9580,6 +9585,8 @@ impl Brokkr {
                 // mid-mask leaves the mask strength exactly where the user put
                 // it -- which is the whole point of the mask having a slot.
                 self.swap_strength(|app| app.brush.kind = kind);
+                // A classic brush chosen is the classic brush wanted.
+                self.studio.op = None;
             }
             Message::FalloffChanged(curve) => self.brush.falloff = curve,
             // Clamped rather than trusted. The slider's own range is already
@@ -10358,6 +10365,7 @@ impl Brokkr {
             Message::PaintAdded => self.add_paint(),
             Message::PaintCoatChosen(coat) => self.paint_coat = coat,
             Message::PaintEdited(edit) => self.edit_paint(edit),
+            Message::Studio(message) => self.studio_changed(message),
             Message::FlatPaintToggled => self.flat_paint = !self.flat_paint,
             Message::PaintAllApplied => self.coat_the_body(),
             Message::PaintTouchChosen(touch) => self.touch.kind = touch,

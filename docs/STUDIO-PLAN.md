@@ -17,7 +17,7 @@ was built and what was measured.
 | S1a Decimated export | **Done**, 2026-11-22 (section 7.1) | A *Detail* choice on export: Full, Fine, Standard, Draft |
 | S1b Parting with keys | **Done but for a preview**, 2026-11-22 (section 7.2) | Cut tool with **alt** held: the body becomes two, with pegs and sockets |
 | S2 Mini painting | **Done but for broad occlusion and zenithal**, 2026-11-22 (section 8), which wait for S4 | Paint brush: *Mix paints*, then a rack of paints, each with a wash and an edge highlight; *Loaded*, *Drybrush*, *Sponge* and *Fill*; a flat view; export as PLY in colour, and 3MF by the filament each paint prints in |
-| S3 Brush engine, surfaced | Not started | |
+| S3 Brush engine, surfaced | **Begun**, 2026-11-22 (section 6.3): Crease, lazy stroke, size from pressure. Alphas, drag rect and presets next | A STUDIO block under the brush: *Crease*, *Lazy*, *Size from pressure* |
 | S4 Form tools | Not started | |
 | S5 Unwrap and bake | Not started | |
 
@@ -499,18 +499,51 @@ break them:
 |---|---|---|
 | Gates | Cavity range, occlusion range, facing, slot filter | Built in S0 with the signals; the paint brushes of S2 are the first customers |
 | Operator | Paint operators (section 8) | S2 |
-| Operator | Scrape (flatten, remove only), Fill (flatten, add only), Crease (pinch plus inverted draw in one warp) | Each is a clamp or a composition of something that exists |
+| Operator | Crease (pinch plus inverted draw in one warp) | **Built** (S3.1). Scrape and Fill were listed here too and are not needed: upstream's Clay blends toward a plane held just off the surface and keeps only the half that adds, and inverted it is a plane just under the surface keeping only the half that removes. That is a fill and a scrape already |
 | Tip | Alpha image: a greyscale stamp, bilinear sampled in the stamp frame | 16 bit PNG, decoded in `brokkr-app` and handed to core as `&[f32]`; core stays free of file formats |
 | Stroke | Drag rect: one stamp placed at the press, sized and turned by the drag | The natural partner of an alpha |
 | Operator | Displace: draw whose depth is the alpha's value | Scales, runes, stitches as stamps |
-| Dynamics | Curves from pressure, tilt, speed and stroke distance to radius, strength, rotation | Resolved per stamp; costs nothing per voxel |
-| Stroke | Lazy (stabilised), spray (jittered), curve (along a drawn spline) | |
+| Dynamics | Curves from pressure, tilt, speed and stroke distance to radius, strength, rotation | Pressure to radius **built** (S3.1), as one share. Pressure to strength and tilt to lean were upstream's already. The rest follows the alpha, which is what rotation is for |
+| Stroke | Lazy (stabilised), spray (jittered), curve (along a drawn spline) | Lazy **built** (S3.1) |
 | Operator | Gesture warps on the `MoveStroke` machinery: twist, elastic grab (regularised Kelvinlets) | Volume preserving by construction |
 | Operator | Layer: draw capped at a fixed height above the stroke's starting surface | Needs a stroke long locked region; memory to be measured first |
 | Presets | One flat `key = value` file per brush under the config directory | The format `palette.rs` and `printer.rs` already use |
 
 The digit keys keep meaning the classic brushes in the order they have always
 had (`brush.rs:344`, "Appended and never reordered").
+
+#### Built, 2026-11-22 (S3.1): the engine, where a user can reach it
+
+Under the classic brush's own controls, a STUDIO block:
+
+- **Crease.** A groove cut and pinched in one stamp, or inverted a pinched
+  ridge. Its kernel is Pinch's warp and Draw's shift, the other way round,
+  in one read of the field: 60% of Draw's depth, so a groove is cut over a
+  few stamps and can be stopped part way. It has no upstream brush to be held
+  to, so it is held to a slow reference written from its definition, a hash
+  lookup a sample with no snapshot and no plan, and to the kernel rules: one
+  stamp moves the field no more than a voxel, nothing outside the brush
+  moves by a bit, nothing under full protection moves.
+- **Lazy.** The brush trails the pointer on a lead of up to 80 pixels. Inside
+  the lead nothing moves; past it the brush is pulled straight toward the
+  pointer and stops a lead short. For panel lines, seams and lettering, and
+  it leads the paint brush and the Fill as well as the sculpt brushes.
+- **Size from pressure.** One share from 0 to 1: at 1 a pen at half pressure
+  is half the brush. A mouse reports full pressure and is not affected.
+
+**A studio operator borrows a classic brush's settings.** Upstream's brushes
+are an enum with a digit key each, a remembered strength each and a button
+each. An operator added to that enum is a change to upstream's hottest file
+and to every `match` on it. So Crease is chosen BESIDE the classic brush: the
+radius, strength, falloff and pattern are still the classic brush's, and the
+operator replaces only what one weighted voxel does. Choosing any classic
+brush puts it away, and shift still smooths. The panel's heading says
+CREASE; the tool strip still lights the classic brush, which is the honest
+picture of whose settings are in use and is also the part most likely to
+want revisiting.
+
+Upstream's files took one field, one message arm, one line in the brush
+chooser, and four changed lines in the two strokes.
 
 **Drift.** More operators means more gradient drift. `redistance` is band
 restricted and gates on measured drift (`redistance.rs:137`), so S3 measures

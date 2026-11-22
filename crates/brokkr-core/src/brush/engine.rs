@@ -76,8 +76,9 @@ use crate::volume::{BrickPreview, BrickVerdict, Volume};
 /// What one weighted voxel does to the distance field.
 ///
 /// The six stamping operations [`BrushKind`] has, under the names it gives
-/// them. New operators are added here and given a [`Kernel`]; nothing else in
-/// the engine has to learn about them.
+/// them, and then the ones only the engine has. New operators are added
+/// here and given a [`Kernel`]; nothing else in the engine has to learn
+/// about them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldOp {
     /// Slide the patch along the stroke normal by resampling from behind it.
@@ -92,10 +93,17 @@ pub enum FieldOp {
     Pinch,
     /// Blend toward the tangent plane under the cursor.
     Flatten,
+    /// Cut a groove and pinch it shut in one stamp: the surface goes in along
+    /// the normal while the material either side is drawn toward the brush's
+    /// axis. Inverted, a pinched ridge. The first operator with no
+    /// [`BrushKind`]: see [`FieldOp::STUDIO`].
+    Crease,
 }
 
 impl FieldOp {
-    pub const ALL: [FieldOp; 6] = [
+    /// The operators upstream's brushes have, each held to its brush bit for
+    /// bit by this module's tests.
+    pub const CLASSIC: [FieldOp; 6] = [
         FieldOp::Draw,
         FieldOp::Clay,
         FieldOp::Smooth,
@@ -103,6 +111,23 @@ impl FieldOp {
         FieldOp::Pinch,
         FieldOp::Flatten,
     ];
+
+    /// The operators only the engine has. There is no upstream brush to hold
+    /// these to, so each is held to a slow reference written from its
+    /// definition and to the rules at the top of this module.
+    pub const STUDIO: [FieldOp; 1] = [FieldOp::Crease];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            FieldOp::Draw => "Draw",
+            FieldOp::Clay => "Clay",
+            FieldOp::Smooth => "Smooth",
+            FieldOp::Inflate => "Inflate",
+            FieldOp::Pinch => "Pinch",
+            FieldOp::Flatten => "Flatten",
+            FieldOp::Crease => "Crease",
+        }
+    }
 
     /// The operator a legacy kind stamps with, or `None` for the two kinds
     /// that do not stamp the field: Move is a gesture and Paint writes a slot.
@@ -189,6 +214,7 @@ impl BrushDef {
             FieldOp::Inflate => run::<InflateKernel>(self, volume, stamp, scratch),
             FieldOp::Pinch => run::<PinchKernel>(self, volume, stamp, scratch),
             FieldOp::Flatten => run::<FlattenKernel>(self, volume, stamp, scratch),
+            FieldOp::Crease => run::<CreaseKernel>(self, volume, stamp, scratch),
         }
     }
 }
@@ -581,6 +607,67 @@ impl Kernel for ClayKernel {
     }
 }
 
+/// How far a crease cuts at full weight, as a share of what Draw moves.
+///
+/// Less than one, so that a groove is cut over a few stamps and can be
+/// stopped part way, and so that the cut and the pinch together stay inside
+/// the reach [`CreaseKernel::reach_voxels`] declares.
+pub const CREASE_DEPTH: f32 = 0.6;
+
+struct CreaseKernel;
+
+impl Kernel for CreaseKernel {
+    const READS_THE_FIELD: bool = true;
+
+    /// The pinch and the cut are at right angles, so the read is no further
+    /// than the sum and that is what is declared.
+    ///
+    /// **Declared, and not shown to matter by any test here.** A mutant that
+    /// declares zero survives, for two reasons that are both true of this
+    /// kernel and neither a law. Every falloff tapers to nothing at the rim,
+    /// so the voxels that read furthest are well inside the box and the
+    /// snapshot's one voxel of padding covers the rest. And the cut is under
+    /// a voxel, so a saturated brick with nothing different within a voxel
+    /// of it cannot change anyway. A tip that is flat to its rim, or a
+    /// deeper cut, would make this number the only thing between a stamp and
+    /// a smeared rim, which is why it is the true one.
+    fn reach_voxels(gain: f32, displacement: f32) -> f32 {
+        gain * (PINCH_PULL_VOXELS + displacement * CREASE_DEPTH)
+    }
+
+    /// Resampling a constant gives the constant back.
+    fn leaves_saturated_alone(_value: f32, _direction: BrushDirection) -> bool {
+        true
+    }
+
+    #[inline(always)]
+    fn write(
+        plan: &Plan,
+        region: &FieldRegion,
+        _voxel: IVec3,
+        position: Vec3,
+        _value: f32,
+        patterned: f32,
+        free: f32,
+    ) -> f32 {
+        let weight = patterned * free;
+        let to_centre = plan.centre - position;
+        // Toward the axis along the surface, as Pinch does it, and in both
+        // directions: a groove and a ridge are both pinched.
+        let lateral = to_centre - plan.normal * to_centre.dot(plan.normal);
+        let pull = lateral.normalize_or_zero() * (weight * PINCH_PULL_VOXELS * plan.voxel_size);
+        // Draw's shift the other way round: reading from further OUT brings
+        // the outside in, which is the surface going down.
+        let cut = plan.normal
+            * (weight
+                * plan.displacement
+                * CREASE_DEPTH
+                * plan.voxel_size
+                * plan.direction.outward_sign());
+        region.sample((position + pull + cut) / plan.voxel_size)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -688,10 +775,10 @@ mod tests {
     #[test]
     fn every_kind_but_move_and_paint_has_an_operator() {
         let with: Vec<_> = stamping_kinds().collect();
-        assert_eq!(with.len(), FieldOp::ALL.len());
+        assert_eq!(with.len(), FieldOp::CLASSIC.len());
         assert_eq!(FieldOp::from_kind(BrushKind::Move), None);
         assert_eq!(FieldOp::from_kind(BrushKind::Paint), None);
-        for op in FieldOp::ALL {
+        for op in FieldOp::CLASSIC {
             assert!(
                 with.iter().any(|kind| FieldOp::from_kind(*kind) == Some(op)),
                 "{op:?} has no legacy kind, so nothing checks it against one"
@@ -876,5 +963,210 @@ mod tests {
         volume.begin_stroke();
         able.apply(&mut volume, &stamp, &mut BrushScratch::new());
         assert!(volume.end_stroke().is_some(), "the able brush changed nothing either");
+    }
+
+    /// One stamp of an engine-only operator, worked out the slow way from
+    /// its definition: every voxel read from the volume as it stood before
+    /// the stamp, a hash lookup a sample, with no snapshot and no plan.
+    fn crease_by_definition(before: &Volume, def: &BrushDef, stamp: &Stamp) -> Vec<(IVec3, f32)> {
+        let voxel_size = before.voxel_size();
+        let displacement =
+            (def.radius / voxel_size * STAMP_FRACTION_OF_RADIUS).min(MAX_STAMP_VOXELS);
+        let extent = Vec3::splat(def.radius);
+        let (lo, hi) = before.voxel_bounds(stamp.centre - extent, stamp.centre + extent);
+        let mut out = Vec::new();
+        for z in lo.z..=hi.z {
+            for y in lo.y..=hi.y {
+                for x in lo.x..=hi.x {
+                    let voxel = IVec3::new(x, y, z);
+                    let position = voxel.as_vec3() * voxel_size;
+                    let offset = position - stamp.centre;
+                    let value = before.sample_voxel(voxel);
+                    if offset.length() >= def.radius {
+                        out.push((voxel, value));
+                        continue;
+                    }
+                    let weight = def.tip.falloff.weight(offset.length() / def.radius)
+                        * def.strength
+                        * stamp.pressure;
+                    let to_centre = stamp.centre - position;
+                    let lateral = to_centre - stamp.normal * to_centre.dot(stamp.normal);
+                    let pull =
+                        lateral.normalize_or_zero() * (weight * PINCH_PULL_VOXELS * voxel_size);
+                    let cut = stamp.normal
+                        * (weight
+                            * displacement
+                            * CREASE_DEPTH
+                            * voxel_size
+                            * stamp.direction.outward_sign());
+                    out.push((voxel, before.sample_world(position + pull + cut)));
+                }
+            }
+        }
+        out
+    }
+
+    fn crease(radius: f32, strength: f32) -> BrushDef {
+        BrushDef { op: FieldOp::Crease, radius, strength, tip: Tip::default() }
+    }
+
+    /// The crease is what its definition says, voxel for voxel, in both
+    /// directions and at a strength high enough to read as far as it
+    /// declares. A reach understated by a voxel reads the snapshot's rim
+    /// where the reference reads the field, and the two part company.
+    #[test]
+    fn a_crease_is_its_definition_read_the_slow_way() {
+        for direction in [BrushDirection::Add, BrushDirection::Subtract] {
+            // Small brushes with a tip that is still heavy a voxel from its
+            // rim are here because they read furthest past their own box.
+            // They do not catch a reach declared as zero, and nothing on a
+            // ball does: see `CreaseKernel::reach_voxels`.
+            for (radius, strength, falloff) in [
+                (9.0, 0.6, FalloffCurve::Smooth),
+                (3.0, 1.0, FalloffCurve::Smooth),
+                (14.0, 1.0, FalloffCurve::Smooth),
+                (2.5, 1.0, FalloffCurve::Wide),
+                (4.0, 1.0, FalloffCurve::Wide),
+            ] {
+                let def =
+                    BrushDef { tip: Tip { falloff, ..Tip::default() }, ..crease(radius, strength) };
+                let at = CENTRE + stroke()[0] * RADIUS;
+                let stamp =
+                    Stamp::new(at, stroke()[0], direction).with_pressure(0.9).with_tangent(Vec3::X);
+                let before = ball();
+                let mut after = ball();
+                def.apply(&mut after, &stamp, &mut BrushScratch::new());
+                let mut moved = 0;
+                for (voxel, expected) in crease_by_definition(&before, &def, &stamp) {
+                    let got = after.sample_voxel(voxel);
+                    assert!(
+                        (got - expected).abs() < 1.0e-5,
+                        "{direction:?} at radius {radius}, {voxel}: {got} against {expected}"
+                    );
+                    moved += usize::from((got - before.sample_voxel(voxel)).abs() > 1.0e-3);
+                }
+                assert!(moved > 10, "{direction:?} at radius {radius} moved only {moved} voxels");
+            }
+        }
+    }
+
+    /// How far the surface has moved along `towards` from the ball's own
+    /// radius, in voxels, outward positive.
+    fn surface_shift(volume: &Volume, towards: Vec3) -> f32 {
+        // The field is a distance in voxels and the voxel is one unit, so
+        // the value at the old surface is how far the new one is from it.
+        -volume.sample_world(CENTRE + towards * RADIUS)
+    }
+
+    /// A crease cuts in, inverted it raises, and either way it is pinched:
+    /// narrower for its depth than Draw is with the same tip.
+    #[test]
+    fn a_crease_cuts_a_groove_narrower_than_draw_does_and_inverted_raises_a_ridge() {
+        let axis = stroke()[0];
+        let at = CENTRE + axis * RADIUS;
+        // A direction off the axis by half the brush's radius along the
+        // surface.
+        let radius = 9.0;
+        let side = (axis.cross(Vec3::Z)).normalize();
+        let off_axis = (axis * RADIUS + side * (radius * 0.5)).normalize();
+
+        let stamped = |def: BrushDef, direction: BrushDirection| {
+            let mut volume = ball();
+            let mut scratch = BrushScratch::new();
+            for _ in 0..6 {
+                def.apply(&mut volume, &Stamp::new(at, axis, direction), &mut scratch);
+            }
+            (surface_shift(&volume, axis), surface_shift(&volume, off_axis))
+        };
+
+        let (groove, groove_side) = stamped(crease(radius, 0.8), BrushDirection::Add);
+        assert!(groove < -1.0, "six stamps of a crease cut only {groove} voxels");
+        let (ridge, _) = stamped(crease(radius, 0.8), BrushDirection::Subtract);
+        assert!(ridge > 1.0, "six stamps of an inverted crease raised only {ridge} voxels");
+
+        // Draw cutting in, for the comparison: how much of the depth at the
+        // axis is still there half a radius out.
+        let draw = BrushDef { op: FieldOp::Draw, ..crease(radius, 0.8) };
+        let (dent, dent_side) = stamped(draw, BrushDirection::Subtract);
+        assert!(dent < -1.0, "the Draw control cut only {dent} voxels");
+        let (kept_by_crease, kept_by_draw) = (groove_side / groove, dent_side / dent);
+        // Measured at 0.62 against 0.73, a groove 15% narrower at this
+        // point. The bar is set inside that and is not the measurement.
+        assert!(
+            kept_by_crease < kept_by_draw * 0.92,
+            "half a radius out a crease keeps {kept_by_crease} of its depth and Draw keeps \
+             {kept_by_draw}: the crease is not pinched"
+        );
+    }
+
+    /// The rules every kernel answers to, asked of the crease: nothing
+    /// outside the brush moves, nothing under full protection moves, one
+    /// stamp moves the surface no more than a voxel, and a stroke is one
+    /// undo entry.
+    #[test]
+    fn a_crease_keeps_the_rules_every_kernel_keeps() {
+        let axis = stroke()[0];
+        let at = CENTRE + axis * RADIUS;
+        let def = crease(9.0, 1.0);
+        let stamp = Stamp::new(at, axis, BrushDirection::Add);
+
+        let before = ball();
+        let mut once = ball();
+        once.begin_stroke();
+        def.apply(&mut once, &stamp, &mut BrushScratch::new());
+        let entry = once.end_stroke();
+        assert!(entry.is_some_and(|edit| !edit.is_empty()), "a crease recorded nothing to undo");
+        let (lo, hi) = before
+            .voxel_bounds(at - Vec3::splat(def.radius + 6.0), at + Vec3::splat(def.radius + 6.0));
+        let mut furthest: f32 = 0.0;
+        for z in lo.z..=hi.z {
+            for y in lo.y..=hi.y {
+                for x in lo.x..=hi.x {
+                    let voxel = IVec3::new(x, y, z);
+                    let (was, now) = (before.sample_voxel(voxel), once.sample_voxel(voxel));
+                    if (voxel.as_vec3() - at).length() >= def.radius {
+                        assert_eq!(was.to_bits(), now.to_bits(), "{voxel} is outside the brush");
+                    }
+                    furthest = furthest.max((now - was).abs());
+                }
+            }
+        }
+        assert!(furthest > 0.3, "one stamp at full strength moved the field by only {furthest}");
+        assert!(
+            furthest <= MAX_STAMP_VOXELS + 1.0e-4,
+            "one stamp moved the field by {furthest} voxels, past the limit of {MAX_STAMP_VOXELS}"
+        );
+
+        // Everything protected: the stamp changes nothing at all.
+        let mut masked = ball();
+        masked.mask_mut().set_inverted(true);
+        let untouched = masked.duplicated(IVec3::ZERO);
+        def.apply(&mut masked, &stamp, &mut BrushScratch::new());
+        assert_same_field(&masked, &untouched, "a crease cut through full protection");
+
+        // And mirrored it lands on the twin.
+        let mut mirrored = ball();
+        def.apply_symmetric(&mut mirrored, &stamp, Symmetry::X, CENTRE, &mut BrushScratch::new());
+        let twin = Vec3::new(-axis.x, axis.y, axis.z);
+        assert!(surface_shift(&mirrored, axis) < -0.1, "the stamp itself did not cut");
+        assert!(surface_shift(&mirrored, twin) < -0.1, "the mirror of a crease did not cut");
+        assert_eq!(surface_shift(&once, twin), 0.0, "the unmirrored control cut the twin");
+    }
+
+    #[test]
+    fn every_operator_is_classic_or_studio_and_has_a_name() {
+        let mut names = Vec::new();
+        for op in FieldOp::CLASSIC.into_iter().chain(FieldOp::STUDIO) {
+            assert!(!op.label().is_empty());
+            assert!(!names.contains(&op.label()), "two operators are called {}", op.label());
+            names.push(op.label());
+        }
+        for op in FieldOp::STUDIO {
+            assert!(!FieldOp::CLASSIC.contains(&op), "{op:?} is listed as both");
+            assert!(
+                BrushKind::ALL.into_iter().all(|kind| FieldOp::from_kind(kind) != Some(op)),
+                "{op:?} has a classic brush after all"
+            );
+        }
     }
 }
