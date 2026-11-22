@@ -1071,6 +1071,7 @@ impl Brokkr {
                                 ExportFormat::Stl => "Export STL…",
                                 ExportFormat::Obj => "Export OBJ…",
                                 ExportFormat::ThreeMf => "Export 3MF…",
+                                ExportFormat::Ply => "Export PLY, in colour…",
                             },
                             Message::ExportRequested(format),
                         ))

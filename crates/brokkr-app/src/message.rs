@@ -17,17 +17,22 @@ pub enum ExportFormat {
     Obj,
     /// 3MF. The only one of the three that states its units.
     ThreeMf,
+    /// PLY with a colour at every vertex: what a painted model looks like,
+    /// for a full colour process, where a 3MF says which filament prints
+    /// what. See `brokkr_core::export::ply`.
+    Ply,
 }
 
 impl ExportFormat {
-    pub const ALL: [ExportFormat; 3] =
-        [ExportFormat::Stl, ExportFormat::Obj, ExportFormat::ThreeMf];
+    pub const ALL: [ExportFormat; 4] =
+        [ExportFormat::Stl, ExportFormat::Obj, ExportFormat::ThreeMf, ExportFormat::Ply];
 
     pub fn label(self) -> &'static str {
         match self {
             ExportFormat::Stl => "STL",
             ExportFormat::Obj => "OBJ",
             ExportFormat::ThreeMf => "3MF",
+            ExportFormat::Ply => "PLY",
         }
     }
 
@@ -36,6 +41,7 @@ impl ExportFormat {
             ExportFormat::Stl => "stl",
             ExportFormat::Obj => "obj",
             ExportFormat::ThreeMf => "3mf",
+            ExportFormat::Ply => "ply",
         }
     }
 }
@@ -199,6 +205,8 @@ impl WashKind {
 pub enum PaintEdit {
     Name(String),
     Finish(brokkr_core::paint::Finish),
+    /// The filament the paint prints in, 1-based, or 0 for the nearest.
+    Filament(u8),
     /// The whole colour of the coat shown, sRGB.
     Colour([u8; 3]),
     /// One channel of it: 0 red, 1 green, 2 blue.

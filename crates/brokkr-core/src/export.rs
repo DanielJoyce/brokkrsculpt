@@ -39,6 +39,7 @@
 
 pub mod decimate;
 pub mod obj;
+pub mod ply;
 pub mod stl;
 pub mod threemf;
 

@@ -63,6 +63,7 @@
 //! darker AND more saturated, which is what a wash does and what multiplying
 //! by grey does not.
 
+pub mod bake;
 pub mod touch;
 
 /// The most paints a document can hold, not counting "unpainted".
@@ -185,6 +186,10 @@ pub struct Paint {
     pub finish: Finish,
     pub wash: Wash,
     pub highlight: Highlight,
+    /// The filament this paint prints in on a machine that prints in
+    /// filaments, 1-based, or 0 for whichever loaded filament is nearest its
+    /// colour. See [`bake`]. Nothing on screen reads it.
+    pub filament: u8,
 }
 
 /// The longest a paint's name is kept, in bytes.
@@ -199,6 +204,7 @@ impl Paint {
             finish: Finish::Matte,
             wash: Wash::NONE,
             highlight: Highlight::NONE,
+            filament: 0,
         }
     }
 
@@ -317,7 +323,13 @@ impl std::fmt::Display for PaintError {
 }
 
 /// The version byte a table is written with.
-const TABLE_VERSION: u8 = 1;
+///
+/// Version 1 had no filament byte. It was only ever written by builds of
+/// this branch on the day it was made, and is still read: a paint from one
+/// names no filament and takes the nearest.
+const TABLE_VERSION: u8 = 2;
+/// The oldest version [`PaintTable::decode`] reads.
+const OLDEST_TABLE_VERSION: u8 = 1;
 
 impl PaintTable {
     pub fn is_empty(&self) -> bool {
@@ -372,6 +384,7 @@ impl PaintTable {
             out.extend_from_slice(name.as_bytes());
             out.extend_from_slice(&paint.base);
             out.push(paint.finish.byte());
+            out.push(paint.filament);
             out.extend_from_slice(&paint.wash.colour);
             for amount in [paint.wash.stain, paint.wash.flow, paint.wash.edge] {
                 out.extend_from_slice(&amount.to_le_bytes());
@@ -397,7 +410,7 @@ impl PaintTable {
             Ok(head)
         };
         let version = take(1)?[0];
-        if version != TABLE_VERSION {
+        if !(OLDEST_TABLE_VERSION..=TABLE_VERSION).contains(&version) {
             return Err(PaintError::Version(version));
         }
         let count = usize::from(take(1)?[0]);
@@ -418,6 +431,10 @@ impl PaintTable {
             let finish_byte = take(1)?[0];
             let finish =
                 Finish::from_byte(finish_byte).ok_or(PaintError::BadFinish(finish_byte))?;
+            // Any byte is a filament: one the machine does not have is
+            // treated as none when the paint is printed, since the machine
+            // is not the document's to know.
+            let filament = if version >= 2 { take(1)?[0] } else { 0 };
             let wash_colour = colour(take(3)?);
             let mut amount = || -> Result<f32, PaintError> {
                 let bytes = take(4)?;
@@ -441,6 +458,7 @@ impl PaintTable {
                 finish,
                 wash: Wash { colour: wash_colour, stain, flow, edge },
                 highlight: Highlight { colour: highlight_colour, amount: amount_at_edge, start },
+                filament,
             });
         }
         if !rest.is_empty() {
@@ -621,9 +639,57 @@ mod tests {
         table.add(Paint {
             finish: Finish::Metallic,
             wash: Wash::contrast([30, 60, 150]),
+            filament: 3,
             ..Paint::flat("", [200, 200, 205])
         });
         table
+    }
+
+    /// A table as the first version of the format wrote it: the same bytes
+    /// without the filament byte after each finish.
+    fn as_version_one(table: &PaintTable) -> Vec<u8> {
+        let mut out = vec![1, table.len() as u8];
+        for paint in table.paints() {
+            out.push(paint.name.len() as u8);
+            out.extend_from_slice(paint.name.as_bytes());
+            out.extend_from_slice(&paint.base);
+            out.push(paint.finish.byte());
+            out.extend_from_slice(&paint.wash.colour);
+            for amount in [paint.wash.stain, paint.wash.flow, paint.wash.edge] {
+                out.extend_from_slice(&amount.to_le_bytes());
+            }
+            out.extend_from_slice(&paint.highlight.colour);
+            for amount in [paint.highlight.amount, paint.highlight.start] {
+                out.extend_from_slice(&amount.to_le_bytes());
+            }
+        }
+        out
+    }
+
+    /// A table written before paints named a filament still reads, every
+    /// paint naming none. And a version from the future is refused by name
+    /// and not read as something it is not.
+    #[test]
+    fn a_table_from_before_filaments_still_reads_and_a_newer_one_is_refused() {
+        let table = a_table();
+        assert!(table.paints().iter().any(|paint| paint.filament != 0), "the fixture names none");
+        let old = PaintTable::decode(&as_version_one(&table)).expect("version 1 was refused");
+        assert_eq!(old.len(), table.len());
+        for (old, new) in old.paints().iter().zip(table.paints()) {
+            assert_eq!(old.filament, 0, "a version 1 paint named a filament");
+            assert_eq!(*old, Paint { filament: 0, ..new.clone() });
+        }
+        // The control for the version switch: the same bytes relabelled as
+        // the current version are one byte a paint short and do not read.
+        let mut relabelled = as_version_one(&table);
+        relabelled[0] = TABLE_VERSION;
+        assert!(PaintTable::decode(&relabelled).is_err(), "version 1 bytes read as version 2");
+
+        let mut newer = table.encode();
+        newer[0] = TABLE_VERSION + 1;
+        assert_eq!(PaintTable::decode(&newer), Err(PaintError::Version(TABLE_VERSION + 1)));
+        newer[0] = 0;
+        assert_eq!(PaintTable::decode(&newer), Err(PaintError::Version(0)));
     }
 
     #[test]
@@ -791,9 +857,10 @@ mod tests {
         let mut finish = good.clone();
         finish[finish_at] = 77;
         assert_eq!(PaintTable::decode(&finish), Err(PaintError::BadFinish(77)));
-        // And a NaN where an amount goes: three of wash colour, then stain.
+        // And a NaN where an amount goes: the filament byte, three of wash
+        // colour, then the stain.
         let mut nan = good;
-        nan[finish_at + 4..finish_at + 8].copy_from_slice(&f32::NAN.to_le_bytes());
+        nan[finish_at + 5..finish_at + 9].copy_from_slice(&f32::NAN.to_le_bytes());
         assert_eq!(PaintTable::decode(&nan), Err(PaintError::NotFinite));
     }
 }
