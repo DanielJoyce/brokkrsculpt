@@ -68,6 +68,16 @@ The plan those decisions live in is the maintainer's local note
 visitor; everything load-bearing from it that constrains this repository is
 restated in `handoff.md`.
 
+### On the `feature/studio` branch only, 2026-11-22
+
+This list is upstream's and is unchanged for `main`. The long-lived
+`feature/studio` branch deliberately crosses two of its entries, **UV
+unwrapping** (as an export step only) and **polypaint or vertex colours** (as
+RGB paint beside the filament slot), and the asking this list requires has
+happened for both. [`STUDIO-PLAN.md`](STUDIO-PLAN.md) section 3 says exactly
+what is crossed, what is not, and why. Every other entry stands on that branch
+too.
+
 ## Stack
 
 Pinned choices. Do not substitute without asking.
