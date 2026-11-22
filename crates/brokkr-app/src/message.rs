@@ -104,6 +104,20 @@ impl std::fmt::Display for ExportDetail {
 
 /// One setting of the key a parting puts between two parts.
 ///
+/// One change to the studio brushes, on [`KeySetting`]'s pattern: one
+/// message with a payload and not three entries in the message table.
+/// Settings of the application and not of the document.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StudioMessage {
+    /// Take up an operator upstream has no brush for, or `None` to put it
+    /// away and go back to the classic brush.
+    OperatorChosen(Option<brokkr_core::brush::engine::FieldOp>),
+    /// How far the brush trails the pointer, in pixels. Zero is off.
+    LazyChanged(f32),
+    /// How much of the brush's size pen pressure decides, 0..=1.
+    SizeFromPressureChanged(f32),
+}
+
 /// How the paint brush is put to the model. See
 /// [`brokkr_core::paint::touch`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -904,6 +918,8 @@ pub enum Message {
     /// Which filament slot the paint brush writes, 1-based. Clamped to the
     /// palette on arrival.
     PaintSlotChanged(u8),
+    /// One of the studio brush controls. See `app/studio.rs`.
+    Studio(StudioMessage),
     /// Coat the whole of the active body in the paint in hand, wherever the
     /// mask leaves it free. One undo entry.
     PaintAllApplied,

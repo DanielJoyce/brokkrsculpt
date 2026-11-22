@@ -2331,7 +2331,7 @@ impl Brokkr {
                 self.section(PanelSection::Bodies, || self.bodies_panel()),
                 text(match self.tool {
                     Tool::Mask => "MASK".to_string(),
-                    _ => self.brush.kind.label().to_uppercase(),
+                    _ => self.live_brush_name(),
                 })
                 .size(theme::CAPTION_SIZE)
                 .color(theme::TEXT_MUTE),
@@ -2339,6 +2339,7 @@ impl Brokkr {
                 radius,
                 strength,
                 falloff,
+                self.studio_panel(),
                 self.section(PanelSection::Pattern, || self.pattern_panel()),
                 self.section(PanelSection::Pen, || self.pen_panel()),
                 self.section(PanelSection::SpaceMouse, || self.spacemouse_panel()),
