@@ -2,6 +2,7 @@
 
 //! Application state, input handling and the widget tree.
 
+mod paints;
 mod panel;
 
 use std::collections::VecDeque;
@@ -885,6 +886,13 @@ pub struct Brokkr {
     /// The key a parting puts between two parts: its kind, its size, and the
     /// clearance, which belongs to the printer. See `brokkr_core::part`.
     key_spec: brokkr_core::part::KeySpec,
+    /// The document's paints: what each painted slot means once the document
+    /// uses paints at all. Empty until it does, and then every slot is a
+    /// filament, as upstream has it. Document state, saved with the sculpt.
+    /// See `app/paints.rs`.
+    paints: brokkr_core::paint::PaintTable,
+    /// Which coat of the paint in hand the editor shows. View state.
+    paint_coat: crate::message::PaintCoat,
     /// How strong the tint is when it is shown at all, 0..1.
     ///
     /// The shader has its own floor under this (`0.30 + 0.70 * m`), which is
@@ -2132,6 +2140,8 @@ impl Brokkr {
             show_cavity: false,
             export_detail: ExportDetail::default(),
             key_spec: brokkr_core::part::KeySpec::peg(),
+            paints: brokkr_core::paint::PaintTable::default(),
+            paint_coat: crate::message::PaintCoat::default(),
             mask_tint: DEFAULT_MASK_TINT,
             mask_peek: false,
             mask_filter: MaskFilter::Blur,
@@ -3419,7 +3429,7 @@ impl Brokkr {
         // document's worth of scattered dirty bricks onto a single thread. At
         // the sizes M2 targets the parallel path is the difference between a
         // remesh at 70 percent of its budget and one at under 10.
-        if self.show_cavity {
+        if self.show_cavity || !self.paints.is_empty() {
             self.doc.mesh_dirty_with_cavity(&self.dirty, &mut self.mesh_buffers[..count]);
         } else {
             self.doc.mesh_dirty(&self.dirty, &mut self.mesh_buffers[..count]);
@@ -6548,6 +6558,7 @@ impl Brokkr {
         volume.seed_sphere(Vec3::ZERO, MODEL_RADIUS_MM);
         volume.mark_everything_dirty();
         self.doc = Document::from_volume(volume);
+        self.forget_paints();
         // History refers to bricks of the volume that just went away, so keeping
         // it would let undo splice pieces of the discarded model into this one.
         self.history.clear();
@@ -6695,7 +6706,11 @@ impl Brokkr {
     /// Shared by the explicit save and the autosave so the two cannot record
     /// different things.
     fn project_state(&self) -> brokkr_core::ProjectState {
-        brokkr_core::ProjectState { view: self.current_view(), keys: self.timeline.keys.clone() }
+        brokkr_core::ProjectState {
+            view: self.current_view(),
+            keys: self.timeline.keys.clone(),
+            paints: self.paints.clone(),
+        }
     }
 
     /// Put the camera where a view says, and nothing else.
@@ -6989,6 +7004,8 @@ impl Brokkr {
         self.status = format!("opened {}", path.display());
         self.apply_view(&state.view);
         self.timeline.adopt(state.keys);
+        self.paints = state.paints;
+        self.paint_slot = self.paint_slot.clamp(1, self.last_paint_slot());
 
         // History belongs to the model that just went away.
         self.history.clear();
@@ -7021,6 +7038,7 @@ impl Brokkr {
     /// plus padding and the camera sits visibly too far back.
     fn adopt_import(&mut self, imported: crate::message::Imported) {
         self.doc = Document::from_volume(imported.volume);
+        self.forget_paints();
         self.camera = OrbitCamera::framing(Vec3::ZERO, MODEL_RADIUS_MM);
         // `framing` leaves the default lattice behind, and the floor is a
         // number of voxels, so it has to be told the real one.
@@ -7976,6 +7994,7 @@ impl Brokkr {
         self.shared.set_paint_view(crate::viewport::PaintView {
             shown: self.show_paint,
             palette: self.palette.shader_palette(),
+            paints: brokkr_gpu::PaintBlock::from(&self.paints),
         });
         // The gain is what makes the setting a size in millimetres: a feature
         // `w` voxels across reads a curvature of `4 / w`, so `w / 4` brings a
@@ -10273,8 +10292,7 @@ impl Brokkr {
             // only grows in a session -- `sync_from_printer` never removes a
             // slot -- so a chosen slot cannot be orphaned after the fact.
             Message::PaintSlotChanged(slot) => {
-                let last = self.palette.slots.len().clamp(1, usize::from(u8::MAX)) as u8;
-                self.paint_slot = slot.clamp(1, last);
+                self.paint_slot = slot.clamp(1, self.last_paint_slot());
             }
             Message::ShowPaintToggled => self.show_paint = !self.show_paint,
             // A remesh of everything, because the signal travels in the mesh:
@@ -10290,11 +10308,20 @@ impl Brokkr {
                 KeySetting::Depth(mm) => self.key_spec.depth_mm = mm.clamp(0.5, 8.0),
                 KeySetting::Clearance(mm) => self.key_spec.clearance_mm = mm.clamp(0.0, 0.6),
             },
+            // With paints in use the meshes carry the signal whatever this
+            // says, because a wash reads it, and then this is the view toggle
+            // it looks like and there is nothing to remesh.
             Message::ShowCavityToggled => {
                 self.show_cavity = !self.show_cavity;
-                self.doc.mark_everything_dirty();
-                self.remesh_dirty();
+                if self.paints.is_empty() {
+                    self.doc.mark_everything_dirty();
+                    self.remesh_dirty();
+                }
             }
+            Message::PaintsStarted => self.start_paints(),
+            Message::PaintAdded => self.add_paint(),
+            Message::PaintCoatChosen(coat) => self.paint_coat = coat,
+            Message::PaintEdited(edit) => self.edit_paint(edit),
             // And the verbs, which DO change protection and all of which are
             // undoable in one entry apiece.
             Message::MaskCleared => self.clear_mask(),

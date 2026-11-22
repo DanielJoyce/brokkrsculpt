@@ -16,7 +16,7 @@ was built and what was measured.
 | S0 Groundwork | **Done**, 2026-11-22 (sections 5 and 6) | *show creases* in the viewport. The rest is foundations |
 | S1a Decimated export | **Done**, 2026-11-22 (section 7.1) | A *Detail* choice on export: Full, Fine, Standard, Draft |
 | S1b Parting with keys | **Done but for a preview**, 2026-11-22 (section 7.2) | Cut tool with **alt** held: the body becomes two, with pegs and sockets |
-| S2 Mini painting | Not started | |
+| S2 Mini painting | **Recipes done**, 2026-11-22 (section 8); gated strokes, occlusion and export next | Paint brush: *Mix paints*, then a rack of paints, each with a wash and an edge highlight |
 | S3 Brush engine, surfaced | Not started | |
 | S4 Form tools | Not started | |
 | S5 Unwrap and bake | Not started | |
@@ -48,7 +48,7 @@ The short answers, before the long ones:
 |---|---|---|---|
 | Decimated export | Yes, and better than a mesh tool can | The field is an O(1) oracle for "how far is this vertex from the real surface" | Nothing structural |
 | Parting with keys | Yes, nearly free | `max` and `min` are exact booleans; an offset field is an exact clearance | Peak memory is 2x, as for every split |
-| Mini painting | Yes | Cavity and occlusion fall out of the field; paint survives every sculpt edit | Paint resolution is tied to voxel size; RGB costs +100% per painted brick |
+| Mini painting | Yes | Cavity and occlusion fall out of the field; paint survives every sculpt edit | Paint resolution is tied to voxel size; a voxel holds one paint, so no soft blends (section 8.2) |
 | Flexible brushes | Yes | Every brush is already "weight times kernel" | The stamp loop is the hottest code in the project and is gated by a benchmark |
 | Volume with detail | **Yes.** See section 9 | Domain warps carry detail by construction, and the engine already prefers them | Each warp is one lossy resample; one gesture is bounded by invertibility |
 | UV unwrapping | Yes, as an **export artefact only** | Baking needs no cage and no ray casts | It is the newest mathematics here, and the upstream spec forbids it |
@@ -65,7 +65,7 @@ pull a printing capability after it:
 
 | Studio work | The printing work it drives |
 |---|---|
-| RGB paint (S2) | Full colour output: quantising paint to loaded filaments first, then formats full colour printers and services accept |
+| Paints (S2) | Full colour output: each paint names the filament it prints in first, then formats full colour printers and services accept |
 | Decimation (S1a) | Files a slicer loads in seconds; later, handing a slicer geometry sized to the process |
 | Parting and keys (S1b) | Parts sized to a bed and oriented to print without support |
 | Detail gain (S4) | Detail exaggerated to survive a given nozzle or layer height |
@@ -156,10 +156,14 @@ mesh*, once, at export, and the atlas is thrown away afterwards. This is what
 keeps `pattern.rs:28`'s promise (patterns are world space, no unwrap needed)
 true, and it is why unwrapping cannot destabilise sculpting.
 
-**D2. Paint is volumetric and lives in the band**, exactly as the filament
-slot does: a sparse RGB plus finish field inside `Volume`. Paint therefore
-survives every cut, merge, move, warp and resample, which no UV or vertex
-scheme does when the topology changes under it.
+**D2. Paint is volumetric and lives in the band, as a paint number a voxel
+and a table of recipes a document.** The number is the slot byte upstream
+already has; the recipe is a base coat, a wash and a highlight. Paint
+therefore survives every cut, merge, move, warp and resample, which no UV or
+vertex scheme does when the topology changes under it, and it does so
+through code that already exists and is already tested. (First drawn as an
+RGB field of its own; section 8.2 says why that was dropped before it was
+built.)
 
 **D3. One derived structure, the form pyramid, serves three features.** The
 same solid at two, four, eight times the voxel size gives depth below the form
@@ -194,7 +198,7 @@ deliberately crosses three of those lines on this branch:
 | Spec entry | This plan | Why it is not the thing the entry feared |
 |---|---|---|
 | UV unwrapping | S5 | Export only (D1). The entry exists to keep a UV dependency out of the sculpt loop, and it still is. |
-| Polypaint or vertex colours | S2 | Crossed outright. RGB per voxel, next to the slot field rather than replacing it. |
+| Polypaint or vertex colours | S2 | Crossed, and more narrowly than first drawn: no colour is stored per voxel or per vertex. The slot byte upstream already has names a paint recipe (section 8.2). |
 | Sculpt layers | Not built | Paint layers are deferred (section 12); recorded sculpt deltas remain out. |
 | IMM / insert mesh | Not built | Keys are closed form solids, not a mesh library. |
 | Auto retopology | Not built | Decimation reduces triangles; it does not produce quads or edge flow. |
@@ -213,7 +217,7 @@ flowchart TB
         F["Distance field<br/>f32 per voxel, band of 3"]
         M["Mask<br/>u8"]
         SL["Filament slot<br/>u8"]
-        P["Paint  NEW<br/>RGB + finish, 4 bytes"]
+        P["Paints  NEW<br/>a table of recipes a document;<br/>the slot names one"]
     end
 
     subgraph DER["Derived: never saved, rebuilt lazily"]
@@ -276,8 +280,9 @@ is built on them.
 
 `mask.rs` (2,075 lines) and `colour.rs` (985 lines) are the same sparse map
 written twice by hand: absent means default, a `Uniform` tile costs no heap, a
-dense brick is `32³ x size_of::<T>()`. Paint and the per-stroke coverage buffer
-would be the third and fourth copies.
+dense brick is `32³ x size_of::<T>()`. The first draft of painting would have
+made a third and a fourth copy. The recipe design of section 8.2 needs
+neither, so this is not built until something needs a new field.
 
 A generic `SparseField<T: Pod>` is written **for the new fields only**. The
 existing two are left exactly as they are (D6); folding them in is a refactor
@@ -788,125 +793,188 @@ techniques are what was asked for and they are all *geometry driven*:
 "Slapchop" (prime black, drybrush grey then white, contrast paint over the
 top) becomes three clicks and a few strokes, which is the point of the mode.
 
-### 8.2 Storage
+### 8.2 Storage: a paint is a recipe, and a voxel names one
 
-`PaintField = SparseField<[u8; 4]>`: sRGB red, green, blue and a **finish**
-byte (0 bare, then matte, satin, gloss, metallic; high bits reserved).
+**This section was first written as a second field of four bytes a voxel:**
+red, green, blue and a finish, deposited by brushes. It was redrawn on
+2026-11-22, before any of it was built, once the engine had been read with
+that field in mind. Three things were against it.
 
-It follows the slot field's rules word for word, because `colour.rs` argues
-each one from a measured failure:
+- **The slot field is woven through everything.** Rotating, shifting,
+  resampling, warping, merging, splitting, the Move brush, undo and the
+  project file each carry it, and each has a test that fails without it:
+  about 350 mentions across 17 files (counted with `grep` over
+  `crates/brokkr-core/src`). A second field is that sweep again, in
+  upstream's hottest files, on a fork that has to keep merging them. It is
+  the opposite of D6.
+- **It doubles the memory of a painted model.** +100% of the field
+  (`colour.rs:8`), against the +25% a slot costs, which `colour.rs` gives as
+  the reason a slot is an index in the first place.
+- **A wash painted into colour is dead the moment it lands.** It is right for
+  the surface as it was. Sculpt a fold deeper afterwards and the shadow stays
+  where the old fold used to be.
 
-- Inside `Volume`, outside `Brick`, with its own undo recorder.
-- Written only where the field is in band (`colour.rs:233`); read only at mesh
-  vertices.
-- Carried through `rotated`, `shifted`, `resampled`, `warped`, merge, split,
-  duplicate and Move, **each with a test that fails without it.** That sweep is
-  the single largest piece of S2 and the one most likely to be skimped.
-- Saved as a new per-body stream behind a `FIELD_VERSION` bump from 3 to 4
-  (`project.rs:142`), which is the route the mask and the slot both took. The
-  reader gets a mutation fuzz with a control.
-
-**Cost, sourced:** a dense paint brick is 131,072 bytes, +100% of a dense field
-brick (`colour.rs:8`). **Priming is free**: one uniform tile per brick, no
-heap. Bricks go dense as they are painted. Every global operation predicts its
-demand before it runs and is refused by name over the 6 GiB ceiling
-(`project.rs:245`), following `generated_mask_demand` (`generate.rs:244`).
-
-**The slot field stays.** Filament slots and paint are different facts: one is
-a print instruction, the other is a picture. A bridge operation,
-*Paint to filament slots*, quantises paint to the loaded filaments
-(`palette.rs`) and writes the slot field, so a speed painted model can go
-straight to a multi-colour print through the 3MF writer that already exists.
-
-### 8.3 The paint operators
-
-All colour arithmetic is done in linear light and stored as sRGB. With base
-colour `b`, paint colour `c`, brush weight `w`, signed cavity `k` (positive in
-a crevice), occlusion `o`, normal `n` and stroke tangent `t`:
-
-| Operator | Result | Parameters |
-|---|---|---|
-| Opaque | `lerp(b, c, w)` | opacity |
-| Glaze | `lerp(b, b * c, w)` | opacity |
-| **Wash** | thickness `T = stain + flow * (a*max(k,0) + (1-a)*o) - edge * max(-k,0)`, clamped at 0; then `lerp(b, b * c^T, w)` | stain, flow, edge, scale mix `a` |
-| Drybrush | `g = ridge(-k) * facing(n, t) * streak(p, t) * load(distance)`; then `lerp(b, c, w * g)` | ridge threshold, streak, load length |
-| Sponge | `g = cell_noise(p, stamp_seed) > 1 - density`, optionally times `ridge(-k)`; then `lerp(b, c, w * g)` | density, grain, edge bias |
-| Zenithal | `g = max(0, n . L)^e * (1 - o_L)`; opaque | direction, spread |
-| Edge highlight | `g = ridge(-k)` at the finest scale; opaque | width |
-
-**The wash is Beer-Lambert, and that one line is the whole "abuse of ambient
-occlusion".** A film of pigment of thickness `T` transmits `c^T` of the light
-that reaches the surface under it. Where the film is thin (a ridge, `T` near 0)
-the base shows through nearly untouched: that is the highlight. On a flat it
-transmits about `c^stain`: the tint. In a crevice (`T` of 2 or 3) it
-transmits `c^3`: deeper *and more saturated*, which is exactly how a contrast
-paint behaves and exactly what a multiply by a grey ramp gets wrong. A wash and
-a contrast paint are the same operator at two settings of `stain`.
-
-**One stroke is one coat.** A stroke lays hundreds of overlapping stamps, and a
-multiplicative operator applied per stamp would darken unevenly wherever they
-happened to overlap. So a paint stroke accumulates **coverage** in a scratch
-`SparseField<u8>` and applies its operator from the *stroke-start* colour:
+What was built instead is in `brokkr-core/src/paint.rs`:
 
 ```mermaid
 flowchart LR
-    S0["Stroke begins"] --> R["First touch of a brick:<br/>undo recorder snapshots it<br/>(already how undo works)"]
-    R --> ST["Each stamp raises<br/>coverage = max(coverage, weight)"]
-    ST --> AP["colour = op(snapshot colour, coverage)<br/>for the voxels this stamp raised"]
-    AP --> ST
-    AP --> EN["Stroke ends:<br/>coverage buffer dropped,<br/>one undo entry"]
+    V["Voxel: one slot byte<br/>(upstream's colour field,<br/>unchanged)"] --> M["Mesh vertex:<br/>slot, and the crease signal"]
+    T["Document: paint table<br/>slot n is paint n,<br/>up to 63"] --> U["Uniform: four vectors a paint"]
+    M --> SH["Shader, per pixel:<br/>base, wash film, highlight"]
+    U --> SH
+    T --> EX["Export: the same arithmetic<br/>on the CPU (Paint::shade)"]
 ```
 
-The snapshot is the one undo already takes on first touch, so the coat rule
-costs one byte per touched voxel for the duration of a stroke and nothing
-after. Two strokes are two coats, as at the bench.
+A **paint** is a base coat, a wash and a highlight:
 
-### 8.4 Whole-body operations and their preview
+| Part | What it holds | What it does |
+|---|---|---|
+| Base | sRGB colour, finish | The colour of the paint |
+| Wash | pigment colour; `stain`, `flow`, `edge` | A film of thickness `T = stain + flow * recess - edge * edge_amount`, never below 0, that passes `pigment^T` of the light |
+| Highlight | colour; `amount`, `start` | Mixed in on edges sharper than `start`, up to `amount` at a full edge |
 
-Every operator above also runs as a **whole-body operation** with the mask as
-its only weight: prime, zenithal, wash everything, drybrush everything, edge
-highlight everything. They are the "speed" in speed paint.
+`recess` and `edge_amount` are the two halves of the crease signal of section
+5.3, scaled by the view's gain so that "a full crease" is a size in
+millimetres whatever the voxel size.
 
-**The preview is free and is the same formula.** The shader already has cavity
-and occlusion per vertex (S0) and paint per vertex (S2), so a pending wash is
-drawn live from four uniforms while the sliders move. *Apply* then runs the
-same arithmetic on the CPU and writes the field. One formula in two languages
-is a known hazard here, and the repository already has the remedy: a test that
-evaluates both on a table of inputs, in the manner of
-`the_base_luma_the_shader_divides_by_is_the_clays`.
+**The wash is Beer-Lambert, and that one line is the whole "abuse of ambient
+occlusion".** Where the film is thin (an edge, `T` near 0) the base shows
+through nearly untouched: that is the highlight a contrast paint leaves by
+itself. On a flat it passes about `pigment^stain`: the tint. In a crease (`T`
+of 2 or 3) it passes `pigment^3`: darker *and more saturated*, which is how a
+contrast paint behaves and what a multiply by a grey ramp gets wrong. A shade
+wash and a contrast paint are the same recipe at two settings of `stain`.
 
-**Undo for a whole-body operation** replaces the entire paint field, which can
-exceed the 256 MiB stroke budget (`undo.rs:96`) on its own. It is recorded as a
-whole-field replacement charged to the reclaim budget (`undo.rs:121`), the
-category that exists for "the entry is the only copy" (`undo.rs:54`, "Two
-counters, one deque").
+**What this buys, beyond not doing the sweep:**
+
+- **Nothing new per voxel.** A painted model costs what a filament-painted one
+  costs today, and every transform, the undo and the project file already
+  carry the byte without knowing what it now means.
+- **Non-destructive, everywhere at once.** Changing a wash's colour or how far
+  it flows recolours every voxel wearing that paint in the same frame, and
+  touches no voxel. There is no "apply", so there is no preview that can
+  disagree with the result.
+- **Washes follow the sculpt.** The film is worked out from the surface each
+  time the surface is drawn. A fold cut after painting gets its shadow.
+- **The print bridge is short.** A paint can name the filament it prints in,
+  and then the slot field already IS the multi-colour print instruction the
+  3MF writer consumes.
+
+**What it costs, and it is real:**
+
+- **No blends.** A voxel is one paint or another, so the boundary between two
+  paints is an edge and never a gradient. Speckle, stipple and a drybrush's
+  broken edge are all things an index holds well. A soft airbrushed fade from
+  one colour to another is not something it can hold at all. Section 8.6 has
+  the way out if that turns out to matter.
+- **63 paints a document**, because the shader is handed the whole table: four
+  vectors a paint, 4 KiB of uniform.
+
+**Saved** as an optional tagged trailer after the timeline keys: the eight
+bytes `BRKPAINT`, a length, the table. Written only when the document has
+paints, so a file without them is byte for byte what upstream writes and
+`CONTAINER_VERSION` did not move. (Bumping it to 4 with a mandatory trailer
+was tried first and broke 28 of upstream's project tests, which pin the
+bytes.) The reader is forgiving in one direction only: a damaged paint table
+gives back the sculpt with no paints, and never refuses the file. It has a
+mutation fuzz with a control.
+
+### 8.3 The techniques, as recipes and as gated strokes
+
+Each row of the table in 8.1 lands in one of two places. If the technique is
+"everywhere the geometry says", it is a term of the recipe and costs no
+stroke. If it is "where I put the brush, and only on what the geometry says",
+it is the paint brush with a gate from the brush engine (D4), writing a paint
+number.
+
+| Technique | Where it lives | State |
+|---|---|---|
+| Basecoat, detail | The paint brush, writing a slot | Built (upstream's brush, the rack on top) |
+| Wash, shade | Recipe: the wash | **Built** |
+| Contrast or speed paint | Recipe: the wash with a stain, over a pale base | **Built**, one click |
+| Edge highlight, overall drybrush | Recipe: the highlight | **Built** |
+| Drybrush as a stroke | Gated brush: writes a lighter paint only on convex voxels, in streaks along the stroke | S2.2 |
+| Sponge or stipple | Gated brush: cellular noise per stamp, optional edge bias | S2.2 |
+| Zenithal prime | Recipe term: lighten by normal against a direction, times broad occlusion | S2.3, needs the occlusion byte |
+| Fill: body, mask, crease-bounded | Whole-body slot writes, with the mask as the only weight | S2.2 |
+
+"Slapchop" is then a paint: pale base, contrast wash, a near-white highlight
+with a low `start`. One click on *Contrast* and one slider.
+
+**One stroke is one coat**, which the first draft needed a coverage buffer to
+guarantee, is free here: writing a slot twice is writing it once.
+
+### 8.4 The two copies of the arithmetic
+
+`Paint::shade` on the CPU and `sculpt.wgsl` on the GPU compute the same
+colour. One formula in two languages is a known hazard, and the repository's
+remedy is used: `the_shader_shades_a_paint_the_way_the_engine_does` pins the
+shader's lines and evaluates a Rust transcription of them against
+`Paint::shade` over a table of paints and creases, in the manner of
+`the_base_luma_the_shader_divides_by_is_the_clays`. An export bakes with the
+CPU copy, so what is exported is what was on screen.
 
 ### 8.5 The paint view
 
-- **Lit:** paint albedo times the matcap's lighting term. This is the filament
-  path that already exists (`sculpt.wgsl:105-112`) reading a vertex colour
-  instead of a palette entry. It needs a second `Unorm8x4` attribute buffer and
-  almost no new shader.
-- **Flat:** albedo only. A wash paints shading *into* the colour, so a painter
-  has to be able to see the paint without the viewport's own lighting on top.
-- **Finish** (later in S2): gloss and metallic read a second matcap.
+- **Lit:** the paint's colour times the matcap's lighting term. This is the
+  filament path that already existed, reading a recipe where there is one and
+  the palette where there is not.
+- **Flat** (S2.3): the paint's colour alone, because a wash is shading and a
+  painter has to be able to see it without the viewport's own light on top.
+- **Finish** (later): gloss and metallic read a second matcap. The finish is
+  saved with a paint today so that paints mixed now keep it.
+- **Thumbnails** draw a painted body with its washes, at the viewport's gain.
 
-Tools around it: colour picker, eyedropper, a paint rack of named swatches
-saved beside the filament palette, fill (body, mask, slot region), and later a
-**crease-bounded fill** that floods an area and stops at cavity lines, which is
-what makes basecoating by region one click per region.
+**The rack.** With the Paint brush chosen, the panel offers the filament
+slots and a *Mix paints* button. Mixing makes one plain paint per filament
+slot, in the filament's colour, so nothing already painted changes colour;
+from then on the panel shows the rack and an editor for the paint in hand:
+name, then one coat at a time (base, wash, highlight), each with a range of
+24 starting colours, three channel sliders and its own amounts. The wash has
+three ready-made kinds: None, Shade (the base's own hue, darker, in the
+recesses) and Contrast (the colour moves into the wash over a pale
+undercoat).
 
 ### 8.6 The honest limits
 
+- **No blends**, as 8.2 says. The named way out is a second, optional field
+  of blend weights between a voxel's paint and one neighbour paint, which is
+  one more byte and not three, and is not built until a painter asks for it.
 - **Paint resolution is the voxel size.** A 32 mm figure at 0.1 mm is 320
-  paint cells tall. That is close to what a physical brush resolves at 1:1 and
-  it looks coarse zoomed in on a monitor. The existing answer applies: resample
-  finer (down to 0.03 mm). The named way out is a paint lattice at twice the
-  field's resolution, deferred until someone needs it more than they need the
-  memory.
-- **No paint layers in the first version** (section 12).
-- **No pigment flow simulation.** The wash is a transfer function of geometry,
-  not a fluid. Gravity pooling is a possible extra term, not a solver.
+  paint cells tall. The boundary between two paints is cut at half-triangle
+  precision by the mesher (`mesh.rs`), which is finer than the cells, and a
+  wash is shaded per pixel from an interpolated signal, which is finer again.
+- **The wash sees fine creases only.** It reads the fine cavity signal of
+  section 5.3, a few voxels wide. The broad occlusion that darkens the inside
+  of a cloak comes from the pyramid, through the one free attribute byte, in
+  S2.3.
+- **No pigment flow simulation.** The wash is a transfer function of
+  geometry, not a fluid. Gravity pooling is a possible extra term, not a
+  solver.
+- **Editing a paint is not in the undo history yet**, and a paint cannot be
+  removed. Both are recorded in `brokkr-app/src/app/paints.rs` with the
+  reason.
+
+#### Built, 2026-11-22 (S2.1)
+
+- `brokkr-core/src/paint.rs`: `Paint`, `Wash`, `Highlight`, `PaintTable`,
+  `Paint::shade`, the table's byte format and its reader.
+- `brokkr-core/src/project.rs`: the optional `BRKPAINT` trailer. All 71
+  project tests pass unchanged apart from eight fixtures that gained
+  `..ProjectState::default()`.
+- `brokkr-gpu/src/paints.rs`: `PaintBlock`, the table as the shader reads it.
+  The uniform grew by 4,096 bytes.
+- `sculpt.wgsl`: 14 lines in the paint branch.
+- `brokkr-app/src/app/paints.rs`: the rack, the editor, the handlers. Upstream
+  files received two fields, four message arms, two call sites and three
+  one-line hooks.
+
+**Measured in pixels, on the real shader** (`tests/offscreen.rs`, a cube with
+a slot cut in it, drawn by lavapipe): a plain paint is a filament of its
+colour to the byte; a shade with no stain darkens the slot's inside corner by
+more than 10 levels of luma and leaves the flat and the edge exactly as they
+were; a contrast paint's saturation falls in the order crease, flat, edge;
+a highlight reaches the edge and neither the flat nor the crease.
 
 ---
 
@@ -1105,7 +1173,7 @@ measured baselines when its milestone opens.
 | 1 | **S0 Groundwork** | Brush engine (no behaviour change), `SparseField`, form pyramid, signals, cavity shading toggle, branch and CI hygiene | 2 to 3 | Everything stands on it. Zero user-facing risk. Cavity shading is a visible win by itself |
 | 2 | **S1a Decimated export** | Tolerance in mm, field verified, slot boundaries held, report | 2 | Smallest, independent, fixes a pain that exists today, prerequisite for S5, upstream candidate |
 | 3 | **S1b Parting with keys** | Plane part, four key kinds, auto placement, clearance, preview | 2 to 3 | Independent. The engine makes it nearly free. Upstream candidate |
-| 4 | **S2 Mini painting** | Paint field and view, prime, opaque and glaze, wash and contrast, drybrush, sponge, zenithal, edge highlight, whole-body versions, paint to slots, PLY | 5 to 7 | The headline. Largest. Needs S0's signals and gates |
+| 4 | **S2 Mini painting** | Paint recipes and the rack (done), gated drybrush and sponge strokes, fills, zenithal and broad occlusion, paints to filaments, PLY | 5 to 7 | The headline. Largest. Needs S0's signals and gates |
 | 5 | **S3 Brush engine, surfaced** | Alphas, drag rect, displace, dynamics curves, new operators, presets | 3 to 4 | The refactor is done in S0 and exercised by S2; this exposes it |
 | 6 | **S4 Form tools** | Bulk and slim, form smooth, posed transform, detail gain | 3 | Needs the pyramid. High value, one real unknown (resample blur) |
 | 7 | **S5 Unwrap and bake** | Charts, packing, bake, OBJ+PNG, GLB | 3 to 4 | Needs S1a and S2. Newest mathematics. Only matters once there is paint to carry |

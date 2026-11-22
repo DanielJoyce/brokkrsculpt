@@ -1740,7 +1740,7 @@ impl Brokkr {
         // the filament. A menu that listed both under PAINT contradicted the
         // panel beside it.
         if self.brush.kind == BrushKind::Paint && self.tool != Tool::Mask {
-            body = body.push(self.filament_picker());
+            body = body.push(self.paint_picker(false));
         } else {
             body = body
                 .push(numeric(
@@ -2293,7 +2293,7 @@ impl Brokkr {
         .spacing(theme::S2);
 
         let strength: Element<'_, Message> = if painting {
-            self.filament_picker()
+            self.paint_picker(true)
         } else {
             column![
                 text(format!("Strength  {:.2}", self.brush.strength))
@@ -3560,7 +3560,7 @@ impl Brokkr {
     ///
     /// Lives in the brush block and not in FILAMENT below, because it is
     /// consulted while sculpting and FILAMENT is consulted while exporting.
-    fn filament_picker(&self) -> Element<'_, Message> {
+    pub(super) fn filament_picker(&self) -> Element<'_, Message> {
         let swatches = self.palette.slots.iter().enumerate().fold(
             row![].spacing(theme::S1),
             |assembled, (index, slot)| {

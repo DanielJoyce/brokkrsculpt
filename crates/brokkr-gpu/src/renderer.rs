@@ -116,6 +116,12 @@ pub struct Uniforms {
     /// byte array stride uniform address space imposes; the fourth component
     /// is spare.
     pub palette: [[f32; 4]; PALETTE_SLOTS],
+    /// The document's paints, by slot. See [`crate::PaintBlock`].
+    ///
+    /// Where a slot names a paint here, the shader draws the paint and never
+    /// looks at `palette`. An empty block is all zeros, names no paint, and
+    /// leaves every slot drawn as the filament it always was.
+    pub paints: crate::PaintBlock,
 }
 
 /// Filament slots the shader can name, counting the unpainted zero.
@@ -130,7 +136,7 @@ pub const PALETTE_SLOTS: usize = 16;
 pub const UNKNOWN_FILAMENT: [f32; 4] = [1.0, 0.0, 1.0, 1.0];
 
 const _: () = assert!(
-    size_of::<Uniforms>() == 160 + 16 * PALETTE_SLOTS,
+    size_of::<Uniforms>() == 160 + 16 * PALETTE_SLOTS + size_of::<crate::PaintBlock>(),
     "Uniforms must stay in step with the WGSL struct in sculpt.wgsl"
 );
 
@@ -153,6 +159,7 @@ impl Default for Uniforms {
             // of here, and a mesh carries no cavity until something asks.
             cavity: [0.0; 4],
             palette: [UNKNOWN_FILAMENT; PALETTE_SLOTS],
+            paints: crate::PaintBlock::default(),
         }
     }
 }
@@ -242,6 +249,11 @@ pub struct SculptRenderer {
     /// The palette the viewport was last given, for the thumbnail pass, which
     /// writes its own camera and has no other way to learn the colours.
     palette: [[f32; 4]; PALETTE_SLOTS],
+    /// And the paints it was last given, for the same pass and reason.
+    paints: crate::PaintBlock,
+    /// And how much signal the viewport calls a full crease, because a wash
+    /// in a thumbnail has to pool where the wash in the viewport does.
+    crease_gain: f32,
 }
 
 impl SculptRenderer {
@@ -474,6 +486,8 @@ impl SculptRenderer {
             format: target_format,
             srgb_target: target_format.is_srgb(),
             palette: Uniforms::default().palette,
+            paints: crate::PaintBlock::default(),
+            crease_gain: Uniforms::default().cavity[1],
         }
     }
 
@@ -581,6 +595,8 @@ impl SculptRenderer {
     /// second buffer and not an offset.
     pub fn write_uniforms(&mut self, queue: &wgpu::Queue, uniforms: &Uniforms) {
         self.palette = uniforms.palette;
+        self.paints = uniforms.paints;
+        self.crease_gain = uniforms.cavity[1];
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(uniforms));
         let opposite =
             Uniforms { mask_inverted: u32::from(uniforms.mask_inverted == 0), ..*uniforms };
@@ -666,7 +682,14 @@ impl SculptRenderer {
             return;
         }
 
-        self.thumbnails.write_uniforms(queue, bounds, self.srgb_target, &self.palette);
+        self.thumbnails.write_uniforms(
+            queue,
+            bounds,
+            self.srgb_target,
+            &self.palette,
+            &self.paints,
+            self.crease_gain,
+        );
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("brokkr thumbnail"),

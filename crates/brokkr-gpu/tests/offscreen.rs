@@ -428,6 +428,7 @@ fn uniforms(distance: f32) -> Uniforms {
         paint_shown: 1,
         cavity: [0.0; 4],
         palette: red_palette(),
+        paints: brokkr_gpu::PaintBlock::default(),
     }
 }
 
@@ -2604,5 +2605,278 @@ fn creases_are_drawn_darker_and_edges_lighter_and_flats_are_left_alone() {
     assert!(
         halfway * 4 > full && halfway * 4 < full * 3,
         "half strength moved the picture by {halfway} against {full} at full strength"
+    );
+}
+
+/// How saturated each pixel is, in thousandths: `1 - min / max` of its three
+/// channels. A light multiplies all three alike, so this is nearly the same
+/// for one colour in the light and in the shade, which luma is not; and a
+/// wash of pigment raises it where the wash is thick, which a wash of grey
+/// does not.
+fn saturation(pixels: &[u8]) -> Vec<i32> {
+    pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|p| {
+            let high = i32::from(p[0].max(p[1]).max(p[2]));
+            let low = i32::from(p[0].min(p[1]).min(p[2]));
+            if high == 0 { 0 } else { 1000 * (high - low) / high }
+        })
+        .collect()
+}
+
+/// A paint is drawn as its recipe says, on the real mesh, by the real shader.
+///
+/// `the_shader_shades_a_paint_the_way_the_engine_does` holds the shader's
+/// arithmetic to the engine's line by line. This is the half that cannot be
+/// read off the source: that the table reaches the right binding, that slot
+/// `n` reads row `n` of it, that the crease signal the wash reads is the one
+/// in the mesh with its sign the right way up, and that a plain paint is
+/// exactly a filament of the same colour.
+#[test]
+fn a_paint_is_drawn_with_its_wash_in_the_creases_and_its_highlight_on_the_edges() {
+    use brokkr_core::paint::{Highlight, Paint, PaintTable, Wash, linear};
+    use brokkr_gpu::PaintBlock;
+
+    let Some(harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the paint recipe test");
+        return;
+    };
+
+    let distance = MODEL_RADIUS * 3.0;
+    let mut renderer = SculptRenderer::new(&harness.device, &harness.queue, TARGET_FORMAT);
+    renderer.resize(&harness.device, WIDTH, HEIGHT);
+
+    let mut volume = slotted_cube();
+    paint(&mut volume, false);
+    let measured =
+        upload_all_with_cavity(&mut renderer, &harness.device, &harness.queue, &mut volume);
+    assert!(measured > 1000, "the fixture measured cavity at only {measured} vertices");
+
+    // Creases are NOT shown, and the gain is on: what the application
+    // publishes for a painted document with the crease view switched off.
+    let pale = [232, 226, 214];
+    let table = |paint: Paint| {
+        let mut table = PaintTable::default();
+        table.add(paint).expect("an empty table took no paint");
+        PaintBlock::from(&table)
+    };
+    let with = |paints: PaintBlock, palette: [[f32; 4]; PALETTE_SLOTS]| Uniforms {
+        cavity: [0.0, 1.0, 0.0, 0.0],
+        paints,
+        palette,
+        ..uniforms(distance)
+    };
+    let mut frame = |uniforms: Uniforms| {
+        renderer.write_uniforms(&harness.queue, &uniforms);
+        harness.frame(&renderer)
+    };
+
+    // 1. A plain paint is a filament of its colour, to the byte.
+    let mut as_filament = red_palette();
+    let base = linear(pale);
+    as_filament[1] = [base[0], base[1], base[2], 1.0];
+    let filament = frame(with(PaintBlock::default(), as_filament));
+    let plain = frame(with(table(Paint::flat("plain", pale)), red_palette()));
+    assert_eq!(
+        plain, filament,
+        "a paint with no wash and no highlight is not drawn as a filament of the same colour"
+    );
+    // The control for that: the palette under a paint is not what is drawn,
+    // so the two frames agreeing was the paint's doing.
+    let filament_red = frame(with(PaintBlock::default(), red_palette()));
+    assert_ne!(
+        filament_red, plain,
+        "the paint table changed nothing: slot 1 is still the palette's"
+    );
+
+    // 2. Slot 1 reads row 1 and no other: a table whose only paint is slot 2
+    // leaves a body painted slot 1 on its filament.
+    let mut second = PaintTable::default();
+    second.add(Paint::flat("first", pale)).unwrap();
+    second.add(Paint::flat("second", [10, 200, 30])).unwrap();
+    let both = frame(with(PaintBlock::from(&second), red_palette()));
+    assert_eq!(both, plain, "slot 1 was drawn with another slot's paint");
+
+    let drawn = mask(&plain);
+    let half = MODEL_RADIUS * 0.6;
+    // The mean of a measure over the drawn pixels within three of a point
+    // projected to the screen.
+    let near = |values: &[i32], point: Vec3| -> i32 {
+        let clip = view_projection(distance) * point.extend(1.0);
+        let ndc = clip.truncate() / clip.w;
+        let px = ((ndc.x * 0.5 + 0.5) * WIDTH as f32).round() as i32;
+        let py = ((0.5 - ndc.y * 0.5) * HEIGHT as f32).round() as i32;
+        let (mut sum, mut count) = (0, 0);
+        for dy in -3..=3 {
+            for dx in -3..=3 {
+                let (x, y) = (px + dx, py + dy);
+                if x < 0 || y < 0 || x >= WIDTH as i32 || y >= HEIGHT as i32 {
+                    continue;
+                }
+                let index = (y * WIDTH as i32 + x) as usize;
+                if drawn[index] {
+                    sum += values[index];
+                    count += 1;
+                }
+            }
+        }
+        assert!(count > 8, "only {count} drawn pixels near {point}");
+        sum / count
+    };
+    // The same three places the crease test reads: the slot's inside corner,
+    // the cube's edge between the two faces the camera sees, and the middle
+    // of the big flat beside the slot.
+    let crease = Vec3::new(-3.0, 0.0, half - 5.0);
+    let edge = Vec3::new(half, 0.0, half);
+    let flat = Vec3::new(-half * 0.55, 0.0, half);
+
+    // 3. A shade: a dark film in the recesses and nowhere else. No stain and
+    // no run-off, so the flat and the edge must not move at all.
+    let shade = Wash { colour: [70, 30, 20], stain: 0.0, flow: 2.0, edge: 0.0 };
+    let shaded =
+        frame(with(table(Paint { wash: shade, ..Paint::flat("shaded", pale) }), red_palette()));
+    dump("paint-plain", &plain);
+    dump("paint-shade", &shaded);
+    // Not "the same silhouette": `mask` is a brightness threshold, and a
+    // shade is allowed to take a crease below it. Nothing may appear, though.
+    assert!(
+        mask(&shaded).iter().zip(&drawn).all(|(now, was)| *was || !*now),
+        "a wash drew something where there was no body"
+    );
+    let (was, now) = (luma(&plain), luma(&shaded));
+    assert!(
+        near(&now, crease) < near(&was, crease) - 10,
+        "a shade did not darken the crease: {} against {}",
+        near(&now, crease),
+        near(&was, crease)
+    );
+    assert_eq!(near(&now, flat), near(&was, flat), "a wash with no stain tinted the flat");
+    assert_eq!(near(&now, edge), near(&was, edge), "a wash with no run-off changed the edge");
+
+    // 4. A contrast paint: one pigment, thick in the crease, thinner on the
+    // flat, nearly gone on the edge. Saturation orders the three, which is
+    // the thing a film of pigment does and a darkening by grey cannot.
+    let contrast = Wash::contrast([190, 32, 36]);
+    let coated = frame(with(
+        table(Paint { wash: contrast, ..Paint::flat("contrast", pale) }),
+        red_palette(),
+    ));
+    dump("paint-contrast", &coated);
+    let rich = saturation(&coated);
+    let (in_crease, on_flat, on_edge) = (near(&rich, crease), near(&rich, flat), near(&rich, edge));
+    assert!(
+        in_crease > on_flat + 30 && on_flat > on_edge + 100,
+        "a contrast paint's saturation is {in_crease} in the crease, {on_flat} on the flat and \
+         {on_edge} on the edge, in thousandths; it must fall in that order"
+    );
+    let bare = saturation(&plain);
+    assert!(
+        on_flat > near(&bare, flat) + 200,
+        "a contrast paint did not tint the flat: {on_flat} against {}",
+        near(&bare, flat)
+    );
+
+    // 5. A highlight: a light colour on the edges and nowhere else. Blue, so
+    // that it is told from the pale base by more than brightness.
+    let light = Highlight { colour: [40, 90, 255], amount: 1.0, start: 0.2 };
+    let lit =
+        frame(with(table(Paint { highlight: light, ..Paint::flat("edged", pale) }), red_palette()));
+    dump("paint-highlight", &lit);
+    let (cool_before, cool_after) = (warmth(&plain), warmth(&lit));
+    assert!(
+        near(&cool_after, edge) < near(&cool_before, edge) - 30,
+        "a blue highlight did not reach the edge: warmth {} against {}",
+        near(&cool_after, edge),
+        near(&cool_before, edge)
+    );
+    assert_eq!(near(&cool_after, flat), near(&cool_before, flat), "a highlight landed on the flat");
+    assert_eq!(
+        near(&cool_after, crease),
+        near(&cool_before, crease),
+        "a highlight landed in the crease"
+    );
+
+    // 6. And a paint is paint: with paint hidden the body is clay, whatever
+    // the table says.
+    let hidden = frame(Uniforms {
+        paint_shown: 0,
+        ..with(table(Paint { wash: contrast, ..Paint::flat("contrast", pale) }), red_palette())
+    });
+    let clay = frame(Uniforms { paint_shown: 0, ..with(PaintBlock::default(), red_palette()) });
+    assert_eq!(hidden, clay, "paints were drawn with paint switched off");
+}
+
+/// A thumbnail draws a paint as the viewport does: from the table the
+/// viewport was last given, with the wash pooling at the viewport's gain.
+///
+/// The twin of the palette relay test above, for the two things this adds to
+/// that relay, `SculptRenderer::paints` and `SculptRenderer::crease_gain`.
+/// Nothing else reads either, so without this a thumbnail of a washed body
+/// could go on showing a plain one and no test would say.
+#[test]
+fn a_thumbnail_shows_a_paint_with_its_wash_at_the_viewports_gain() {
+    use brokkr_core::paint::{Paint, PaintTable, Wash, linear};
+    use brokkr_gpu::PaintBlock;
+
+    const CELL: u32 = 1;
+    let Some(harness) = Harness::in_format(TARGET_FORMAT) else {
+        eprintln!("no usable wgpu adapter, skipping the thumbnail paint recipe test");
+        return;
+    };
+    let distance = MODEL_RADIUS * 3.0;
+    let mut renderer = SculptRenderer::new(&harness.device, &harness.queue, TARGET_FORMAT);
+    renderer.resize(&harness.device, WIDTH, HEIGHT);
+
+    let mut volume = slotted_cube();
+    paint(&mut volume, false);
+    let bounds = volume.world_bounds().expect("the fixture has bricks");
+    upload_all_with_cavity(&mut renderer, &harness.device, &harness.queue, &mut volume);
+
+    let pale = [232, 226, 214];
+    let base = linear(pale);
+    let mut palette = red_palette();
+    palette[1] = [base[0], base[1], base[2], 1.0];
+    // No stain and no run-off: with no gain there is no film anywhere, and
+    // the paint is its base coat.
+    let wash = Wash { colour: [70, 30, 20], stain: 0.0, flow: 3.0, edge: 0.0 };
+    let mut table = PaintTable::default();
+    table.add(Paint { wash, ..Paint::flat("shaded", pale) }).unwrap();
+    let paints = PaintBlock::from(&table);
+
+    let mut cell = |paints: PaintBlock, gain: f32| {
+        // The viewport's own strength stays at zero throughout: creases are
+        // not shown, and a thumbnail does not show them either.
+        let uniforms =
+            Uniforms { cavity: [0.0, gain, 0.0, 0.0], paints, palette, ..uniforms(distance) };
+        renderer.write_uniforms(&harness.queue, &uniforms);
+        renderer.render_thumbnail(&harness.device, &harness.queue, CELL, THE_ONLY_BODY, bounds);
+        harness.cell(&renderer, CELL)
+    };
+
+    let filament = cell(PaintBlock::default(), 1.0);
+    let no_gain = cell(paints, 0.0);
+    assert_eq!(
+        no_gain, filament,
+        "a wash with no stain, at no gain, is not its base coat in the thumbnail"
+    );
+    let washed = cell(paints, 1.0);
+    assert_ne!(
+        washed, filament,
+        "the thumbnail drew a washed paint as a plain filament: the table or the gain was not relayed"
+    );
+    let darker =
+        luma(&washed).iter().zip(luma(&filament)).filter(|(now, was)| **now + 6 <= *was).count();
+    let lighter =
+        luma(&washed).iter().zip(luma(&filament)).filter(|(now, was)| **now >= *was + 6).count();
+    assert!(darker > 4, "only {darker} thumbnail texels got darker under a shade");
+    assert_eq!(lighter, 0, "{lighter} thumbnail texels got LIGHTER under a shade");
+    // And it is the viewport's gain, not a fixed one: more gain, more pooling.
+    let stronger = cell(paints, 3.0);
+    let sum = |frame: &[u8]| luma(frame).iter().map(|l| i64::from(*l)).sum::<i64>();
+    assert!(
+        sum(&stronger) < sum(&washed),
+        "three times the gain did not pool more wash into the thumbnail's creases"
     );
 }

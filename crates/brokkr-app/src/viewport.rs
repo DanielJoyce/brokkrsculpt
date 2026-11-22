@@ -133,13 +133,22 @@ pub struct PaintView {
     pub shown: bool,
     /// Linear RGB per slot. See [`brokkr_gpu::Uniforms::palette`].
     pub palette: [[f32; 4]; brokkr_gpu::PALETTE_SLOTS],
+    /// The document's paints, as the shader reads them. Unlike the palette
+    /// this IS the document's: it is here because this is the one road from
+    /// the application to the uniform, and it is all zeros for a document
+    /// that has no paints, which leaves every slot a filament.
+    pub paints: brokkr_gpu::PaintBlock,
 }
 
 impl Default for PaintView {
     /// Shown, in the unknown-filament colour, for the reason [`MaskView`]'s
     /// default is tinted: the default has to fail visibly.
     fn default() -> Self {
-        Self { shown: true, palette: Uniforms::default().palette }
+        Self {
+            shown: true,
+            palette: Uniforms::default().palette,
+            paints: brokkr_gpu::PaintBlock::default(),
+        }
     }
 }
 
@@ -1090,6 +1099,7 @@ impl shader::Primitive for SculptPrimitive {
             paint_shown: u32::from(paint.shown),
             cavity: [cavity.strength, cavity.gain, 0.0, 0.0],
             palette: paint.palette,
+            paints: paint.paints,
         };
         pipeline.renderer.write_uniforms(queue, &uniforms);
         {

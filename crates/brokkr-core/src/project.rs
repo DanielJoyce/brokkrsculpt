@@ -113,6 +113,29 @@ const MAGIC: &[u8; 8] = b"BROKKR\x00\x01";
 /// those two bytes are reserved rather than absent.
 const CONTAINER_VERSION: u16 = 3;
 
+/// What marks a paint table after the key trailer.
+///
+/// **The table is not part of the container's layout and does not bump its
+/// version**, and that is a decision made the hard way. The first attempt
+/// made it section five of a version 4 container, and 28 of this file's own
+/// tests failed: they build files byte by byte, and every one of them had its
+/// length and its trailer moved under it for a feature none of them use.
+///
+/// So the table is an OPTIONAL tail, present only in a document that has
+/// paints, behind a tag of its own. A document without paints is written
+/// byte for byte as it always was. A reader that predates paints stops after
+/// the keys, where it always stopped, and opens the file with its slots
+/// drawn as filaments. And a file from before paints has nothing after its
+/// keys, which this reader takes as no table.
+const PAINT_TAG: &[u8; 8] = b"BRKPAINT";
+
+/// The most bytes a paint table may claim to be.
+///
+/// A table is at most [`crate::paint::MAX_PAINTS`] paints of under a hundred
+/// bytes each. The length in the file is checked against this before anything
+/// is allocated for it, like every other count the reader meets.
+const MAX_PAINT_TABLE_BYTES: u32 = 16 * 1024;
+
 /// The oldest layout this build still reads.
 ///
 /// Version 1 is version 2 without the key trailer, so reading one is a matter
@@ -528,6 +551,14 @@ pub struct ProjectState {
     /// nearest a click -- and a list that is sorted only sometimes makes every
     /// one of those a bug waiting for the one caller that forgot.
     pub keys: Vec<Keyframe>,
+    /// The document's paints: what each painted slot means. See
+    /// [`crate::paint`]. Empty for a document that only uses filaments.
+    ///
+    /// Here and not in [`Document`] because it is read by the shell and the
+    /// renderer and by nothing in the engine's own operations: no brush, cut
+    /// or transform consults it. The slot NUMBERS are in the voxels and are
+    /// carried by all of those.
+    pub paints: crate::paint::PaintTable,
 }
 
 /// How far a read got before it returned.
@@ -963,6 +994,15 @@ pub fn write(out: &mut impl Write, doc: &Document, state: &ProjectState) -> Resu
     for key in &state.keys {
         write_f32(out, key.at)?;
         write_view(out, &key.view)?;
+    }
+
+    // The paint table, only where there is one. See `PAINT_TAG` for why a
+    // document without paints must not gain a byte here.
+    if !state.paints.is_empty() {
+        let paints = state.paints.encode();
+        out.write_all(PAINT_TAG)?;
+        write_u32(out, paints.len() as u32)?;
+        out.write_all(&paints)?;
     }
 
     out.flush()?;
@@ -1554,7 +1594,11 @@ fn read_understanding_field_versions_to(
     newest_field: u16,
 ) -> Result<(Document, ProjectState)> {
     let header = read_header(input, newest_field)?;
-    let mut state = ProjectState { view: header.view, keys: Vec::new() };
+    let mut state = ProjectState {
+        view: header.view,
+        keys: Vec::new(),
+        paints: crate::paint::PaintTable::default(),
+    };
 
     let (rows, active) = read_table_or_synthesize(input, header.container, progress)?;
 
@@ -1623,6 +1667,37 @@ fn read_understanding_field_versions_to(
         // Sorted on the way in, because everything downstream asks for
         // neighbours and a file is free to have been written by anything.
         state.keys.sort_by(|a, b| a.at.partial_cmp(&b.at).expect("clamped, so no NaN"));
+    }
+
+    // The paint table, if the file goes on. Everything here is forgiving, on
+    // purpose: the geometry has been read in full by this point, and nothing
+    // about a colour chart is worth losing it for. Too short to be a tag, a
+    // tag that is not this one, a length past the cap, bytes that will not
+    // decode: each leaves the document with no paints, its slots drawn as
+    // filaments, and the sculpt intact.
+    if header.container >= 2 {
+        let mut tag = [0u8; 8];
+        let mut filled = 0;
+        while filled < tag.len() {
+            match input.read(&mut tag[filled..]) {
+                Ok(0) => break,
+                Ok(count) => filled += count,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => break,
+            }
+        }
+        if filled == tag.len() && &tag == PAINT_TAG {
+            let mut length = [0u8; 4];
+            if input.read_exact(&mut length).is_ok() {
+                let length = u32::from_le_bytes(length);
+                if length <= MAX_PAINT_TABLE_BYTES {
+                    let mut bytes = vec![0u8; length as usize];
+                    if input.read_exact(&mut bytes).is_ok() {
+                        state.paints = crate::paint::PaintTable::decode(&bytes).unwrap_or_default();
+                    }
+                }
+            }
+        }
     }
 
     let mut doc = Document::from_table(header.voxel_size, loaded, active);
@@ -1956,6 +2031,7 @@ mod tests {
                 mirror: [true, false, true],
             },
             keys: Vec::new(),
+            ..ProjectState::default()
         };
         let (_, loaded) = round_trip(&sculpted_doc(), &state);
         assert_eq!(loaded, state);
@@ -2542,6 +2618,7 @@ mod tests {
         let state = ProjectState {
             view: View { camera_distance: 77.0, ..View::default() },
             keys: vec![a_key(0.0, 10.0), a_key(0.25, 20.0), a_key(0.9, 30.0)],
+            ..ProjectState::default()
         };
         let (_, loaded) = round_trip(&sculpted_doc(), &state);
         assert_eq!(loaded, state, "the keys did not come back as they went in");
@@ -2555,6 +2632,7 @@ mod tests {
         let state = ProjectState {
             view: View::default(),
             keys: vec![a_key(0.8, 1.0), a_key(0.1, 2.0), a_key(0.5, 3.0)],
+            ..ProjectState::default()
         };
         let (_, loaded) = round_trip(&sculpted_doc(), &state);
         let order: Vec<f32> = loaded.keys.iter().map(|key| key.at).collect();
@@ -2579,6 +2657,7 @@ mod tests {
         let state = ProjectState {
             view: View { camera_distance: 55.0, brush_radius: 7.0, ..View::default() },
             keys: Vec::new(),
+            ..ProjectState::default()
         };
         let mut bytes = Vec::new();
         write(&mut bytes, &doc, &state).expect("write failed");
@@ -2652,6 +2731,7 @@ mod tests {
             let state = ProjectState {
                 view: View::default(),
                 keys: vec![Keyframe { at: offending, view: View::default() }],
+                ..ProjectState::default()
             };
             let (_, loaded) = round_trip(&sculpted_doc(), &state);
             let at = loaded.keys[0].at;
@@ -2676,6 +2756,7 @@ mod tests {
                     ..View::default()
                 },
             }],
+            ..ProjectState::default()
         };
         let (_, loaded) = round_trip(&sculpted_doc(), &state);
         assert!(loaded.keys[0].view.camera_target.is_finite());
@@ -2884,6 +2965,7 @@ mod tests {
         let state = ProjectState {
             view: View { camera_distance: 12.0, ..View::default() },
             keys: vec![a_key(0.4, 9.0)],
+            ..ProjectState::default()
         };
 
         let mut first = Vec::new();
@@ -4235,6 +4317,7 @@ mod tests {
                 mirror: [true, false, true],
             },
             keys,
+            ..ProjectState::default()
         }
     }
 

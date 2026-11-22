@@ -40,6 +40,20 @@ struct Uniforms {
     // Rust-side change to PALETTE_SLOTS would otherwise pass validation with
     // the shader indexing past what it was given.
     palette: array<vec4<f32>, 16>,
+    // The document's paints, by slot: what `brokkr_gpu::PaintBlock` lays out.
+    // A paint is a base coat, a wash over it and a highlight on its edges,
+    // and where `paint_base[slot].w` is non zero the slot names one and the
+    // filament palette above is not consulted. All zeros is "no paints", and
+    // draws every slot as the filament it always was.
+    paint_base: array<vec4<f32>, 64>,
+    // The wash's pigment, and in w its stain: the film's thickness on a flat.
+    paint_wash: array<vec4<f32>, 64>,
+    // x: how much more film a full crease holds. y: how much a full edge
+    // sheds. z: how opaque the highlight is at a full edge. w: how sharp an
+    // edge has to be before any highlight lands.
+    paint_film: array<vec4<f32>, 64>,
+    // The highlight's colour.
+    paint_light: array<vec4<f32>, 64>,
 }
 
 // Luminance of the matcap's BASE clay colour in linear light, which is what a
@@ -53,6 +67,10 @@ const MATCAP_BASE_LUMA: f32 = 0.384;
 // clips at the specular peak -- as white plastic does -- while the rest of the
 // lit quarter keeps its gradient rather than flattening to one value.
 const PAINT_EXPOSURE: f32 = 0.8;
+// The least light a wash's pigment is taken to pass, so that pure black on an
+// edge is `floor^0` and not `0^0`. `brokkr_core::paint::WASH_FLOOR` is the
+// other copy and `paints::tests` reads this line.
+const WASH_FLOOR: f32 = 0.003;
 // The largest curvature the cavity byte carries, in 1/voxel. One fact in two
 // places: `brokkr_core::signals::CAVITY_RANGE` is the other, and
 // `renderer::tests::the_shader_decodes_cavity_the_way_the_engine_encodes_it`
@@ -136,12 +154,32 @@ fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) ->
     // lighting kept. A slot past the palette clamps to the last entry, which
     // the application fills with a colour no filament is.
     if (uniforms.paint_shown != 0u && in.slot != 0u) {
-        let filament = uniforms.palette[min(in.slot, 15u)].rgb;
+        var albedo = uniforms.palette[min(in.slot, 15u)].rgb;
+        let base = uniforms.paint_base[min(in.slot, 63u)];
+        if (base.w > 0.5) {
+            // A paint, and not a filament: a recipe shaded from how concave
+            // the surface is here. This is `brokkr_core::paint::Paint::shade`
+            // line for line, and `paints::tests` reads these lines out of
+            // this file to hold the two together.
+            let wash = uniforms.paint_wash[min(in.slot, 63u)];
+            let film = uniforms.paint_film[min(in.slot, 63u)];
+            let light = uniforms.paint_light[min(in.slot, 63u)];
+            let s = clamp(in.cavity * uniforms.cavity.y, -1.0, 1.0);
+            let recess = max(s, 0.0);
+            let edge = max(-s, 0.0);
+            albedo = base.rgb;
+            // The wash is a film of pigment, by Beer and Lambert: thin on an
+            // edge, `stain` thick on a flat, pooled in a crease.
+            let thickness = max(wash.w + film.x * recess - film.y * edge, 0.0);
+            albedo = albedo * pow(max(wash.rgb, vec3<f32>(WASH_FLOOR)), vec3<f32>(thickness));
+            let caught = clamp(smoothstep(film.w, 1.0, edge) * film.z, 0.0, 1.0);
+            albedo = mix(albedo, light.rgb, caught);
+        }
         let luma = dot(colour, vec3<f32>(0.2126, 0.7152, 0.0722));
         // Not clamped at 1: the lighting term is allowed to exceed the clay's
         // own, or every painted pixel on the key-lit side collapses to one
         // flat value and the form under the paint is gone.
-        colour = filament * (luma / MATCAP_BASE_LUMA) * PAINT_EXPOSURE;
+        colour = albedo * (luma / MATCAP_BASE_LUMA) * PAINT_EXPOSURE;
     }
 
     // The creases and edges, AFTER the paint so they model a painted surface
