@@ -115,16 +115,21 @@ pub enum PaintTouch {
     Drybrush,
     /// A speckle, as a dabbed sponge leaves.
     Sponge,
+    /// Not a stroke at all: the paint is poured where the pointer is and
+    /// runs until a line of the model stops it.
+    Fill,
 }
 
 impl PaintTouch {
-    pub const ALL: [PaintTouch; 3] = [PaintTouch::Loaded, PaintTouch::Drybrush, PaintTouch::Sponge];
+    pub const ALL: [PaintTouch; 4] =
+        [PaintTouch::Loaded, PaintTouch::Drybrush, PaintTouch::Sponge, PaintTouch::Fill];
 
     pub fn label(self) -> &'static str {
         match self {
             PaintTouch::Loaded => "Loaded",
             PaintTouch::Drybrush => "Drybrush",
             PaintTouch::Sponge => "Sponge",
+            PaintTouch::Fill => "Fill",
         }
     }
 }
@@ -147,6 +152,11 @@ pub enum TouchSetting {
     SpongeGrain(f32),
     /// How much more of it lands on edges.
     SpongeEdges(f32),
+    /// Whether a fill stops at creases, and at edges.
+    FillStopsAtCreases(bool),
+    FillStopsAtEdges(bool),
+    /// How sharp a line has to be to stop one, as a share of a full crease.
+    FillSharpness(f32),
 }
 
 /// One of a paint's three coats, in the order a painter lays them down.
@@ -894,6 +904,13 @@ pub enum Message {
     /// Which filament slot the paint brush writes, 1-based. Clamped to the
     /// palette on arrival.
     PaintSlotChanged(u8),
+    /// Coat the whole of the active body in the paint in hand, wherever the
+    /// mask leaves it free. One undo entry.
+    PaintAllApplied,
+    /// Draw paint as its own colour with no light on it, or lit like the
+    /// clay. View state: a wash is shading, and a painter has to be able to
+    /// see it without the viewport's light on top.
+    FlatPaintToggled,
     /// Draw painted slots in their filament colours, or as bare clay.
     ///
     /// View state on the mask toggle's terms: it changes no slot, dirties no

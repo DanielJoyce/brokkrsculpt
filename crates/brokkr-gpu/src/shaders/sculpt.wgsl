@@ -180,6 +180,11 @@ fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) ->
         // own, or every painted pixel on the key-lit side collapses to one
         // flat value and the form under the paint is gone.
         colour = albedo * (luma / MATCAP_BASE_LUMA) * PAINT_EXPOSURE;
+        // Flat: the paint as it is, with no light on it. A wash is shading,
+        // and it cannot be judged with the viewport's own shading on top.
+        if (uniforms.paint_shown == 2u) {
+            colour = albedo;
+        }
     }
 
     // The creases and edges, AFTER the paint so they model a painted surface

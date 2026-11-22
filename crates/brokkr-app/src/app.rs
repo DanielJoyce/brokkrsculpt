@@ -896,6 +896,8 @@ pub struct Brokkr {
     /// How the paint brush touches the model, its settings, and where the
     /// stroke in progress has got to. See `app/paints.rs`.
     touch: paints::TouchState,
+    /// Whether paint is drawn flat, with no light on it. View state.
+    flat_paint: bool,
     /// How strong the tint is when it is shown at all, 0..1.
     ///
     /// The shader has its own floor under this (`0.30 + 0.70 * m`), which is
@@ -2146,6 +2148,7 @@ impl Brokkr {
             paints: brokkr_core::paint::PaintTable::default(),
             paint_coat: crate::message::PaintCoat::default(),
             touch: paints::TouchState::default(),
+            flat_paint: false,
             mask_tint: DEFAULT_MASK_TINT,
             mask_peek: false,
             mask_filter: MaskFilter::Blur,
@@ -5547,6 +5550,13 @@ impl Brokkr {
             BrushDirection::Add => self.paint_slot,
             BrushDirection::Subtract => brokkr_core::colour::UNPAINTED,
         };
+        // A fill is not a stroke: the paint is poured where the pointer is.
+        // See `app/paints.rs`.
+        if self.touch.kind == crate::message::PaintTouch::Fill {
+            self.pour(point, slot);
+            self.remesh_dirty();
+            return;
+        }
         let brush = self.brush;
         let lean = self.pen_lean();
         let tangent = self.stroke.direction().unwrap_or(Vec3::ZERO);
@@ -8018,6 +8028,7 @@ impl Brokkr {
         // cost: a fixed array and no allocation, on the frame path.
         self.shared.set_paint_view(crate::viewport::PaintView {
             shown: self.show_paint,
+            flat: self.flat_paint,
             palette: self.palette.shader_palette(),
             paints: brokkr_gpu::PaintBlock::from(&self.paints),
         });
@@ -10347,6 +10358,8 @@ impl Brokkr {
             Message::PaintAdded => self.add_paint(),
             Message::PaintCoatChosen(coat) => self.paint_coat = coat,
             Message::PaintEdited(edit) => self.edit_paint(edit),
+            Message::FlatPaintToggled => self.flat_paint = !self.flat_paint,
+            Message::PaintAllApplied => self.coat_the_body(),
             Message::PaintTouchChosen(touch) => self.touch.kind = touch,
             Message::PaintTouchChanged(setting) => self.touch.set(setting),
             // And the verbs, which DO change protection and all of which are

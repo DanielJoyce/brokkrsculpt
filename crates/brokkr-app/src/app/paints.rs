@@ -32,7 +32,7 @@
 use brokkr_core::paint::touch::{Coat, Drybrush, Sponge, Touch};
 use brokkr_core::paint::{Finish, MAX_PAINTS, Paint, Wash};
 use glam::Vec3;
-use iced::widget::{button, column, container, pick_list, row, slider, text, text_input};
+use iced::widget::{button, checkbox, column, container, pick_list, row, slider, text, text_input};
 use iced::{Alignment, Element, Length, Padding};
 
 use super::Brokkr;
@@ -90,17 +90,33 @@ pub(super) const LOAD_RANGE: std::ops::RangeInclusive<f32> = 0.0..=200.0;
 pub(super) const DENSITY_RANGE: std::ops::RangeInclusive<f32> = 0.02..=1.0;
 pub(super) const GRAIN_RANGE: std::ops::RangeInclusive<f32> = 0.1..=4.0;
 pub(super) const EDGES_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
+pub(super) const SHARPNESS_RANGE: std::ops::RangeInclusive<f32> = 0.05..=1.0;
+
+/// The most surface voxels one click of a fill may flood.
+///
+/// A fill costs about a microsecond and a half a voxel it paints, measured
+/// in `brokkr_core::paint::fill`, and paints about six through the band for
+/// each one on the surface. So this is about a second and a half at worst,
+/// which is as long as a click should ever take, and is a patch 7 cm across
+/// at a quarter millimetre. A model with no lines on it at all is what the
+/// *Coat the body* button is for.
+pub(super) const FILL_LIMIT: usize = 150_000;
 
 /// How the paint brush touches the model, and the stroke in progress.
 ///
 /// One struct on the application and not seven fields, so that upstream's
 /// `Brokkr` grows by a line. The settings are the brush's: they are not
 /// saved with a document and no document changes when they do.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct TouchState {
     pub kind: PaintTouch,
     pub dry: Drybrush,
     pub sponge: Sponge,
+    /// Whether a fill stops at creases, at edges, and how sharp a line has
+    /// to be to count, as a share of a full crease.
+    pub fill_stops_at_creases: bool,
+    pub fill_stops_at_edges: bool,
+    pub fill_sharpness: f32,
     /// How far a drybrush goes before it runs out, in millimetres. Zero for
     /// one that never does.
     pub load_mm: LoadMm,
@@ -118,14 +134,30 @@ pub(super) struct TouchState {
     pub scratch: brokkr_core::paint::touch::TouchScratch,
 }
 
-/// A length in millimetres that defaults to [`DEFAULT_LOAD_MM`] and not to
-/// nothing, so that `TouchState` can derive its `Default`.
+/// A length in millimetres, named so that a bare number in a test is not
+/// mistaken for a share.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct LoadMm(pub f32);
 
-impl Default for LoadMm {
+impl Default for TouchState {
     fn default() -> Self {
-        Self(DEFAULT_LOAD_MM)
+        Self {
+            kind: PaintTouch::default(),
+            dry: Drybrush::default(),
+            sponge: Sponge::default(),
+            // Both on: a fill that stops at nothing is the whole body, and
+            // there is a button for that.
+            fill_stops_at_creases: true,
+            fill_stops_at_edges: true,
+            fill_sharpness: 0.3,
+            load_mm: LoadMm(DEFAULT_LOAD_MM),
+            strokes: 0,
+            origin: Vec3::ZERO,
+            seed: 0,
+            travelled: 0.0,
+            last: Vec3::ZERO,
+            scratch: brokkr_core::paint::touch::TouchScratch::new(),
+        }
     }
 }
 
@@ -142,6 +174,11 @@ impl TouchState {
             }
             TouchSetting::SpongeGrain(mm) => self.sponge.grain_mm = clamped(mm, GRAIN_RANGE),
             TouchSetting::SpongeEdges(value) => self.sponge.edges = clamped(value, EDGES_RANGE),
+            TouchSetting::FillStopsAtCreases(on) => self.fill_stops_at_creases = on,
+            TouchSetting::FillStopsAtEdges(on) => self.fill_stops_at_edges = on,
+            TouchSetting::FillSharpness(value) => {
+                self.fill_sharpness = clamped(value, SHARPNESS_RANGE);
+            }
         }
     }
 
@@ -165,6 +202,9 @@ impl TouchState {
             PaintTouch::Loaded => Touch::Loaded,
             PaintTouch::Drybrush => Touch::Drybrush(self.dry),
             PaintTouch::Sponge => Touch::Sponge(self.sponge),
+            // A fill lays no stamps, so this is never asked for one. A
+            // loaded coat is the answer that does least if it ever is.
+            PaintTouch::Fill => Touch::Loaded,
         };
         let load = if self.load_mm.0 > 0.0 {
             (1.0 - self.travelled / self.load_mm.0).clamp(0.0, 1.0)
@@ -302,7 +342,63 @@ impl Brokkr {
         self.touch.coat(centre, first, gain)
     }
 
-    /// How the brush touches: three buttons, and the sliders of the one
+    /// Pour `slot` onto the model at `point`, a world position on its
+    /// surface, to run until the model's own lines stop it.
+    ///
+    /// Called for every pointer event of a drag with the Fill touch chosen,
+    /// so dragging across several panels fills each as the pointer reaches
+    /// it. A point already holding the paint costs one lookup and does
+    /// nothing. The drag is one undo entry, on the stroke's own recorder.
+    pub(super) fn pour(&mut self, point: Vec3, slot: u8) {
+        let sharpness = Some(self.touch.fill_sharpness);
+        let fill = brokkr_core::paint::fill::Fill {
+            slot,
+            stop_at_creases: sharpness.filter(|_| self.touch.fill_stops_at_creases),
+            stop_at_edges: sharpness.filter(|_| self.touch.fill_stops_at_edges),
+            crease_gain: super::CAVITY_FEATURE_MM / self.doc.voxel_size() / 4.0,
+            limit: FILL_LIMIT,
+            into_the_line: brokkr_core::paint::fill::INTO_THE_LINE,
+        };
+        let filled = self.doc.active_volume_mut().fill_paint(point, fill);
+        if filled.reached_the_limit {
+            self.status = format!(
+                "the fill stopped at {FILL_LIMIT} voxels of surface: nothing on the model stopped \
+                 it sooner. Coat the body paints all of it"
+            );
+        } else if filled.voxels > 0 {
+            self.status = format!("filled {} voxels", filled.voxels);
+        }
+    }
+
+    /// Coat the whole of the active body in the paint in hand, wherever the
+    /// mask leaves it at least half free. One undo entry.
+    ///
+    /// Not a fill with nothing to stop it: that floods outward from a point
+    /// and this is one pass over the body, which is the difference between
+    /// seconds and milliseconds on a large model.
+    pub(super) fn coat_the_body(&mut self) {
+        let slot = self.paint_slot;
+        let Some((low, high)) = self.doc.active_volume().world_bounds() else {
+            return;
+        };
+        self.arm_recorder();
+        let volume = self.doc.active_volume_mut();
+        let (lo, hi) = volume.voxel_bounds(low, high);
+        // The half line every paint stamp draws for the mask.
+        let protected = brokkr_core::PROTECTED / 2 + 1;
+        volume.edit_colour(
+            lo,
+            hi,
+            |_, _, held, protection| {
+                if protection >= protected { held } else { slot }
+            },
+        );
+        self.finish_stroke();
+        self.remesh_dirty();
+        self.status = format!("coated the body in paint {slot}");
+    }
+
+    /// How the brush touches: a button each, and the settings of the one
     /// chosen.
     fn touch_picker(&self, settings: bool) -> Element<'_, Message> {
         let reading = |label: String| text(label).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM);
@@ -382,6 +478,39 @@ impl Brokkr {
                             changed(TouchSetting::SpongeEdges(v))
                         })
                         .step(0.01_f32),
+                    );
+            }
+            PaintTouch::Fill => {
+                let touch = &self.touch;
+                picker = picker
+                    .push(
+                        checkbox(touch.fill_stops_at_creases)
+                            .label("stops at creases")
+                            .on_toggle(move |on| changed(TouchSetting::FillStopsAtCreases(on)))
+                            .text_size(theme::CAPTION_SIZE),
+                    )
+                    .push(
+                        checkbox(touch.fill_stops_at_edges)
+                            .label("stops at edges")
+                            .on_toggle(move |on| changed(TouchSetting::FillStopsAtEdges(on)))
+                            .text_size(theme::CAPTION_SIZE),
+                    )
+                    .push(reading(format!("A line is sharper than  {:.2}", touch.fill_sharpness)))
+                    .push(
+                        slider(SHARPNESS_RANGE, touch.fill_sharpness, move |v| {
+                            changed(TouchSetting::FillSharpness(v))
+                        })
+                        .step(0.01_f32),
+                    )
+                    .push(
+                        text("click a panel to fill it, or a groove to line it")
+                            .size(theme::CAPTION_SIZE)
+                            .color(theme::TEXT_MUTE),
+                    )
+                    .push(
+                        button(text("Coat the body").size(theme::TEXT_SIZE_SMALL))
+                            .style(theme::tool_button)
+                            .on_press(Message::PaintAllApplied),
                     );
             }
         }
@@ -554,6 +683,12 @@ impl Brokkr {
         ]
         .spacing(theme::S2);
         if editing {
+            picker = picker.push(
+                checkbox(self.flat_paint)
+                    .label("flat colour, no light")
+                    .on_toggle(|_| Message::FlatPaintToggled)
+                    .text_size(theme::CAPTION_SIZE),
+            );
             let mut add =
                 button(text("Add a paint").size(theme::TEXT_SIZE_SMALL)).style(theme::tool_button);
             if self.paints.len() < MAX_PAINTS {
@@ -1223,6 +1358,95 @@ mod tests {
         assert!(matches!(touch.coat(Vec3::ZERO, true, 0.5).touch, Touch::Sponge(_)));
         touch.kind = PaintTouch::Loaded;
         assert!(matches!(touch.coat(Vec3::ZERO, true, 0.5).touch, Touch::Loaded));
+    }
+
+    /// How many voxels of the active body could be painted at all.
+    fn paintable_voxels(app: &Brokkr) -> usize {
+        let volume = app.doc.active_volume();
+        let (low, high) = volume.world_bounds().expect("the body has bricks");
+        let (lo, hi) = volume.voxel_bounds(low, high);
+        let mut count = 0;
+        for z in lo.z..=hi.z {
+            for y in lo.y..=hi.y {
+                for x in lo.x..=hi.x {
+                    let distance = volume.sample_voxel(glam::IVec3::new(x, y, z));
+                    count += usize::from(brokkr_core::colour::ColourField::paintable(distance));
+                }
+            }
+        }
+        count
+    }
+
+    /// The Fill touch through the application. The starting ball has no
+    /// lines on it and is bigger than one click may flood, so a fill on it
+    /// runs to its limit, says so, and is one undo for the whole drag.
+    #[test]
+    fn a_fill_pours_until_its_limit_on_a_ball_and_is_one_undo() {
+        let mut app = app();
+        update(&mut app, Message::PaintTouchChosen(PaintTouch::Fill));
+        stroke(&mut app);
+        let poured = painted_voxels(&app);
+        assert!(poured >= FILL_LIMIT, "a fill of {FILL_LIMIT} surface voxels painted {poured}");
+        assert!(poured < paintable_voxels(&app), "the limit did not stop the fill");
+        assert!(app.status.contains("stopped"), "the limit was not reported: {}", app.status);
+        assert!(app.unsaved, "a fill did not dirty the document");
+        // A fill is not a stroke, and lays no stamps of the brush along the
+        // drag: the pour is all that happens.
+        assert_eq!(app.perf.stamps, 0, "a fill also stamped the brush along the drag");
+
+        update(&mut app, Message::Undo);
+        assert_eq!(painted_voxels(&app), 0, "the whole drag was not one undo");
+
+        // The settings reach the fill: with both stops off a fill reads no
+        // line at all, and on a ball that changes nothing, so the proof is
+        // in the fields.
+        update(&mut app, Message::PaintTouchChanged(TouchSetting::FillStopsAtCreases(false)));
+        update(&mut app, Message::PaintTouchChanged(TouchSetting::FillStopsAtEdges(false)));
+        update(&mut app, Message::PaintTouchChanged(TouchSetting::FillSharpness(0.61)));
+        assert!(!app.touch.fill_stops_at_creases && !app.touch.fill_stops_at_edges);
+        assert_eq!(app.touch.fill_sharpness, 0.61);
+        update(&mut app, Message::PaintTouchChanged(TouchSetting::FillStopsAtEdges(true)));
+        assert!(app.touch.fill_stops_at_edges && !app.touch.fill_stops_at_creases);
+        update(&mut app, Message::PaintTouchChanged(TouchSetting::FillSharpness(0.0)));
+        assert_eq!(app.touch.fill_sharpness, *SHARPNESS_RANGE.start(), "a line of no sharpness");
+        update(&mut app, Message::PaintTouchChanged(TouchSetting::FillSharpness(f32::NAN)));
+        assert_eq!(app.touch.fill_sharpness, *SHARPNESS_RANGE.start());
+        let fresh = TouchState::default();
+        assert!(fresh.fill_stops_at_creases && fresh.fill_stops_at_edges, "a fill starts open");
+    }
+
+    /// Coat the body paints every voxel that can be painted, in the paint
+    /// in hand, in one undo; and a masked body takes none of it.
+    #[test]
+    fn coating_the_body_paints_all_of_it_once_and_respects_the_mask() {
+        let mut app = app();
+        update(&mut app, Message::PaintSlotChanged(2));
+        let all = paintable_voxels(&app);
+        update(&mut app, Message::PaintAllApplied);
+        assert_eq!(painted_voxels(&app), all, "the coat missed some of the body");
+        assert!(app.status.contains("paint 2"), "{}", app.status);
+        assert!(app.unsaved);
+        update(&mut app, Message::Undo);
+        assert_eq!(painted_voxels(&app), 0, "the coat was not one undo");
+
+        update(&mut app, Message::MaskAllApplied);
+        update(&mut app, Message::PaintAllApplied);
+        assert_eq!(painted_voxels(&app), 0, "a fully masked body was coated");
+    }
+
+    /// The flat view is a view: it reaches the shader and touches nothing
+    /// else.
+    #[test]
+    fn the_flat_view_reaches_the_shader_and_changes_no_document() {
+        let mut app = app();
+        app.unsaved = false;
+        assert!(!app.shared.paint_view().flat, "paint starts lit");
+        update(&mut app, Message::FlatPaintToggled);
+        assert!(app.shared.paint_view().flat, "the toggle did not reach the shared frame");
+        assert!(app.shared.paint_view().shown);
+        assert!(!app.unsaved, "a view toggle dirtied the document");
+        update(&mut app, Message::FlatPaintToggled);
+        assert!(!app.shared.paint_view().flat);
     }
 
     /// What a drybrush calls a full edge is what the viewport calls one, so

@@ -16,7 +16,7 @@ was built and what was measured.
 | S0 Groundwork | **Done**, 2026-11-22 (sections 5 and 6) | *show creases* in the viewport. The rest is foundations |
 | S1a Decimated export | **Done**, 2026-11-22 (section 7.1) | A *Detail* choice on export: Full, Fine, Standard, Draft |
 | S1b Parting with keys | **Done but for a preview**, 2026-11-22 (section 7.2) | Cut tool with **alt** held: the body becomes two, with pegs and sockets |
-| S2 Mini painting | **Recipes, drybrush and sponge, coloured export done**, 2026-11-22 (section 8); fills, broad occlusion and zenithal next | Paint brush: *Mix paints*, then a rack of paints, each with a wash and an edge highlight; *Loaded*, *Drybrush* and *Sponge* strokes; export as PLY in colour, and 3MF by the filament each paint prints in |
+| S2 Mini painting | **Done but for broad occlusion and zenithal**, 2026-11-22 (section 8), which wait for S4 | Paint brush: *Mix paints*, then a rack of paints, each with a wash and an edge highlight; *Loaded*, *Drybrush*, *Sponge* and *Fill*; a flat view; export as PLY in colour, and 3MF by the filament each paint prints in |
 | S3 Brush engine, surfaced | Not started | |
 | S4 Form tools | Not started | |
 | S5 Unwrap and bake | Not started | |
@@ -895,8 +895,8 @@ number.
 | Edge highlight, overall drybrush | Recipe: the highlight | **Built** |
 | Drybrush as a stroke | Gated brush: writes the paint in hand only on what stands up, more on the side the brush comes at, in bristle streaks, until it runs out | **Built** (S2.2) |
 | Sponge or stipple | Gated brush: a speckle covering a set share of the surface, optionally more on edges. With the eraser it chips paint off | **Built** (S2.2) |
-| Zenithal prime | Recipe term: lighten by normal against a direction, times broad occlusion | S2.3, needs the occlusion byte |
-| Fill: body, mask, crease-bounded | Whole-body slot writes, with the mask as the only weight | S2.3 |
+| Zenithal prime | Recipe term: lighten by normal against a direction, times broad occlusion | After S4, which makes the pyramid incremental |
+| Fill: by area, bounded by the model's creases and edges; the whole body | A flood on the surface shell, and one pass over the body | **Built** (S2.4) |
 
 "Slapchop" is then a paint: pale base, contrast wash, a near-white highlight
 with a low `start`. One click on *Contrast* and one slider.
@@ -926,8 +926,10 @@ CPU copy, so what is exported is what was on screen.
 - **Lit:** the paint's colour times the matcap's lighting term. This is the
   filament path that already existed, reading a recipe where there is one and
   the palette where there is not.
-- **Flat** (S2.3): the paint's colour alone, because a wash is shading and a
-  painter has to be able to see it without the viewport's own light on top.
+- **Flat** (built): the paint's colour alone, because a wash is shading and
+  a painter has to be able to see it without the viewport's own light on
+  top. A plain paint drawn flat is one colour over the whole body, to the
+  byte.
 - **Finish** (later): gloss and metallic read a second matcap. The finish is
   saved with a paint today so that paints mixed now keep it.
 - **Thumbnails** draw a painted body with its washes, at the viewport's gain.
@@ -953,14 +955,69 @@ undercoat).
   wash is shaded per pixel from an interpolated signal, which is finer again.
 - **The wash sees fine creases only.** It reads the fine cavity signal of
   section 5.3, a few voxels wide. The broad occlusion that darkens the inside
-  of a cloak comes from the pyramid, through the one free attribute byte, in
-  S2.3.
+  of a cloak comes from the pyramid, through the one free attribute byte.
+  That waits for S4, because the pyramid is rebuilt whole today and a wash
+  that lagged a second behind every stroke would be worse than none.
 - **No pigment flow simulation.** The wash is a transfer function of
   geometry, not a fluid. Gravity pooling is a possible extra term, not a
   solver.
 - **Editing a paint is not in the undo history yet**, and a paint cannot be
   removed. Both are recorded in `brokkr-app/src/app/paints.rs` with the
   reason.
+
+#### Built, 2026-11-22 (S2.4): fill, coat, and the flat view
+
+`brokkr-core/src/paint/fill.rs`. A fourth touch beside Loaded, Drybrush and
+Sponge: **Fill** pours the paint in hand where the pointer is, and it runs
+until one of the model's own lines stops it. Two checkboxes say which lines
+count, creases and edges, and a slider says how sharp a line has to be.
+
+- Click a panel and the panel is painted, up to the middle of the lines
+  round it.
+- Click IN a groove and the fill runs along the groove and stays in it. That
+  is panel lining, which at the bench is a fine brush and a steady hand.
+- A fill replaces the paint it starts on and spreads only through that
+  paint, and the mask stops it, as for every paint stamp.
+- *Coat the body* paints all of the active body in one pass, for a model
+  with no lines to stop at. *Flat colour* draws paint with no light on it,
+  so a wash can be judged without the viewport's shading on top.
+
+**Three versions, and what each one got wrong.** This was expected to be a
+flood fill with a threshold, and it was the hardest thing in the milestone.
+
+```mermaid
+flowchart TB
+    V1["1. Flood the band; stop where the<br/>viewport's crease signal is strong"]
+    V1 -->|"leaks where a groove meets an edge:<br/>the SUM of two curvatures is zero there"| V2
+    V2["2. The two curvatures separately,<br/>from the field's second derivatives"]
+    V2 -->|"weak exactly where three faces meet:<br/>0.25 of a full edge at the voxel that mattered"| V3
+    V3["3. How far the NORMAL turns between<br/>a voxel and each of its neighbours"]
+    V3 -->|"right at junctions, but the flood<br/>still leaked: 3,538 voxels on the wrong face"| V4
+    V4["4. Flood only the shell at the surface,<br/>then spread that answer through the band"]
+```
+
+The last leak was not about the signal at all. Paint is in the whole band,
+and inside a sharp convex edge NO voxel's nearest surface point is the edge:
+those on one side of the diagonal are nearest one face and those on the
+other the other. A flood through the band stepped from the first to the
+second without ever meeting the line. So the flood runs in the shell, the
+voxels within one of the surface, where a line is a row of voxels it has to
+cross. Every other voxel of the band then takes the answer of the shell
+voxel it leads down to.
+
+Two smaller things the tests found: a field cut by a plane is flat along the
+diagonal inside a concave corner, so "the face neighbour nearer the surface"
+does not exist there and 242 voxels were left bare until all 26 neighbours
+were asked; and along a straight edge three neighbours in a row are equally
+near, and taking the first made a voxel beside the mask follow a masked one.
+
+**Cost, measured** (release, one core): 66 ms to fill a ball of 43,290
+voxels, about a microsecond and a half a voxel painted. One click is capped
+at 150,000 voxels of surface, which is about a second and a half at worst.
+
+**Limit.** A fill is only as good as the lines. A groove that fades out, or
+a gap of a voxel in one, lets it through, and the answer is the sharpness
+slider, the mask, or a brush. *Show creases* shows the lines it will read.
 
 #### Built, 2026-11-22 (S2.3): a painted model in a file
 
