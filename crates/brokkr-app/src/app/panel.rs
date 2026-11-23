@@ -2322,8 +2322,15 @@ impl Brokkr {
         // Falloff goes the way strength does while painting a slot: a slot
         // has no rim to feather, so the row would be four buttons that change
         // nothing. A colour has one, and keeps the row.
-        let falloff: Element<'_, Message> =
-            if painting && !self.painting_colour() { column![].into() } else { self.falloff_row() };
+        // A brush on the field has a profile, which is the falloff and
+        // more: see `app/studio.rs`.
+        let falloff: Element<'_, Message> = if painting && !self.painting_colour() {
+            column![].into()
+        } else if painting || self.tool == Tool::Mask {
+            self.falloff_row()
+        } else {
+            self.profile_row()
+        };
 
         let history = row![
             button(text("Undo").size(theme::TEXT_SIZE_SMALL))
@@ -2338,6 +2345,8 @@ impl Brokkr {
         container(
             scrollable(column![
                 self.section(PanelSection::Bodies, || self.bodies_panel()),
+                // The palette of brushes. See `app/studio.rs`.
+                self.palette_panel(),
                 text(match self.tool {
                     Tool::Mask => "MASK".to_string(),
                     _ => self.live_brush_name(),

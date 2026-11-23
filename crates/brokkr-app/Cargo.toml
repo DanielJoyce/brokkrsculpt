@@ -17,6 +17,7 @@ path = "src/main.rs"
 brokkr-core.workspace = true
 brokkr-gpu.workspace = true
 bytemuck.workspace = true
+contracts.workspace = true
 dir_spec.workspace = true
 env_logger.workspace = true
 glam.workspace = true
@@ -104,6 +105,9 @@ evdev.workspace = true
 # workspace dependency and already compiled for `brokkr-gpu`'s own tests.
 [dev-dependencies]
 pollster.workspace = true
+# Property tests, as in `brokkr-core`: what a brush kept in a file comes back
+# as, whatever the brush. Zero new crates, for the same reason as above.
+proptest.workspace = true
 
 # `poke` is nothing but evdev: it writes synthetic pointer and key events to
 # `/dev/uinput`. Opt-in rather than a `cfg` on each of its ten items, which

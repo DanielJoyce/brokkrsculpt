@@ -50,8 +50,9 @@ use glam::Vec3;
 
 use super::alpha::Alpha;
 use super::{
-    BrushDirection, BrushScratch, CLAY_OFFSET, FalloffCurve, MAX_STAMP_VOXELS, PINCH_PULL_VOXELS,
-    STAMP_FRACTION_OF_RADIUS, Stamp, Symmetry, admit, blend_toward_plane_clamps_back,
+    BrushDirection, BrushKind, BrushScratch, CLAY_OFFSET, FalloffCurve, MAX_STAMP_VOXELS,
+    PINCH_PULL_VOXELS, STAMP_FRACTION_OF_RADIUS, Stamp, Symmetry, admit,
+    blend_toward_plane_clamps_back,
 };
 use crate::brick::{INSIDE, OUTSIDE};
 use crate::mask::PROTECTED;
@@ -168,6 +169,48 @@ impl Actions {
             && self.level == 0.0
     }
 
+    /// What the classic brush of this kind does, or nothing for the two
+    /// that are not brushes on the field: Move, which drags the surface
+    /// with the pointer, and Paint, which writes no distances at all.
+    pub fn of(kind: BrushKind) -> Option<Actions> {
+        match kind {
+            BrushKind::Draw => Some(Actions::DRAW),
+            BrushKind::Clay => Some(Actions::CLAY),
+            BrushKind::Smooth => Some(Actions::SMOOTH),
+            BrushKind::Inflate => Some(Actions::INFLATE),
+            BrushKind::Pinch => Some(Actions::PINCH),
+            BrushKind::Flatten => Some(Actions::FLATTEN),
+            BrushKind::Move | BrushKind::Paint => None,
+        }
+    }
+
+    /// The classic brush these amounts are nearest to: the one whose key,
+    /// whose remembered strength and whose answer to "does the invert key
+    /// do anything" a brush made of them goes by.
+    ///
+    /// The last is the one that has to be right. A brush with no push, no
+    /// inflation and no pinch, which levels to the plane under it from
+    /// both sides or not at all, has no opposite, and its family is one of
+    /// the two classic brushes that have none ([`BrushKind::is_directional`]).
+    /// `a_brush_of_a_family_with_no_opposite_has_none` holds that to the
+    /// kernel.
+    #[debug_ensures(Actions::of(ret).is_some(), "a family is a brush on the field")]
+    pub fn family(&self) -> BrushKind {
+        if self.push != 0.0 {
+            BrushKind::Draw
+        } else if self.inflate != 0.0 {
+            BrushKind::Inflate
+        } else if self.pinch != 0.0 {
+            BrushKind::Pinch
+        } else if self.level == 0.0 {
+            BrushKind::Smooth
+        } else if self.side == Side::Both && self.plane == 0.0 {
+            BrushKind::Flatten
+        } else {
+            BrushKind::Clay
+        }
+    }
+
     /// What Draw does: push.
     pub const DRAW: Actions = Actions { push: 1.0, ..Actions::NOTHING };
     /// What Inflate does.
@@ -225,6 +268,18 @@ impl Shape {
         }
     }
 
+    /// The falloff curve this shape is, or nothing for the one shape no
+    /// curve of upstream's has.
+    pub fn curve(self) -> Option<FalloffCurve> {
+        match self {
+            Shape::Smooth => Some(FalloffCurve::Smooth),
+            Shape::Linear => Some(FalloffCurve::Linear),
+            Shape::Sharp => Some(FalloffCurve::Sharp),
+            Shape::Wide => Some(FalloffCurve::Wide),
+            Shape::Round => None,
+        }
+    }
+
     /// The shape a falloff curve is.
     pub fn of(curve: FalloffCurve) -> Self {
         match curve {
@@ -260,19 +315,43 @@ impl Profile {
     #[inline]
     #[debug_ensures((0.0..=1.0).contains(&ret) || distance.is_nan(), "a weight is a share")]
     pub fn weight(self, distance: f32) -> f32 {
-        let plateau = self.plateau.clamp(0.0, MOST_PLATEAU);
-        let along = if plateau > 0.0 {
-            ((distance - plateau) / (1.0 - plateau)).max(0.0)
-        } else {
-            distance
-        };
+        self.slope().weight(distance)
+    }
+
+    /// This profile made ready for a stamp: the plateau brought into its
+    /// range and the division it implies done, once and not at every voxel.
+    #[inline]
+    fn slope(self) -> Slope {
+        let plateau =
+            if self.plateau.is_finite() { self.plateau.clamp(0.0, MOST_PLATEAU) } else { 0.0 };
+        Slope { shape: self.shape, plateau, steepness: 1.0 / (1.0 - plateau) }
+    }
+}
+
+/// A [`Profile`] with its arithmetic done. A stamp asks the weight of every
+/// voxel in its box, and asked the plain way (bring the plateau into range,
+/// divide, choose) it was a third of what a stamp cost: measured.
+#[derive(Debug, Clone, Copy)]
+struct Slope {
+    shape: Shape,
+    plateau: f32,
+    /// One over what is left of the radius past the plateau.
+    steepness: f32,
+}
+
+impl Slope {
+    /// With no plateau this is the distance as it came, to the bit: nothing
+    /// taken from it and one multiplied into it.
+    #[inline(always)]
+    fn weight(&self, distance: f32) -> f32 {
+        let along = ((distance - self.plateau) * self.steepness).max(0.0);
         match self.shape {
             Shape::Smooth => FalloffCurve::Smooth.weight(along),
             Shape::Linear => FalloffCurve::Linear.weight(along),
             Shape::Sharp => FalloffCurve::Sharp.weight(along),
             Shape::Wide => FalloffCurve::Wide.weight(along),
             Shape::Round => {
-                let along = along.clamp(0.0, 1.0);
+                let along = along.min(1.0);
                 (1.0 - along * along).sqrt()
             }
         }
@@ -316,11 +395,70 @@ impl Compound {
 
     /// Apply one stamp.
     ///
+    /// Which of the actions the brush has is looked at here, once, and the
+    /// stamp is run by the loop compiled for exactly those: the engine's
+    /// own rule ([`super::engine`], rule 5) that the choice costs one jump
+    /// a stamp and nothing a voxel. Written the plain way first, with each
+    /// action asked about at each voxel, a stamp of one action cost from a
+    /// quarter to nine tenths more than the classic kernel of that action:
+    /// measured, with `what_a_generic_stamp_costs_beside_a_classic_one`.
+    #[debug_requires(self.actions.is_legal(), "a brush's amounts are within what a brush can be")]
+    pub fn apply(
+        &self,
+        volume: &mut Volume,
+        stamp: &Stamp,
+        tip: Option<&Alpha>,
+        scratch: &mut BrushScratch,
+    ) {
+        let actions = self.actions;
+        let has = (
+            actions.push != 0.0 || actions.pinch != 0.0,
+            actions.inflate != 0.0,
+            actions.smooth != 0.0,
+            actions.level != 0.0,
+        );
+        // Thirty-two loops: one for each set of actions a brush can have,
+        // with an image across its tip and without.
+        macro_rules! run {
+            ($($warps:literal $inflates:literal $smooths:literal $levels:literal,)*) => {
+                match (has, tip.is_some()) {
+                    $((($warps, $inflates, $smooths, $levels), false) => self
+                        .run::<$warps, $inflates, $smooths, $levels, false>(
+                            volume, stamp, tip, scratch,
+                        ),
+                    (($warps, $inflates, $smooths, $levels), true) => self
+                        .run::<$warps, $inflates, $smooths, $levels, true>(
+                            volume, stamp, tip, scratch,
+                        ),)*
+                }
+            };
+        }
+        run! {
+            false false false false, false false false true,
+            false false true false, false false true true,
+            false true false false, false true false true,
+            false true true false, false true true true,
+            true false false false, true false false true,
+            true false true false, true false true true,
+            true true false false, true true false true,
+            true true true false, true true true true,
+        }
+    }
+
+    /// One stamp, by the loop for a brush that has these actions and no
+    /// others: `WARPS` for a push or a pinch, which are one read, one each
+    /// for the other three, and `TIPPED` for an image across the tip.
+    ///
     /// The structure is [`super::Brush::stamp`]'s and the engine's, step
     /// for step, and where one action is all the brush does the arithmetic
     /// is that kernel's arithmetic in its order.
-    #[debug_requires(self.actions.is_legal(), "a brush's amounts are within what a brush can be")]
-    pub fn apply(
+    fn run<
+        const WARPS: bool,
+        const INFLATES: bool,
+        const SMOOTHS: bool,
+        const LEVELS: bool,
+        const TIPPED: bool,
+    >(
         &self,
         volume: &mut Volume,
         stamp: &Stamp,
@@ -348,8 +486,7 @@ impl Compound {
         // What each action needs of the stamp. The two that read the field
         // from somewhere else, and the one that reads its neighbours, need a
         // copy of it; the other two write from the voxel's own value.
-        let warps = actions.push != 0.0 || actions.pinch != 0.0;
-        let reads = warps || actions.smooth != 0.0;
+        let reads = WARPS || SMOOTHS;
         let pinch_alone = actions.push == 0.0
             && actions.inflate == 0.0
             && actions.smooth == 0.0
@@ -387,8 +524,8 @@ impl Compound {
         } else {
             self.pattern.prepare(voxel_size, normal, stamp.tangent)
         };
-        let profile = self.profile;
-        let across = tip.map(|image| (image, Frame::of(stamp)));
+        let slope = self.profile.slope();
+        let frame = Frame::of(stamp);
 
         let read_voxels = (reach / voxel_size).ceil() as i32 + 1;
 
@@ -463,14 +600,14 @@ impl Compound {
                     return value;
                 }
                 let distance = offset.length() * inverse_radius;
-                let shaped = profile.weight(distance) * gain;
+                let shaped = slope.weight(distance) * gain;
                 if shaped <= 0.0 {
                     return value;
                 }
                 // The tip's factors. Each stays in 0..=1, so the product
                 // does.
                 let mut patterned = shaped * pattern.weight(position);
-                if let Some((image, frame)) = &across {
+                if TIPPED && let Some(image) = tip {
                     patterned *= frame.height(image, offset, inverse_radius);
                 }
                 if patterned <= 0.0 || free <= 0.0 {
@@ -481,7 +618,7 @@ impl Compound {
 
                 // The reads from somewhere else, as one read. Each amount
                 // is multiplied in last: by one, that is exact.
-                if warps {
+                if WARPS {
                     let mut from = position;
                     let mut read = false;
                     if actions.push != 0.0 {
@@ -517,12 +654,12 @@ impl Compound {
                 }
 
                 // The offset of the level set.
-                if actions.inflate != 0.0 {
+                if INFLATES {
                     held += direction.field_sign() * weight * displacement * actions.inflate;
                 }
 
                 // Toward the mean of the neighbours.
-                if actions.smooth != 0.0 {
+                if SMOOTHS {
                     let average = region.neighbour_average(voxel);
                     held += (average - held) * (weight * actions.smooth);
                 }
@@ -530,7 +667,7 @@ impl Compound {
                 // Toward the plane. The mask is let in after the blend and
                 // not folded into its weight, as Flatten and Clay have it:
                 // see `admit`.
-                if actions.level != 0.0 {
+                if LEVELS {
                     let plane = (position - plane_point).dot(normal) / voxel_size;
                     let blended = held + (plane - held) * (patterned * actions.level);
                     // Only the half of the blend that moves material the
@@ -868,6 +1005,31 @@ mod tests {
         assert!(back.sample_voxel(at) > ball().sample_voxel(at), "a negative push did not cut");
     }
 
+    /// The six classic brushes are each their own family, and the two
+    /// that are not brushes on the field have no actions.
+    #[test]
+    fn a_classic_brush_is_its_own_family() {
+        for kind in BrushKind::ALL {
+            match Actions::of(kind) {
+                Some(actions) => {
+                    assert!(actions.is_legal());
+                    assert_eq!(actions.family(), kind, "{kind:?}");
+                }
+                None => assert!(matches!(kind, BrushKind::Move | BrushKind::Paint)),
+            }
+        }
+        // And the ones that cost only their settings.
+        assert_eq!(Actions::CREASE.family(), BrushKind::Draw);
+        assert_eq!(Actions { pinch: -1.0, ..Actions::default() }.family(), BrushKind::Pinch);
+        // Every shape upstream has a curve for is that curve's shape.
+        for shape in Shape::ALL {
+            match shape.curve() {
+                Some(curve) => assert_eq!(Shape::of(curve), shape),
+                None => assert_eq!(shape, Shape::Round),
+            }
+        }
+    }
+
     /// A scraper takes down what stands proud of its plane and fills
     /// nothing, where Flatten does both and Clay only fills.
     #[test]
@@ -1041,6 +1203,21 @@ mod tests {
         }
 
         proptest! {
+            /// Every brush has a family, and the family of anything that
+            /// moves the surface one way has an opposite.
+            #[test]
+            fn every_brush_has_a_family(actions in loose()) {
+                let actions = actions.legal();
+                let family = actions.family();
+                prop_assert!(Actions::of(family).is_some());
+                let one_way = actions.push != 0.0
+                    || actions.inflate != 0.0
+                    || actions.pinch != 0.0
+                    || (actions.level != 0.0
+                        && (actions.side != Side::Both || actions.plane != 0.0));
+                prop_assert_eq!(family.is_directional(), one_way);
+            }
+
             /// Any amounts at all are brought to what a brush can be, and
             /// what already is one is left exactly as it was.
             #[test]
@@ -1075,6 +1252,49 @@ mod tests {
         proptest! {
             // Each case stamps a ball: fewer of them.
             #![proptest_config(ProptestConfig::with_cases(32))]
+
+            /// A brush whose family is a classic brush with no opposite
+            /// has none itself: the invert key changes nothing it does.
+            /// The application asks the family whether to invert at all,
+            /// so a family that said "no opposite" of a brush that has one
+            /// would be a brush that cannot be turned round.
+            #[test]
+            fn a_brush_of_a_family_with_no_opposite_has_none(
+                smooth in 0.0_f32..=1.0,
+                level in 0.0_f32..=1.0,
+                radius in 4.0_f32..12.0,
+            ) {
+                let actions = Actions { smooth, level, ..Actions::default() };
+                prop_assert!(!actions.family().is_directional());
+                let compound = Compound {
+                    actions,
+                    radius,
+                    strength: 0.6,
+                    profile: Profile::default(),
+                    pattern: Pattern::default(),
+                };
+                let towards = stroke()[0];
+                let at = CENTRE + towards * RADIUS;
+                let (mut added, mut taken) = (ball(), ball());
+                for (volume, direction) in [
+                    (&mut added, BrushDirection::Add),
+                    (&mut taken, BrushDirection::Subtract),
+                ] {
+                    let stamp = Stamp::new(at, towards, direction).with_tangent(Vec3::Z);
+                    compound.apply(volume, &stamp, None, &mut BrushScratch::new());
+                }
+                for z in 20..80 {
+                    for y in 20..80 {
+                        for x in 20..80 {
+                            let voxel = glam::IVec3::new(x, y, z);
+                            prop_assert_eq!(
+                                added.sample_voxel(voxel).to_bits(),
+                                taken.sample_voxel(voxel).to_bits()
+                            );
+                        }
+                    }
+                }
+            }
 
             /// Whatever a brush is made of, a stamp of it leaves a field
             /// that is still a field (every value within the band), touches
@@ -1138,6 +1358,65 @@ mod tests {
                 masked.begin_stroke();
                 compound.apply(&mut masked, &stamp, None, &mut BrushScratch::new());
                 prop_assert!(masked.end_stroke().is_none(), "a stamp got under the mask");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod timing {
+    use super::*;
+    use crate::brush::engine::{BrushDef, FieldOp, Tip};
+
+    /// What a stamp of the generic brush costs beside the classic kernel
+    /// it stands in for.
+    #[test]
+    #[ignore = "a measurement, not a claim: run by hand, in release"]
+    fn what_a_generic_stamp_costs_beside_a_classic_one() {
+        let centre = Vec3::splat(48.0);
+        for (op, actions) in [
+            (FieldOp::Draw, Actions::DRAW),
+            (FieldOp::Clay, Actions::CLAY),
+            (FieldOp::Smooth, Actions::SMOOTH),
+            (FieldOp::Inflate, Actions::INFLATE),
+            (FieldOp::Pinch, Actions::PINCH),
+            (FieldOp::Flatten, Actions::FLATTEN),
+        ] {
+            for radius in [8.0_f32, 24.0] {
+                let stamp = Stamp::new(centre + Vec3::Y * 40.0, Vec3::Y, BrushDirection::Add)
+                    .with_tangent(Vec3::X);
+                let rounds = 200;
+                let time = |run: &dyn Fn(&mut Volume, &mut BrushScratch)| {
+                    let mut best = f64::MAX;
+                    for _ in 0..5 {
+                        let mut volume = Volume::new(1.0);
+                        volume.seed_sphere(centre, 40.0);
+                        let mut scratch = BrushScratch::new();
+                        let started = std::time::Instant::now();
+                        for _ in 0..rounds {
+                            run(&mut volume, &mut scratch);
+                        }
+                        best =
+                            best.min(started.elapsed().as_secs_f64() * 1000.0 / f64::from(rounds));
+                    }
+                    best
+                };
+                let def = BrushDef { op, radius, strength: 0.3, tip: Tip::default() };
+                let compound = Compound {
+                    actions,
+                    radius,
+                    strength: 0.3,
+                    profile: Profile::default(),
+                    pattern: Pattern::default(),
+                };
+                let classic = time(&|volume, scratch| def.apply(volume, &stamp, scratch));
+                let generic =
+                    time(&|volume, scratch| compound.apply(volume, &stamp, None, scratch));
+                eprintln!(
+                    "{op:?} at {radius} voxels: classic {classic:.3} ms, generic {generic:.3} ms, \
+                     {:+.0}%",
+                    (generic / classic - 1.0) * 100.0
+                );
             }
         }
     }

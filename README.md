@@ -409,11 +409,19 @@ true of it too, and what it adds is this.
   stops at creases and edges. Each paint names the filament it prints in,
   so a model painted this way is also a multi-colour print. Everything the
   rack does is an undo step, removing a paint included.
-- **Studio brushes.** *Crease*, a *Stamp* that presses one of six images or
-  any picture into the surface with one drag, or lays a row of them along
-  a stroke (rivets, stitches, scales), a *Lazy* stroke for long clean
-  lines, and *Size from pressure*. A brush set up the way you like
-  it can be kept under a name and taken up again with one press.
+- **A palette of brushes.** Eighteen come with it: Draw, Clay, Inflate,
+  Pinch, Smooth and Flatten, and *Spread*, *Scrape*, *Fill*, *Polish*,
+  *Crease*, *Bead*, *Band* and more. Every one is the same brush with
+  different settings, and *What it does* shows them: how much it pushes,
+  inflates, pinches, smooths and levels. Change them, choose the
+  *Profile* of the stroke (five shapes, and a flat middle), and *Keep*
+  the brush under a name. A brush you keep is one small file in your data
+  directory (`~/.local/share/brokkrsculpt/brushes` on Linux), so a brush
+  can be handed to somebody else.
+- **Stamps and strokes.** A *Stamp* that presses one of six images or any
+  picture into the surface with one drag, or lays a row of them along a
+  stroke (rivets, stitches, scales), a *Lazy* stroke for long clean
+  lines, and *Size from pressure*.
 - **Form.** Thicken or thin a body by millimetres, or soften or exaggerate
   its detail, with the surface texture kept. Exaggerating is for print:
   detail a nozzle would lose can be made to survive it.
@@ -423,6 +431,10 @@ true of it too, and what it adds is this.
 
 <p align="center">
   <img alt="A ball painted with the colour brush: a red stroke and a blue one, a yellow sponge speckle, a dark glaze drawn down across all three that darkens each where it crosses, and a stripe of white at half opacity that the red and the blue show through. Beside it the panel: Colour or Filaments, Paint, Glaze or Erase, Loaded, Wash, Drybrush, Sponge or Fill, the colour in hand, its opacity, the machine's filaments and a range of swatches" src="docs/images/studio-colour-brush.png" width="760">
+</p>
+
+<p align="center">
+  <img alt="A ball with five strokes across it, each from a different brush on the palette: a band with a flat top, a bead, a crease, a scraped flat and a row of rivets. Beside it the panel: BRUSHES, eighteen buttons with Crease lit, the radius and strength, the Profile row of five shapes, and What it does opened to show Crease as a push of 0.60 in and a pinch of 1.00 together" src="docs/images/studio-brush-palette.png" width="760">
 </p>
 
 <p align="center">

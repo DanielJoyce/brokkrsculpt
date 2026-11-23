@@ -18,10 +18,11 @@ was built and what was measured.
 | S1b Parting with keys | **Done but for a preview**, 2026-11-23 (section 7.2) | Cut tool with **alt** held: the body becomes two, with pegs and sockets. *Print a fit test…* writes a plate of sockets and a peg, to find the clearance a printer needs |
 | S1c Overhang view | **Done**, 2026-11-23 (section 7.3). Not in the first plan | *show overhangs* on the export panel: what leans past the angle a printer manages is tinted, and an export says how much |
 | S2 Mini painting | **Done but for broad occlusion**, 2026-11-23 (section 8), which waits for S4 | Paint brush: *Mix paints*, then a rack of paints, each with a wash, an edge highlight and a zenithal undercoat; *Loaded*, *Drybrush*, *Sponge* and *Fill*; a flat view; export as PLY in colour, and 3MF by the filament each paint prints in |
-| S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). A textured tip and the gesture warps remain | A STUDIO block under the brush: *Crease*, *Stamp* with six images or any picture, one at a time or in a row *Along the stroke*, *Lazy*, *Size from pressure*; and PRESETS, a brush kept under a name |
+| S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). A textured tip and the gesture warps remain. Its Crease button and PRESETS block became the palette of milestone B | *Stamp* with six images or any picture, one at a time or in a row *Along the stroke*, *Lazy*, *Size from pressure* |
 | S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush and form smooth remain. Posing is not planned (section 9.3) | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
 | S5 Unwrap and bake | **Done but for the other maps**, 2026-11-23 (sections 10.4 and 10.5): unwrap, the base colour bake, OBJ with a picture, and GLB. Normal, occlusion and finish maps remain | Export as *OBJ+PNG* or *GLB*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
 | P Painting engine | **Usable**, 2026-11-23 (section 15): the storage, the view and the brush. Painted colour is on screen, in the project file and in every export that carries colour | The paint brush lays a colour: *Paint*, *Glaze* or *Erase*, put on *Loaded*, as a *Wash*, with a *Drybrush* or a *Sponge*, at any opacity, with a soft edge. *Pick from model* takes a colour back off it |
+| B A brush is its settings | **The palette is built**, 2026-11-23 (section 16): files in the right directories, one generic brush, the palette. Build-up and a picture across the tip are next | BRUSHES: eighteen that come with the application, upstream's six among them, and the user's own, a file each. *What it does* shows a brush as five amounts to change. *Profile*: five shapes and a flat middle |
 | B Brushes as settings | **Begun**, 2026-11-23 (section 16): where the files go, and the generic brush in the engine. The palette and build-up follow | Settings, brushes and autosave each in the folder the operating system keeps for them |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
@@ -556,6 +557,11 @@ size, and for a bar (which is longer one way than the other) the same
 length along a row dragged up the view as along one dragged across it.
 
 #### Built, 2026-11-23 (S3.3): presets
+
+*Superseded the same day by the palette of section 16 (stage B3): the
+five starting presets became brushes that come with the application, the
+one file became a file a brush, and Crease became a brush like the rest.
+What follows is what was built first.*
 
 `brokkr-app/src/app/presets.rs`, and a PRESETS block above the STUDIO one:
 a button for each brush kept, a small one beside it that forgets it, and a
@@ -2748,10 +2754,10 @@ and stays one.
 
 The Draw to Flatten buttons become a palette of brushes, and each of those
 six is a core preset of the generic brush, with a few more that cost only
-their settings: Clay buildup, Spread, Scrape, Crease, Layer. The user's
-own brushes follow them. A brush in hand can be changed on the panel, kept
-under a name, and forgotten again. A core preset cannot be forgotten, and
-one that has been changed can be put back as it came.
+their settings: Spread, Scrape, Fill, Polish, Crease, Bead, Band. The
+user's own brushes follow them. A brush in hand can be changed on the
+panel, kept under a name, and forgotten again. A core preset cannot be
+forgotten, and one that has been changed can be put back as it came.
 
 ### 16.5 Where the files go
 
@@ -2773,8 +2779,8 @@ is made, and it is worth handing to somebody else.
 |---|---|---|
 | B1 | Where the files go | **Built**, 2026-11-23 (below) |
 | B2 | The generic brush in the core, held to the classic kernels | **Built**, 2026-11-23 (below) |
-| B3 | The palette, the core presets, and a brush's settings on the panel | Next |
-| B4 | Build-up on or off, and choosing a bitmap for a brush's tip | |
+| B3 | The palette, the core presets, and a brush's settings on the panel | **Built**, 2026-11-23 (below) |
+| B4 | Build-up on or off, and choosing a bitmap for a brush's tip | Next |
 | B5 | Brushes that stamp a shape and not a height: an implicit surface, or a vector displacement map | Later. Asked for as a later stage, and written down here so that it is not lost |
 
 #### Built, 2026-11-23 (B1): where the files go
@@ -2843,6 +2849,154 @@ nothing under a mask that protects everything.
 inflation together are no more than one stamp may move the surface, a
 voxel. Asked for more, both are brought down in proportion. Two actions
 that each move the surface a voxel would be two.
+
+**What one kernel for everything cost, and what was done about it.**
+Measured with `what_a_generic_stamp_costs_beside_a_classic_one` (ignored,
+run by hand in release): a stamp of each classic brush against the generic
+brush of the same one action, on the ball the brush tests use, at radii of
+8 and of 24 voxels, on the four cores of the build container. It is a
+comparison on one machine and not a number for any other.
+
+| The generic brush as | Slower than the classic kernel by |
+|---|---|
+| First written: each action asked about at each voxel | 24% to 90% |
+| One loop compiled for each set of actions, chosen once a stamp | 16% to 72% |
+| And for a tip with an image or without, and the profile's division done once a stamp | 0% to 20% |
+
+The last row by brush, at 8 voxels and at 24: Draw 8% and 0%, Clay 20% and
+13%, Smooth 3% and 14%, Inflate 8% and 4%, Pinch 10% and 9%, Flatten 10%
+and 6%. Runs of the same measurement differ by several percent, so the
+small ones are not distinguishable from nothing. The bit-for-bit tests
+passed unchanged after each step.
+
+#### Built, 2026-11-23 (B3): the palette
+
+`app/presets.rs` and `app/studio.rs`. Upstream's files changed in three
+places: the arm for a falloff curve chosen in `app.rs`, and in `panel.rs`
+the palette put over the brush's block and the profile put where the
+falloff row was.
+
+**BRUSHES**, over the brush's own block: eighteen that come with the
+application, three to a row, and the user's own under them, two to a row.
+The one that is the brush in hand is lit.
+
+| Brush | What it is |
+|---|---|
+| Draw, Clay, Inflate, Pinch, Smooth, Flatten | Upstream's six, each as nothing but itself |
+| Spread | A pinch turned round |
+| Scrape | Cuts down to a plane held 0.15 of a radius under the surface, and fills nothing |
+| Fill | Fills up to the plane through the surface under the brush, and cuts nothing |
+| Polish | Half a smooth and half a level |
+| Crease | A push in of 0.6 and a pinch |
+| Bead | Draw, with the cross-section of a ball |
+| Band | Draw, flat across six tenths of its width |
+| Fine crease, Long line | A crease and a draw, small and on a lazy lead |
+| Rivets, Rivet row, Scales | The stamp: one sized by the drag, and two rows |
+
+Crease was a button of its own with a kernel of its own. It is now a brush
+on the palette like the rest and the kernel is not called.
+
+**What it does**, put away until asked for: a slider for each of the five
+amounts, and for a brush that levels, where its plane is held and which
+side of it the brush works. Moving one changes the brush in hand, which is
+then lit on the palette only if it has become another brush that is
+there. The push and the inflation share the one voxel a stamp may move:
+the slider being moved takes what it is given and the other gives way.
+
+**Profile**, where upstream's row of four falloff curves was: the four,
+*Round*, and how much of the middle is flat. The four are still
+upstream's setting.
+
+**Keep** writes the brush in hand under the name typed, size and strength
+and all. **Forget** takes away the one that is lit, if it is the user's.
+A brush kept under the name of one that came with the application stands
+where that one stood, marked with a star, and its button reads *Restore*.
+
+**A brush still goes by a classic brush.** A great deal of upstream's
+`app.rs` asks its brush enum questions: which digit key, which remembered
+strength, whether the invert key does anything. Rather than change every
+place that asks, a brush with amounts of its own goes by the classic brush
+they are nearest, its *family*: Draw if it pushes, then Inflate, then
+Pinch, and of those that only smooth or level, Smooth, Flatten, or Clay
+if its plane is off the surface or it works one side. The family of a
+brush with no opposite is a classic brush with no opposite, which is the
+one thing about it that has to be right, and a property test holds it to
+the kernel: for any amounts of smoothing and levelling to the plane under
+the brush, a stamp with the invert key and one without leave the same
+field to the bit.
+
+**Upstream's kernels still run upstream's brushes.** The brush in hand
+that is a classic brush with a classic curve is stamped by upstream's
+code, called and not copied, as before. The generic brush gives the same
+result to the bit and costs up to a fifth more (above), so there was
+nothing to gain by routing them through it. Anything else is the generic
+brush.
+
+**The files.** One file a brush, `<name>.brush`, in `brushes/` in the data
+directory, so that handing somebody a brush is copying a file. The line
+inside is the old `brushes.conf` line with the amounts added:
+
+```
+Fine crease = brush:Draw, push:-0.6, pinch:1, falloff:Smooth, size:1.5, strength:0.3, lazy:12
+```
+
+`brush:` names the classic brush the settings start from and the amounts
+after it are what differs, so a line written by hand that says only
+`brush:Clay, plane:0.8` is Clay with its plane held further off. A line
+with no `size` or `strength` is a brush that leaves those as they are in
+hand, which is how the ones that come with the application are. A file
+may hold several lines, a pack, and a file somebody else made is read
+whatever it is called. `brushes.conf`, in either place it has been, is
+read while there is no `brushes/` directory and what it holds is written
+out as files; the old file is left where it is. Its `studio:Crease` still
+reads as a crease.
+
+**Found by the tests while it was built:**
+
+* A scraper with its plane through the surface under the pointer did
+  nothing to a ball, to a ridge run along, or to a ridge run beside. Nothing
+  stands proud of a plane that touches a ball; the top of a ridge is the
+  plane; and beside a low ridge a ball falls away from the plane faster
+  than the ridge rises to it. So Scrape holds its plane under the surface,
+  as Clay holds its proud.
+* The side of a stroke is lower than its middle even with a profile that
+  is flat right across, at a probe beside where the stroke began: the
+  later stamps are further from it. Measured, 0.83 of the middle with
+  seven tenths flat, against 0.46 for the classic curve. The test asks
+  for the difference between those and not for "flat".
+
+**Held by**: contracts (a preset settled is a preset that needs no
+settling; the user's brushes stay in the order of their names; a family
+is a brush on the field); property tests (any brush at all settles, and
+comes back from its file the same brush; amounts are held one way; every
+brush has a family, with an opposite exactly when it moves the surface
+one way; a family with no opposite has none in the kernel); and
+integration tests through messages and pointer events: every brush on the
+palette does something to the model and is one undo; upstream's six
+chosen on the palette or by upstream's button are the same brush and
+leave the same field to the bit; what a brush is made of is what its
+stroke does; the profile is the cross-section of the stroke; a brush is
+kept, comes back, is changed and is forgotten; one that came can be
+changed and put back and not forgotten; the mask tool's strength and a
+brush's stay apart; a brush is a file of its own, packs and all; a
+damaged file reads without a panic and into range; and the old file is
+moved.
+
+**Not done, and known:**
+
+* The palette is names on buttons. A picture of each brush's stroke would
+  say more, and wants a renderer for one.
+* A brush's size and strength are kept when it is kept. There is no way
+  yet to keep a brush that leaves them alone, other than writing its
+  file by hand without them.
+* The digit keys are still upstream's eight.
+* Bead at a high strength shows its stamps as ribs along the stroke
+  (`docs/images/studio-brush-palette.png`, second stroke down, at a
+  strength of 0.37). A ball's cross-section is upright at its rim, and
+  stamps spaced for a curve that tapers do not blend there. Wants the
+  spacing to follow the profile.
+* A file named for a device on Windows (`CON.brush`) would not be
+  written. A brush would have to be called exactly that.
 
 ---
 

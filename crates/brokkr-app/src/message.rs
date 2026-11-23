@@ -148,9 +148,20 @@ pub enum FormMessage {
 /// Settings of the application and not of the document.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StudioMessage {
-    /// Take up an operator upstream has no brush for, or `None` to put it
-    /// away and go back to the classic brush.
-    OperatorChosen(Option<brokkr_core::brush::engine::FieldOp>),
+    /// What the brush in hand does to the surface: an amount of each of
+    /// the five things a brush can do. Amounts that are just a classic
+    /// brush's are that classic brush.
+    ActionsChosen(brokkr_core::brush::compound::Actions),
+    /// Give the stroke the cross-section of a ball, which no falloff curve
+    /// of the classic brush's is. Choosing one of those curves again
+    /// (`Message::FalloffChanged`) puts it away.
+    RoundChosen,
+    /// How much of the middle of the stroke is flat, as a share of its
+    /// radius.
+    PlateauChanged(f32),
+    /// Show what the brush in hand is made of, to change it, or put that
+    /// away.
+    SettingsShown(bool),
     /// How far the brush trails the pointer, in pixels. Zero is off.
     LazyChanged(f32),
     /// How much of the brush's size pen pressure decides, 0..=1.
@@ -173,15 +184,17 @@ pub enum StudioMessage {
     /// and the image, or why it could not be used. `None` when the dialog
     /// was dismissed.
     StampImageLoaded(Option<Result<LoadedStamp, String>>),
-    /// Take up a brush preset: every setting it holds, at once. The number
-    /// is its place in the list.
+    /// Take up a brush from the palette: every setting it holds, at once.
+    /// The number is its place on the palette.
     PresetChosen(usize),
-    /// The name being typed for a preset about to be saved.
+    /// The name being typed for a brush about to be kept.
     PresetNamed(String),
     /// Keep the brush as it is set up now under the name typed, in place
-    /// of the preset with that name if there is one.
+    /// of the brush with that name if there is one.
     PresetSaved,
-    /// Forget a preset.
+    /// Forget a brush the user kept. The number is its place on the
+    /// palette. One that came with the application stays; one kept under
+    /// the name of one that did is forgotten, and that one comes back.
     PresetRemoved(usize),
 }
 
