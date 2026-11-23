@@ -59,6 +59,7 @@
 //! Sampling under a warp or a resample is nearest, as it is for slots.
 //! For a colour, interpolating would be better, and is owed.
 
+use contracts::{debug_ensures, debug_requires};
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -79,6 +80,7 @@ pub const BARE: Rgba = [0, 0, 0, 0];
 
 /// `rgba` as it is stored: a voxel with no coverage has no colour either.
 #[inline]
+#[debug_ensures(ret[3] != 0 || ret == BARE, "a voxel with no coverage has no colour")]
 pub fn stored(rgba: Rgba) -> Rgba {
     if rgba[3] == 0 { BARE } else { rgba }
 }
@@ -199,6 +201,8 @@ impl PaintField {
         }
     }
 
+    #[debug_requires(stored(rgba) == rgba, "paint is written as it is stored")]
+    #[debug_ensures(self.at(cell) == rgba, "a voxel written reads back")]
     pub fn write(&mut self, cell: IVec3, rgba: Rgba) {
         let coord = BrickCoord::containing(cell);
         let local = cell - coord.origin();
@@ -216,6 +220,10 @@ impl PaintField {
         }
     }
 
+    #[debug_requires(
+        lo.cmpge(coord.origin()).all() && hi.cmple(coord.max_voxel()).all(),
+        "the box edited is inside the brick"
+    )]
     pub(crate) fn edit_brick(
         &mut self,
         coord: BrickCoord,
@@ -288,6 +296,7 @@ impl PaintField {
         }
     }
 
+    #[debug_ensures(out.len() == old(out.len()) + cells.len(), "one paint for each cell")]
     pub(crate) fn rgba_at_cells(&self, coord: BrickCoord, cells: &[IVec3], out: &mut Vec<Rgba>) {
         if self.bricks.is_empty() {
             out.resize(out.len() + cells.len(), BARE);
@@ -309,6 +318,10 @@ impl PaintField {
         }
     }
 
+    #[debug_ensures(
+        self.bricks.values().all(|brick| *brick != PaintBrick::Uniform(BARE)),
+        "a brick of nothing is no brick"
+    )]
     pub(crate) fn collapse(&mut self) {
         self.bricks.retain(|_, brick| match brick.is_collapsible() {
             Some(BARE) => false,
@@ -729,6 +742,10 @@ impl Volume {
 
     /// Copy the paint of the inclusive voxel box `lo..=hi` into `region`:
     /// what a gesture that works from the surface as it WAS reads from.
+    #[debug_ensures(
+        region.values.len() == region.size.element_product() as usize,
+        "a paint for each voxel of the box"
+    )]
     pub fn snapshot_paint(&self, lo: IVec3, hi: IVec3, region: &mut PaintRegion) {
         region.lo = lo;
         region.size = (hi - lo + IVec3::ONE).max(IVec3::ZERO);
@@ -838,6 +855,16 @@ mod tests {
             }
         }
         cells
+    }
+
+    /// The contracts on this module are checked in a debug build, and one
+    /// that is broken says which. (`write` is for paint as it is stored: a
+    /// colour with no coverage is not that.)
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "paint is written as it is stored")]
+    fn a_contract_is_checked_in_a_debug_build() {
+        PaintField::default().write(IVec3::ZERO, [9, 9, 9, 0]);
     }
 
     /// An unpainted field costs nothing and reads as bare; a voxel painted

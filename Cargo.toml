@@ -39,6 +39,13 @@ windows-sys = { version = "0.61", features = [
 # same trade the nonce made, where a dependency has to be doing something hard
 # to be worth it, and retain/release is hard while ten signatures are not.
 core-foundation = "0.10"
+# Contracts: what a function requires and what it promises, written on the
+# function and checked when it runs. Only the `debug_` and `test_` forms are
+# used, so a release build compiles none of it and a stamp costs what it
+# cost. A procedural macro and nothing at run time; its own dependencies
+# (proc-macro2, quote, syn) were in the lockfile already. MPL-2.0, which
+# AGPL-3.0 may be combined with.
+contracts = "0.6"
 glam = { version = "0.33", features = ["bytemuck"] }
 iced = "0.14"
 iced_wgpu = "0.14"
@@ -50,6 +57,12 @@ evdev = "0.13"
 # lockfile before it was added -- see the note in brokkr-app/Cargo.toml.
 rfd = "0.17"
 pollster = "0.4"
+# Property tests: a rule stated for every input and tried on a few hundred
+# drawn at random, shrunk to the smallest that breaks it. A dev-dependency
+# of brokkr-core and never part of the application. Without its default
+# features, which are a persistence file and a forking runner this has no
+# use for.
+proptest = { version = "1", default-features = false, features = ["std"] }
 rayon = "1"
 # XML and raw DEFLATE, both needed to read a 3MF and both already compiled for
 # this workspace before they were named here: roxmltree arrives through

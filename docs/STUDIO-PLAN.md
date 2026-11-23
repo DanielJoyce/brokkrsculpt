@@ -2003,6 +2003,46 @@ build to the beta channel by accident.
 - House conventions hold: SPDX header on every new file, no em-dashes in
   prose, fish for any shell command, warnings before command blocks.
 
+### How it is tested, from 2026-11-23
+
+Decided by the maintainer on that day, in these words: *"let's move off
+mutation testing it seems to eat a lot of time and this isn't aerospace
+software. Let's go with integration testing, property testing where needed,
+and debug/test time contracts (use contracts crate)."*
+
+Up to and including the painting engine's brush (section 15.9, P3), each
+stage was mutation tested by hand, and its account says so. That stopped
+there. It found real gaps, and it cost hours of machine time a stage. From
+here a stage is held by three things, and its account says which it used:
+
+1. **Contracts**, on the function they are about. What it requires of its
+   caller and what it promises, as `#[debug_requires]`, `#[debug_ensures]`
+   and `#[debug_invariant]` from the `contracts` crate. Checked in every
+   debug build and so in every test run that is not asked to be a release
+   one, and compiled out of a release build entirely: a stamp costs what
+   it cost. `#[test_ensures]` for a promise too dear to check outside a
+   test. A contract is for what must be true whoever calls: an index in
+   range, a result in its range, a count that only grows, paint stored the
+   way paint is stored.
+2. **Property tests**, with `proptest`, where there is a rule that holds
+   for every input and a hand-picked case would be the author's own idea of
+   the input twice over: a file that comes back as it went in, a move and
+   its inverse, a stroke that does not care what order its stamps came in,
+   an undo. Not everywhere. A thing with three cases gets three cases.
+3. **Integration tests**: the thing done the way a user does it and the
+   result looked at where a user would see it. Messages and pointer events
+   through the application, a file written and opened again, a frame
+   rendered and its pixels read. These were always here, and are now the
+   main thing.
+
+Unit tests on worked fixtures stay where they say something the other
+three do not, which is mostly "this number, for this reason".
+
+What a stage runs before it is merged: `cargo fmt`, clippy with warnings
+as errors, the core suite in the **dev** profile (a minute, with every
+contract and debug assertion live) and again in release, the gpu suite and
+the app suite.
+
 ### Seeing it run without a screen
 
 Every panel on this branch was built and tested without anybody seeing it,
@@ -2406,3 +2446,37 @@ Mutants not written, because they change the time a stamp takes and
 nothing else: the one early way out of a stamp, for a voxel outside the
 brush or wholly protected, and the undo copy being taken for every stamp
 where once a brick will do.
+
+#### Built, 2026-11-23: contracts and properties on what is there
+
+The first stage held the new way (section 13), and the engine built so far
+brought under it.
+
+**Contracts** on the functions of `paint/field.rs`, `file.rs`, `stroke.rs`
+and `touch.rs`. Among them: paint is written as it is stored, and a voxel
+written reads back; a box edited is inside its brick; a collapse leaves no
+brick of nothing; a mesh gets one paint for each cell; a section read is a
+field for each body or no fields; what is laid is stored as paint is, an
+eraser adds no coverage and paint takes none off; a share of a wash, a
+drybrush or a sponge is a share; and what a stroke has covered, it has
+covered. One test breaks one on purpose and reads its name back, so that
+the contracts being live is itself tested.
+
+**Properties**, in `paint/properties.rs`, fifteen of them:
+
+- Of the arithmetic: nothing laid changes nothing; coverage moves one way;
+  more of a stroke is never less of its effect; a full coat is the colour;
+  the opacity is a scale on the amount; a glaze never lightens.
+- Of the file: any fields come back from their section as they went in and
+  as the same bytes each time; no bytes at all make the reader do anything
+  but answer, nor a real section with some of its bytes changed.
+- Of moving a body: there and back is no move, a turn and its inverse is no
+  turn for each of the 24, and after either every voxel holds what the
+  voxel it came from held.
+- Of a stroke: it is its stamps in any order and any of them laid twice,
+  for any pigment over any paint and whatever the brush catches; and
+  undone it is what was there, and done again it is the stroke.
+
+All of it passed as first written, which after three stages of mutation
+testing is what should happen. The whole core suite is 975 tests and a
+minute in the dev profile.
