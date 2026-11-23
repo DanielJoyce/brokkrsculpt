@@ -275,6 +275,13 @@ pub fn pooled(relief: f32) -> f32 {
 /// Kept by the caller from one stroke to the next, so that a stroke does
 /// not allocate once it is under way. [`PaintStroke::begin`] starts a new
 /// one.
+///
+/// **A stroke of paint is laid inside an undo stroke**
+/// ([`Volume::begin_stroke`]), one for one. What a voxel held before the
+/// stroke is read back from the undo record, and with none open there is
+/// no "before": each stamp would lay over the last one's result, which is
+/// the compounding this type exists to prevent. A debug build refuses a
+/// stamp laid outside one.
 #[derive(Debug, Default)]
 pub struct PaintStroke {
     /// The most any stamp of this stroke has given each voxel, 0..=255, a
@@ -420,6 +427,10 @@ impl PaintStroke {
     /// A mirrored twin asks what it catches at the point its voxel is the
     /// mirror image of, so that the speckle on one side of the plane is the
     /// reflection of the speckle on the other.
+    #[debug_requires(
+        volume.is_recording(),
+        "a stroke of paint is laid inside an undo stroke: that is where what was there is kept"
+    )]
     pub fn stamp_symmetric(
         &mut self,
         volume: &mut Volume,
@@ -652,6 +663,23 @@ mod tests {
 
     fn on(centre: Vec3, normal: Vec3) -> Stamp {
         Stamp::new(centre, normal, BrushDirection::Add)
+    }
+
+    /// One stamp, as a stroke of its own.
+    fn dab(volume: &mut Volume, brush: &Brush, stamp: &Stamp, lay: &Lay) {
+        dab_mirrored(volume, brush, stamp, lay, Symmetry::OFF);
+    }
+
+    fn dab_mirrored(
+        volume: &mut Volume,
+        brush: &Brush,
+        stamp: &Stamp,
+        lay: &Lay,
+        symmetry: Symmetry,
+    ) {
+        volume.begin_stroke();
+        PaintStroke::new().stamp_symmetric(volume, brush, stamp, lay, symmetry, Vec3::ZERO);
+        let _ = volume.end_stroke();
     }
 
     fn lay(pigment: Pigment, catch: Catch) -> Lay {
@@ -891,8 +919,7 @@ mod tests {
         let stamped = |brush: &Brush, stamp: &Stamp, prepare: &dyn Fn(&mut Volume)| {
             let mut volume = cube();
             prepare(&mut volume);
-            let mut stroke = PaintStroke::new();
-            stroke.stamp(&mut volume, brush, stamp, &Lay::loaded(red));
+            dab(&mut volume, brush, stamp, &Lay::loaded(red));
             volume
         };
         // Across the face, as the brush is measured.
@@ -950,6 +977,7 @@ mod tests {
         assert!(stamped(&Brush { radius: 0.0, ..brush }, &stamp, &|_| {}).paint().is_empty());
         let mut volume = cube();
         let mut stroke = PaintStroke::new();
+        volume.begin_stroke();
         stroke.stamp(&mut volume, &brush, &stamp, &Lay::loaded(pigment(RED, 0.0)));
         assert!(volume.paint().is_empty() && stroke.bricks() == 0);
         volume.edit_mask(IVec3::splat(-40), IVec3::splat(40), |_, _, _| PROTECTED);
@@ -957,6 +985,7 @@ mod tests {
         assert!(volume.paint().is_empty() && stroke.bricks() == 0);
         // Control: a stamp that does lay something is kept count of.
         let mut volume = cube();
+        volume.begin_stroke();
         stroke.stamp(&mut volume, &brush, &stamp, &Lay::loaded(red));
         assert!(stroke.bricks() > 0);
         // And it is paint and not sculpture: the field is as it was.
@@ -982,9 +1011,9 @@ mod tests {
         let stamp = on(centre, Vec3::Z);
         let wash = Pigment { colour: [40, 30, 20], opacity: 1.0, mode: Mode::Glaze };
         let mut washed = slotted();
-        PaintStroke::new().stamp(&mut washed, &wide, &stamp, &lay(wash, Catch::Recesses));
+        dab(&mut washed, &wide, &stamp, &lay(wash, Catch::Recesses));
         let mut loaded = slotted();
-        PaintStroke::new().stamp(&mut loaded, &wide, &stamp, &Lay::loaded(wash));
+        dab(&mut loaded, &wide, &stamp, &Lay::loaded(wash));
 
         // The share of a loaded brush's paint that the wash left, by where
         // on the slot a voxel is. Near the middle of the stamp only, in y.
@@ -1041,7 +1070,7 @@ mod tests {
         // is no crease anywhere, and the wash lies as it does on a flat.
         let mut level = slotted();
         let flat_everywhere = Lay { crease_gain: 0.0, ..lay(wash, Catch::Recesses) };
-        PaintStroke::new().stamp(&mut level, &wide, &stamp, &flat_everywhere);
+        dab(&mut level, &wide, &stamp, &flat_everywhere);
         for ((_, at, with), (_, _, without)) in
             near(&level, centre, 8.0).into_iter().zip(near(&loaded, centre, 8.0))
         {
@@ -1069,7 +1098,7 @@ mod tests {
         let dry = Drybrush { catch: 0.7, streak: 0.0, bristle_mm: 0.4 };
         let stamp = on(ON_EDGE, Vec3::new(1.0, 1.0, 0.0).normalize());
         let mut volume = cube();
-        PaintStroke::new().stamp(&mut volume, &wide, &stamp, &lay(red, Catch::Raised(dry)));
+        dab(&mut volume, &wide, &stamp, &lay(red, Catch::Raised(dry)));
         let voxels = near(&volume, ON_EDGE, 6.0);
         let on_edge: Vec<_> =
             voxels.iter().filter(|(_, at, _)| from_an_edge(*at) <= VOXEL * 0.75).collect();
@@ -1099,6 +1128,7 @@ mod tests {
         // nothing kept of the stamp.
         let mut face = cube();
         let mut stroke = PaintStroke::new();
+        face.begin_stroke();
         stroke.stamp(&mut face, &wide, &on(ON_FLAT, Vec3::Z), &lay(red, Catch::Raised(dry)));
         assert!(near(&face, ON_FLAT, 4.0).iter().all(|(_, _, paint)| *paint == BARE));
         assert_eq!(stroke.bricks(), 0, "a stamp that laid nothing kept count of it");
@@ -1107,7 +1137,7 @@ mod tests {
             let streaky = Drybrush { streak: 1.0, ..dry };
             let mut volume = cube();
             let lay = Lay { seed, ..lay(red, Catch::Raised(streaky)) };
-            PaintStroke::new().stamp(&mut volume, &wide, &stamp.with_tangent(Vec3::Z), &lay);
+            dab(&mut volume, &wide, &stamp.with_tangent(Vec3::Z), &lay);
             near(&volume, ON_EDGE, 6.0)
         };
         assert_ne!(streaked(7), streaked(8), "the seed changed no bristle");
@@ -1115,7 +1145,7 @@ mod tests {
         // With less on the brush, less on the edge, and not nothing.
         let mut running_out = cube();
         let low = Lay { load: 0.6, ..lay(red, Catch::Raised(dry)) };
-        PaintStroke::new().stamp(&mut running_out, &wide, &stamp, &low);
+        dab(&mut running_out, &wide, &stamp, &low);
         let sum = |volume: &Volume| {
             near(volume, ON_EDGE, 6.0).iter().map(|(_, _, paint)| u32::from(paint[3])).sum::<u32>()
         };
@@ -1126,7 +1156,7 @@ mod tests {
         let sides = |travel: Vec3| {
             let mut volume = cube();
             let coming = stamp.with_tangent(travel);
-            PaintStroke::new().stamp(&mut volume, &wide, &coming, &lay(red, Catch::Raised(dry)));
+            dab(&mut volume, &wide, &coming, &lay(red, Catch::Raised(dry)));
             let (mut x_face, mut y_face) = (0, 0);
             for (_, at, paint) in near(&volume, ON_EDGE, 6.0) {
                 if at.x > at.y {
@@ -1151,6 +1181,7 @@ mod tests {
         let stamp = on(ON_FLAT, Vec3::Z);
         let mut volume = cube();
         let mut stroke = PaintStroke::new();
+        volume.begin_stroke();
         stroke.stamp(&mut volume, &wide, &stamp, &lay(red, Catch::Specks(sponge)));
         let layer = |volume: &Volume, radius: f32| -> Vec<Rgba> {
             near(volume, ON_FLAT, radius)
@@ -1199,13 +1230,13 @@ mod tests {
         assert_eq!(specks(&volume), before, "a second stamp moved the specks");
         let mut other = cube();
         let reseeded = Lay { seed: 8, ..lay(red, Catch::Specks(sponge)) };
-        PaintStroke::new().stamp(&mut other, &wide, &stamp, &reseeded);
+        dab(&mut other, &wide, &stamp, &reseeded);
         assert_ne!(specks(&other), before, "the seed changed nothing");
         // All of a flat is all of it, and none of it is none.
         for (density, alpha) in [(1.0, 255), (0.0, 0)] {
             let sponge = Sponge { density, grain_mm: 1.0, edges: 0.0 };
             let mut volume = cube();
-            PaintStroke::new().stamp(&mut volume, &wide, &stamp, &lay(red, Catch::Specks(sponge)));
+            dab(&mut volume, &wide, &stamp, &lay(red, Catch::Specks(sponge)));
             let patch = layer(&volume, 2.0);
             assert!(patch.len() > 40);
             assert!(patch.iter().all(|paint| paint[3] == alpha), "a density of {density}");
@@ -1219,13 +1250,12 @@ mod tests {
         let sponge = Sponge { density: 0.5, grain_mm: 1.0, edges: 0.0 };
         let at = Vec3::new(6.0, 2.0, HALF);
         let mut volume = cube();
-        PaintStroke::new().stamp_symmetric(
+        dab_mirrored(
             &mut volume,
             &brush,
             &on(at, Vec3::Z),
             &lay(pigment(RED, 1.0), Catch::Specks(sponge)),
             Symmetry::X,
-            Vec3::ZERO,
         );
         let here = near(&volume, at, 5.5);
         let painted = here.iter().filter(|(_, _, paint)| *paint != BARE).count();
@@ -1239,13 +1269,12 @@ mod tests {
         let dry = Drybrush { catch: 0.8, streak: 1.0, bristle_mm: 0.6 };
         let along = on(ON_EDGE, Vec3::new(1.0, 1.0, 0.0).normalize()).with_tangent(Vec3::Z);
         let mut volume = cube();
-        PaintStroke::new().stamp_symmetric(
+        dab_mirrored(
             &mut volume,
             &Brush { radius: 8.0, ..brush },
             &along,
             &lay(pigment(RED, 1.0), Catch::Raised(dry)),
             Symmetry::X,
-            Vec3::ZERO,
         );
         let here = near(&volume, ON_EDGE, 7.0);
         let painted = here.iter().filter(|(_, _, paint)| *paint != BARE).count();
@@ -1262,13 +1291,12 @@ mod tests {
 
         // With the symmetry off, the other side is bare.
         let mut alone = cube();
-        PaintStroke::new().stamp_symmetric(
+        dab_mirrored(
             &mut alone,
             &brush,
             &on(at, Vec3::Z),
             &Lay::loaded(pigment(RED, 1.0)),
             Symmetry::OFF,
-            Vec3::ZERO,
         );
         assert!(near(&alone, at * Vec3::new(-1.0, 1.0, 1.0), 5.5).iter().all(|v| v.2 == BARE));
         assert!(near(&alone, at, 5.5).iter().any(|v| v.2 != BARE));
@@ -1296,14 +1324,20 @@ mod timing {
             let along = {
                 let mut stroke = PaintStroke::new();
                 let lay = Lay::loaded(pigment);
+                volume.begin_stroke();
                 let started = std::time::Instant::now();
                 for step in 0..20 {
                     let centre = Vec3::new(step as f32 * radius * 0.25, 0.0, 30.0);
                     let stamp = Stamp::new(centre, Vec3::Z, BrushDirection::Add);
                     stroke.stamp(&mut volume, &brush, &stamp, &lay);
                 }
-                started.elapsed().as_secs_f64() * 1000.0 / 20.0
+                let each = started.elapsed().as_secs_f64() * 1000.0 / 20.0;
+                let _ = volume.end_stroke();
+                each
             };
+            // One undo stroke for all that follows, so that every round
+            // lays its paint over the same thing: what was there before.
+            volume.begin_stroke();
             let mut time = |catch: Catch| {
                 let rounds = 20;
                 let mut stroke = PaintStroke::new();

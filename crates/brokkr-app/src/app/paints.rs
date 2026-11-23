@@ -352,8 +352,13 @@ impl Brokkr {
             ExportFormat::ThreeMf => {
                 // With no paints every slot is a filament slot already and
                 // maps to itself, so this needs no "if there are paints".
-                for (_, mesh, _) in bodies.iter_mut() {
-                    mesh.slots = bake.filament_slots(mesh);
+                // And what is painted in colour prints in the filament
+                // nearest it.
+                for (meta, mesh, _) in bodies.iter_mut() {
+                    mesh.slots = match self.doc.volume(meta.id) {
+                        Some(volume) => bake.printed_slots(volume, mesh),
+                        None => bake.filament_slots(mesh),
+                    };
                 }
                 Vec::new()
             }

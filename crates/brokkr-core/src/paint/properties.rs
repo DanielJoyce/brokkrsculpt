@@ -263,6 +263,58 @@ proptest! {
     }
 }
 
+proptest! {
+    /// Asked at a voxel, a sample is that voxel's paint: its colour as
+    /// light times its coverage, and its coverage.
+    #[test]
+    fn a_sample_at_a_voxel_is_the_voxel(
+        field in field(),
+        probes in prop::collection::vec((-96..96_i32, -96..96_i32, -96..96_i32), 1..40),
+    ) {
+        for (x, y, z) in probes {
+            let cell = IVec3::new(x, y, z);
+            let [r, g, b, a] = field.at(cell);
+            let coverage = f32::from(a) / 255.0;
+            let colour = crate::paint::linear([r, g, b]);
+            let sample = field.sample(cell.as_vec3());
+            prop_assert!((sample[3] - coverage).abs() < 1e-6, "{:?} at {}", sample, cell);
+            for channel in 0..3 {
+                prop_assert!((sample[channel] - colour[channel] * coverage).abs() < 1e-6);
+            }
+        }
+    }
+
+    /// Asked between voxels, its coverage is between theirs: a blend makes
+    /// no paint that was not there and loses none that was all round.
+    #[test]
+    fn a_sample_is_between_the_voxels_round_it(
+        field in field(),
+        probes in prop::collection::vec(
+            ((-96..95_i32, -96..95_i32, -96..95_i32), (0.0_f32..1.0, 0.0_f32..1.0, 0.0_f32..1.0)),
+            1..40,
+        ),
+    ) {
+        for ((x, y, z), (fx, fy, fz)) in probes {
+            let cell = IVec3::new(x, y, z);
+            let (mut least, mut most) = (1.0_f32, 0.0_f32);
+            for corner in 0..8 {
+                let step = IVec3::new(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1);
+                let coverage = f32::from(field.at(cell + step)[3]) / 255.0;
+                least = least.min(coverage);
+                most = most.max(coverage);
+            }
+            let sample = field.sample(cell.as_vec3() + Vec3::new(fx, fy, fz));
+            prop_assert!(
+                sample[3] >= least - 1e-5 && sample[3] <= most + 1e-5,
+                "{} is not between {} and {}",
+                sample[3],
+                least,
+                most
+            );
+        }
+    }
+}
+
 /// A ball to paint on, and a stamp on its top at `(x, y)`.
 fn ball() -> Volume {
     let mut volume = Volume::new(0.5);

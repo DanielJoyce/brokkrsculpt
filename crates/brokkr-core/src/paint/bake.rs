@@ -21,10 +21,21 @@
 //!
 //! Neither changes the document. Both are worked out for one export and
 //! thrown away.
+//!
+//! # And the body's own paint, over either
+//!
+//! A body painted in colour ([`crate::paint::field`]) holds a colour and a
+//! coverage at each voxel, and that is laid over whatever its slot comes to,
+//! by its coverage, in linear light: [`Bake::over`], which is the shader's
+//! compositing line again. For a colour at every point that is all there is
+//! to it. For a filament printer, a vertex that is at least half covered
+//! prints in the loaded filament nearest the colour it was painted
+//! ([`Bake::printed_slots`]): a machine with four spools cannot print a
+//! glaze, and half is where a coat stops being a tint.
 
 use glam::Vec3;
 
-use super::{Paint, PaintTable, srgb};
+use super::{Paint, PaintTable, linear, srgb};
 use crate::export::ExportMesh;
 use crate::volume::Volume;
 
@@ -87,7 +98,26 @@ impl Bake<'_> {
             }
             _ => 0.0,
         };
-        self.colour(slot, crease, self.up_at(volume, position, slot))
+        self.over(volume, position, self.colour(slot, crease, self.up_at(volume, position, slot)))
+    }
+
+    /// `under`, sRGB, with the body's own paint at `position` laid over it
+    /// by its coverage. The paint is blended from the voxels round the
+    /// point ([`crate::paint::field::PaintField::sample`]), since a texel
+    /// or a vertex of a thinned mesh is not at a voxel. Free for a body
+    /// that has none.
+    pub fn over(&self, volume: &Volume, position: Vec3, under: [u8; 3]) -> [u8; 3] {
+        let paint = volume.paint();
+        if paint.is_empty() {
+            return under;
+        }
+        let [red, green, blue, coverage] = paint.sample(position / volume.voxel_size());
+        if coverage <= 0.0 {
+            return under;
+        }
+        let base = linear(under);
+        let laid = [red, green, blue];
+        srgb(std::array::from_fn(|channel| base[channel] * (1.0 - coverage) + laid[channel]))
     }
 
     /// How much of the surface's normal at `position` points up, or 0 for a
@@ -111,13 +141,17 @@ impl Bake<'_> {
     /// this is as good for a decimated mesh as for a dense one, though a
     /// decimated mesh has fewer vertices to hold a wash in.
     pub fn vertex_colours(&self, volume: &Volume, mesh: &ExportMesh) -> Vec<[u8; 3]> {
-        if mesh.slots.len() != mesh.positions.len() {
+        // No slots at all is every vertex unassigned: with no paint on the
+        // body either, there is nothing to work out.
+        let slotted = mesh.slots.len() == mesh.positions.len();
+        if !slotted && volume.paint().is_empty() {
             return vec![self.unpainted; mesh.positions.len()];
         }
         let voxel_size = volume.voxel_size();
+        let unassigned = std::iter::repeat(&0_u8);
         mesh.positions
             .iter()
-            .zip(&mesh.slots)
+            .zip(mesh.slots.iter().chain(unassigned))
             .map(|(position, slot)| {
                 // Only a paint with something to pool or to catch reads the
                 // surface. The lookup is a hash a sample and thirty-two
@@ -132,7 +166,8 @@ impl Bake<'_> {
                 // From the field and not from the mesh's own normals: a
                 // mesh that has been decimated has few of them, and the
                 // model is what the paint is on.
-                self.colour(*slot, crease, self.up_at(volume, *position, *slot))
+                let under = self.colour(*slot, crease, self.up_at(volume, *position, *slot));
+                self.over(volume, *position, under)
             })
             .collect()
     }
@@ -166,7 +201,47 @@ impl Bake<'_> {
         let slots: Vec<u8> = mesh.slots.iter().map(|slot| by_slot[usize::from(*slot)]).collect();
         if slots.iter().all(|slot| *slot == 0) { Vec::new() } else { slots }
     }
+
+    /// [`Bake::filament_slots`], with the body's own paint taken into it:
+    /// a vertex at least half covered by paint prints in the loaded
+    /// filament nearest the colour it was painted, whatever its slot, and
+    /// one less covered than that prints as its slot says.
+    ///
+    /// The nearest voxel's paint and not a blend: a filament is one or
+    /// another, and a blend across the edge of a patch would send a rim of
+    /// it to whichever filament is nearest the colour between.
+    pub fn printed_slots(&self, volume: &Volume, mesh: &ExportMesh) -> Vec<u8> {
+        let paint = volume.paint();
+        if paint.is_empty() {
+            return self.filament_slots(mesh);
+        }
+        let mut by_slot = [0_u8; 256];
+        for (slot, filament) in by_slot.iter_mut().enumerate() {
+            *filament = self.filament_of(slot as u8);
+        }
+        let voxel_size = volume.voxel_size();
+        let unassigned = std::iter::repeat(&0_u8);
+        let slots: Vec<u8> = mesh
+            .positions
+            .iter()
+            .zip(mesh.slots.iter().chain(unassigned))
+            .map(|(position, slot)| {
+                let [red, green, blue, coverage] =
+                    paint.at((*position / voxel_size).round().as_ivec3());
+                if coverage >= HALF_COVERED {
+                    nearest([red, green, blue], self.filaments)
+                } else {
+                    by_slot[usize::from(*slot)]
+                }
+            })
+            .collect();
+        if slots.iter().all(|slot| *slot == 0) { Vec::new() } else { slots }
+    }
 }
+
+/// The coverage at which a coat of paint is the surface's colour, for a
+/// machine that prints one filament or another: half.
+pub const HALF_COVERED: u8 = 128;
 
 /// The crease signal at a world position, in 1/voxel, positive in a recess
 /// and 0 where it cannot be measured: the number a vertex's cavity byte
@@ -256,6 +331,122 @@ mod tests {
     fn luma(colour: [u8; 3]) -> i32 {
         (2126 * i32::from(colour[0]) + 7152 * i32::from(colour[1]) + 722 * i32::from(colour[2]))
             / 10000
+    }
+
+    /// The body's own paint is in what is exported. A stroke of red across
+    /// one face of the cube: a colour at every vertex is the red under the
+    /// stroke, the clay away from it, and something between along its
+    /// soft edge; and for a filament printer, what is at least half
+    /// covered prints in the filament nearest the red and the rest as it
+    /// did.
+    #[test]
+    fn painted_colour_is_laid_over_what_the_slot_comes_to() {
+        use crate::brush::{Brush, BrushDirection, BrushKind, FalloffCurve, Stamp};
+        use crate::paint::stroke::{Lay, Mode, PaintStroke, Pigment};
+
+        const RED: [u8; 3] = [200, 30, 30];
+        assert_eq!(nearest(RED, &FILAMENTS), 3, "the fixture: red is the third filament");
+        let brush = Brush {
+            kind: BrushKind::Paint,
+            radius: 4.0,
+            falloff: FalloffCurve::Wide,
+            ..Brush::default()
+        };
+        // Along y on the +x face, from y = -4 to y = 4.
+        let stroked = |slot: u8, opacity: f32| {
+            let (mut volume, _) = painted(|_| slot);
+            let lay = Lay::loaded(Pigment { colour: RED, opacity, mode: Mode::Paint });
+            let mut stroke = PaintStroke::new();
+            volume.begin_stroke();
+            for step in 0..=8 {
+                let centre = Vec3::new(HALF, step as f32 - 4.0, -4.0);
+                stroke.stamp(
+                    &mut volume,
+                    &brush,
+                    &Stamp::new(centre, Vec3::X, BrushDirection::Add),
+                    &lay,
+                );
+            }
+            volume.end_stroke().expect("a stroke that painted");
+            let (mesh, report) = volume.export_mesh();
+            assert!(report.is_printable());
+            (volume, mesh)
+        };
+        // How far a point of the +x face is from the stroke, across the
+        // face, or nothing for a point of another face.
+        let from_the_stroke = |position: Vec3| {
+            (position.x > HALF - 0.3).then(|| {
+                let along = position.y.clamp(-4.0, 4.0);
+                Vec3::new(0.0, position.y - along, position.z + 4.0).length()
+            })
+        };
+        let close = |one: [u8; 3], other: [u8; 3], by: i32| {
+            (0..3).all(|c| (i32::from(one[c]) - i32::from(other[c])).abs() <= by)
+        };
+
+        let table = PaintTable::default();
+        let bake = bake(&table);
+        let (volume, mesh) = stroked(0, 1.0);
+        assert!(mesh.slots.is_empty(), "the fixture has no slots");
+        let colours = bake.vertex_colours(&volume, &mesh);
+        let filaments = bake.printed_slots(&volume, &mesh);
+        assert_eq!(filaments.len(), mesh.positions.len(), "a painted mesh carries no slots");
+        let (mut under, mut edge, mut away) = (0, 0, 0);
+        for ((position, colour), filament) in mesh.positions.iter().zip(&colours).zip(&filaments) {
+            match from_the_stroke(*position) {
+                // A fifth of the radius from the path, where a wide brush
+                // lays all but a hundredth of what it has.
+                Some(across) if across < 0.8 => {
+                    assert!(close(*colour, RED, 6), "{colour:?} under the stroke at {position}");
+                    assert_eq!(*filament, 3, "under the stroke at {position}");
+                    under += 1;
+                }
+                Some(across) if across < 4.0 => {
+                    // Between the two, channel by channel, and a filament
+                    // one or the other.
+                    for c in 0..3 {
+                        let (low, high) = (CLAY[c].min(RED[c]), CLAY[c].max(RED[c]));
+                        assert!((low..=high).contains(&colour[c]), "{colour:?} at {position}");
+                    }
+                    assert!(*filament == 3 || *filament == 0);
+                    edge += usize::from(!close(*colour, RED, 6) && !close(*colour, CLAY, 6));
+                }
+                Some(across) if across < 4.8 => {}
+                _ => {
+                    assert_eq!(*colour, CLAY, "away from the stroke at {position}");
+                    assert_eq!(*filament, 0, "away from the stroke at {position}");
+                    away += 1;
+                }
+            }
+        }
+        assert!(under > 40 && edge > 100 && away > 1000, "{under} {edge} {away}");
+        // A point that is not a vertex, as a texture asks: the same.
+        assert!(close(bake.surface_colour(&volume, Vec3::new(HALF, 0.3, -3.8)), RED, 6));
+        assert_eq!(bake.surface_colour(&volume, Vec3::new(HALF, 0.3, 8.2)), CLAY);
+
+        // A thin coat tints and does not change what prints: over the
+        // second filament's slot, all of it still prints in the second.
+        let (volume, mesh) = stroked(2, 0.3);
+        let filaments = bake.printed_slots(&volume, &mesh);
+        let seen: std::collections::BTreeSet<u8> = filaments.iter().copied().collect();
+        assert!(
+            filaments.iter().all(|filament| *filament == 2),
+            "a thin coat changed a filament: {seen:?}, {} of them, slots {:?}",
+            filaments.len(),
+            mesh.slots.iter().copied().collect::<std::collections::BTreeSet<u8>>()
+        );
+        let colours = bake.vertex_colours(&volume, &mesh);
+        let tinted = colours.iter().filter(|colour| **colour != FILAMENTS[1]).count();
+        assert!(tinted > 100, "a thin coat is not in the colours: {tinted} vertices");
+        // And a full one over it prints red where it is, and the second
+        // filament everywhere else.
+        let (volume, mesh) = stroked(2, 1.0);
+        let filaments = bake.printed_slots(&volume, &mesh);
+        let red = filaments.iter().filter(|filament| **filament == 3).count();
+        assert!(red > 100 && filaments.iter().all(|filament| *filament == 3 || *filament == 2));
+        // With no paint on the body it is the slots' own answer.
+        let (volume, mesh) = painted(|at| u8::from(at.x > 0.0) * 2);
+        assert_eq!(bake.printed_slots(&volume, &mesh), bake.filament_slots(&mesh));
     }
 
     /// A paint with a zenithal undercoat bakes lighter on the faces that
