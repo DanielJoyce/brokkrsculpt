@@ -548,16 +548,27 @@ impl Brokkr {
     /// it. A point already holding the paint costs one lookup and does
     /// nothing. The drag is one undo entry, on the stroke's own recorder.
     pub(super) fn pour(&mut self, point: Vec3, slot: u8) {
+        let fill = self.fill_lines(slot);
+        let filled = self.doc.active_volume_mut().fill_paint(point, fill);
+        self.say_what_was_filled(filled);
+    }
+
+    /// The lines a fill stops at and how far it may run, as the panel has
+    /// them set, for pouring `slot`.
+    pub(super) fn fill_lines(&self, slot: u8) -> brokkr_core::paint::fill::Fill {
         let sharpness = Some(self.touch.fill_sharpness);
-        let fill = brokkr_core::paint::fill::Fill {
+        brokkr_core::paint::fill::Fill {
             slot,
             stop_at_creases: sharpness.filter(|_| self.touch.fill_stops_at_creases),
             stop_at_edges: sharpness.filter(|_| self.touch.fill_stops_at_edges),
             crease_gain: super::CAVITY_FEATURE_MM / self.doc.voxel_size() / 4.0,
             limit: FILL_LIMIT,
             into_the_line: brokkr_core::paint::fill::INTO_THE_LINE,
-        };
-        let filled = self.doc.active_volume_mut().fill_paint(point, fill);
+        }
+    }
+
+    /// What a fill did, on the status line.
+    pub(super) fn say_what_was_filled(&mut self, filled: brokkr_core::paint::fill::Filled) {
         if filled.reached_the_limit {
             self.status = format!(
                 "the fill stopped at {FILL_LIMIT} voxels of surface: nothing on the model stopped \
@@ -600,28 +611,35 @@ impl Brokkr {
     /// chosen.
     pub(super) fn touch_picker(&self, settings: bool) -> Element<'_, Message> {
         let reading = |label: String| text(label).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM);
-        // Each way of painting has one touch the other has not: a slot
-        // cannot take some of a wash, and a fill of colour is not built.
-        let left_out = if self.painting_colour() { PaintTouch::Fill } else { PaintTouch::Wash };
-        let kinds = PaintTouch::ALL.into_iter().filter(|kind| *kind != left_out).fold(
-            row![].spacing(theme::S1),
-            |assembled, kind| {
+        // A slot cannot take some of a wash, so painting by slot has no
+        // such touch.
+        let colour = self.painting_colour();
+        let offered: Vec<PaintTouch> = PaintTouch::ALL
+            .into_iter()
+            .filter(|kind| colour || *kind != PaintTouch::Wash)
+            .collect();
+        // Four to a row and no more: five in one row, seen on a screen,
+        // cut the end off "Loaded". Five are laid out as three and two.
+        let a_row = if offered.len() > 4 { 3 } else { 4 };
+        let mut picker = column![].spacing(theme::S1);
+        for line in offered.chunks(a_row) {
+            let kinds = line.iter().fold(row![].spacing(theme::S1), |assembled, kind| {
                 assembled.push(
                     button(text(kind.label()).size(theme::CAPTION_SIZE))
                         // A share of the row for each letter and two for
                         // the padding: in four equal buttons, seen on a
                         // screen, "Drybrush" ran into its own edge.
                         .width(Length::FillPortion(kind.label().len() as u16 + 2))
-                        .style(if kind == self.touch.kind {
+                        .style(if *kind == self.touch.kind {
                             theme::tool_button_active
                         } else {
                             theme::tool_button
                         })
-                        .on_press(Message::PaintTouchChosen(kind)),
+                        .on_press(Message::PaintTouchChosen(*kind)),
                 )
-            },
-        );
-        let mut picker = column![kinds].spacing(theme::S1);
+            });
+            picker = picker.push(kinds);
+        }
         if !settings {
             return picker.into();
         }
@@ -719,12 +737,19 @@ impl Brokkr {
                         text("click a panel to fill it, or a groove to line it")
                             .size(theme::CAPTION_SIZE)
                             .color(theme::TEXT_MUTE),
-                    )
-                    .push(
+                    );
+                // How alike is alike, for a colour, and the whole body in
+                // one press, for a slot: the colour brush has that button
+                // of its own, whatever the touch. See `app/painting.rs`.
+                picker = if colour {
+                    self.fill_likeness(picker)
+                } else {
+                    picker.push(
                         button(text("Coat the body").size(theme::TEXT_SIZE_SMALL))
                             .style(theme::tool_button)
                             .on_press(Message::PaintAllApplied),
-                    );
+                    )
+                };
             }
         }
         picker.into()

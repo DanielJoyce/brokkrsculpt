@@ -5576,8 +5576,12 @@ impl Brokkr {
         };
         // A fill is not a stroke: the paint is poured where the pointer is.
         // See `app/paints.rs`.
-        if self.touch.kind == crate::message::PaintTouch::Fill && !self.painting_colour() {
-            self.pour(point, slot);
+        if self.touch.kind == crate::message::PaintTouch::Fill {
+            if self.painting_colour() {
+                self.pour_colour(point, direction);
+            } else {
+                self.pour(point, slot);
+            }
             self.remesh_dirty();
             return;
         }

@@ -315,6 +315,25 @@ proptest! {
     }
 }
 
+proptest! {
+    /// What a fill of colour takes to be alike: a paint is like itself at
+    /// any tolerance, alike goes both ways, more tolerance never makes two
+    /// paints less alike, and at the most there is everything is alike.
+    #[test]
+    fn alike_is_a_likeness(one in rgba(), other in rgba(), tolerance in any::<u8>()) {
+        use super::fill::alike;
+        prop_assert!(alike(one, one, tolerance));
+        prop_assert_eq!(alike(one, other, tolerance), alike(other, one, tolerance));
+        if alike(one, other, tolerance) {
+            prop_assert!(alike(one, other, tolerance.saturating_add(1)));
+        }
+        prop_assert!(alike(one, other, 255));
+        if tolerance == 0 && alike(one, other, 0) {
+            prop_assert_eq!(one, other);
+        }
+    }
+}
+
 /// A ball to paint on, and a stamp on its top at `(x, y)`.
 fn ball() -> Volume {
     let mut volume = Volume::new(0.5);

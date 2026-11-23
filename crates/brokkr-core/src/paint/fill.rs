@@ -82,10 +82,13 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use contracts::debug_ensures;
 use glam::{IVec3, Vec3};
 
 use crate::colour::ColourField;
 use crate::mask::PROTECTED;
+use crate::paint::field::Rgba;
+use crate::paint::stroke::{Pigment, laid};
 use crate::volume::Volume;
 
 /// A voxel at least this protected takes no paint. The line every paint
@@ -157,17 +160,87 @@ impl Volume {
     /// flood costs. [`Filled::voxels`] counts every voxel painted, through
     /// the band.
     pub fn fill_paint(&mut self, seed: Vec3, fill: Fill) -> Filled {
-        let voxel_size = self.voxel_size();
-        let seed = (seed / voxel_size).round().as_ivec3();
-        if self.sample_voxel(seed).abs() > SHELL {
+        let seed = (seed / self.voxel_size()).round().as_ivec3();
+        let replacing = self.colour().at(seed);
+        if replacing == fill.slot {
             return Filled::NOTHING;
         }
-        let replacing = self.colour().at(seed);
-        if replacing == fill.slot || self.mask().at(seed) >= PAINT_PROTECTED {
+        let same = |volume: &Volume, voxel: IVec3| volume.colour().at(voxel) == replacing;
+        let Some(flood) = self.flooded(seed, fill, &same) else {
             return Filled::NOTHING;
+        };
+        let slot = fill.slot;
+        let reached = &flood.reached;
+        self.edit_colour(
+            flood.lo,
+            flood.hi,
+            |voxel, _, held, _| {
+                if reached.contains(&voxel) { slot } else { held }
+            },
+        );
+        Filled { voxels: flood.reached.len(), reached_the_limit: flood.reached_the_limit }
+    }
+
+    /// Pour a colour from the surface nearest `seed`, a world position: the
+    /// colour brush's fill ([`crate::paint::stroke`]).
+    ///
+    /// It runs as [`Volume::fill_paint`] runs, over the surface until the
+    /// model's own lines stop it, and over paint LIKE the paint where it
+    /// began: within `tolerance` levels of it, in colour and in coverage.
+    /// A slot is the same as another or it is not, and a colour is more or
+    /// less like another, so a fill of colour has to be told how alike is
+    /// alike. Bare clay is like bare clay, whatever colour it last was.
+    ///
+    /// What it reaches takes the pigment at full strength, by the
+    /// pigment's own opacity and in its own mode, less what the mask holds
+    /// off. `lines` gives the lines to stop at and the limit; its slot is
+    /// not read.
+    ///
+    /// Nothing happens when the seed is not on the model, is protected, or
+    /// would not be changed by the pigment.
+    #[debug_ensures(ret.voxels > 0 || !ret.reached_the_limit, "a fill that reached its limit reached something")]
+    pub fn fill_colour(
+        &mut self,
+        seed: Vec3,
+        pigment: Pigment,
+        tolerance: u8,
+        lines: Fill,
+    ) -> Filled {
+        let seed = (seed / self.voxel_size()).round().as_ivec3();
+        let like = self.paint().at(seed);
+        if laid(like, pigment, 1.0) == like {
+            return Filled::NOTHING;
+        }
+        let same = |volume: &Volume, voxel: IVec3| alike(volume.paint().at(voxel), like, tolerance);
+        let Some(flood) = self.flooded(seed, lines, &same) else {
+            return Filled::NOTHING;
+        };
+        let reached = &flood.reached;
+        self.edit_paint(flood.lo, flood.hi, |voxel, _, held, protection| {
+            if !reached.contains(&voxel) {
+                return held;
+            }
+            let free = 1.0 - f32::from(protection) / f32::from(PROTECTED);
+            laid(held, pigment, free)
+        });
+        Filled { voxels: flood.reached.len(), reached_the_limit: flood.reached_the_limit }
+    }
+
+    /// The voxels a fill from `seed` reaches: over the shell until a line
+    /// stops it, into the line, and through the band. `same` says whether
+    /// a voxel holds what the fill is replacing. `None` when the seed is
+    /// not on the model or is protected.
+    fn flooded(
+        &self,
+        seed: IVec3,
+        fill: Fill,
+        same: &dyn Fn(&Volume, IVec3) -> bool,
+    ) -> Option<Flood> {
+        if self.sample_voxel(seed).abs() > SHELL || self.mask().at(seed) >= PAINT_PROTECTED {
+            return None;
         }
 
-        let mut judge = Judge { volume: self, fill, normals: HashMap::new() };
+        let mut judge = Judge { volume: self, fill, same, normals: HashMap::new() };
         // A fill that starts ON a line it was asked to stop at runs along
         // the line and stays in it. Otherwise a click in a groove would
         // paint one voxel, and a click in a groove means the groove: that is
@@ -184,7 +257,7 @@ impl Volume {
         'flood: while let Some(voxel) = frontier.pop_front() {
             for step in STEPS {
                 let next = voxel + step;
-                if reached.contains(&next) || !judge.in_the_shell(next, replacing) {
+                if reached.contains(&next) || !judge.in_the_shell(next) {
                     continue;
                 }
                 if judge.stops(next) != in_the_line {
@@ -219,10 +292,7 @@ impl Volume {
                 reached.insert(voxel);
                 for step in STEPS {
                     let next = voxel + step;
-                    if !reached.contains(&next)
-                        && judge.in_the_shell(next, replacing)
-                        && judge.stops(next)
-                    {
+                    if !reached.contains(&next) && judge.in_the_shell(next) && judge.stops(next) {
                         shore.push(next);
                     }
                 }
@@ -242,7 +312,7 @@ impl Volume {
         while let Some(voxel) = frontier.pop_front() {
             for step in STEPS {
                 let next = voxel + step;
-                if reached.contains(&next) || !judge.takes(next, replacing) {
+                if reached.contains(&next) || !judge.takes(next) {
                     continue;
                 }
                 let depth = judge.volume.sample_voxel(next).abs();
@@ -280,16 +350,31 @@ impl Volume {
             lo = lo.min(*voxel);
             hi = hi.max(*voxel);
         }
-        let slot = fill.slot;
-        self.edit_colour(
-            lo,
-            hi,
-            |voxel, _, held, _| {
-                if reached.contains(&voxel) { slot } else { held }
-            },
-        );
-        Filled { voxels: reached.len(), reached_the_limit }
+        Some(Flood { reached, lo, hi, reached_the_limit })
     }
+}
+
+/// What a flood reached: the voxels, the box they are in, and whether it
+/// stopped at its limit and not for want of anywhere to go.
+struct Flood {
+    reached: HashSet<IVec3>,
+    lo: IVec3,
+    hi: IVec3,
+    reached_the_limit: bool,
+}
+
+/// Whether two paints are alike enough for a fill of colour to run from
+/// one onto the other: their coverage within `tolerance` levels, and their
+/// colours too, unless there is so little of either that its colour is
+/// not to be seen.
+#[debug_ensures(!(one == other) || ret, "a paint is like itself")]
+pub fn alike(one: Rgba, other: Rgba, tolerance: u8) -> bool {
+    let apart = |channel: usize| one[channel].abs_diff(other[channel]);
+    if apart(3) > tolerance {
+        return false;
+    }
+    let faint = one[3] <= tolerance && other[3] <= tolerance;
+    faint || (0..3).all(|channel| apart(channel) <= tolerance)
 }
 
 /// What a fill asks of a voxel, with the normal at each voxel worked out
@@ -297,6 +382,8 @@ impl Volume {
 struct Judge<'a> {
     volume: &'a Volume,
     fill: Fill,
+    /// Whether a voxel holds what the fill is replacing.
+    same: &'a dyn Fn(&Volume, IVec3) -> bool,
     /// The unit normal of the field at a voxel, or `None` where the voxel
     /// is outside the band or the field is flat there.
     normals: HashMap<IVec3, Option<Vec3>>,
@@ -305,16 +392,16 @@ struct Judge<'a> {
 impl Judge<'_> {
     /// Whether a voxel can be painted by this fill at all: it is in the
     /// band, it holds the paint being replaced, and the mask leaves it free.
-    fn takes(&self, voxel: IVec3, replacing: u8) -> bool {
+    fn takes(&self, voxel: IVec3) -> bool {
         ColourField::paintable(self.volume.sample_voxel(voxel))
-            && self.volume.colour().at(voxel) == replacing
+            && (self.same)(self.volume, voxel)
             && self.volume.mask().at(voxel) < PAINT_PROTECTED
     }
 
     /// Whether the flood itself can stand on a voxel: it can be painted,
     /// and it is at the surface.
-    fn in_the_shell(&self, voxel: IVec3, replacing: u8) -> bool {
-        self.volume.sample_voxel(voxel).abs() <= SHELL && self.takes(voxel, replacing)
+    fn in_the_shell(&self, voxel: IVec3) -> bool {
+        self.volume.sample_voxel(voxel).abs() <= SHELL && self.takes(voxel)
     }
 
     fn normal(&mut self, voxel: IVec3) -> Option<Vec3> {
@@ -718,5 +805,167 @@ mod tests {
             Fill { stop_at_creases: Some(0.3), stop_at_edges: Some(0.3), ..fill(4) },
         );
         crate::testing::assert_same_field(&volume, &untouched, "a fill moved the field");
+    }
+
+    const RED: [u8; 3] = [200, 30, 20];
+
+    fn paint(colour: [u8; 3], opacity: f32) -> Pigment {
+        Pigment { colour, opacity, mode: crate::paint::stroke::Mode::Paint }
+    }
+
+    /// Every paintable voxel of the fixture, with where it is and its
+    /// paint.
+    fn paints(volume: &Volume) -> Vec<(Vec3, Rgba)> {
+        voxels(volume)
+            .iter()
+            .map(|(at, _)| (*at, volume.paint().at((*at / VOXEL).round().as_ivec3())))
+            .collect()
+    }
+
+    /// A fill of colour runs exactly where a fill of a slot runs, on a body
+    /// with nothing painted on it: the same flood, laying something else.
+    #[test]
+    fn a_fill_of_colour_goes_where_a_fill_of_a_slot_goes() {
+        for (seed, creases, edges) in [
+            (ON_THE_FLOOR, Some(0.3), Some(0.3)),
+            (ON_THE_TOP, Some(0.3), None),
+            (IN_THE_CORNER, Some(0.3), Some(0.3)),
+            (ON_THE_TOP, None, None),
+        ] {
+            let lines = Fill { stop_at_creases: creases, stop_at_edges: edges, ..fill(4) };
+            let mut by_slot = slotted_cube();
+            let poured = by_slot.fill_paint(seed, lines);
+            let mut by_colour = slotted_cube();
+            let coloured = by_colour.fill_colour(seed, paint(RED, 1.0), 0, lines);
+            assert_eq!(coloured, poured, "from {seed}");
+            assert!(poured.voxels > 100, "the fixture filled {} voxels", poured.voxels);
+            for ((at, slot), (_, rgba)) in voxels(&by_slot).iter().zip(paints(&by_colour)) {
+                let wanted = if *slot == 4 { [200, 30, 20, 255] } else { [0; 4] };
+                assert_eq!(rgba, wanted, "at {at}, from {seed}");
+            }
+            // It moved no clay and painted no slot.
+            assert!(voxels(&by_colour).iter().all(|(_, slot)| *slot == 0));
+        }
+    }
+
+    /// It spreads over paint like the paint it began on and stops at paint
+    /// that is not, by as much as it is told is alike.
+    #[test]
+    fn a_fill_of_colour_spreads_over_paint_like_where_it_began() {
+        const GREEN: Rgba = [30, 160, 40, 255];
+        const BLUE: Rgba = [20, 40, 210, 255];
+        let two = || {
+            let mut volume = slotted_cube();
+            volume.edit_paint(IVec3::splat(-40), IVec3::splat(40), |_, at, _, _| {
+                if at.y < 0.0 { GREEN } else { BLUE }
+            });
+            volume
+        };
+        let from_green = Vec3::new(-8.0, -6.0, HALF);
+        let mut volume = two();
+        let filled = volume.fill_colour(from_green, paint(RED, 1.0), 10, fill(0));
+        assert!(filled.voxels > 5000, "{filled:?}");
+        for (at, rgba) in paints(&volume) {
+            let wanted = if at.y < 0.0 { [200, 30, 20, 255] } else { BLUE };
+            assert_eq!(rgba, wanted, "at {at}");
+        }
+        // Told that anything is alike, it takes everything.
+        let mut volume = two();
+        volume.fill_colour(from_green, paint(RED, 1.0), 255, fill(0));
+        assert!(paints(&volume).iter().all(|(_, rgba)| *rgba == [200, 30, 20, 255]));
+
+        // Across a shade that changes evenly, it goes as far as the shade
+        // is alike and no further: a level a voxel along x, from 100.
+        let mut volume = slotted_cube();
+        volume.edit_paint(IVec3::splat(-40), IVec3::splat(40), |voxel, _, _, _| {
+            [(100 + voxel.x) as u8, 50, 50, 255]
+        });
+        // From the slot's floor, where x is nothing.
+        volume.fill_colour(ON_THE_FLOOR, paint(RED, 1.0), 6, fill(0));
+        for (at, rgba) in paints(&volume) {
+            let along = (at.x / VOXEL).round() as i32;
+            let wanted = if along.abs() <= 6 {
+                [200, 30, 20, 255]
+            } else {
+                [(100 + along) as u8, 50, 50, 255]
+            };
+            assert_eq!(rgba, wanted, "at {at}");
+        }
+    }
+
+    /// What it reaches takes the pigment as a stroke at full strength would
+    /// lay it: by its opacity, in its mode, and less what the mask holds
+    /// off. And it is one step of the undo history.
+    #[test]
+    fn a_fill_of_colour_lays_the_pigment_as_a_stroke_would() {
+        use crate::paint::stroke::Mode;
+        let mut volume = slotted_cube();
+        volume.begin_stroke();
+        let half = volume.fill_colour(ON_THE_TOP, paint(RED, 0.5), 0, fill(0));
+        let edit = volume.end_stroke().expect("a fill that painted");
+        assert!(half.voxels > 10_000);
+        assert!(paints(&volume).iter().all(|(_, rgba)| *rgba == [200, 30, 20, 128]));
+        // A glaze over that darkens it, and leaves a thin coat of itself
+        // on the half of the clay the red did not cover; an eraser takes
+        // all of it off again.
+        let glaze = Pigment { colour: [128, 128, 128], opacity: 1.0, mode: Mode::Glaze };
+        volume.fill_colour(ON_THE_TOP, glaze, 0, fill(0));
+        let glazed = paints(&volume)[0].1;
+        assert!(glazed[3] == 192 && glazed[0] < 200, "a glaze left {glazed:?}");
+        assert!(paints(&volume).iter().all(|(_, rgba)| *rgba == glazed));
+        let eraser = Pigment { colour: RED, opacity: 1.0, mode: Mode::Erase };
+        volume.fill_colour(ON_THE_TOP, eraser, 0, fill(0));
+        assert!(
+            paints(&volume).iter().all(|(_, rgba)| *rgba == [0; 4]),
+            "an eraser poured over everything left paint"
+        );
+        volume.apply_edit(edit);
+
+        // Under a mask: nothing where it is half protected or more, and
+        // less where it is protected less than that.
+        let mut volume = slotted_cube();
+        volume.edit_mask(IVec3::splat(-40), IVec3::splat(40), |_, at, _| {
+            if at.x < -4.0 {
+                PROTECTED
+            } else if at.x < 4.0 {
+                51
+            } else {
+                0
+            }
+        });
+        volume.fill_colour(Vec3::new(8.0, 0.0, HALF), paint(RED, 1.0), 0, fill(0));
+        let (mut held, mut part, mut free) = (0, 0, 0);
+        for (at, rgba) in paints(&volume) {
+            if at.x < -4.0 {
+                assert_eq!(rgba, [0; 4], "paint under the mask at {at}");
+                held += 1;
+            } else if at.x < 4.0 {
+                assert_eq!(rgba, [200, 30, 20, 204], "a fifth protected at {at}");
+                part += 1;
+            } else {
+                assert_eq!(rgba, [200, 30, 20, 255], "free at {at}");
+                free += 1;
+            }
+        }
+        assert!(held > 1000 && part > 1000 && free > 1000, "{held} {part} {free}");
+    }
+
+    /// A fill of colour that has nothing to do does nothing: off the
+    /// model, under the mask, or where the pigment would change nothing.
+    #[test]
+    fn a_fill_of_colour_with_nothing_to_do_does_nothing() {
+        let mut volume = slotted_cube();
+        let red = paint(RED, 1.0);
+        assert_eq!(volume.fill_colour(Vec3::splat(40.0), red, 0, fill(0)), Filled::NOTHING);
+        assert_eq!(volume.fill_colour(Vec3::ZERO, red, 0, fill(0)), Filled::NOTHING);
+        assert!(volume.paint().is_empty());
+        volume.fill_colour(ON_THE_TOP, red, 0, fill(0));
+        // Red over red changes nothing, and is not done.
+        volume.begin_stroke();
+        assert_eq!(volume.fill_colour(ON_THE_TOP, red, 0, fill(0)), Filled::NOTHING);
+        assert!(volume.end_stroke().is_none());
+        volume.mask_mut().write((ON_THE_TOP / VOXEL).round().as_ivec3(), PROTECTED);
+        let blue = paint([20, 40, 210], 1.0);
+        assert_eq!(volume.fill_colour(ON_THE_TOP, blue, 0, fill(0)), Filled::NOTHING);
     }
 }
