@@ -2,88 +2,65 @@
 
 //! Where the application keeps its own files.
 //!
-//! Three places needed the same base directory dance -- the puck's settings,
-//! the recent files list and the autosave -- and each had grown its own copy of
-//! it. The rule is small but it is a rule: honour the environment variable only
-//! when it is set AND absolute, per the base directory specification, and fall
-//! back to a fixed path under the home otherwise. A copy that forgets the
-//! absolute check silently writes to a relative path resolved against whatever
-//! directory the application happened to be started from, which is not stable
-//! across sessions and is exactly when these files are read.
+//! Three kinds of file, in three places, and the operating system is asked
+//! where each belongs through the `dir_spec` crate:
 //!
-//! Each platform is asked where it wants these, rather than XDG being imposed
-//! on all three: Windows splits roaming settings from local state and calls
-//! the home `USERPROFILE`, and macOS puts both under Application Support with
-//! no overridable variable at all. The one invariant that holds everywhere is
-//! that settings and state are different directories.
+//! | | What | Linux | macOS | Windows |
+//! |---|---|---|---|---|
+//! | **Settings** | Chosen once and expected to survive a reinstall: the printer, the slicer, the puck's buttons | `~/.config` | `~/Library/Application Support` | `%APPDATA%` |
+//! | **Data** | Made by the user and worth sharing: brushes | `~/.local/share` | `~/Library/Application Support` | `%APPDATA%` |
+//! | **State** | Recovered from, not set: the autosave, the recent files | `~/.local/state` | `~/Library/Application Support` | `%LOCALAPPDATA%` |
+//!
+//! each under a directory named for the application. `XDG_CONFIG_HOME`,
+//! `XDG_DATA_HOME` and `XDG_STATE_HOME` move them, on every platform, when
+//! they are set and absolute. A relative value is ignored: it would resolve
+//! against whatever directory the application happened to be started from,
+//! which is not the same from one session to the next and is exactly when
+//! these files are read.
+//!
+//! This module did all of that by hand before it asked `dir_spec`, and to
+//! the same answers on Linux and Windows. What changed on macOS is that the
+//! three variables are honoured there too.
+//!
+//! # The one thing the crate is not asked
+//!
+//! Settings and state must be different directories: an autosave sitting
+//! beside the settings reads as a document the user chose to keep. On macOS
+//! the platform's answer to all three questions is the same directory, so
+//! state and data each go in a directory of their own inside it there, and
+//! anywhere else an environment makes two of them the same.
 
 use std::path::PathBuf;
 
 /// Everything the application writes lives under a directory of this name.
 const APPLICATION: &str = "brokkrsculpt";
 
-/// The user's home, under whichever name this platform gives it.
-///
-/// Windows does not set `HOME`; `USERPROFILE` is the equivalent, and reading
-/// only `HOME` there means every path below comes back `None` and the recent
-/// list, the autosave and the puck's settings all silently stop existing.
-fn home() -> Option<PathBuf> {
-    let variable = if cfg!(target_os = "windows") { "USERPROFILE" } else { "HOME" };
-    std::env::var_os(variable).map(PathBuf::from)
-}
-
-/// A base directory from the environment, or a fallback under the home.
-///
-/// `variable` is honoured only when it is set and absolute, which is what the
-/// base directory specification requires and what a hand-rolled copy is most
-/// likely to get wrong. `None` for platforms whose convention is a fixed path
-/// rather than an overridable variable -- macOS has no `XDG_*` equivalent.
-fn base(variable: Option<&str>, fallback: &str) -> Option<PathBuf> {
-    if let Some(from_environment) =
-        variable.and_then(std::env::var_os).map(PathBuf::from).filter(|path| path.is_absolute())
-    {
-        return Some(from_environment);
-    }
-    Some(fallback.split('/').fold(home()?, |path, part| path.join(part)))
-}
-
-/// Where settings live, per platform.
-///
-/// * Linux: `$XDG_CONFIG_HOME/brokkrsculpt`, else `~/.config/brokkrsculpt`
-/// * Windows: `%APPDATA%\brokkrsculpt` -- roaming, because settings are what a
-///   user would expect to follow them to another machine on a domain
-/// * macOS: `~/Library/Application Support/brokkrsculpt`
+/// Where settings live. See the table at the top of this module.
 fn config_directory() -> Option<PathBuf> {
-    let base = if cfg!(target_os = "windows") {
-        base(Some("APPDATA"), "AppData/Roaming")?
-    } else if cfg!(target_os = "macos") {
-        base(None, "Library/Application Support")?
-    } else {
-        base(Some("XDG_CONFIG_HOME"), ".config")?
-    };
-    Some(base.join(APPLICATION))
+    Some(dir_spec::config_home()?.join(APPLICATION))
 }
 
-/// Where recoverable state lives, per platform.
+/// `base`, in the application's directory, and in `apart` inside that when
+/// it would otherwise be the settings' own directory.
+fn apart_from_config(base: Option<PathBuf>, apart: &str) -> Option<PathBuf> {
+    let directory = base?.join(APPLICATION);
+    if Some(&directory) == config_directory().as_ref() {
+        return Some(directory.join(apart));
+    }
+    Some(directory)
+}
+
+/// Where recoverable state lives.
 ///
-/// **Never the same directory as [`config_directory`].** An autosave sitting
-/// beside the settings reads as a document the user chose to keep, and that
-/// invariant is what `config_and_state_are_different_places` pins.
-///
-/// * Linux: `$XDG_STATE_HOME/brokkrsculpt`, else `~/.local/state/brokkrsculpt`
-/// * Windows: `%LOCALAPPDATA%\brokkrsculpt` -- local rather than roaming, since
-///   an autosave of a half-finished sculpt has no business crossing machines
-/// * macOS: a `State` directory inside the application support one. Apple has
-///   no separate state location, and the alternative -- `~/Library/Caches` --
-///   is purgeable, which is the one thing an autosave must not be.
+/// **Never the same directory as [`config_directory`].** That invariant is
+/// what `the_three_kinds_are_three_places` pins.
 fn state_directory() -> Option<PathBuf> {
-    if cfg!(target_os = "windows") {
-        return Some(base(Some("LOCALAPPDATA"), "AppData/Local")?.join(APPLICATION));
-    }
-    if cfg!(target_os = "macos") {
-        return Some(config_directory()?.join("State"));
-    }
-    Some(base(Some("XDG_STATE_HOME"), ".local/state")?.join(APPLICATION))
+    apart_from_config(dir_spec::state_home(), "State")
+}
+
+/// Where what the user made lives: brushes, today.
+fn data_directory() -> Option<PathBuf> {
+    apart_from_config(dir_spec::data_home(), "Data")
 }
 
 /// A settings file under [`config_directory`].
@@ -91,6 +68,15 @@ fn state_directory() -> Option<PathBuf> {
 /// For things the user chose and would expect to survive a reinstall.
 pub fn config_file(name: &str) -> Option<PathBuf> {
     Some(config_directory()?.join(name))
+}
+
+/// A file or a directory of the user's own making under
+/// [`data_directory`].
+///
+/// For things worth copying to another machine or handing to someone else:
+/// a brush is the first of them.
+pub fn data_file(name: &str) -> Option<PathBuf> {
+    Some(data_directory()?.join(name))
 }
 
 /// A state file under [`state_directory`].
@@ -147,9 +133,9 @@ pub(crate) fn absolute(rest: &str) -> PathBuf {
 mod tests {
     use super::*;
 
-    /// The check a hand-rolled copy is most likely to drop. A relative value
-    /// resolves against the working directory, which is not stable across
-    /// sessions.
+    /// The check a hand-rolled copy is most likely to drop, and the one
+    /// the crate is trusted with now. A relative value resolves against
+    /// the working directory, which is not stable across sessions.
     #[test]
     fn a_relative_environment_value_is_ignored_in_favour_of_home() {
         // Asserted through the predicate rather than by setting the variable,
@@ -157,11 +143,19 @@ mod tests {
         // these in parallel.
         assert!(!PathBuf::from("relative/path").is_absolute());
         assert!(absolute("absolute/path").is_absolute());
+        // And of the crate itself, whatever this machine's environment is:
+        // what it hands back is never relative.
+        for directory in [dir_spec::config_home(), dir_spec::data_home(), dir_spec::state_home()]
+            .into_iter()
+            .flatten()
+        {
+            assert!(directory.is_absolute(), "{} is not absolute", directory.display());
+        }
     }
 
     #[test]
-    fn both_kinds_land_under_the_application_directory() {
-        for built in [config_file("thing"), state_file("thing")] {
+    fn every_kind_lands_under_the_application_directory() {
+        for built in [config_file("thing"), data_file("thing"), state_file("thing")] {
             let Some(path) = built else {
                 continue;
             };
@@ -175,12 +169,60 @@ mod tests {
         }
     }
 
-    /// Config and state must not collide: an autosave sitting next to the
-    /// settings would read as a document the user chose to keep.
+    /// Settings, data and state must not collide: an autosave sitting next
+    /// to the settings would read as a document the user chose to keep,
+    /// and a brush beside them as a setting.
     #[test]
-    fn config_and_state_are_different_places() {
-        if let (Some(config), Some(state)) = (config_file("x"), state_file("x")) {
+    fn the_three_kinds_are_three_places() {
+        let (config, data, state) = (config_file("x"), data_file("x"), state_file("x"));
+        if let (Some(config), Some(state)) = (&config, &state) {
             assert_ne!(config, state);
+        }
+        if let (Some(config), Some(data)) = (&config, &data) {
+            assert_ne!(config, data);
+        }
+        if let (Some(data), Some(state)) = (&data, &state) {
+            assert_ne!(data, state);
+        }
+    }
+
+    /// Where two kinds would be one directory, the second gets a directory
+    /// of its own inside it: macOS, where the platform has one answer for
+    /// all three, and any environment that points two variables at one
+    /// place.
+    #[test]
+    fn a_kind_that_would_share_the_settings_directory_is_put_inside_it() {
+        let Some(config) = config_directory() else {
+            return;
+        };
+        let shared = config.parent().map(PathBuf::from);
+        assert_eq!(apart_from_config(shared, "State"), Some(config.join("State")));
+        let elsewhere = absolute("somewhere/else");
+        assert_eq!(
+            apart_from_config(Some(elsewhere.clone()), "State"),
+            Some(elsewhere.join(APPLICATION))
+        );
+        assert_eq!(apart_from_config(None, "State"), None);
+    }
+
+    /// On Linux, where this was developed and the paths are known: the
+    /// directories the specification names, when the environment names no
+    /// others.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn on_linux_they_are_where_the_specification_says() {
+        let unset = |key: &str| std::env::var_os(key).is_none();
+        let Some(home) = dir_spec::home() else {
+            return;
+        };
+        if unset("XDG_CONFIG_HOME") {
+            assert_eq!(config_file("x"), Some(home.join(".config/brokkrsculpt/x")));
+        }
+        if unset("XDG_DATA_HOME") {
+            assert_eq!(data_file("x"), Some(home.join(".local/share/brokkrsculpt/x")));
+        }
+        if unset("XDG_STATE_HOME") {
+            assert_eq!(state_file("x"), Some(home.join(".local/state/brokkrsculpt/x")));
         }
     }
 }

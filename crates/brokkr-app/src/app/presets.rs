@@ -10,9 +10,16 @@
 //!
 //! # The file
 //!
-//! `brushes.conf` in the config directory, the flat `key = value` shape
-//! `filaments.conf` and `printer.conf` already use
-//! ([`crate::paths::entries`]). A line is a preset: its name, and after the
+//! `brushes.conf` in the DATA directory ([`crate::paths::data_file`]): a
+//! brush is something its user made and might hand to somebody else, which
+//! is what that directory is for, where the settings directory is for what
+//! is chosen once about a machine. It was in the settings directory first,
+//! and one found there is still read when the data directory has none, so
+//! that nobody's brushes went missing when they moved; the next change is
+//! written to the new place.
+//!
+//! The flat `key = value` shape `filaments.conf` and `printer.conf` already
+//! use ([`crate::paths::entries`]). A line is a preset: its name, and after the
 //! `=` its settings as `key:value` pairs with commas between them.
 //!
 //! ```text
@@ -305,7 +312,9 @@ impl Presets {
     /// The presets on this machine, or the ones it starts with when there
     /// is no file.
     pub fn load() -> Self {
-        Self::load_from(crate::paths::config_file(FILE).as_deref())
+        let here = crate::paths::data_file(FILE);
+        let before = crate::paths::config_file(FILE);
+        Self::load_from(first_there(here, before).as_deref())
     }
 
     /// Split out so the tests can point it at a file of their own.
@@ -370,8 +379,8 @@ impl Presets {
         if cfg!(test) {
             return Ok(());
         }
-        let Some(path) = crate::paths::config_file(FILE) else {
-            return Err("no config directory to write to".to_string());
+        let Some(path) = crate::paths::data_file(FILE) else {
+            return Err("no data directory to write to".to_string());
         };
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -382,9 +391,53 @@ impl Presets {
     }
 }
 
+/// The first of two files that is there: where the brushes are kept now,
+/// and where they were kept before. The new place when neither is, which
+/// reads as no file at all.
+fn first_there(
+    here: Option<std::path::PathBuf>,
+    before: Option<std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    match (here, before) {
+        (Some(here), _) if here.is_file() => Some(here),
+        (_, Some(before)) if before.is_file() => Some(before),
+        (here, _) => here,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Brushes are read from the data directory, and from the settings
+    /// directory they used to be in only when the data directory has none.
+    #[test]
+    fn brushes_kept_in_the_old_place_are_still_found() {
+        let directory =
+            std::env::temp_dir().join(format!("brokkr-brush-places-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("scratch directory");
+        let (here, before) = (directory.join("new.conf"), directory.join("old.conf"));
+        let both = || (Some(here.clone()), Some(before.clone()));
+        // Neither is there: the new place, which reads as no file.
+        let (new, old) = both();
+        assert_eq!(first_there(new, old), Some(here.clone()));
+        // Only the old one.
+        std::fs::write(&before, "Old = brush:Clay\n").expect("writing");
+        let (new, old) = both();
+        assert_eq!(first_there(new, old), Some(before.clone()));
+        let found =
+            Presets::load_from(first_there(Some(here.clone()), Some(before.clone())).as_deref());
+        assert_eq!(found.list.len(), 1);
+        assert_eq!(found.list[0].name, "Old");
+        // Both: the new one, and the old one is not looked at again.
+        std::fs::write(&here, "New = brush:Draw\n").expect("writing");
+        let (new, old) = both();
+        assert_eq!(first_there(new, old), Some(here.clone()));
+        // No data directory at all on this machine: the old place.
+        assert_eq!(first_there(None, Some(before.clone())), Some(before.clone()));
+        assert_eq!(first_there(None, None), None);
+        std::fs::remove_dir_all(&directory).ok();
+    }
 
     /// Every setting a preset has, none of them at its default.
     fn full(name: &str) -> Preset {

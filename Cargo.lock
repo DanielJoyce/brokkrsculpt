@@ -414,6 +414,7 @@ dependencies = [
  "brokkr-gpu",
  "bytemuck",
  "core-foundation 0.10.1",
+ "dir_spec",
  "env_logger",
  "evdev",
  "getrandom 0.3.4",
@@ -877,6 +878,12 @@ checksum = "10d60334b3b2e7c9d91ef8150abfb6fa4c1c39ebbcf4a81c2e346aad939fee3e"
 dependencies = [
  "thiserror 2.0.20",
 ]
+
+[[package]]
+name = "dir_spec"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d407ed4103b6e5595ed2c0fd18270d40cc8eca9bdee9b4caabf4c9f39c5508f"
 
 [[package]]
 name = "dispatch"
