@@ -335,32 +335,26 @@ impl Brokkr {
                 Vec::new()
             }
             // A texture is baked from the model and not from the mesh's
-            // slots, by `write_textured`.
-            ExportFormat::Stl | ExportFormat::Obj | ExportFormat::Textured => Vec::new(),
+            // slots, by `textures_for`.
+            ExportFormat::Stl | ExportFormat::Obj | ExportFormat::Textured | ExportFormat::Glb => {
+                Vec::new()
+            }
         }
     }
 
-    /// Write the bodies as an OBJ with a material file and a picture each.
-    ///
-    /// The OBJ goes to `obj`, which the caller has open at `path`. The
-    /// material file and the pictures go beside it under the same name:
-    /// `figure.obj`, `figure.mtl`, `figure_1.png`, `figure_2.png`.
+    /// Each body laid out flat, and its paint as a picture on that.
     ///
     /// Each body is unwrapped and baked here, from the mesh that is being
     /// written, whatever detail it was exported at: the texture is read off
     /// the model and not off the mesh, so a decimated export keeps its
     /// washes. See `brokkr_core::export::texture`.
-    pub(super) fn write_textured(
+    fn textures_for(
         &self,
         bodies: &[brokkr_core::ExportedBody],
-        path: &std::path::Path,
-        obj: &mut impl std::io::Write,
-    ) -> std::io::Result<()> {
-        use brokkr_core::export::textured::{Textured, write_mtl, write_obj};
+    ) -> Vec<(brokkr_core::export::unwrap::Unwrap, brokkr_core::export::texture::Texture)> {
+        use brokkr_core::export::texture::Texture;
         use brokkr_core::export::unwrap::UnwrapSpec;
 
-        let stem =
-            path.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
         let filaments = self.filament_colours();
         let bake = brokkr_core::paint::bake::Bake {
             table: &self.paints,
@@ -369,31 +363,58 @@ impl Brokkr {
             crease_gain: super::CAVITY_FEATURE_MM / self.doc.voxel_size() / 4.0,
         };
         let spec = UnwrapSpec { size: self.texture_size, ..UnwrapSpec::default() };
+        bodies
+            .iter()
+            .map(|(meta, mesh, _)| {
+                let unwrap = mesh.unwrapped(spec);
+                let texture = match self.doc.volume(meta.id) {
+                    Some(volume) => unwrap.baked(mesh, volume, &bake, spec.margin),
+                    // As for a PLY in `bake_for`: clay, and not a panic.
+                    None => {
+                        let [red, green, blue] = UNPAINTED;
+                        let texels = spec.size as usize * spec.size as usize;
+                        Texture { size: spec.size, rgba: [red, green, blue, 255].repeat(texels) }
+                    }
+                };
+                (unwrap, texture)
+            })
+            .collect()
+    }
 
-        let mut unwraps = Vec::with_capacity(bodies.len());
+    /// Write the bodies as an OBJ with a material file and a picture each.
+    ///
+    /// The OBJ goes to `obj`, which the caller has open at `path`. The
+    /// material file and the pictures go beside it under the same name:
+    /// `figure.obj`, `figure.mtl`, `figure_1.png`, `figure_2.png`.
+    pub(super) fn write_textured(
+        &self,
+        bodies: &[brokkr_core::ExportedBody],
+        path: &std::path::Path,
+        obj: &mut impl std::io::Write,
+    ) -> std::io::Result<()> {
+        use brokkr_core::export::textured::{Textured, write_mtl, write_obj};
+
+        let stem =
+            path.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
+        let textures = self.textures_for(bodies);
         let mut pictures = Vec::with_capacity(bodies.len());
-        for (index, (meta, mesh, _)) in bodies.iter().enumerate() {
-            let unwrap = mesh.unwrapped(spec);
+        for (index, (_, texture)) in textures.iter().enumerate() {
             let picture = format!("{stem}_{}.png", index + 1);
-            if let Some(volume) = self.doc.volume(meta.id) {
-                let texture = unwrap.baked(mesh, volume, &bake, spec.margin);
-                image::save_buffer(
-                    path.with_file_name(&picture),
-                    &texture.rgba,
-                    texture.size,
-                    texture.size,
-                    image::ExtendedColorType::Rgba8,
-                )
-                .map_err(std::io::Error::other)?;
-            }
-            unwraps.push(unwrap);
+            image::save_buffer(
+                path.with_file_name(&picture),
+                &texture.rgba,
+                texture.size,
+                texture.size,
+                image::ExtendedColorType::Rgba8,
+            )
+            .map_err(std::io::Error::other)?;
             pictures.push(picture);
         }
         let textured: Vec<Textured<'_>> = bodies
             .iter()
-            .zip(&unwraps)
+            .zip(&textures)
             .zip(&pictures)
-            .map(|(((meta, mesh, _), unwrap), picture)| Textured {
+            .map(|(((meta, mesh, _), (unwrap, _)), picture)| Textured {
                 name: meta.name.as_str(),
                 mesh,
                 unwrap,
@@ -407,8 +428,48 @@ impl Brokkr {
         write_mtl(&textured, &mut file)
     }
 
-    /// How big a baked texture is: the three sizes, the one in use lit.
-    pub(super) fn texture_size_picker(&self) -> Element<'_, Message> {
+    /// Write the bodies as one GLB, each with its picture inside the file.
+    ///
+    /// The same unwrap and the same bake as [`Self::write_textured`]. The
+    /// pictures are PNGs here too, made in memory.
+    pub(super) fn write_glb(
+        &self,
+        bodies: &[brokkr_core::ExportedBody],
+        out: &mut impl std::io::Write,
+    ) -> std::io::Result<()> {
+        let textures = self.textures_for(bodies);
+        let mut pictures = Vec::with_capacity(bodies.len());
+        for (_, texture) in &textures {
+            let mut png = Vec::new();
+            image::write_buffer_with_format(
+                &mut std::io::Cursor::new(&mut png),
+                &texture.rgba,
+                texture.size,
+                texture.size,
+                image::ExtendedColorType::Rgba8,
+                image::ImageFormat::Png,
+            )
+            .map_err(std::io::Error::other)?;
+            pictures.push(png);
+        }
+        let parts: Vec<brokkr_core::export::glb::Body<'_>> = bodies
+            .iter()
+            .zip(&textures)
+            .zip(&pictures)
+            .map(|(((meta, mesh, _), (unwrap, _)), png)| brokkr_core::export::glb::Body {
+                name: meta.name.as_str(),
+                mesh,
+                unwrap,
+                png,
+            })
+            .collect();
+        brokkr_core::export::glb::write(&parts, out)
+    }
+
+    /// The exports that carry the paint as a picture: how big the picture
+    /// is, the three sizes with the one in use lit, and under it a button
+    /// for each format that has one.
+    pub(super) fn textured_exports(&self) -> Element<'_, Message> {
         let sizes = TEXTURE_SIZES.into_iter().fold(row![].spacing(theme::S1), |assembled, size| {
             assembled.push(
                 button(text(format!("{size}")).size(theme::CAPTION_SIZE))
@@ -421,9 +482,22 @@ impl Brokkr {
                     .on_press(Message::TextureSizeChanged(size)),
             )
         });
+        let formats = crate::message::ExportFormat::ALL
+            .into_iter()
+            .filter(|format| format.has_texture())
+            .fold(row![].spacing(theme::S2), |assembled, format| {
+                assembled.push(
+                    button(text(format.label()).size(theme::TEXT_SIZE_SMALL))
+                        .style(theme::tool_button)
+                        .on_press(Message::Export(format)),
+                )
+            });
         column![
-            text("Texture, for OBJ+PNG").size(theme::CAPTION_SIZE).color(theme::TEXT_DIM),
-            sizes
+            text("With the paint as a texture, of size")
+                .size(theme::CAPTION_SIZE)
+                .color(theme::TEXT_DIM),
+            sizes,
+            formats
         ]
         .spacing(theme::S1)
         .into()
@@ -1680,7 +1754,7 @@ mod tests {
         assert_eq!(app.texture_size, 1024);
         update(&mut app, Message::TextureSizeChanged(3000));
         assert_eq!(app.texture_size, 1024, "a size not on offer was taken");
-        drop(app.texture_size_picker());
+        drop(app.textured_exports());
 
         app.export(crate::message::ExportFormat::Textured, &path);
         assert!(app.status.starts_with("exported"), "{}", app.status);
@@ -1705,6 +1779,85 @@ mod tests {
         assert!(painted > 500, "only {painted} texels are the paint's colour");
         assert!(clay > painted, "the unpainted ball is not clay: {clay} texels");
         assert!(picture.pixels().all(|pixel| pixel.0[3] == 255), "the picture is not opaque");
+
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    /// A painted body exports as one GLB: one file, that a JSON parser
+    /// which is not this application's own reads, with the mesh in metres
+    /// and the picture inside it.
+    #[test]
+    fn a_painted_body_exports_as_a_glb_with_its_picture_inside() {
+        let directory = scratch("glb");
+        let path = directory.join("figure.glb");
+        let mut app = app();
+        update(&mut app, Message::PaintAdded);
+        let colour = [20, 140, 200];
+        edit(&mut app, PaintEdit::Colour(colour));
+        stroke(&mut app);
+        update(&mut app, Message::TextureSizeChanged(1024));
+
+        app.export(crate::message::ExportFormat::Glb, &path);
+        assert!(app.status.starts_with("exported"), "{}", app.status);
+        let files: Vec<_> = std::fs::read_dir(&directory)
+            .expect("the directory")
+            .map(|entry| entry.expect("an entry").file_name())
+            .collect();
+        assert_eq!(files.len(), 1, "a GLB is one file, and there are {files:?}");
+
+        let bytes = std::fs::read(&path).expect("the GLB should be there");
+        let word =
+            |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().expect("four")) as usize;
+        assert_eq!(&bytes[..4], b"glTF");
+        assert_eq!(word(8), bytes.len(), "the header counts the whole file");
+        let json_length = word(12);
+        let json: serde_json::Value =
+            serde_json::from_slice(&bytes[20..20 + json_length]).expect("the JSON chunk is JSON");
+        let bin = &bytes[20 + json_length + 8..];
+        assert_eq!(json["buffers"][0]["byteLength"].as_u64(), Some(bin.len() as u64));
+        let index = |value: &serde_json::Value| value.as_u64().expect("an index") as usize;
+
+        // The picture, found the way a viewer finds it: the mesh's
+        // material, its texture, that texture's image, that image's bytes.
+        let primitive = &json["meshes"][0]["primitives"][0];
+        let material = &json["materials"][index(&primitive["material"])];
+        let texture = &material["pbrMetallicRoughness"]["baseColorTexture"]["index"];
+        let image = &json["images"][index(&json["textures"][index(texture)]["source"])];
+        assert_eq!(image["mimeType"], "image/png");
+        let view = &json["bufferViews"][index(&image["bufferView"])];
+        let (offset, length) = (index(&view["byteOffset"]), index(&view["byteLength"]));
+        let picture = image::load_from_memory(&bin[offset..offset + length])
+            .expect("the picture inside is a picture")
+            .into_rgba8();
+        assert_eq!((picture.width(), picture.height()), (1024, 1024));
+        let count =
+            |wanted: [u8; 3]| picture.pixels().filter(|pixel| pixel.0[..3] == wanted).count();
+        let (painted, clay) = (count(colour), count(UNPAINTED));
+        assert!(painted > 500, "only {painted} texels are the paint's colour");
+        assert!(clay > painted, "the unpainted ball is not clay: {clay} texels");
+
+        // Metres. The body is as wide in the file, times a thousand, as
+        // it is in the document, in millimetres.
+        let positions = &json["accessors"][index(&primitive["attributes"]["POSITION"])];
+        let across = |axis: usize| {
+            positions["max"][axis].as_f64().expect("a number")
+                - positions["min"][axis].as_f64().expect("a number")
+        };
+        let mut visible = Vec::new();
+        app.doc.saved_visibility(&mut visible);
+        let bodies = app.doc.export_bodies(&visible);
+        let mesh = &bodies[0].1;
+        let low = mesh.positions.iter().copied().fold(glam::Vec3::splat(f32::MAX), glam::Vec3::min);
+        let high =
+            mesh.positions.iter().copied().fold(glam::Vec3::splat(f32::MIN), glam::Vec3::max);
+        for axis in 0..3 {
+            let (file, document) = (across(axis) * 1000.0, f64::from((high - low)[axis]));
+            assert!(document > 10.0, "the fixture is {document} mm across: too small to tell");
+            assert!(
+                (file - document).abs() < 0.5,
+                "axis {axis}: {file} mm in the file and {document} mm in the document"
+            );
+        }
 
         std::fs::remove_dir_all(&directory).ok();
     }

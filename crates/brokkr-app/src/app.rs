@@ -7328,6 +7328,7 @@ impl Brokkr {
                     &mut file,
                 )?,
                 ExportFormat::Textured => self.write_textured(&bodies, path, &mut file)?,
+                ExportFormat::Glb => self.write_glb(&bodies, &mut file)?,
                 ExportFormat::Ply => {
                     let coloured: Vec<brokkr_core::export::ply::Coloured<'_>> = bodies
                         .iter()

@@ -19,7 +19,7 @@ was built and what was measured.
 | S2 Mini painting | **Done but for broad occlusion and zenithal**, 2026-11-22 (section 8), which wait for S4 | Paint brush: *Mix paints*, then a rack of paints, each with a wash and an edge highlight; *Loaded*, *Drybrush*, *Sponge* and *Fill*; a flat view; export as PLY in colour, and 3MF by the filament each paint prints in |
 | S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). Presets, a textured tip and the gesture warps remain | A STUDIO block under the brush: *Crease*, *Stamp* with six images or any picture, *Lazy*, *Size from pressure* |
 | S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush, form smooth and posing remain | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
-| S5 Unwrap and bake | **Begun**, 2026-11-23 (section 10.4): unwrap, the base colour bake and OBJ with a picture. GLB and the other maps remain | Export as *OBJ+PNG*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
+| S5 Unwrap and bake | **Done but for the other maps**, 2026-11-23 (sections 10.4 and 10.5): unwrap, the base colour bake, OBJ with a picture, and GLB. Normal, occlusion and finish maps remain | Export as *OBJ+PNG* or *GLB*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
 repository, or the README's measured tables) or explicitly labelled
@@ -69,7 +69,7 @@ pull a printing capability after it:
 | Decimation (S1a) | Files a slicer loads in seconds; later, handing a slicer geometry sized to the process |
 | Parting and keys (S1b) | Parts sized to a bed and oriented to print without support |
 | Detail gain (S4) | Detail exaggerated to survive a given nozzle or layer height |
-| Unwrap and bake (S5) | Textured output for full colour processes that take an atlas: OBJ with a picture (done), GLB (next) |
+| Unwrap and bake (S5) | Textured output for full colour processes that take an atlas: OBJ with a picture (done), GLB (done) |
 
 When a design choice is between a better picture on screen and a better object
 off the printer, the object wins. Slicing itself stays out of this plan: the
@@ -1493,11 +1493,14 @@ The test this milestone exists for: a ball with a wash in a groove,
 decimated until the groove is narrower than the triangles across it. A
 colour a vertex (the PLY) loses the groove. The texture has it.
 
-**Measured** (release, the starting ball at a quarter millimetre, decimated
-from 125,408 triangles to 10,004): 28 charts, the unwrap 10 ms, the bake at
-1024 texels 0.46 s, 14 texels to the millimetre. The paint is one value a
-voxel, which is 4 to the millimetre, so 1024 already holds it three times
-over on a model this size, and the estimate in 10.1 stands.
+**Measured** (release, a 24 mm cube at a quarter millimetre with a slot cut
+in it and a ball let into one corner, decimated from 125,408 triangles to
+10,004): 28 charts, the unwrap 10 ms, the bake at 1024 texels 0.46 s, 14
+texels to the millimetre. The paint is one value a voxel, which is 4 to the
+millimetre, so 1024 already holds it three times over on a model this size,
+and the estimate in 10.1 stands. (The commit that built this, and its pull
+request, call that model "the starting ball". It was not: the numbers are
+right and the name was wrong.)
 
 **Build or depend: built.** The evaluation of `uvunwrap` was not made. The
 projection charts were the fallback and they turned out to be enough for a
@@ -1508,7 +1511,52 @@ used; the core has no picture format in it and gained none.
 
 **Not built from this section:** seam hiding and the mask as "protect"
 (seams are where they fall; the bake makes them not show), conformal
-flattening, the maps other than base colour, and GLB, which is next.
+flattening, the maps other than base colour, and GLB, which is 10.5.
+
+### 10.5 Built, 2026-11-23 (S5.2): GLB
+
+`brokkr-core/src/export/glb.rs`, and a sixth format on the export panel.
+The textured formats now sit in a row of their own under the texture size,
+since six buttons were one row too wide and the size only means anything
+to two of them.
+
+One file: the mesh, and each body's picture inside it as the PNG the
+application made. It shares the unwrap and the bake with the OBJ.
+
+**Three things this format means that the others here do not**, each of
+which is a line in the writer and a test:
+
+- **Metres.** Everything else written here is millimetres. A glTF is
+  metres by its specification, so positions are divided by a thousand. A
+  model written in millimetres opens a thousand times too big and nothing
+  says why.
+- **Y up.** So is the sculpt. This is the one writer that does not turn
+  the model.
+- **A vertex is one position and one place on the picture.** A vertex on
+  the edge of two charts has two places and is written twice.
+
+**The JSON is written by hand**, where 10.3 said `serde_json` was already
+in the graph. It is in the application's graph and not the core's, and the
+core is where a writer belongs. It is forty lines of fixed shape with one
+kind of string in it, the bodies' names, which are escaped and tested with
+quotes, backslashes, line ends and a control character in them. The
+application's test reads the file back with `serde_json`, so a parser that
+is not this one has read it.
+
+**Checked how.** By tests that follow the file's own indices from the
+scene down to the bytes and compare them with what went in, for two bodies
+with pictures of odd lengths so that the padding is exercised. **Not
+checked** against the Khronos validator: it could not be run where this
+was built. That is the first thing to do with a file from this writer
+anywhere it can be.
+
+**Size.** A ball 30 mm in radius at full detail (543,000 triangles) with a
+1024 texture is 15 MB, of which the picture is 39 KB: the mesh is the file. *Detail* is the
+control that matters here as everywhere.
+
+**Not built:** the finish as a metal and roughness picture (every material
+is the same matt non-metal), normal and occlusion maps, and compression of
+the mesh.
 
 ---
 

@@ -1073,6 +1073,7 @@ impl Brokkr {
                                 ExportFormat::ThreeMf => "Export 3MF…",
                                 ExportFormat::Ply => "Export PLY, in colour…",
                                 ExportFormat::Textured => "Export OBJ with a texture…",
+                                ExportFormat::Glb => "Export GLB, texture inside…",
                             },
                             Message::ExportRequested(format),
                         ))
@@ -3665,14 +3666,18 @@ impl Brokkr {
 
     /// Export controls, plus what the last attempt did.
     fn export_panel(&self) -> Element<'_, Message> {
-        let buttons =
-            ExportFormat::ALL.into_iter().fold(row![].spacing(theme::S2), |assembled, format| {
+        // The formats with a picture in them are a row of their own, under
+        // the size of that picture: see `textured_exports`.
+        let buttons = ExportFormat::ALL.into_iter().filter(|format| !format.has_texture()).fold(
+            row![].spacing(theme::S2),
+            |assembled, format| {
                 assembled.push(
                     button(text(format.label()).size(theme::TEXT_SIZE_SMALL))
                         .style(theme::tool_button)
                         .on_press(Message::Export(format)),
                 )
-            });
+            },
+        );
 
         let status: Element<'_, Message> = if self.status.is_empty() {
             text(format!("to {}", Self::export_directory().display()))
@@ -3737,7 +3742,7 @@ impl Brokkr {
         ]
         .spacing(theme::S1);
 
-        column![detail, self.texture_size_picker(), buttons, status, keys].spacing(theme::S2).into()
+        column![detail, buttons, self.textured_exports(), status, keys].spacing(theme::S2).into()
     }
 
     /// Pen controls, plus enough of a live readout that a user can tell whether

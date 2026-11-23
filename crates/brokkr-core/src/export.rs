@@ -38,6 +38,7 @@
 //! like.
 
 pub mod decimate;
+pub mod glb;
 pub mod obj;
 pub mod ply;
 pub mod stl;

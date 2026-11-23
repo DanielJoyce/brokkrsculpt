@@ -393,8 +393,8 @@ true of it too, and what it adds is this.
   its detail, with the surface texture kept. Exaggerating is for print:
   detail a nozzle would lose can be made to survive it.
 - **Colour out.** PLY with a colour a vertex, 3MF by the filament each
-  paint prints in, and *OBJ+PNG*, where the paint is baked to a texture
-  that stays sharp however far the mesh is thinned.
+  paint prints in, and *OBJ+PNG* or *GLB*, where the paint is baked to a
+  texture that stays sharp however far the mesh is thinned.
 
 [docs/STUDIO-PLAN.md](docs/STUDIO-PLAN.md) is the design, the state of each
 part, what was measured, and what was tried and dropped. Everything on the
