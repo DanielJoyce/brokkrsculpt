@@ -17,6 +17,7 @@ path = "src/main.rs"
 brokkr-core.workspace = true
 brokkr-gpu.workspace = true
 bytemuck.workspace = true
+dir_spec.workspace = true
 env_logger.workspace = true
 glam.workspace = true
 # `canvas` is the icon set, and it is the one feature of iced this project pays

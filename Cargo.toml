@@ -46,6 +46,12 @@ core-foundation = "0.10"
 # (proc-macro2, quote, syn) were in the lockfile already. MPL-2.0, which
 # AGPL-3.0 may be combined with.
 contracts = "0.6"
+# Where a user's settings, data and state belong on each platform, by the
+# XDG base directory specification where it is set and each platform's own
+# convention where it is not. `paths.rs` did this by hand, correctly, and
+# this is here because the maintainer asked for the crate by name: one
+# small file an operating system, MIT, and no dependencies of its own.
+dir_spec = "0.5"
 glam = { version = "0.33", features = ["bytemuck"] }
 iced = "0.14"
 iced_wgpu = "0.14"

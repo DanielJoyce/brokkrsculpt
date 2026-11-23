@@ -22,6 +22,7 @@ was built and what was measured.
 | S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush and form smooth remain. Posing is not planned (section 9.3) | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
 | S5 Unwrap and bake | **Done but for the other maps**, 2026-11-23 (sections 10.4 and 10.5): unwrap, the base colour bake, OBJ with a picture, and GLB. Normal, occlusion and finish maps remain | Export as *OBJ+PNG* or *GLB*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
 | P Painting engine | **Usable**, 2026-11-23 (section 15): the storage, the view and the brush. Painted colour is on screen, in the project file and in every export that carries colour | The paint brush lays a colour: *Paint*, *Glaze* or *Erase*, put on *Loaded*, as a *Wash*, with a *Drybrush* or a *Sponge*, at any opacity, with a soft edge. *Pick from model* takes a colour back off it |
+| B Brushes as settings | **Begun**, 2026-11-23 (section 16): where the files go. The generic brush, the palette and build-up follow | Settings, brushes and autosave each in the folder the operating system keeps for them |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
 repository, or the README's measured tables) or explicitly labelled
@@ -2664,3 +2665,136 @@ lose the one thing the recipes do that colour does not: a wash or a
 highlight that can be turned up or down after it is on the model. Kept
 behind its button it costs nothing and is in nobody's way. So it waits for
 a yes.
+
+---
+
+## 16. A brush is its settings (milestone B)
+
+Asked for by the maintainer on 2026-11-23:
+
+> Can we make the brush engine more generic? In ZBrush all the brushes are
+> just combinations of basic settings, smoothing, strength, pinch/spread,
+> whether or not they have a bitmap, whether or not they build up (clay),
+> the stroke cross section profile (Rounded, plateau, etc), strokes or
+> repeated stamps. Move isn't a brush of course. Can we get a brush palette
+> going with some basic brushes, way to save presets, etc? Also saved app
+> config, brushes, etc should go in appropriate home folder (dir_spec). The
+> basic brushes would just become core presets.
+
+### 16.1 Where this starts from
+
+Section 6 built an engine in which a brush is parts: a tip, and an operator
+chosen from a list. The list is the trouble. Draw, Clay, Smooth, Inflate,
+Pinch, Flatten and Crease are seven kernels, a brush is exactly one of
+them, and Crease had to be written as an eighth thing because it is Draw
+and Pinch at once. A brush that pinches a little while it builds, or
+smooths as it flattens, is another kernel each time.
+
+### 16.2 The actions, and a brush as amounts of them
+
+Looked at for what they do to the field, the seven are five actions:
+
+| Action | What it does to a voxel | Whose it was |
+|---|---|---|
+| **Push** | Reads the field from behind along the stroke's normal, so the surface moves out, or in | Draw; the cut of Crease |
+| **Inflate** | Offsets the level set, so the surface swells along its own normals | Inflate |
+| **Pinch** | Reads the field from further from the brush's axis, so the surface is drawn toward it. Negative, it spreads | Pinch; the squeeze of Crease |
+| **Smooth** | Blends toward the mean of the neighbours | Smooth |
+| **Level** | Blends toward a plane: the one under the brush, or one held off it. Filling up to it only, cutting down to it only, or both | Flatten (both, on the surface); Clay (fill, held proud) |
+
+A brush is an **amount of each**, a size and a strength. The two that read
+the field from somewhere else add, as displacements, into one read. Then
+the offset, then the two blends. One kernel, and Crease is `push -0.6,
+pinch 1` with nothing written for it.
+
+What the invert key does: it reverses what the brush builds (push,
+inflate, and which side of the plane it fills). It reverses pinch only
+when pinch is all the brush does, which is what the Pinch brush has always
+done, and leaves the pinch of a crease a pinch, which is what Crease has
+always done.
+
+**The classic brushes are the oracle again.** A brush of one action at
+full amount has to do what the classic kernel of that name does, to the
+bit, over the same strokes the engine was first held to (section 6): the
+arithmetic is arranged so that an amount of nothing adds exactly nothing
+and an amount of one multiplies by exactly one. That is the test, and it
+is why this can replace the list and not sit beside it.
+
+### 16.3 The rest of what a brush is
+
+- **Profile**: the cross-section of the stroke. A shape (smooth, linear,
+  sharp, wide, and round, which is a dome) and a **plateau**: how much of
+  the middle is flat before the shape begins. With no plateau the first
+  four are the falloff curves upstream has, to the bit.
+- **Bitmap**: an image across the tip, one more factor on the weight, laid
+  out along the stroke. The six that come with the application or any
+  picture, as the stamp has them now.
+- **Pattern**: as now.
+- **Stroke**: *freehand*, stamps a fraction of a radius apart that read as
+  one line; *dots*, stamps a radius or more apart that read as separate
+  marks; and for an image pressed to its full height, the *stamp* and the
+  *row of stamps* section 6.3 built, which are gestures and stay as they
+  are.
+- **Build-up**: on, every pass adds to the last, as now. Off, a stroke
+  lays one layer however often it crosses itself, on the terms the paint
+  brush's coat is laid (section 15.3) and by the same means: what each
+  voxel held before the stroke, read back from the undo record, and the
+  most any stamp has given it.
+
+Move is not a brush and stays a tool. Paint is its own engine (section 15)
+and stays one.
+
+### 16.4 The palette
+
+The Draw to Flatten buttons become a palette of brushes, and each of those
+six is a core preset of the generic brush, with a few more that cost only
+their settings: Clay buildup, Spread, Scrape, Crease, Layer. The user's
+own brushes follow them. A brush in hand can be changed on the panel, kept
+under a name, and forgotten again. A core preset cannot be forgotten, and
+one that has been changed can be put back as it came.
+
+### 16.5 Where the files go
+
+Three kinds of file in three places, asked of the operating system through
+the `dir_spec` crate:
+
+| | What | Linux | macOS | Windows |
+|---|---|---|---|---|
+| Settings | The printer, the slicer, the puck, the welcome screen | `~/.config` | `~/Library/Application Support` | `%APPDATA%` |
+| Data | Brushes | `~/.local/share` | `~/Library/Application Support` | `%APPDATA%` |
+| State | The autosave, the recent files | `~/.local/state` | `~/Library/Application Support` | `%LOCALAPPDATA%` |
+
+each in a `brokkrsculpt` directory. A brush is data and not a setting: it
+is made, and it is worth handing to somebody else.
+
+### 16.6 The stages
+
+| Stage | What | State |
+|---|---|---|
+| B1 | Where the files go | **Built**, 2026-11-23 (below) |
+| B2 | The generic brush in the core, held to the classic kernels | Next |
+| B3 | The palette, the core presets, and a brush's settings on the panel | |
+| B4 | Build-up on or off, and a bitmap along a stroke | |
+
+#### Built, 2026-11-23 (B1): where the files go
+
+`paths.rs` asks `dir_spec` where it used to work the answer out by hand.
+The answers are the same on Linux and Windows, so nobody's settings
+moved. On macOS the three `XDG_` variables are honoured where they were
+not.
+
+One thing the crate is not asked. Settings and state have to be different
+directories, or an autosave beside the settings reads as a document
+somebody chose to keep, and on macOS the platform's answer to all three
+questions is one directory. So state and data each go in a directory of
+their own inside it there, and wherever an environment points two of the
+variables at one place.
+
+Brushes moved from the settings directory to the data directory. A
+`brushes.conf` still in the old place is read when the new place has none,
+and the next change is written to the new one.
+
+**Held by**: tests that the three kinds are three places, that each is
+absolute and under the application's name, that a kind which would share
+the settings' directory is put inside it, that on Linux they are where the
+specification says, and that brushes in the old place are still found.
