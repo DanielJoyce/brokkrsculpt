@@ -23,6 +23,7 @@ was built and what was measured.
 | S5 Unwrap and bake | **Done but for the other maps**, 2026-11-23 (sections 10.4 and 10.5): unwrap, the base colour bake, OBJ with a picture, and GLB. Normal, occlusion and finish maps remain | Export as *OBJ+PNG* or *GLB*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
 | P Painting engine | **Usable**, 2026-11-23 (section 15): the storage, the view and the brush. Painted colour is on screen, in the project file and in every export that carries colour | The paint brush lays a colour: *Paint*, *Glaze* or *Erase*, put on *Loaded*, as a *Wash*, with a *Drybrush* or a *Sponge*, at any opacity, with a soft edge. *Pick from model* takes a colour back off it |
 | B A brush is its settings | **Done but for B5**, 2026-11-23 (section 16): files in the right directories, one generic brush, the palette, a picture across the tip, build-up on or off, lines or dabs. Brushes that stamp a shape (B5) are a later stage | BRUSHES: twenty-one that come with the application, upstream's six among them, and the user's own, a file each. *What it does* shows a brush as five amounts to change. *Profile*: five shapes and a flat middle. *Picture across the tip*, *Builds up* or *One layer*, and *Set down* as a line or every so many widths |
+| M Reading sizes | **Done**, 2026-11-23 (section 17) | A scale bar in the corner of the viewport that follows the zoom, and *Measure*: two clicks on the model, and the straight-line distance between them drawn and read out |
 | B Brushes as settings | **Begun**, 2026-11-23 (section 16): where the files go, and the generic brush in the engine. The palette and build-up follow | Settings, brushes and autosave each in the folder the operating system keeps for them |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
@@ -3132,19 +3133,69 @@ it.
 
 ---
 
-## 17. Reading sizes off the screen (asked for, not begun)
+## 17. Reading sizes off the screen
 
 Asked for by the maintainer on 2026-11-23, while section 16 was being
 built: *"some kind of on screen size display, like how maps show a
 distance that changes as you zoom, and maybe a quick way to get the
 distance between two clicked points."*
 
-Two small things, and a stage of their own after the brushes:
+#### Built, 2026-11-23
 
-- **A scale bar** in a corner of the viewport: a bar and a round number of
-  millimetres, which changes as the view is zoomed, as a map's does. The
-  length it stands for is the length at the point the view is turning
-  about, since under a perspective view a millimetre is not one size
-  everywhere on the screen.
-- **A measure**: click two points on the model and read the straight-line
-  distance between them, with the line drawn between the two.
+`app/measure.rs`. One field, one message arm and two lines of the pointer
+handler in `app.rs`; one arm of the view in `panel.rs`.
+
+**A scale bar** in the bottom left of the viewport: a bar with a tick at
+each end and the round number of millimetres it stands for, which is the
+longest of 1, 2 or 5 times a power of ten that is no more than 140 pixels
+at the zoom in hand. On the starting ball it reads 10 mm, and 5 mm three
+clicks of the wheel in.
+
+Under a perspective view a millimetre is not one size everywhere on the
+screen. The bar stands for its length **at the point the view turns
+about**, across the view, which is where the model being looked at is and
+the one direction in which a length there is not foreshortened. It says
+"at the middle of the view" under it, so that nobody takes it for more
+than that.
+
+**Measure**, a button under the bar: the next two left clicks on the model
+are the two ends of a line and not strokes. With one down, the loose end
+follows the pointer with a running length. With both down the line stays,
+with its length on it and beside the button, until *Clear* or the next
+measurement, and the pointer is the brush's again. The right and middle
+buttons still turn and pan the view between the two clicks, which on a
+model of any size is how the second point is reached. The length is the
+straight line between the two points in the model's own millimetres,
+whatever the view.
+
+**Drawn by the application and not by the renderer.** The renderer's
+overlay is tested against the model's depth, and the straight line
+between two points on a ball is inside the ball. What is wanted is a line
+across the screen, always in front, with words on it: one transparent
+canvas over the viewport, which the icons already cost. It takes no
+pointer events, so a drag begun on top of the scale bar still sculpts:
+tried on a screen.
+
+**Seen on a screen and changed**: zoomed in, the corner of the viewport is
+over the model, the model is pale, and the bar could not be read. It and
+the Measure button's words are on dark plates.
+
+**Held by**: two clicks measure the distance between the two points the
+pick finds under them, sculpt nothing and leave nothing to undo, and the
+next click sculpts; a click off the model is no point; the other buttons
+are not the measure's; a measurement put away with one point down leaves
+no half of a line; the bar stands for less as the view is zoomed in and
+more as it is zoomed out; and two properties: whatever the zoom, the bar
+is a round length that fits and is the longest that does; and a point
+along the ray through a pixel is drawn at that pixel, which holds the
+drawing to the camera's own ray.
+
+**Not done:**
+
+* The measure is a straight line through space. A length along the
+  surface, an angle, or the size of the whole model on each axis are
+  each a small thing more.
+* A measurement is of two points in space and stays where it was put
+  when the model under it is sculpted or moved.
+* It is not saved with the document.
+* Escape does not put a measurement away; the button does.

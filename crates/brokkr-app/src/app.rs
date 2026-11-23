@@ -4,6 +4,7 @@
 
 mod fit_test;
 mod form;
+mod measure;
 mod overhang;
 mod painting;
 mod paints;
@@ -902,6 +903,8 @@ pub struct Brokkr {
     /// The studio brushes: an operator upstream has no brush for, a lazy
     /// stroke, size from pressure. See `app/studio.rs`.
     studio: studio::StudioState,
+    /// The measurement being taken or last taken. See `app/measure.rs`.
+    measure: measure::MeasureState,
     /// The form tools' settings. See `app/form.rs`.
     form: form::FormState,
     /// The overhang view: whether it is on, and how steep a lean the
@@ -2164,6 +2167,7 @@ impl Brokkr {
             touch: paints::TouchState::default(),
             flat_paint: false,
             studio: studio::StudioState::default(),
+            measure: measure::MeasureState::default(),
             form: form::FormState::default(),
             overhang: overhang::OverhangState::default(),
             painting: painting::PaintingState::default(),
@@ -9179,6 +9183,12 @@ impl Brokkr {
                     return;
                 }
 
+                // A click while a measurement is being taken is one of its
+                // two points, and not a stroke. See `app/measure.rs`.
+                if self.measure_press(button, position) {
+                    return;
+                }
+
                 // A press on the navigation cube belongs to the cube. Checked
                 // before anything else, or clicking it would also carve a divot
                 // out of the model behind it.
@@ -9390,6 +9400,8 @@ impl Brokkr {
                 let position = Vec2::new(position.x, position.y);
                 let delta = self.cursor.map(|previous| position - previous).unwrap_or(Vec2::ZERO);
                 self.cursor = Some(position);
+                // The loose end of a measurement follows the pointer.
+                self.measure_hover(position);
 
                 // Past the slop this is a drag, not a click, and it stays one
                 // even if it comes back: otherwise an orbit that ends where it
@@ -10426,6 +10438,7 @@ impl Brokkr {
             Message::PaintEdited(edit) => self.edit_paint(edit),
             Message::Studio(message) => return self.studio_changed(message),
             Message::Form(message) => self.form_changed(message),
+            Message::Measure(message) => self.measure_changed(message),
             // One of the sizes on offer, or the setting stays as it is.
             Message::TextureSizeChanged(size) => {
                 if paints::TEXTURE_SIZES.contains(&size) {

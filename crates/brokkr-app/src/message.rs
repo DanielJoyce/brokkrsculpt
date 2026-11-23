@@ -209,6 +209,16 @@ pub enum StudioMessage {
     PresetRemoved(usize),
 }
 
+/// The measure's controls. See `app/measure.rs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MeasureMessage {
+    /// Begin a measurement, the next two left clicks on the model being its
+    /// two points, or with `false` put the one being taken away.
+    Armed(bool),
+    /// Clear what was measured.
+    Cleared,
+}
+
 /// What the paint brush lays. See `app/painting.rs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PaintTarget {
@@ -1112,6 +1122,9 @@ pub enum Message {
     Studio(StudioMessage),
     /// One of the form tools' controls. See `app/form.rs`.
     Form(FormMessage),
+    /// The measure: begin one, or clear what was measured. View state: it
+    /// changes no voxel and is not saved. See `app/measure.rs`.
+    Measure(MeasureMessage),
     /// How many texels on a side a baked texture is: 1024, 2048 or 4096. A
     /// setting of the application, like the export detail.
     TextureSizeChanged(u32),
