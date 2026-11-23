@@ -163,6 +163,10 @@ pub enum StudioMessage {
     StampChosen(brokkr_core::brush::alpha::BuiltIn),
     /// How tall the stamp is, as a share of its size.
     StampHeightChanged(f32),
+    /// Lay the stamp again and again along the drag, this many of its own
+    /// widths apart, each at the brush's size. Nothing, or less, is one
+    /// stamp sized by the drag.
+    StampAlongChanged(f32),
     /// Ask for a picture to use as the stamp image.
     StampImageRequested,
     /// The picture that was chosen, read and turned into heights: its name
