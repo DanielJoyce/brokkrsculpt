@@ -221,13 +221,16 @@ impl PaintField {
         coord: BrickCoord,
         lo: IVec3,
         hi: IVec3,
-        voxel_size: f32,
+        keep_prior: bool,
         paintable: &impl Fn(usize) -> bool,
-        edit: &impl Fn(IVec3, Vec3, Rgba) -> Rgba,
+        edit: &mut impl FnMut(IVec3, usize, Rgba) -> Rgba,
     ) -> PaintChange {
         let origin = coord.origin();
         let existed = self.bricks.contains_key(&coord);
-        let prior = self.bricks.get(&coord).cloned();
+        // A copy of the brick as it was, for the undo record, and only for
+        // a caller that has somewhere to put it: the copy is 131 KB, and a
+        // stroke asks for it once a brick and not once a stamp.
+        let prior = if keep_prior { self.bricks.get(&coord).cloned() } else { None };
         let brick = self.bricks.entry(coord).or_insert(PaintBrick::Uniform(BARE));
         let was_uniform = matches!(brick, PaintBrick::Uniform(_));
         let uniform_rgba = match brick {
@@ -246,8 +249,7 @@ impl PaintField {
                     if !paintable(index) {
                         continue;
                     }
-                    let position = voxel.as_vec3() * voxel_size;
-                    let rgba = edit(voxel, position, data[index]);
+                    let rgba = edit(voxel, index, data[index]);
                     if rgba != data[index] {
                         data[index] = rgba;
                         changed = true;
@@ -554,7 +556,7 @@ impl PaintField {
     }
 }
 
-fn bricks_between(low: IVec3, high: IVec3) -> impl Iterator<Item = BrickCoord> {
+pub(crate) fn bricks_between(low: IVec3, high: IVec3) -> impl Iterator<Item = BrickCoord> {
     (low.z..=high.z).flat_map(move |z| {
         (low.y..=high.y).flat_map(move |y| (low.x..=high.x).map(move |x| BrickCoord::new(x, y, z)))
     })
@@ -596,6 +598,30 @@ impl Volume {
         hi: IVec3,
         edit: impl Fn(IVec3, Vec3, Rgba, u8) -> Rgba,
     ) {
+        self.edit_paint_over(lo, hi, |voxel, position, held, _, protection| {
+            edit(voxel, position, held, protection)
+        });
+    }
+
+    /// [`Volume::edit_paint`] for an edit that works from the paint as it
+    /// was when the open stroke began, and may keep count as it goes.
+    ///
+    /// `edit` is handed one thing more, after the paint the voxel holds:
+    /// the paint it held **before the stroke**. That is the stroke's own
+    /// undo record read back, so it costs nothing to keep. A brick the
+    /// stroke has not changed yet holds it still, and with no stroke open
+    /// it is simply what the voxel holds.
+    ///
+    /// It is what lets a stroke lay its paint once however many stamps
+    /// cross a voxel: each stamp blends over what was there before any of
+    /// them, and not over the last one's result. See
+    /// [`crate::paint::stroke`].
+    pub fn edit_paint_over(
+        &mut self,
+        lo: IVec3,
+        hi: IVec3,
+        mut edit: impl FnMut(IVec3, Vec3, Rgba, Rgba, u8) -> Rgba,
+    ) {
         let voxel_size = self.voxel_size();
         let b_min = BrickCoord::containing(lo).0;
         let b_max = BrickCoord::containing(hi).0;
@@ -609,14 +635,21 @@ impl Volume {
                 continue;
             }
             let protection = mask.slab(coord);
-            let edit = |voxel: IVec3, position: Vec3, held: Rgba| {
-                let local = voxel - origin;
-                let byte = protection.byte_at(brick_index(
-                    local.x as usize,
-                    local.y as usize,
-                    local.z as usize,
-                ));
-                stored(edit(voxel, position, held, mask.resolve(byte)))
+            // What this brick held before the stroke, where the stroke has
+            // changed it already: `None` for a brick it has not.
+            let recorded = parts.recorder.as_ref().and_then(|recorder| recorder.get(&coord));
+            // Whether a stroke is open and has yet to record this brick.
+            let unrecorded = parts.recorder.is_some() && recorded.is_none();
+            let mut edit = |voxel: IVec3, index: usize, held: Rgba| {
+                let position = voxel.as_vec3() * voxel_size;
+                let before = match recorded {
+                    None => held,
+                    Some(None) => BARE,
+                    Some(Some(PaintBrick::Uniform(rgba))) => *rgba,
+                    Some(Some(PaintBrick::Dense(data))) => data[index],
+                };
+                let byte = protection.byte_at(index);
+                stored(edit(voxel, position, held, before, mask.resolve(byte)))
             };
             let outcome = match parts.bricks.get(&coord) {
                 None => continue,
@@ -624,22 +657,22 @@ impl Volume {
                     if !PaintField::paintable(*value) {
                         continue;
                     }
-                    parts.paint.edit_brick(coord, from, to, voxel_size, &|_| true, &edit)
+                    parts.paint.edit_brick(coord, from, to, unrecorded, &|_| true, &mut edit)
                 }
                 Some(Brick::Dense(values)) => parts.paint.edit_brick(
                     coord,
                     from,
                     to,
-                    voxel_size,
+                    unrecorded,
                     &|index| PaintField::paintable(values[index]),
-                    &edit,
+                    &mut edit,
                 ),
             };
             let PaintChange::Changed(prior) = outcome else {
                 continue;
             };
-            if let Some(recorder) = parts.recorder.as_mut() {
-                recorder.entry(coord).or_insert(prior);
+            if unrecorded && let Some(recorder) = parts.recorder.as_mut() {
+                recorder.insert(coord, prior);
             }
         }
         self.mark_dirty_voxel_range(lo, hi);
@@ -1010,6 +1043,68 @@ mod tests {
             RED
         });
         assert_eq!(fine.paint().at(IVec3::new(12, 0, 0)), RED);
+    }
+
+    /// An edit that asks is told what each voxel held before the stroke
+    /// that is open, whatever the stroke has done to it since and however
+    /// its brick was stored: not there, one value, or dense. With no
+    /// stroke open that is what it holds.
+    #[test]
+    fn an_edit_is_told_what_a_voxel_held_before_the_stroke() {
+        let (lo, hi) = (IVec3::splat(-20), IVec3::splat(20));
+        let seen = |volume: &mut Volume, lay: Rgba| {
+            let mut pairs = std::collections::BTreeSet::new();
+            volume.edit_paint_over(lo, hi, |_, _, held, before, _| {
+                pairs.insert((held, before));
+                lay
+            });
+            pairs
+        };
+        let only = |pair: (Rgba, Rgba)| std::collections::BTreeSet::from([pair]);
+
+        // No stroke open: before is now.
+        let mut volume = ball(12.0);
+        assert_eq!(seen(&mut volume, RED), only((BARE, BARE)));
+        assert_eq!(seen(&mut volume, BLUE), only((RED, RED)));
+
+        // A brick that was not there, then one that was dense: half the
+        // ball red and half blue, so that it is not one value.
+        for start in [None, Some(())] {
+            let mut volume = ball(12.0);
+            let was = |at: Vec3| match start {
+                None => BARE,
+                Some(()) if at.x > 0.0 => RED,
+                Some(()) => BLUE,
+            };
+            volume.edit_paint(lo, hi, |_, at, _, _| was(at));
+            volume.begin_stroke();
+            volume.edit_paint(lo, hi, |_, _, _, _| [1, 2, 3, 4]);
+            let mut checked = 0;
+            volume.edit_paint_over(lo, hi, |_, at, held, before, _| {
+                assert_eq!(held, [1, 2, 3, 4]);
+                assert_eq!(before, was(at), "at {at}");
+                checked += 1;
+                [5, 6, 7, 8]
+            });
+            assert!(checked > 1000);
+            // And still, after a second change in the same stroke.
+            volume.edit_paint_over(lo, hi, |_, at, held, before, _| {
+                assert_eq!((held, before), ([5, 6, 7, 8], was(at)), "at {at}");
+                held
+            });
+            volume.end_stroke().expect("a stroke");
+            // The stroke over, before is now again.
+            assert_eq!(seen(&mut volume, BARE), only(([5, 6, 7, 8], [5, 6, 7, 8])));
+        }
+
+        // A brick that was one value throughout.
+        let mut volume = ball(12.0);
+        for coord in volume.brick_coords().collect::<Vec<_>>() {
+            volume.paint_mut().insert(coord, PaintBrick::Uniform(RED));
+        }
+        volume.begin_stroke();
+        volume.edit_paint(lo, hi, |_, _, _, _| BLUE);
+        assert_eq!(seen(&mut volume, BLUE), only((BLUE, RED)));
     }
 
     /// A brick that is one paint throughout is stored as that paint, and is
