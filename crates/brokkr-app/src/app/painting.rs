@@ -40,6 +40,12 @@ use crate::theme;
 /// How little and how much of itself a full touch of the brush may lay.
 pub(super) const OPACITY_RANGE: std::ops::RangeInclusive<f32> = 0.05..=1.0;
 
+/// How unlike the paint it began on a fill runs over, until it is told
+/// otherwise: an eighth of the way from black to white. Enough to take a
+/// shaded panel as one panel, and not enough to run from one colour onto
+/// another.
+const USUAL_LIKENESS: u8 = 32;
+
 /// How many swatches of the range go on a line of the panel.
 const SWATCHES_A_ROW: usize = 8;
 
@@ -62,6 +68,9 @@ pub(super) struct PaintingState {
     /// Whether the drag in progress began with the eyedropper, and so
     /// paints nothing.
     held_off: bool,
+    /// How unlike the paint it began on a fill will still run over, in
+    /// levels of 255.
+    pub fill_like: u8,
     stroke: PaintStroke,
 }
 
@@ -74,6 +83,7 @@ impl Default for PaintingState {
             mode: PaintMode::default(),
             picking: false,
             held_off: false,
+            fill_like: USUAL_LIKENESS,
             stroke: PaintStroke::new(),
         }
     }
@@ -107,12 +117,8 @@ impl Brokkr {
             PaintingMessage::Target(target) => {
                 self.painting.target = target;
                 self.painting.picking = false;
-                // Each way of painting has a touch the other has not.
-                let stray = match target {
-                    PaintTarget::Colour => PaintTouch::Fill,
-                    PaintTarget::Slots => PaintTouch::Wash,
-                };
-                if self.touch.kind == stray {
+                // A slot cannot take a wash.
+                if target == PaintTarget::Slots && self.touch.kind == PaintTouch::Wash {
                     self.touch.kind = PaintTouch::Loaded;
                 }
             }
@@ -126,6 +132,7 @@ impl Brokkr {
                 self.painting.opacity = opacity.clamp(*OPACITY_RANGE.start(), *OPACITY_RANGE.end());
             }
             PaintingMessage::Mode(mode) => self.painting.mode = mode,
+            PaintingMessage::FillLike(levels) => self.painting.fill_like = levels,
             PaintingMessage::PickArmed => self.painting.picking = !self.painting.picking,
             PaintingMessage::Coated => self.coat_the_body_in_colour(),
         }
@@ -203,6 +210,39 @@ impl Brokkr {
             self.symmetry,
             super::MIRROR_CENTRE,
         );
+    }
+
+    /// Pour the colour in hand onto the model at `point`, a world position
+    /// on its surface, to run until the model's own lines stop it or the
+    /// paint under it is no longer like the paint where it began.
+    ///
+    /// Called for every pointer event of a drag with the Fill touch
+    /// chosen, as a slot's fill is, so that dragging across several panels
+    /// fills each as the pointer reaches it. The drag is one undo entry.
+    pub(super) fn pour_colour(&mut self, point: Vec3, direction: BrushDirection) {
+        let lines = self.fill_lines(0);
+        let pigment = self.painting.pigment(direction);
+        let like = self.painting.fill_like;
+        let filled = self.doc.active_volume_mut().fill_colour(point, pigment, like, lines);
+        self.say_what_was_filled(filled);
+    }
+
+    /// The one setting a fill of colour has that a fill of a slot has not,
+    /// added to the fill's block of the panel.
+    pub(super) fn fill_likeness<'a>(
+        &'a self,
+        block: iced::widget::Column<'a, Message>,
+    ) -> iced::widget::Column<'a, Message> {
+        let like = self.painting.fill_like;
+        block
+            .push(
+                text(format!("Runs over paint within  {like} levels"))
+                    .size(theme::CAPTION_SIZE)
+                    .color(theme::TEXT_DIM),
+            )
+            .push(slider(0..=255_u8, like, |levels| {
+                Message::Painting(PaintingMessage::FillLike(levels))
+            }))
     }
 
     /// Lay the colour in hand over the whole of the active body, by the
@@ -305,6 +345,26 @@ impl Brokkr {
             return picker.into();
         }
 
+        // The machine's own filaments first. A colour painted at full
+        // strength in one of these prints in exactly that filament: the
+        // nearest filament to a filament's colour is itself.
+        let mut spools = row![].spacing(theme::S1);
+        for slot in self.palette.slots.iter().take(SWATCHES_A_ROW) {
+            let swatch = slot.swatch().into_rgba8();
+            let each = [swatch[0], swatch[1], swatch[2]];
+            let (style, _) = theme::tool_toggle(each == colour);
+            spools = spools.push(
+                button(
+                    container(text("")).width(14).height(14).style(theme::swatch(slot.swatch())),
+                )
+                .padding(2)
+                .style(style)
+                .on_press(Message::Painting(PaintingMessage::Colour(each))),
+            );
+        }
+        let spools =
+            column![reading("The machine's filaments".to_string()), spools].spacing(theme::S1);
+
         let mut range = column![].spacing(theme::S1);
         for line in RANGE.chunks(SWATCHES_A_ROW) {
             let mut swatches = row![].spacing(theme::S1);
@@ -344,6 +404,7 @@ impl Brokkr {
             },
         );
         picker = picker
+            .push(spools)
             .push(range)
             .push(channels)
             .push(
@@ -618,8 +679,53 @@ mod tests {
         );
     }
 
+    /// A click with the Fill touch pours the colour over the paint it lands
+    /// on and paint like it, and stops at paint that is not; told that
+    /// anything is alike, it takes the body. Each click is one undo.
+    #[test]
+    fn a_fill_pours_the_colour_over_paint_like_where_it_landed() {
+        let click = |app: &mut Brokkr| {
+            press(app, CENTRE);
+            release(app);
+        };
+        // On bare clay, on a ball with no lines to stop it: as much of it
+        // as one click may flood, and the status line says that is why it
+        // stopped.
+        let mut app = app();
+        update(&mut app, Message::PaintTouchChosen(PaintTouch::Fill));
+        set(&mut app, PaintingMessage::Colour([30, 90, 200]));
+        click(&mut app);
+        let all = painted(&app);
+        assert!(all.len() > 100_000, "a fill of a bare ball painted {} voxels", all.len());
+        assert!(all.iter().all(|rgba| *rgba == [30, 90, 200, 255]));
+        assert!(app.status.contains("the fill stopped at"), "{}", app.status);
+        update(&mut app, Message::Undo);
+        assert!(painted(&app).is_empty(), "a fill was more than one step");
+
+        // On a stroke of blue across bare clay: the stroke, and not the
+        // clay round it.
+        update(&mut app, Message::PaintTouchChosen(PaintTouch::Loaded));
+        update(&mut app, Message::FalloffChanged(brokkr_core::FalloffCurve::Wide));
+        stroke(&mut app);
+        let blue = painted(&app).len();
+        update(&mut app, Message::PaintTouchChosen(PaintTouch::Fill));
+        set(&mut app, PaintingMessage::Colour([200, 30, 20]));
+        click(&mut app);
+        let after = painted(&app);
+        let red = after.iter().filter(|rgba| rgba[..3] == [200, 30, 20]).count();
+        assert_eq!(after.len(), blue, "a fill begun on paint ran onto the clay");
+        assert!(red > 300 && red < blue, "{red} of the stroke's {blue} voxels turned red");
+
+        // Told that anything is alike: everything.
+        set(&mut app, PaintingMessage::FillLike(255));
+        set(&mut app, PaintingMessage::Colour([20, 160, 40]));
+        click(&mut app);
+        let green = painted(&app).iter().filter(|rgba| **rgba == [20, 160, 40, 255]).count();
+        assert!(green > 100_000, "a fill over anything painted {green} voxels");
+    }
+
     /// The other way of painting is one button away and is what it was,
-    /// and each way drops the touch the other has not got.
+    /// and drops the one touch it has not got.
     #[test]
     fn filaments_are_painted_as_before_behind_their_button() {
         let mut app = app();
@@ -631,7 +737,7 @@ mod tests {
 
         update(&mut app, Message::PaintTouchChosen(PaintTouch::Fill));
         set(&mut app, PaintingMessage::Target(PaintTarget::Colour));
-        assert_eq!(app.touch.kind, PaintTouch::Loaded, "a fill of colour is not built");
+        assert_eq!(app.touch.kind, PaintTouch::Fill, "both ways of painting have a fill");
         update(&mut app, Message::PaintTouchChosen(PaintTouch::Wash));
         set(&mut app, PaintingMessage::Target(PaintTarget::Slots));
         assert_eq!(app.touch.kind, PaintTouch::Loaded, "a slot cannot take a wash");

@@ -2239,9 +2239,9 @@ palette of colours to pick from, and the list of filaments for a 3MF.
 |---|---|---|
 | P1 | The storage: the field, every edit that must carry it, undo, the file | **Built**, 2026-11-23 (below) |
 | P2 | The view: paint on the vertices, composited in the shader | **Built**, 2026-11-23 (below) |
-| P3 | The brush: the locked stroke, the modes, the colour picker, the eyedropper | **Built**, 2026-11-23 (below), but for a fill of colour |
+| P3 | The brush: the locked stroke, the modes, the colour picker, the eyedropper, the fill | **Built**, 2026-11-23 (below) |
 | P4 | The exports: bake, PLY, OBJ, GLB, and the nearest filament for 3MF | **Built**, 2026-11-23 (below) |
-| P5 | Retire the recipes: convert old documents, remove the editor | Next, with a fill of colour |
+| P5 | Retire the recipes: convert old documents, remove the editor | Not begun, and waiting on a word from the maintainer (below) |
 
 #### Built, 2026-11-23 (P1): the storage
 
@@ -2599,3 +2599,68 @@ how far it is from the stroke, for the colours and for the filaments, over
 clay and over a slot, at full opacity and at 0.3; and an integration test
 that paints in the application, exports a PLY, an OBJ with its picture and
 a 3MF, and reads the colour back out of each file.
+
+#### Built, 2026-11-23 (P3, the last of it): a fill of colour, and the machine's filaments
+
+**The fill.** *Fill* is a touch of the colour brush as it is of a slot's:
+a click pours the colour in hand over the surface until something stops
+it. What stops it is what stopped a slot's fill, the model's own creases
+and edges at the sharpness the panel sets, and one thing more.
+
+A slot's fill runs over "the slot where I clicked", which is the same slot
+or is not. A colour is more or less like another, so a fill of colour is
+told how alike is alike: *Runs over paint within N levels*, 32 until it is
+changed, an eighth of the way from black to white. Within that of the
+paint where it began, in colour and in coverage, it runs on; at paint
+further off than that it stops. Bare clay is like bare clay. So a click on
+a red panel repaints the red panel and stops at the blue one beside it
+with no line between them, and a click on a shaded panel takes the panel
+and its shading together.
+
+In the engine it is the slot's flood, which did not change: `fill.rs` was
+split into the flood (`Volume::flooded`, which is told what "the same as
+where it began" means) and what is laid on what the flood reached. What
+it reaches takes the pigment as a stroke at full strength would lay it: by
+its opacity, in its mode, less what the mask holds off. So there is a fill
+of glaze, and a fill of eraser.
+
+**The machine's filaments** are a row of swatches above the range. A
+filament's own colour, painted at full strength, prints in that filament,
+because the nearest filament to a filament's colour is itself. With that,
+painting in colour does everything painting by slot did for a filament
+printer, which is what P5 was waiting to be true.
+
+**Seen on a screen**: five touches in one row cut the end off "Loaded".
+They are three and two.
+
+**Held by**: a contract on the likeness (a paint is like itself); a
+property of it (alike goes both ways, more tolerance is never less alike,
+at the most everything is alike, at none only the same paint is); four
+core tests, the first of which holds a fill of colour on a bare body to
+exactly the voxels a fill of a slot reaches from the same click, for four
+clicks and four settings of the lines; and an integration test that
+clicks in the application: on a bare ball, on a stroke of blue across it,
+and with the likeness opened right up.
+
+#### P5, and a question for the maintainer
+
+The plan said the recipes would be retired once the brush that replaces
+them was in hand. It is in hand. What P5 would take out:
+
+- *Filaments* on the paint brush, and with it painting by filament slot.
+- *Mix paints*: the rack, the recipe editor, washes and highlights as
+  settings of a paint, the zenithal undercoat.
+- About 2,400 lines of `app/paints.rs` and their tests, the paint table in
+  the project file, and the shader's recipe block.
+
+What it would put in their place: on opening a document painted the old
+way, each slot's colour, wash and highlight laid into the paint as
+colour, once.
+
+It has not been begun, for one reason: it removes things that work, and
+the maintainer's words were "pull that out if it simplifies things". It
+would simplify the panel (one way to paint) and the code. It would also
+lose the one thing the recipes do that colour does not: a wash or a
+highlight that can be turned up or down after it is on the model. Kept
+behind its button it costs nothing and is in nobody's way. So it waits for
+a yes.

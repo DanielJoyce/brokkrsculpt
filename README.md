@@ -391,9 +391,12 @@ true of it too, and what it adds is this.
   opacity, with a soft edge. *Paint* covers, *Glaze* tints what is under it
   without hiding it, *Erase* takes paint off. Put on *Loaded*; as a *Wash*,
   which runs into the creases and off the edges; with a *Drybrush*, which
-  catches only what stands up; or with a *Sponge*. A stroke is one coat
-  however often it crosses itself, and a second stroke is a second coat.
-  *Pick from model* takes a colour back off the surface. The paint is
+  catches only what stands up; with a *Sponge*; or as a *Fill*, which
+  runs over a panel until a crease, an edge or a different paint stops it.
+  A stroke is one coat however often it crosses itself, and a second
+  stroke is a second coat. *Pick from model* takes a colour back off the
+  surface, and the machine's own filaments are among the swatches: a
+  filament's colour, painted at full strength, prints in that filament. The paint is
   saved with the project, follows the model through every edit, and is in
   every export that carries colour: a colour a vertex in a PLY, the
   texture of an *OBJ+PNG* or a *GLB*, and in a 3MF the loaded filament
@@ -419,7 +422,7 @@ true of it too, and what it adds is this.
   texture that stays sharp however far the mesh is thinned.
 
 <p align="center">
-  <img alt="A ball painted with the colour brush: a red stroke and a blue one, a yellow sponge speckle, a dark glaze drawn down across all three that darkens each where it crosses, and a stripe of white at half opacity that the red and the blue show through. Beside it the panel: Colour or Filaments, Paint, Glaze or Erase, Loaded, Wash, Drybrush or Sponge, the colour in hand, its opacity, a range of swatches and three sliders" src="docs/images/studio-colour-brush.png" width="760">
+  <img alt="A ball painted with the colour brush: a red stroke and a blue one, a yellow sponge speckle, a dark glaze drawn down across all three that darkens each where it crosses, and a stripe of white at half opacity that the red and the blue show through. Beside it the panel: Colour or Filaments, Paint, Glaze or Erase, Loaded, Wash, Drybrush, Sponge or Fill, the colour in hand, its opacity, the machine's filaments and a range of swatches" src="docs/images/studio-colour-brush.png" width="760">
 </p>
 
 <p align="center">

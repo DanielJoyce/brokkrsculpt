@@ -240,6 +240,9 @@ pub enum PaintingMessage {
     /// How much of itself a full touch of the brush lays.
     Opacity(f32),
     Mode(PaintMode),
+    /// How unlike the paint it began on a fill of colour will still run
+    /// over, in levels of 255.
+    FillLike(u8),
     /// Arm the eyedropper, or put it down again.
     PickArmed,
     /// Coat the whole body in the colour in hand.
@@ -277,7 +280,7 @@ pub enum PaintTouch {
     /// A speckle, as a dabbed sponge leaves.
     Sponge,
     /// Not a stroke at all: the paint is poured where the pointer is and
-    /// runs until a line of the model stops it. For a filament slot only.
+    /// runs until a line of the model stops it.
     Fill,
     /// Into the recesses and off the edges, as a wash runs. For colour
     /// only: a slot has no "some of it".
