@@ -881,6 +881,8 @@ impl Document {
         // hands each half the other's paint under material it does not have.
         masked.adopt_paint(volume.colour());
         rest.adopt_paint(volume.colour());
+        masked.adopt_rgba(volume.paint());
+        rest.adopt_rgba(volume.paint());
         // Both halves are brand new to the renderer, and a volume built by
         // `insert_brick` has marked nothing.
         masked.mark_everything_dirty();
@@ -932,6 +934,7 @@ impl Document {
         }
         for output in &mut volumes {
             output.adopt_paint(volume.colour());
+            output.adopt_rgba(volume.paint());
             // Every output is brand new to the renderer, and a volume built by
             // `insert_brick` has marked nothing. Without this the bodies are
             // right in every headless assertion and invisible on screen, which

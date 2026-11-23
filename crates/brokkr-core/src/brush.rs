@@ -1757,6 +1757,10 @@ struct Locked {
     colour: FieldRegion,
     /// False when the body carries no paint, so the third pass is skipped.
     painted: bool,
+    /// And the paint proper ([`crate::paint::field`]) over the same box, on
+    /// the same terms, with its own flag for the same saving.
+    rgba: crate::paint::field::PaintRegion,
+    coloured: bool,
 }
 
 /// A Move gesture, holding the field as it stood when the button went down.
@@ -1949,6 +1953,10 @@ impl MoveStroke {
             locked.painted = !volume.colour().is_empty();
             if locked.painted {
                 volume.snapshot_colour(read_lo, read_hi, &mut locked.colour);
+            }
+            locked.coloured = !volume.paint().is_empty();
+            if locked.coloured {
+                volume.snapshot_paint(read_lo, read_hi, &mut locked.rgba);
             }
         }
     }
@@ -2205,6 +2213,27 @@ impl MoveStroke {
                     };
                     let from = (position - displacement * free) / voxel_size;
                     locked_colour.get(from.round().as_ivec3()) as u8
+                });
+            }
+            // And the paint proper, the same way from its own lock.
+            if locked.coloured {
+                let locked_rgba = &locked.rgba;
+                volume.edit_paint(anchor.lo, anchor.hi, |voxel, position, held, _| {
+                    let free = if masked {
+                        1.0 - (locked_mask.get(voxel) / PROTECTED as f32).clamp(0.0, 1.0)
+                    } else {
+                        1.0
+                    };
+                    if free <= 0.0 {
+                        return held;
+                    }
+                    let Some(displacement) =
+                        move_displacement(anchors, drag, position, inverse_radius, falloff, cap)
+                    else {
+                        return held;
+                    };
+                    let from = (position - displacement * free) / voxel_size;
+                    locked_rgba.get(from.round().as_ivec3())
                 });
             }
         }

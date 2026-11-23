@@ -14,6 +14,7 @@ use crate::brick::{
 use crate::colour::{ColourBrick, ColourEdit, ColourField};
 use crate::mask::{MaskBrick, MaskEdit, MaskField, MaskSlab, PROTECTED, UNMASKED};
 use crate::mesh::{BrickMesh, MeshScratch, mesh_apron};
+use crate::paint::field::{PaintBrick, PaintField};
 use crate::region::FieldRegion;
 use crate::undo::StrokeEdit;
 
@@ -451,6 +452,9 @@ pub struct Volume {
     mask_recorder: Option<FxHashMap<BrickCoord, Option<MaskBrick>>>,
     /// And a third, for the colour, on the terms the second sets out.
     colour_recorder: Option<FxHashMap<BrickCoord, Option<ColourBrick>>>,
+    /// And a fourth, for the paint, on the same terms. See
+    /// [`crate::paint::field`].
+    paint_recorder: Option<FxHashMap<BrickCoord, Option<PaintBrick>>>,
     /// The mask's polarity when the current stroke opened, once something in
     /// the stroke has changed it. See [`crate::undo::StrokeEdit`].
     mask_polarity: Option<bool>,
@@ -458,6 +462,9 @@ pub struct Volume {
     /// volume for exactly the reasons [`crate::colour`] gives, which are the
     /// mask's three plus the undo arithmetic that decided it.
     colour: ColourField,
+    /// The body's paint: a colour and a coverage for each voxel of its
+    /// surface. See [`crate::paint::field`].
+    paint: PaintField,
     scratch: EditScratch,
 }
 
@@ -477,8 +484,10 @@ impl Volume {
             recorder: None,
             mask_recorder: None,
             colour_recorder: None,
+            paint_recorder: None,
             mask_polarity: None,
             colour: ColourField::default(),
+            paint: PaintField::default(),
             scratch: EditScratch::default(),
         }
     }
@@ -522,6 +531,39 @@ impl Volume {
     #[inline]
     pub fn colour_mut(&mut self) -> &mut ColourField {
         &mut self.colour
+    }
+
+    /// The body's paint: a colour and a coverage for each voxel of its
+    /// surface. See [`crate::paint::field`].
+    #[inline]
+    pub fn paint(&self) -> &PaintField {
+        &self.paint
+    }
+
+    /// For the operations that rebuild a body and hand it its paint whole.
+    /// An edit of the paint goes through [`Volume::edit_paint`], which is
+    /// what a stroke's recorder sees.
+    #[inline]
+    pub fn paint_mut(&mut self) -> &mut PaintField {
+        &mut self.paint
+    }
+
+    /// What an edit of the paint needs of a volume, borrowed apart: the
+    /// field's bricks to say which voxels are surface, the mask, the paint,
+    /// and the open stroke's record of it. For `paint/field.rs`, which is
+    /// where those edits are written.
+    pub(crate) fn paint_parts(&mut self) -> crate::paint::field::PaintParts<'_> {
+        crate::paint::field::PaintParts {
+            bricks: &self.bricks,
+            mask: &self.mask,
+            paint: &mut self.paint,
+            recorder: &mut self.paint_recorder,
+        }
+    }
+
+    /// [`Volume::mark_brick_and_neighbours_dirty`], for the same file.
+    pub(crate) fn paint_changed_in(&mut self, coord: BrickCoord) {
+        self.mark_brick_and_neighbours_dirty(coord);
     }
 
     /// Swap a whole mask onto this body and hand back the one that was there.
@@ -699,6 +741,7 @@ impl Volume {
         // duplicate that arrived unpainted would print in one filament, and
         // nothing on screen but the paint itself says so.
         copy.colour = self.colour.translated(offset_bricks);
+        copy.paint = self.paint.translated(offset_bricks);
         // A stroke in progress is NOT carried over. `recorder` holds the prior
         // contents of the bricks this volume's own gesture touched, and those
         // name an undo entry that belongs to the body being copied; a copy that
@@ -871,6 +914,10 @@ impl Volume {
         // After both attributes are on, because the cut reads the slots and
         // makes the midpoints' own attributes from their ends.
         crate::mesh::split_paint_boundaries(out);
+        // The paint, after the cut and not before it: a midpoint the cut
+        // made has a cell of its own, and is painted from it like any other
+        // vertex. Free for a body with no paint, as the slots are.
+        self.paint.rgba_at_cells(coord, &out.cells, &mut out.paint);
         debug_assert_eq!(
             out.mask.len(),
             out.vertices.len(),
@@ -1624,6 +1671,7 @@ impl Volume {
         self.recorder = Some(FxHashMap::default());
         self.mask_recorder = Some(FxHashMap::default());
         self.colour_recorder = Some(FxHashMap::default());
+        self.paint_recorder = Some(FxHashMap::default());
         self.mask_polarity = None;
     }
 
@@ -1642,10 +1690,18 @@ impl Volume {
     pub fn end_stroke(&mut self) -> Option<StrokeEdit> {
         self.mask.collapse();
         self.colour.collapse();
+        self.paint.collapse();
         let recorder = self.recorder.take()?;
         let masks = self.mask_recorder.take().unwrap_or_default();
         let colours = self.colour_recorder.take().unwrap_or_default();
-        StrokeEdit::from_recording(recorder, masks, colours, self.mask_polarity.take())
+        let paints: Vec<_> = self.paint_recorder.take().unwrap_or_default().into_iter().collect();
+        let edit = StrokeEdit::from_recording(recorder, masks, colours, self.mask_polarity.take());
+        // A stroke that changed paint and nothing else is still a stroke.
+        match edit {
+            Some(edit) => Some(edit.with_paints(paints)),
+            None if paints.is_empty() => None,
+            None => Some(StrokeEdit::default().with_paints(paints)),
+        }
     }
 
     /// True while a stroke is being recorded.
@@ -1705,7 +1761,17 @@ impl Volume {
     /// is only on screen once the bricks it covers have been remeshed. Undoing a
     /// mask stroke and seeing the old tint stay is the same class of bug as
     /// undoing a carve and seeing the old triangles stay.
-    pub fn apply_edit(&mut self, edit: StrokeEdit) -> StrokeEdit {
+    pub fn apply_edit(&mut self, mut edit: StrokeEdit) -> StrokeEdit {
+        // The paint half, on the colour half's terms and for its reason: it
+        // is baked into the vertices at mesh time.
+        let paints = edit.take_paints();
+        let mut paint_inverse = Vec::with_capacity(paints.len());
+        for (coord, brick) in paints {
+            let previous = self.paint.brick(coord).cloned();
+            self.paint.restore_brick(coord, brick);
+            paint_inverse.push((coord, previous));
+            self.mark_brick_and_neighbours_dirty(coord);
+        }
         let (bricks, masks, colours, polarity) = edit.into_parts();
         let mut inverse = Vec::with_capacity(bricks.len());
         for (coord, brick) in bricks {
@@ -1756,6 +1822,7 @@ impl Volume {
         });
 
         StrokeEdit::from_parts(inverse, mask_inverse, colour_inverse, polarity)
+            .with_paints(paint_inverse)
     }
 
     /// Mark a brick and the twenty-six around it as needing a remesh.
@@ -2231,6 +2298,7 @@ impl Volume {
         // this is how the growth guard, the debug overlay and every bug report
         // come to under-report a painted document by up to 25%.
         self.colour.add_to_stats(&mut stats);
+        self.paint.add_to_stats(&mut stats);
         stats
     }
 

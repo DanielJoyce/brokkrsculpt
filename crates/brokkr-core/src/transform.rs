@@ -176,6 +176,7 @@ impl Volume {
         // `brick_coords`.
         *shifted.mask_mut() = self.mask().shifted(offset_voxels);
         *shifted.colour_mut() = self.colour().shifted(offset_voxels);
+        *shifted.paint_mut() = self.paint().shifted(offset_voxels);
         shifted.mark_everything_dirty();
         shifted
     }
@@ -207,6 +208,7 @@ impl Volume {
         // at all can still have one to carry.
         *warped.mask_mut() = self.mask().warped(by, voxel_size);
         *warped.colour_mut() = self.colour().warped(by, voxel_size);
+        *warped.paint_mut() = self.paint().warped(by, voxel_size);
         let Some((world_min, world_max)) = self.world_bounds() else {
             return warped;
         };

@@ -1005,6 +1005,15 @@ pub fn write(out: &mut impl Write, doc: &Document, state: &ProjectState) -> Resu
         out.write_all(&paints)?;
     }
 
+    // The paint itself, only where a body has some, behind a tag of its
+    // own, after the table's. See `paint/file.rs`.
+    let painted = doc.nodes().iter().filter_map(|node| node.volume()).map(Volume::paint);
+    if let Some(section) = crate::paint::file::encode(painted) {
+        out.write_all(crate::paint::file::TAG)?;
+        write_u64(out, section.len() as u64)?;
+        out.write_all(&section)?;
+    }
+
     out.flush()?;
     Ok(())
 }
@@ -1676,17 +1685,23 @@ fn read_understanding_field_versions_to(
     // decode: each leaves the document with no paints, its slots drawn as
     // filaments, and the sculpt intact.
     if header.container >= 2 {
-        let mut tag = [0u8; 8];
-        let mut filled = 0;
-        while filled < tag.len() {
-            match input.read(&mut tag[filled..]) {
-                Ok(0) => break,
-                Ok(count) => filled += count,
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(_) => break,
+        // A tag, or nothing where the file ends or will not give eight
+        // bytes more.
+        let next_tag = |input: &mut dyn Read| -> Option<[u8; 8]> {
+            let mut tag = [0u8; 8];
+            let mut filled = 0;
+            while filled < tag.len() {
+                match input.read(&mut tag[filled..]) {
+                    Ok(0) => break,
+                    Ok(count) => filled += count,
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => break,
+                }
             }
-        }
-        if filled == tag.len() && &tag == PAINT_TAG {
+            (filled == tag.len()).then_some(tag)
+        };
+        let mut tag = next_tag(input);
+        if tag.as_ref() == Some(PAINT_TAG) {
             let mut length = [0u8; 4];
             if input.read_exact(&mut length).is_ok() {
                 let length = u32::from_le_bytes(length);
@@ -1694,6 +1709,29 @@ fn read_understanding_field_versions_to(
                     let mut bytes = vec![0u8; length as usize];
                     if input.read_exact(&mut bytes).is_ok() {
                         state.paints = crate::paint::PaintTable::decode(&bytes).unwrap_or_default();
+                    }
+                }
+            }
+            tag = next_tag(input);
+        }
+        // The paint itself, on the same forgiving terms: a section that is
+        // cut short, of the wrong length, or will not decode leaves every
+        // body bare and the sculpt as it was read. See `paint/file.rs`. No
+        // cap on the length it claims: only what the file holds is read,
+        // and a claim the file does not meet is a section not taken.
+        if tag.as_ref() == Some(crate::paint::file::TAG) {
+            let mut length = [0u8; 8];
+            if input.read_exact(&mut length).is_ok() {
+                let length = u64::from_le_bytes(length);
+                let mut bytes = Vec::new();
+                let taken = input.take(length).read_to_end(&mut bytes);
+                let bodies = loaded.iter().filter(|(_, volume)| volume.is_some()).count();
+                if taken.is_ok_and(|read| read as u64 == length)
+                    && let Ok(fields) = crate::paint::file::decode(&bytes, bodies)
+                {
+                    let volumes = loaded.iter_mut().filter_map(|(_, volume)| volume.as_mut());
+                    for (volume, field) in volumes.zip(fields) {
+                        *volume.paint_mut() = field;
                     }
                 }
             }

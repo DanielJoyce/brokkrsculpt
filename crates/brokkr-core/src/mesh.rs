@@ -98,6 +98,10 @@ pub struct BrickMesh {
     /// writes it into a shared buffer and a short run leaves the tail of a
     /// brick reading whatever the previous tenant left there.
     pub colour: Vec<u8>,
+    /// The paint at each vertex's own lattice cell: sRGB and coverage, one
+    /// for each vertex, read by cell for the reason the slot is. See
+    /// [`crate::paint::field`]. A run of zeros for a body with no paint.
+    pub paint: Vec<[u8; 4]>,
     /// How concave the surface is at each vertex, as [`crate::signals`]
     /// encodes it, one byte per vertex.
     ///
@@ -119,6 +123,7 @@ impl BrickMesh {
         self.partners.clear();
         self.mask.clear();
         self.colour.clear();
+        self.paint.clear();
         self.cavity.clear();
     }
 

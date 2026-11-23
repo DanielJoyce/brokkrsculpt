@@ -1528,6 +1528,7 @@ mod apply_tests {
             mask: vec![0; 64],
             colour: vec![0; 64],
             cavity: Vec::new(),
+            paint: Vec::new(),
         }
     }
 
@@ -1570,6 +1571,7 @@ mod apply_tests {
             mask: vec![0; 4],
             colour: vec![0; 4],
             cavity: Vec::new(),
+            paint: Vec::new(),
         }
     }
 
