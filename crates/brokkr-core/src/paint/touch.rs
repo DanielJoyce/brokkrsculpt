@@ -59,6 +59,7 @@
 //! Without that, the speckle at depth would be a different speckle, and the
 //! first smoothing stroke would shuffle it.
 
+use contracts::debug_ensures;
 use glam::{IVec3, Vec3};
 
 use crate::brick::NARROW_BAND;
@@ -346,6 +347,7 @@ impl Drybrush {
     /// where [`Drybrush::catches`], and more the further the surface stands
     /// into the brush: a drybrush is heaviest on the sharpest edge and
     /// fades off down its sides.
+    #[debug_ensures((0.0..=1.0).contains(&ret), "a share of a full touch")]
     pub fn amount(&self, raised: f32, facing: f32, bristle: f32, load: f32) -> f32 {
         (self.margin(raised, facing, bristle, load) / DRY_RAMP).clamp(0.0, 1.0)
     }
@@ -370,6 +372,7 @@ impl Sponge {
     /// where [`Sponge::catches`] draws the line. The rim is laid so that a
     /// share of everything is still everything and a share of nothing is
     /// still nothing.
+    #[debug_ensures((0.0..=1.0).contains(&ret), "a share of a full touch")]
     pub fn amount(&self, raised: f32, speck: f32) -> f32 {
         ((self.share(raised) * (1.0 + SPECK_RIM) - speck) / SPECK_RIM).clamp(0.0, 1.0)
     }
@@ -548,6 +551,7 @@ impl<'a> Curvatures<'a> {
     /// How far the surface stands up at a point: 1 on a full edge, 0 on a
     /// flat, -1 in a full crease. [`Curvatures::raised`] is the upper half
     /// of it, and a wash runs into the lower.
+    #[debug_ensures((-1.0..=1.0).contains(&ret), "from a full crease to a full edge")]
     pub(super) fn relief(&self, at: Vec3, gain: f32) -> f32 {
         let below = at.floor().as_ivec3();
         // One step back along each axis the point is exactly on.

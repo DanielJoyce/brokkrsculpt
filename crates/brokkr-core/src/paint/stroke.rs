@@ -34,6 +34,7 @@
 //! bytes does. [`laid`] is the whole of that arithmetic, and the shader's
 //! compositing of paint over clay is its twin.
 
+use contracts::{debug_ensures, debug_requires, test_ensures};
 use glam::{IVec3, Vec3};
 use rustc_hash::FxHashMap;
 
@@ -192,6 +193,7 @@ impl Encode {
         Self { least, start }
     }
 
+    #[test_ensures(ret == srgb([c; 3])[0], "the table is the curve")]
     fn byte(&self, c: f32) -> u8 {
         let c = c.clamp(0.0, 1.0);
         // A value that is not a number is nothing, as `srgb` has it.
@@ -223,6 +225,10 @@ impl Ready {
     }
 
     /// [`laid`], which is this.
+    #[debug_requires(!amount.is_nan() && !self.opacity.is_nan(), "an amount is a number")]
+    #[debug_ensures(ret == crate::paint::field::stored(ret), "laid as paint is stored")]
+    #[debug_ensures(self.mode != Mode::Erase || ret[3] <= before[3], "an eraser adds nothing")]
+    #[debug_ensures(self.mode == Mode::Erase || ret[3] >= before[3], "paint takes nothing off")]
     fn over(&self, before: Rgba, amount: f32) -> Rgba {
         let a = (amount * self.opacity).clamp(0.0, 1.0);
         let under = [light(before[0]), light(before[1]), light(before[2])];
@@ -255,6 +261,8 @@ impl Ready {
 
 /// How much of a wash a point takes. `relief` is how far the surface
 /// stands up there: 1 on a full edge, 0 on a flat, -1 in a full crease.
+#[debug_ensures((0.0..=1.0).contains(&ret), "a share of the wash")]
+#[debug_requires(!relief.is_nan(), "a relief is a number")]
 pub fn pooled(relief: f32) -> f32 {
     let recess = (-relief).clamp(0.0, 1.0);
     let ridge = relief.clamp(0.0, 1.0);
@@ -330,6 +338,11 @@ impl PaintStroke {
 
     /// `stamp` is where the paint goes. `source` and `flip` say which stamp
     /// it is the mirror image of.
+    #[debug_requires(brush.radius.is_finite(), "a brush has a size")]
+    #[debug_ensures(
+        self.coverage.len() >= old(self.coverage.len()),
+        "what a stroke has covered, it has covered"
+    )]
     fn stamp_flipped(
         &mut self,
         volume: &mut Volume,

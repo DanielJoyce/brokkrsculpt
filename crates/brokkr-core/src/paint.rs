@@ -67,6 +67,8 @@ pub mod bake;
 pub mod field;
 pub mod file;
 pub mod fill;
+#[cfg(test)]
+mod properties;
 pub mod remove;
 pub mod stroke;
 pub mod touch;

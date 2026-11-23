@@ -41,6 +41,7 @@
 //! could have written. What a refusal costs is the paint and never the
 //! sculpt: `project.rs` has read the geometry in full before it looks here.
 
+use contracts::debug_ensures;
 use glam::IVec3;
 
 use super::field::{BARE, PaintBrick, PaintField, Rgba, stored};
@@ -89,6 +90,10 @@ impl std::fmt::Display for PaintFileError {
 
 /// A brick's voxels as runs of equal paint, or `None` when that would be
 /// no smaller than writing them all.
+#[debug_ensures(
+    ret.as_ref().is_none_or(|runs| runs.len() < BRICK_VOXELS * 4),
+    "runs are written only where they are the smaller"
+)]
 fn runs_of(data: &[Rgba; BRICK_VOXELS]) -> Option<Vec<u8>> {
     let whole = BRICK_VOXELS * 4;
     let mut out: Vec<u8> = Vec::new();
@@ -154,6 +159,10 @@ pub(crate) fn encode<'a>(bodies: impl Iterator<Item = &'a PaintField> + Clone) -
 }
 
 /// Read a section back into one field for each of `bodies` bodies.
+#[debug_ensures(
+    ret.as_ref().map_or(true, |fields| fields.len() == bodies),
+    "a field for each body, or no fields"
+)]
 pub(crate) fn decode(bytes: &[u8], bodies: usize) -> Result<Vec<PaintField>, PaintFileError> {
     let mut rest = bytes;
     let mut take = |count: usize| -> Result<&[u8], PaintFileError> {
