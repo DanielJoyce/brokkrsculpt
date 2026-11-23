@@ -170,6 +170,18 @@ pub struct CavityView {
     /// What turns the stored curvature into a fraction of a full crease. See
     /// [`brokkr_gpu::Uniforms::cavity`].
     pub gain: f32,
+    /// The overhang view's limit and plate, or zeros for off, which ride in
+    /// the same uniform's two spare floats. See `app/overhang.rs`.
+    pub overhang: [f32; 2],
+}
+
+impl CavityView {
+    /// The four floats of [`brokkr_gpu::Uniforms::cavity`], in its order.
+    /// Here and not in the render callback so that something can ask what
+    /// the shader was told without a GPU to tell.
+    pub fn packed(&self) -> [f32; 4] {
+        [self.strength, self.gain, self.overhang[0], self.overhang[1]]
+    }
 }
 
 /// The hand off between the application and the render callbacks.
@@ -1105,7 +1117,7 @@ impl shader::Primitive for SculptPrimitive {
                 (true, false) => 1,
                 (true, true) => 2,
             },
-            cavity: [cavity.strength, cavity.gain, 0.0, 0.0],
+            cavity: cavity.packed(),
             palette: paint.palette,
             paints: paint.paints,
         };

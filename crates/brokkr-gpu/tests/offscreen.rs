@@ -2917,3 +2917,139 @@ fn a_thumbnail_shows_a_paint_with_its_wash_at_the_viewports_gain() {
         "three times the gain did not pool more wash into the thumbnail's creases"
     );
 }
+
+/// Overhangs are tinted where the surface faces down past the limit, above
+/// the plate, and nowhere else: checked a pixel at a time against the rule
+/// in `brokkr_core::overhang`, on a ball seen from underneath, where what a
+/// pixel shows can be worked out without the renderer.
+#[test]
+fn overhangs_are_tinted_where_the_rule_says_and_nowhere_else() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the overhang test");
+        return;
+    };
+    use brokkr_core::overhang;
+
+    let distance = MODEL_RADIUS * 3.0;
+    let mut renderer = SculptRenderer::new(&harness.device, &harness.queue, TARGET_FORMAT);
+    renderer.resize(&harness.device, WIDTH, HEIGHT);
+    let mut volume = Volume::new(VOXEL_SIZE);
+    volume.seed_sphere(Vec3::ZERO, MODEL_RADIUS);
+    upload_all(&mut renderer, &harness.device, &harness.queue, &mut volume);
+
+    // From below and to one side, so that the picture holds the underside,
+    // the equator and a good deal of neither.
+    let eye = Vec3::new(0.45, -0.8, 1.0).normalize() * distance;
+    let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y);
+    let projection = glam::camera::rh::proj::directx::perspective(
+        45f32.to_radians(),
+        WIDTH as f32 / HEIGHT as f32,
+        0.1,
+        distance * 4.0,
+    );
+    let view_projection = projection * view;
+    harness.view_projection = view_projection;
+    let off = Uniforms {
+        view_projection: view_projection.to_cols_array_2d(),
+        view: view.to_cols_array_2d(),
+        ..uniforms(distance)
+    };
+    renderer.write_uniforms(&harness.queue, &off);
+    let plain = harness.frame(&renderer);
+
+    // The surface a pixel shows, worked out from the ball itself: where the
+    // ray through the pixel first meets a sphere of the model's radius.
+    let back = view_projection.inverse();
+    let shown = |x: u32, y: u32| -> Option<Vec3> {
+        let ndc = glam::Vec2::new(
+            (x as f32 + 0.5) / WIDTH as f32 * 2.0 - 1.0,
+            1.0 - (y as f32 + 0.5) / HEIGHT as f32 * 2.0,
+        );
+        let near = back.project_point3(ndc.extend(0.0));
+        let far = back.project_point3(ndc.extend(1.0));
+        let along = (far - near).normalize();
+        let middle = -near.dot(along);
+        let miss = (near + along * middle).length_squared();
+        let half = MODEL_RADIUS * MODEL_RADIUS - miss;
+        (half > 0.0).then(|| near + along * (middle - half.sqrt()))
+    };
+    // A tinted pixel is redder than the clay can be: the clay's red is
+    // never more than a few levels over its blue.
+    let tinted = |pixels: &[u8], x: u32, y: u32| {
+        let at = ((y * WIDTH + x) * 4) as usize;
+        i32::from(pixels[at]) - i32::from(pixels[at + 2]) > 60
+    };
+    let count = |pixels: &[u8], limit: f32, plate: f32| {
+        // Pixels the rule calls an overhang, and how many of those are
+        // tinted; pixels it does not, and how many of THOSE are. Pixels
+        // within a few degrees of the limit, or a voxel of the plate, are
+        // left out: the ball is made of voxels and the tint has a soft edge.
+        let (mut over, mut over_tinted, mut clear, mut clear_tinted) = (0, 0, 0, 0);
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let Some(point) = shown(x, y) else {
+                    continue;
+                };
+                let down = -point.normalize().y;
+                if (down - limit).abs() < 0.08 || (point.y - plate).abs() < 1.0 {
+                    continue;
+                }
+                if overhang::overhangs(point, point.y, limit, plate) {
+                    over += 1;
+                    over_tinted += usize::from(tinted(pixels, x, y));
+                } else if point.length() < MODEL_RADIUS * 0.97 || down < 0.99 {
+                    clear += 1;
+                    clear_tinted += usize::from(tinted(pixels, x, y));
+                }
+            }
+        }
+        (over, over_tinted, clear, clear_tinted)
+    };
+
+    let limit = overhang::limit(45.0);
+    let plate = overhang::plate(-MODEL_RADIUS);
+    // Switched off, whatever the plate: the picture as it was.
+    renderer.write_uniforms(&harness.queue, &Uniforms { cavity: [0.0, 0.0, 0.0, plate], ..off });
+    assert_eq!(harness.frame(&renderer), plain, "a limit of nothing changed the picture");
+    assert_eq!(count(&plain, limit, plate).1, 0, "the clay itself reads as tinted");
+
+    renderer.write_uniforms(&harness.queue, &Uniforms { cavity: [0.0, 0.0, limit, plate], ..off });
+    let shown_at_45 = harness.frame(&renderer);
+    dump("overhang-off", &plain);
+    dump("overhang-45", &shown_at_45);
+    assert_eq!(mask(&shown_at_45), mask(&plain), "showing overhangs changed the silhouette");
+    let (over, over_tinted, clear, clear_tinted) = count(&shown_at_45, limit, plate);
+    assert!(
+        over > 3000 && clear > 3000,
+        "the view holds {over} overhanging pixels and {clear} not"
+    );
+    assert!(
+        over_tinted * 100 >= over * 99,
+        "{over_tinted} of {over} overhanging pixels are tinted"
+    );
+    assert_eq!(clear_tinted, 0, "{clear_tinted} of {clear} pixels that do not overhang are tinted");
+
+    // A printer that manages a steeper lean: less of it.
+    let steeper = overhang::limit(55.0);
+    renderer
+        .write_uniforms(&harness.queue, &Uniforms { cavity: [0.0, 0.0, steeper, plate], ..off });
+    let shown_at_55 = harness.frame(&renderer);
+    let (over_55, over_55_tinted, clear_55, clear_55_tinted) = count(&shown_at_55, steeper, plate);
+    assert!(over_55 > 300 && over_55 * 3 < over * 2, "{over_55} pixels overhang past 55 degrees");
+    assert!(over_55_tinted * 100 >= over_55 * 99, "{over_55_tinted} of {over_55}");
+    assert!(clear_55_tinted == 0 && clear_55 > clear, "{clear_55_tinted} of {clear_55}");
+
+    // Nothing under the plate is an overhang. The 45 degree line is 21 mm
+    // under the ball's middle. With the plate raised to 27 mm under it, only
+    // the band between the two is left, and what was tinted below is clay
+    // again.
+    let raised = -27.0;
+    renderer.write_uniforms(&harness.queue, &Uniforms { cavity: [0.0, 0.0, limit, raised], ..off });
+    let on_a_tall_plate = harness.frame(&renderer);
+    let (over_raised, over_raised_tinted, clear_raised, clear_raised_tinted) =
+        count(&on_a_tall_plate, limit, raised);
+    assert!(over_raised > 300 && over_raised * 2 < over, "{over_raised} against {over}");
+    assert!(clear_raised > clear, "nothing joined the clay under the plate");
+    assert!(over_raised_tinted * 100 >= over_raised * 98, "{over_raised_tinted} of {over_raised}");
+    assert_eq!(clear_raised_tinted, 0, "{clear_raised_tinted} of {clear_raised} under the plate");
+}

@@ -16,6 +16,7 @@ was built and what was measured.
 | S0 Groundwork | **Done**, 2026-11-22 (sections 5 and 6) | *show creases* in the viewport. The rest is foundations |
 | S1a Decimated export | **Done**, 2026-11-22 (section 7.1) | A *Detail* choice on export: Full, Fine, Standard, Draft |
 | S1b Parting with keys | **Done but for a preview**, 2026-11-22 (section 7.2) | Cut tool with **alt** held: the body becomes two, with pegs and sockets |
+| S1c Overhang view | **Done**, 2026-11-23 (section 7.3). Not in the first plan | *show overhangs* on the export panel: what leans past the angle a printer manages is tinted, and an export says how much |
 | S2 Mini painting | **Done but for broad occlusion and zenithal**, 2026-11-23 (section 8), which wait for S4 | Paint brush: *Mix paints*, then a rack of paints, each with a wash and an edge highlight; *Loaded*, *Drybrush*, *Sponge* and *Fill*; a flat view; export as PLY in colour, and 3MF by the filament each paint prints in |
 | S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). A textured tip and the gesture warps remain | A STUDIO block under the brush: *Crease*, *Stamp* with six images or any picture, one at a time or in a row *Along the stroke*, *Lazy*, *Size from pressure*; and PRESETS, a brush kept under a name |
 | S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush, form smooth and posing remain | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
@@ -68,6 +69,7 @@ pull a printing capability after it:
 | Paints (S2) | Full colour output: each paint names the filament it prints in (done), and a PLY with a colour a vertex for full colour processes (done); a textured file follows in S5 |
 | Decimation (S1a) | Files a slicer loads in seconds; later, handing a slicer geometry sized to the process |
 | Parting and keys (S1b) | Parts sized to a bed and oriented to print without support |
+| Overhang view (S1c) | Seeing, while sculpting, what will need support, and how much of it an export has |
 | Detail gain (S4) | Detail exaggerated to survive a given nozzle or layer height |
 | Unwrap and bake (S5) | Textured output for full colour processes that take an atlas: OBJ with a picture (done), GLB (done) |
 
@@ -930,6 +932,59 @@ turned out to change nothing.
 crisp boundary rather than a feathered one), dovetails, a "fit to bed"
 assistant that proposes a grid of planes from the printer's bed
 (`slicer.rs:329`), embossed part marks, and hollowing with drain holes.
+
+### 7.3 Overhangs
+
+Not in the first plan. It is here because of the north star: the question
+"will this print as it stands" is asked of a sculpt while it is being
+sculpted, by a chin, an arm, the underside of a cloak, and nothing in the
+application answered it.
+
+#### Built, 2026-11-23 (S1c)
+
+*show overhangs* on the export panel, with one setting: how steep a lean
+from upright the printer manages, 20 to 80 degrees, 45 to begin with. What
+leans further and faces down is drawn in a red-orange nothing else in the
+viewport is. With the view on, an export also says how much of what it
+wrote overhangs.
+
+**The rule** is `brokkr_core::overhang`: a surface leaning `a` from upright
+and facing down has a normal whose downward part is `sin(a)`, so the test
+is one comparison, and it is the same comparison in the shader, which is
+handed the sine and not the angle. Up is +Y, as it stands in the viewport
+and as the export writes it.
+
+**The plate.** The underside of a model resting on the bed faces straight
+down and needs no support, so nothing counts within one first layer
+(0.3 mm) of the lowest point. Only that: the underside of a ball is a real
+overhang a hair above the point it stands on, and is drawn as one.
+
+Finding the lowest point took two goes. The bounds the engine already kept
+of "voxels near the surface" reach three voxels under the surface, and a
+plate three voxels too low is under the whole model: every flat underside
+would have been called an overhang. A test of where the plate is found it,
+half a millimetre low. `Volume::lowest_point` reads the lowest layer of
+those voxels for how far each is from the surface, and the least of them
+is the distance up to the lowest point: right to 0.15 of a voxel on balls
+at three voxel sizes.
+
+It is a scan of the model, and the shader wants the plate every frame, so
+it is kept and found again only when the undo history's counters or the
+document's rough bounds have changed. A test counts the searches.
+
+**Checked against geometry and not against itself.** The overhanging share
+of a ball has a closed form, `(1 - sin a) / 2`, and the mesh measure is
+within 0.01 of it at 30, 45 and 60 degrees. The render test works out,
+for every pixel of a ball seen from below, which point of the ball it
+shows and whether the rule calls that an overhang, and compares that with
+whether the pixel came out tinted: 99% of the ones that should be, none of
+the ones that should not, with a band a few degrees wide left out either
+side of the line.
+
+**Limits.** It judges the model as it stands; turned over in the slicer it
+is another print. It knows nothing of bridges, which a printer spans
+without support between two walls, so a short bridge is drawn as an
+overhang. And it is a view of the surface, not a support generator.
 
 ---
 

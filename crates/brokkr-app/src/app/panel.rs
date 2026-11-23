@@ -3742,7 +3742,9 @@ impl Brokkr {
         ]
         .spacing(theme::S1);
 
-        column![detail, buttons, self.textured_exports(), status, keys].spacing(theme::S2).into()
+        column![detail, self.overhang_panel(), buttons, self.textured_exports(), status, keys]
+            .spacing(theme::S2)
+            .into()
     }
 
     /// Pen controls, plus enough of a live readout that a user can tell whether

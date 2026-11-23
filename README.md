@@ -378,6 +378,10 @@ true of it too, and what it adds is this.
   tolerance in millimetres, checked against the model and not against the
   mesh it came from, and handed back at full density if thinning would make
   it unprintable.
+- **Overhangs.** *show overhangs* tints what leans further than your
+  printer manages, as the model stands, and an export then says how much
+  of the surface that is. Seen while sculpting, when there is still time
+  to do something about a chin.
 - **Parting with keys.** The plane cut with **alt** held makes two bodies
   with pegs and sockets that fit, for a model bigger than the bed or one
   that prints better in halves.
@@ -398,6 +402,10 @@ true of it too, and what it adds is this.
 - **Colour out.** PLY with a colour a vertex, 3MF by the filament each
   paint prints in, and *OBJ+PNG* or *GLB*, where the paint is baked to a
   texture that stays sharp however far the mesh is thinned.
+
+<p align="center">
+  <img alt="A ball seen from below with the overhang view on: the cap that leans past 45 degrees is tinted orange, and the small patch that rests on the bed is not" src="docs/images/studio-overhang.png" width="420">
+</p>
 
 <p align="center">
   <img alt="A row of rivets laid along two drags with the Rivet row preset, the studio and presets blocks in the panel on the right" src="docs/images/studio-rivet-row.png" width="820">
