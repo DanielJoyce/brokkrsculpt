@@ -424,6 +424,10 @@ true of it too, and what it adds is this.
   picture into the surface with one drag, or lays a row of them along a
   stroke (rivets, stitches, scales), a *Lazy* stroke for long clean
   lines, and *Size from pressure*.
+- **Sizes on the screen.** A scale bar in the corner of the viewport, in
+  round millimetres, that follows the zoom as a map's does, and
+  *Measure*: click two points on the model and read the distance between
+  them.
 - **Form.** Thicken or thin a body by millimetres, or soften or exaggerate
   its detail, with the surface texture kept. Exaggerating is for print:
   detail a nozzle would lose can be made to survive it.
@@ -441,6 +445,10 @@ true of it too, and what it adds is this.
 
 <p align="center">
   <img alt="A ball with five strokes across it, each from a different brush on the palette: a band with a flat top, a bead, a crease, a scraped flat and a row of rivets. Beside it the brush's own settings: radius and strength, the Profile row of five shapes and its flat middle, Picture across the tip, Builds up or One layer, Set down as a line, and What it does opened to show Crease as a push of 0.60 in and a pinch of 1.00 together" src="docs/images/studio-brush-palette.png" width="760">
+</p>
+
+<p align="center">
+  <img alt="A ball with a line measured across it from one point on its surface to another, 40.50 mm written on the line. In the bottom left of the viewport a scale bar reading 10 mm, at the middle of the view, and under it the Measure button, the length again, and Clear" src="docs/images/studio-measure.png" width="760">
 </p>
 
 <p align="center">

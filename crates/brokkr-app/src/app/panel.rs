@@ -175,7 +175,11 @@ impl Brokkr {
             // rather than left to whichever `stack!` happened to draw last.
             (Some(at), _) => stack![well, self.overlay(), self.tool_menu(at)],
             (None, Some(cube)) => stack![well, self.overlay(), self.cube_menu_card(cube)],
-            (None, None) => stack![well, self.overlay()],
+            // The scale bar and the measure, under the overlay's own
+            // buttons. See `app/measure.rs`.
+            (None, None) => {
+                stack![well, self.rulers(), self.measure_controls(), self.overlay()]
+            }
         };
 
         let body = column![
