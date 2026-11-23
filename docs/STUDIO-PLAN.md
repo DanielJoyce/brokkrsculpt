@@ -17,7 +17,7 @@ was built and what was measured.
 | S1a Decimated export | **Done**, 2026-11-22 (section 7.1) | A *Detail* choice on export: Full, Fine, Standard, Draft |
 | S1b Parting with keys | **Done but for a preview**, 2026-11-22 (section 7.2) | Cut tool with **alt** held: the body becomes two, with pegs and sockets |
 | S2 Mini painting | **Done but for broad occlusion and zenithal**, 2026-11-22 (section 8), which wait for S4 | Paint brush: *Mix paints*, then a rack of paints, each with a wash and an edge highlight; *Loaded*, *Drybrush*, *Sponge* and *Fill*; a flat view; export as PLY in colour, and 3MF by the filament each paint prints in |
-| S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). Presets, a textured tip and the gesture warps remain | A STUDIO block under the brush: *Crease*, *Stamp* with six images or any picture, *Lazy*, *Size from pressure* |
+| S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). A textured tip and the gesture warps remain | A STUDIO block under the brush: *Crease*, *Stamp* with six images or any picture, *Lazy*, *Size from pressure*; and PRESETS, a brush kept under a name |
 | S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush, form smooth and posing remain | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
 | S5 Unwrap and bake | **Done but for the other maps**, 2026-11-23 (sections 10.4 and 10.5): unwrap, the base colour bake, OBJ with a picture, and GLB. Normal, occlusion and finish maps remain | Export as *OBJ+PNG* or *GLB*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
 
@@ -507,10 +507,51 @@ break them:
 | Stroke | Lazy (stabilised), spray (jittered), curve (along a drawn spline) | Lazy **built** (S3.1) |
 | Operator | Gesture warps on the `MoveStroke` machinery: twist, elastic grab (regularised Kelvinlets) | Volume preserving by construction |
 | Operator | Layer: draw capped at a fixed height above the stroke's starting surface | Needs a stroke long locked region; memory to be measured first |
-| Presets | One flat `key = value` file per brush under the config directory | The format `palette.rs` and `printer.rs` already use |
+| Presets | One flat `key = value` file per brush under the config directory | **Built** (S3.3), as one file with a line a brush. The format `palette.rs` and `printer.rs` already use |
 
 The digit keys keep meaning the classic brushes in the order they have always
 had (`brush.rs:344`, "Appended and never reordered").
+
+#### Built, 2026-11-23 (S3.3): presets
+
+`brokkr-app/src/app/presets.rs`, and a PRESETS block above the STUDIO one:
+a button for each brush kept, a small one beside it that forgets it, and a
+box to name the brush in hand and keep it.
+
+A brush here is a dozen settings in two places: the classic brush's (which
+brush, how big, how hard, which falloff) and the studio block's (an
+operator or the stamp, the lazy stroke, size from pressure). A preset is
+all of them at once. A machine with no file starts with four, which are
+there to show what the studio block is for: *Fine crease*, *Long line*,
+*Rivets* and *Clay build*.
+
+**The file** is `brushes.conf` in the config directory:
+
+```text
+Fine crease = brush:Draw, size:1.5, strength:0.3, falloff:Smooth, studio:Crease, lazy:12
+Rivets = brush:Draw, size:3, strength:0.15, falloff:Smooth, stamp:Rivet, height:0.35
+```
+
+Those are two of the starting four as the application writes them. A line
+written by hand may leave out whatever it does not care about.
+
+One file with a line a brush, where the table above said a file a brush:
+a line is a brush already, and one file is one thing to copy to another
+machine. It is the user's to edit, so it is read forgivingly. A setting
+that makes no sense is left at its default and the rest of the line kept,
+a number out of range is brought into it, and a name is made one the file
+can hold (no `=`, no `#`, no line ends) by dropping what it cannot.
+
+**Taking a preset goes through the doors the panel's own controls use**,
+and the one that mattered is strength. Each brush remembers its own, and
+with the mask tool up the strength in hand is the mask's. A preset taken
+then puts its strength in the brush's own slot, where it waits until the
+mask is put down, and a preset kept then keeps the brush's and not the
+mask's.
+
+**What a preset does not hold:** a stamp picture read from a file (the
+preset says "the stamp, with the picture in hand"), a surface pattern, and
+the paint brush's touch, which belongs to the paint rack.
 
 #### Built, 2026-11-23 (S3.2): the stamp
 

@@ -169,6 +169,16 @@ pub enum StudioMessage {
     /// and the image, or why it could not be used. `None` when the dialog
     /// was dismissed.
     StampImageLoaded(Option<Result<LoadedStamp, String>>),
+    /// Take up a brush preset: every setting it holds, at once. The number
+    /// is its place in the list.
+    PresetChosen(usize),
+    /// The name being typed for a preset about to be saved.
+    PresetNamed(String),
+    /// Keep the brush as it is set up now under the name typed, in place
+    /// of the preset with that name if there is one.
+    PresetSaved,
+    /// Forget a preset.
+    PresetRemoved(usize),
 }
 
 /// A stamp image read from a file.
