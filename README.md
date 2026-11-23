@@ -388,7 +388,8 @@ true of it too, and what it adds is this.
   filament it prints in, so a painted model is also a multi-colour print.
 - **Studio brushes.** *Crease*, a *Stamp* that presses one of six images or
   any picture into the surface with one drag, a *Lazy* stroke for long
-  clean lines, and *Size from pressure*.
+  clean lines, and *Size from pressure*. A brush set up the way you like
+  it can be kept under a name and taken up again with one press.
 - **Form.** Thicken or thin a body by millimetres, or soften or exaggerate
   its detail, with the surface texture kept. Exaggerating is for print:
   detail a nozzle would lose can be made to survive it.

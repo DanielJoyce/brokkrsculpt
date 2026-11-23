@@ -5,6 +5,7 @@
 mod form;
 mod paints;
 mod panel;
+mod presets;
 mod studio;
 
 use std::collections::VecDeque;
@@ -1873,6 +1874,8 @@ impl Brokkr {
         // the developer's own `filaments.conf` would assert against whatever
         // happens to be loaded in their printer.
         app.palette = crate::palette::Palette::load();
+        // And the brush presets, for it a third time.
+        app.studio.presets = presets::Presets::load();
         // The screen is up, so its articles are wanted. The only other place
         // that raises it, `Message::WelcomeOpened`, asks for them too.
         let mut boot =

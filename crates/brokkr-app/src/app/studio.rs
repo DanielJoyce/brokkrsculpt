@@ -40,10 +40,11 @@ use brokkr_core::brush::engine::{BrushDef, FieldOp, Tip};
 use brokkr_core::brush::stamp::{Placement, StampError, StampGesture};
 use brokkr_core::{Brush, BrushDirection, Stamp};
 use glam::{Vec2, Vec3};
-use iced::widget::{button, column, row, slider, text};
+use iced::widget::{button, column, row, slider, text, text_input};
 use iced::{Element, Length, Task};
 
 use super::Brokkr;
+use super::presets::{Preset, Presets, StampOf};
 use crate::message::{LoadedStamp, Message, StudioMessage};
 use crate::theme;
 
@@ -87,6 +88,10 @@ pub(super) struct StudioState {
     /// the point on the surface and the surface's normal there.
     gesture: StampGesture,
     press: Option<(Vec3, Vec3)>,
+    /// The brushes kept under a name, and the name being typed for the
+    /// next. See [`super::presets`].
+    pub presets: Presets,
+    pub preset_name: String,
 }
 
 impl Default for StudioState {
@@ -103,6 +108,8 @@ impl Default for StudioState {
             stamp_height: 0.35,
             gesture: StampGesture::new(),
             press: None,
+            presets: Presets::default(),
+            preset_name: String::new(),
         }
     }
 }
@@ -193,6 +200,16 @@ impl StudioState {
             StudioMessage::StampImageLoaded(Some(Err(why))) => {
                 return Some(format!("that picture cannot be a stamp: {why}"));
             }
+            // Kept as typed. It is made a name the file can hold when the
+            // preset is saved, so that a space can be typed at all.
+            StudioMessage::PresetNamed(name) => {
+                self.preset_name = name.chars().take(4 * super::presets::LONGEST_NAME).collect();
+            }
+            // The rest of a preset is the classic brush's settings, which
+            // are not this struct's: `Brokkr::preset_changed` has them.
+            StudioMessage::PresetChosen(_)
+            | StudioMessage::PresetSaved
+            | StudioMessage::PresetRemoved(_) => {}
         }
         None
     }
@@ -238,10 +255,108 @@ impl Brokkr {
                 Message::Studio(StudioMessage::StampImageLoaded(loaded))
             });
         }
+        if matches!(
+            message,
+            StudioMessage::PresetChosen(_)
+                | StudioMessage::PresetSaved
+                | StudioMessage::PresetRemoved(_)
+        ) {
+            self.preset_changed(message);
+            return Task::none();
+        }
         if let Some(status) = self.studio.set(message) {
             self.status = status;
         }
         Task::none()
+    }
+
+    /// The brush as it is set up now, as a preset under `name`.
+    fn preset_now(&self, name: String) -> Preset {
+        let stamp = self.studio.stamp_on.then(|| {
+            let picture = self.studio.built_in.map_or(StampOf::InHand, StampOf::BuiltIn);
+            (picture, self.studio.stamp_height)
+        });
+        // The brush's own strength, which with the mask tool up is not the
+        // one in hand: that one is the mask's.
+        let slot = Self::strength_slot(self.brush.kind);
+        let strength = if self.live_strength_slot() == slot {
+            self.brush.strength
+        } else {
+            self.strengths[slot]
+        };
+        Preset {
+            name,
+            kind: self.brush.kind,
+            radius_mm: self.brush.radius,
+            strength,
+            falloff: self.brush.falloff,
+            op: self.studio.op,
+            stamp,
+            lazy_px: self.studio.lazy_px,
+            size_from_pressure: self.studio.size_from_pressure,
+        }
+    }
+
+    /// Take up a preset, keep one, or forget one.
+    fn preset_changed(&mut self, message: StudioMessage) {
+        match message {
+            StudioMessage::PresetChosen(index) => {
+                let Some(preset) = self.studio.presets.list.get(index).cloned() else {
+                    return;
+                };
+                // The brush and its strength as `BrushKindChanged` and
+                // `BrushStrengthChanged` set them: the strength goes to the
+                // brush's own slot, so that with the mask tool up it waits
+                // there and does not become the mask's.
+                self.swap_strength(|app| {
+                    app.brush.kind = preset.kind;
+                    app.strengths[Self::strength_slot(preset.kind)] = preset.strength;
+                });
+                self.brush.falloff = preset.falloff;
+                self.brush.radius = preset.radius_mm.clamp(super::MIN_RADIUS_MM, self.max_radius());
+                // The studio block through its own setter, which is what
+                // keeps "an operator or the stamp, not both" in one place.
+                self.studio.put_away();
+                self.studio.set(StudioMessage::OperatorChosen(preset.op));
+                if let Some((picture, height)) = preset.stamp {
+                    if let StampOf::BuiltIn(kind) = picture {
+                        self.studio.set(StudioMessage::StampChosen(kind));
+                    }
+                    self.studio.set(StudioMessage::StampHeightChanged(height));
+                    self.studio.set(StudioMessage::StampToggled(true));
+                }
+                self.studio.set(StudioMessage::LazyChanged(preset.lazy_px));
+                self.studio.set(StudioMessage::SizeFromPressureChanged(preset.size_from_pressure));
+                self.status = format!("brush: {}", preset.name);
+            }
+            StudioMessage::PresetSaved => {
+                let Some(name) = super::presets::named(&self.studio.preset_name) else {
+                    self.status = "give the preset a name first".to_string();
+                    return;
+                };
+                let preset = self.preset_now(name.clone());
+                if !self.studio.presets.put(preset) {
+                    self.status = "no room for another preset: remove one first".to_string();
+                    return;
+                }
+                self.studio.preset_name.clear();
+                self.status = match self.studio.presets.save() {
+                    Ok(()) => format!("preset kept: {name}"),
+                    Err(why) => format!("preset kept until the application closes: {why}"),
+                };
+            }
+            StudioMessage::PresetRemoved(index) => {
+                if index >= self.studio.presets.list.len() {
+                    return;
+                }
+                let gone = self.studio.presets.list.remove(index);
+                self.status = match self.studio.presets.save() {
+                    Ok(()) => format!("preset removed: {}", gone.name),
+                    Err(why) => format!("preset removed until the application closes: {why}"),
+                };
+            }
+            _ => {}
+        }
     }
 
     /// One pointer event of a stamp: the press fixes where it goes, and
@@ -426,7 +541,52 @@ impl Brokkr {
                         .color(theme::TEXT_MUTE),
                 );
         }
+        // The presets, two to a row: a button that takes one up, lit when
+        // the brush is set up exactly as it says, and a small one beside it
+        // that forgets it.
+        let now = self.preset_now(String::new());
+        let mut presets = column![].spacing(theme::S1);
+        for (pair, held) in self.studio.presets.list.chunks(2).enumerate() {
+            presets = presets.push(held.iter().enumerate().fold(
+                row![].spacing(theme::S1),
+                |assembled, (offset, preset)| {
+                    let index = pair * 2 + offset;
+                    let live = Preset { name: String::new(), ..preset.clone() } == now;
+                    assembled
+                        .push(
+                            button(text(preset.name.clone()).size(theme::CAPTION_SIZE))
+                                .width(Length::Fill)
+                                .style(if live {
+                                    theme::tool_button_active
+                                } else {
+                                    theme::tool_button
+                                })
+                                .on_press(changed(StudioMessage::PresetChosen(index))),
+                        )
+                        .push(
+                            button(text("\u{d7}").size(theme::CAPTION_SIZE))
+                                .style(theme::tool_button)
+                                .on_press(changed(StudioMessage::PresetRemoved(index))),
+                        )
+                },
+            ));
+        }
+        let keep = row![
+            text_input("name this brush", &self.studio.preset_name)
+                .on_input(move |name| changed(StudioMessage::PresetNamed(name)))
+                .on_submit(changed(StudioMessage::PresetSaved))
+                .padding(iced::Padding { top: 1.0, bottom: 1.0, left: theme::S1, right: theme::S1 })
+                .size(theme::TEXT_SIZE_SMALL)
+                .width(Length::Fill),
+            button(text("Keep").size(theme::CAPTION_SIZE))
+                .style(theme::tool_button)
+                .on_press(changed(StudioMessage::PresetSaved)),
+        ]
+        .spacing(theme::S1);
         column![
+            text("PRESETS").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
+            presets,
+            keep,
             text("STUDIO").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
             operators,
             stamp,
@@ -962,5 +1122,214 @@ mod tests {
         drop(app.studio_panel());
         set(&mut app, StudioMessage::OperatorChosen(Some(FieldOp::Crease)));
         drop(app.studio_panel());
+    }
+
+    fn set(app: &mut Brokkr, message: StudioMessage) {
+        update(app, Message::Studio(message));
+    }
+
+    fn preset_called(app: &Brokkr, name: &str) -> usize {
+        app.studio
+            .presets
+            .list
+            .iter()
+            .position(|preset| preset.name == name)
+            .unwrap_or_else(|| panic!("there is no preset called {name}"))
+    }
+
+    /// Choosing a preset sets up the whole brush at once, the classic
+    /// brush's half and the studio block's, and leaves nothing behind of
+    /// the preset before it.
+    #[test]
+    fn a_preset_sets_up_the_whole_brush_at_once() {
+        let mut app = app();
+        // Everything a preset sets, set to something no starting preset
+        // has: a preset that left one of them alone would otherwise leave
+        // it at the value it was going to set anyway.
+        update(&mut app, Message::FalloffChanged(brokkr_core::FalloffCurve::Wide));
+        set(&mut app, StudioMessage::StampChosen(BuiltIn::Star));
+        set(&mut app, StudioMessage::StampHeightChanged(0.9));
+        let crease = preset_called(&app, "Fine crease");
+        set(&mut app, StudioMessage::PresetChosen(crease));
+        assert_eq!(app.brush.kind, BrushKind::Draw);
+        assert_eq!(app.brush.falloff, brokkr_core::FalloffCurve::Smooth);
+        assert_eq!((app.brush.radius, app.brush.strength), (1.5, 0.3));
+        assert_eq!(app.studio.op, Some(FieldOp::Crease));
+        assert!(!app.studio.stamp_on);
+        assert_eq!(app.studio.lazy_px, 12.0);
+        assert_eq!(app.status, "brush: Fine crease");
+
+        let rivets = preset_called(&app, "Rivets");
+        set(&mut app, StudioMessage::PresetChosen(rivets));
+        assert!(app.studio.stamp_on);
+        assert_eq!(app.studio.built_in, Some(BuiltIn::Rivet));
+        assert_eq!(app.studio.alpha_name, "Rivet");
+        assert_eq!(app.studio.stamp_height, 0.35);
+        assert_eq!(app.studio.op, None, "the crease stayed up under the stamp");
+        assert_eq!(app.studio.lazy_px, 0.0, "the crease's lazy stroke stayed on");
+
+        let clay = preset_called(&app, "Clay build");
+        set(&mut app, StudioMessage::PresetChosen(clay));
+        assert_eq!(app.brush.kind, BrushKind::Clay);
+        assert_eq!((app.brush.radius, app.brush.strength), (6.0, 0.25));
+        assert_eq!(app.studio.size_from_pressure, 0.5);
+        assert!(!app.studio.stamp_on, "the stamp stayed up under the clay brush");
+
+        // Every preset, once taken, is what the brush in hand now is: this
+        // is what lights its button, and it is every setting at once.
+        let held = app.studio.presets.list.clone();
+        for (index, preset) in held.iter().enumerate() {
+            set(&mut app, StudioMessage::PresetChosen(index));
+            assert_eq!(app.preset_now(preset.name.clone()), *preset);
+            drop(app.studio_panel());
+        }
+        // Control: the presets differ, so matching one is not matching any.
+        assert_ne!(
+            app.preset_now(String::new()),
+            Preset { name: String::new(), ..held[0].clone() }
+        );
+
+        // A preset that is not there is nothing, and not a panic.
+        let before = app.preset_now(String::new());
+        set(&mut app, StudioMessage::PresetChosen(held.len()));
+        assert_eq!(app.preset_now(String::new()), before);
+    }
+
+    /// The brush in hand is kept under the name typed, comes back as it
+    /// was, is replaced by the same name used again, and can be forgotten.
+    #[test]
+    fn the_brush_in_hand_is_kept_under_a_name_and_comes_back() {
+        let mut app = app();
+        let before = app.studio.presets.list.len();
+        update(&mut app, Message::BrushKindChanged(BrushKind::Inflate));
+        update(&mut app, Message::BrushRadiusChanged(4.5));
+        update(&mut app, Message::BrushStrengthChanged(0.4));
+        update(&mut app, Message::FalloffChanged(brokkr_core::FalloffCurve::Sharp));
+        set(&mut app, StudioMessage::LazyChanged(25.0));
+        set(&mut app, StudioMessage::SizeFromPressureChanged(0.7));
+
+        // With no name there is nothing to keep it under.
+        set(&mut app, StudioMessage::PresetSaved);
+        assert_eq!(app.status, "give the preset a name first");
+        set(&mut app, StudioMessage::PresetNamed(" = # ".to_string()));
+        set(&mut app, StudioMessage::PresetSaved);
+        assert_eq!(app.studio.presets.list.len(), before, "a preset was kept with no name");
+
+        // What is typed is kept as typed, up to a length: a held key does
+        // not grow the box for ever.
+        set(&mut app, StudioMessage::PresetNamed("x".repeat(1000)));
+        assert_eq!(app.studio.preset_name.len(), 4 * super::super::presets::LONGEST_NAME);
+        set(&mut app, StudioMessage::PresetNamed("  Puff = up \n".to_string()));
+        drop(app.studio_panel());
+        set(&mut app, StudioMessage::PresetSaved);
+        assert_eq!(app.studio.presets.list.len(), before + 1);
+        assert_eq!(app.studio.presets.list[before].name, "Puff up");
+        assert_eq!(app.status, "preset kept: Puff up");
+        assert_eq!(app.studio.preset_name, "", "the name was left in the box");
+
+        // Away to another brush altogether, and back.
+        let rivets = preset_called(&app, "Rivets");
+        set(&mut app, StudioMessage::PresetChosen(rivets));
+        assert_eq!(app.brush.kind, BrushKind::Draw);
+        set(&mut app, StudioMessage::PresetChosen(before));
+        assert_eq!(app.brush.kind, BrushKind::Inflate);
+        assert_eq!((app.brush.radius, app.brush.strength), (4.5, 0.4));
+        assert_eq!(app.brush.falloff, brokkr_core::FalloffCurve::Sharp);
+        assert_eq!((app.studio.lazy_px, app.studio.size_from_pressure), (25.0, 0.7));
+        assert!(!app.studio.stamp_on);
+
+        // The same name again is the same preset, changed.
+        update(&mut app, Message::BrushRadiusChanged(2.0));
+        set(&mut app, StudioMessage::PresetNamed("Puff up".to_string()));
+        set(&mut app, StudioMessage::PresetSaved);
+        assert_eq!(app.studio.presets.list.len(), before + 1);
+        assert_eq!(app.studio.presets.list[before].radius_mm, 2.0);
+
+        // Forgotten, and only it.
+        set(&mut app, StudioMessage::PresetRemoved(before));
+        assert_eq!(app.status, "preset removed: Puff up");
+        assert_eq!(app.studio.presets, Presets::default());
+        set(&mut app, StudioMessage::PresetRemoved(before));
+        assert_eq!(
+            app.studio.presets,
+            Presets::default(),
+            "a preset that is not there was removed"
+        );
+
+        // There is room for only so many, and the one too many is refused
+        // out loud.
+        for index in 0..super::super::presets::MAX_PRESETS {
+            set(&mut app, StudioMessage::PresetNamed(format!("p{index}")));
+            set(&mut app, StudioMessage::PresetSaved);
+        }
+        assert_eq!(app.studio.presets.list.len(), super::super::presets::MAX_PRESETS);
+        assert_eq!(app.status, "no room for another preset: remove one first");
+        drop(app.studio_panel());
+    }
+
+    /// With the mask tool up the strength in hand is the mask's. A preset
+    /// taken then does not change it, and a preset kept then does not keep
+    /// it: both mean the brush's own.
+    #[test]
+    fn a_preset_and_the_mask_tool_keep_their_strengths_apart() {
+        let mut app = app();
+        update(&mut app, Message::ToolChanged(super::super::Tool::Mask));
+        let masks = app.brush.strength;
+        let clay = preset_called(&app, "Clay build");
+        assert_ne!(masks, 0.25, "the fixture cannot tell the two strengths apart");
+        set(&mut app, StudioMessage::PresetChosen(clay));
+        assert_eq!(app.brush.strength, masks, "the preset's strength became the mask's");
+
+        set(&mut app, StudioMessage::PresetNamed("Kept under the mask".to_string()));
+        set(&mut app, StudioMessage::PresetSaved);
+        let kept = app.studio.presets.list.last().expect("a preset");
+        assert_eq!((kept.kind, kept.strength), (BrushKind::Clay, 0.25));
+
+        // The mask put down, the brush is the preset's, strength and all.
+        update(&mut app, Message::ToolChanged(super::super::Tool::Mask));
+        assert_eq!(app.brush.kind, BrushKind::Clay);
+        assert_eq!(app.brush.strength, 0.25);
+
+        // A strength typed into the menu's field goes to the brush in
+        // hand, and to its slot only when the brush is next changed. A
+        // preset kept before then keeps the one in hand.
+        app.edit_menu_field(super::super::SizingTarget::Strength, "0.5".to_string());
+        assert_eq!(app.brush.strength, 0.5);
+        set(&mut app, StudioMessage::PresetNamed("Typed".to_string()));
+        set(&mut app, StudioMessage::PresetSaved);
+        assert_eq!(app.studio.presets.list.last().expect("a preset").strength, 0.5);
+    }
+
+    /// A preset bigger than this document's brush may be is brought down
+    /// to what it may be, and a preset of the stamp with a picture of the
+    /// user's own takes up the stamp with whichever picture is in hand.
+    #[test]
+    fn a_preset_is_fitted_to_the_document_and_the_picture_in_hand() {
+        let mut app = app();
+        app.studio.presets.list.push(Preset { radius_mm: 100.0, ..Preset::plain("Huge") });
+        let huge = preset_called(&app, "Huge");
+        assert!(app.max_radius() < 100.0, "the fixture's brush may be as big as the preset");
+        set(&mut app, StudioMessage::PresetChosen(huge));
+        assert_eq!(app.brush.radius, app.max_radius());
+
+        let mine = LoadedStamp {
+            name: "mine.png".to_string(),
+            alpha: Arc::new(Alpha::built_in(BuiltIn::Star)),
+        };
+        set(&mut app, StudioMessage::StampImageLoaded(Some(Ok(mine))));
+        set(&mut app, StudioMessage::StampToggled(true));
+        set(&mut app, StudioMessage::StampHeightChanged(0.8));
+        set(&mut app, StudioMessage::PresetNamed("Mine".to_string()));
+        set(&mut app, StudioMessage::PresetSaved);
+        let kept = preset_called(&app, "Mine");
+        assert_eq!(app.studio.presets.list[kept].stamp, Some((StampOf::InHand, 0.8)));
+
+        set(&mut app, StudioMessage::PresetChosen(huge));
+        assert!(!app.studio.stamp_on);
+        set(&mut app, StudioMessage::PresetChosen(kept));
+        assert!(app.studio.stamp_on);
+        assert_eq!(app.studio.stamp_height, 0.8);
+        assert_eq!(app.studio.alpha_name, "mine.png", "the picture in hand was put down");
+        assert_eq!(app.studio.built_in, None);
     }
 }
