@@ -94,7 +94,12 @@ pub struct Uniforms {
     /// with it ON regardless of the viewport's toggle, because paint is what a
     /// body IS where the mask is how it is being shown.
     pub paint_shown: u32,
-    /// How creases and edges are drawn: `[strength, gain, 0, 0]`.
+    /// How creases and edges are drawn, and overhangs:
+    /// `[strength, gain, overhang limit, plate]`.
+    ///
+    /// The last two are a view of their own that had this vector's two spare
+    /// floats to live in: zero for the limit draws no overhangs, and
+    /// `brokkr_core::overhang` says what the two numbers are.
     ///
     /// A VIEW setting on [`Uniforms::mask_tint`]'s terms. Strength zero draws
     /// every body exactly as it was drawn before the cavity signal existed,

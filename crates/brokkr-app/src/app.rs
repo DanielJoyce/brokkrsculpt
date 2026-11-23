@@ -3,6 +3,7 @@
 //! Application state, input handling and the widget tree.
 
 mod form;
+mod overhang;
 mod paints;
 mod panel;
 mod presets;
@@ -901,6 +902,9 @@ pub struct Brokkr {
     studio: studio::StudioState,
     /// The form tools' settings. See `app/form.rs`.
     form: form::FormState,
+    /// The overhang view: whether it is on, and how steep a lean the
+    /// printer manages. See `app/overhang.rs`.
+    overhang: overhang::OverhangState,
     /// How many texels on a side a baked texture is. See `app/paints.rs`.
     texture_size: u32,
     /// How strong the tint is when it is shown at all, 0..1.
@@ -2157,6 +2161,7 @@ impl Brokkr {
             flat_paint: false,
             studio: studio::StudioState::default(),
             form: form::FormState::default(),
+            overhang: overhang::OverhangState::default(),
             texture_size: paints::TEXTURE_SIZES[1],
             mask_tint: DEFAULT_MASK_TINT,
             mask_peek: false,
@@ -7360,6 +7365,9 @@ impl Brokkr {
                 // export writes is unchanged.
                 let decimation =
                     decimated.map(|report| format!("; {}", report.summary())).unwrap_or_default();
+                // And how much of it overhangs, when the overhang view is
+                // on and so somebody is asking. See `app/overhang.rs`.
+                let decimation = format!("{decimation}{}", self.overhang_summary(&bodies));
                 self.status = format!(
                     "exported {} of {} bodies; {omitted} hidden{} -- {summary}{decimation} to {} \
                      ({:.1} MB, {:.0} ms){}",
@@ -8055,9 +8063,11 @@ impl Brokkr {
         // feature of exactly that size to a full crease, and one twice as
         // broad to half of one. The document's voxel size is in the ratio, so
         // the same model at a finer voxel draws the same creases.
+        let overhang = self.overhang_view();
         self.shared.set_cavity_view(crate::viewport::CavityView {
             strength: if self.show_cavity { CAVITY_STRENGTH } else { 0.0 },
             gain: CAVITY_FEATURE_MM / self.doc.voxel_size() / 4.0,
+            overhang,
         });
     }
 
@@ -10380,6 +10390,7 @@ impl Brokkr {
             Message::PaintsStarted => self.start_paints(),
             Message::PaintAdded => self.add_paint(),
             Message::PaintRemoved => self.remove_paint(),
+            Message::Overhang(message) => self.overhang_changed(message),
             Message::PaintCoatChosen(coat) => self.paint_coat = coat,
             Message::PaintEdited(edit) => self.edit_paint(edit),
             Message::Studio(message) => return self.studio_changed(message),

@@ -185,6 +185,15 @@ pub enum StudioMessage {
     PresetRemoved(usize),
 }
 
+/// The overhang view. See `app/overhang.rs`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OverhangMessage {
+    /// Show where the model, printed as it stands, would need support.
+    Shown(bool),
+    /// The steepest lean from upright the printer manages, in degrees.
+    Steepest(f32),
+}
+
 /// A stamp image read from a file.
 ///
 /// Behind an `Arc` because a message is cloned on its way through the
@@ -1038,6 +1047,8 @@ pub enum Message {
     /// Take the paint in hand out of the document: off the rack, and off
     /// every body it is on. One undo step.
     PaintRemoved,
+    /// The overhang view's switch and its one setting.
+    Overhang(OverhangMessage),
     /// Which of the chosen paint's three coats the editor shows. View state.
     PaintCoatChosen(PaintCoat),
     /// How the paint brush touches the model: loaded, nearly dry, or a

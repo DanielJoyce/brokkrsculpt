@@ -28,7 +28,12 @@ struct Uniforms {
     //      before this existed.
     //   y: gain. The decoded curvature times this is 1.0 at the feature size
     //      the application calls a full crease.
-    //   z, w: unused.
+    //   z: overhangs. Zero draws none. Otherwise the downward part of a
+    //      normal past which a surface is an overhang: the sine of the
+    //      steepest lean from upright the printer manages.
+    //   w: the height, in the model's own Y, that nothing below is an
+    //      overhang: a first layer above the lowest point, which rests on
+    //      the bed. `brokkr_core::overhang` is the rule and the other copy.
     // A vec4 because a uniform struct aligns to 16 bytes and the four scalars
     // above have filled their row.
     cavity: vec4<f32>,
@@ -82,6 +87,15 @@ const CAVITY_RANGE: f32 = 2.0;
 // would clip on the lit side.
 const CREASE_DARKEN: f32 = 0.55;
 const EDGE_LIFT: f32 = 0.30;
+// An overhang is drawn toward this, a red-orange nothing else in the viewport
+// is: the clay is a warm grey, the mask a cool blue. Most of the way and not
+// all of it, so that the form under the tint can still be read.
+const OVERHANG_TINT: vec3<f32> = vec3<f32>(0.90, 0.20, 0.06);
+const OVERHANG_COVER: f32 = 0.8;
+// The tint comes in over this much of a normal's downward part past the
+// limit, which is about two degrees of lean near 45: a hard step there would
+// crawl along the triangles as the model turned.
+const OVERHANG_SOFT: f32 = 0.03;
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var matcap_texture: texture_2d<f32>;
@@ -108,6 +122,10 @@ struct VertexOutput {
     // and interpolated, which is right for a continuous quantity where it
     // would be wrong for the slot.
     @location(3) cavity: f32,
+    // The normal in the model's own space, where down is down whichever way
+    // the camera is turned, and the vertex's height there. For overhangs.
+    @location(4) world_normal: vec3<f32>,
+    @location(5) height: f32,
 }
 
 @vertex
@@ -121,6 +139,8 @@ fn vertex_main(
     // The view matrix is a rigid transform, so its upper 3x3 rotates normals
     // correctly without an inverse transpose.
     out.view_normal = (uniforms.view * vec4<f32>(normal, 0.0)).xyz;
+    out.world_normal = normal;
+    out.height = position.y;
     out.mask = attributes.r;
     // `Unorm8x4` hands the byte back as `n / 255`; the round undoes it exactly.
     out.slot = u32(round(attributes.g * 255.0));
@@ -196,6 +216,16 @@ fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) ->
         let s = clamp(in.cavity * uniforms.cavity.y, -1.0, 1.0);
         let shade = 1.0 - CREASE_DARKEN * max(s, 0.0) + EDGE_LIFT * max(-s, 0.0);
         colour = colour * mix(1.0, shade, uniforms.cavity.x);
+    }
+
+    // Overhangs, over everything above: this is a question asked of the
+    // shape, and paint is not an answer to it.
+    if (uniforms.cavity.z > 0.0 && in.height > uniforms.cavity.w) {
+        let down = -normalize(in.world_normal).y;
+        let over = smoothstep(uniforms.cavity.z, uniforms.cavity.z + OVERHANG_SOFT, down);
+        // Lit as the pixel was, so that the tint has the model's form in it.
+        let lit = dot(colour, vec3<f32>(0.2126, 0.7152, 0.0722)) / MATCAP_BASE_LUMA;
+        colour = mix(colour, OVERHANG_TINT * clamp(lit, 0.35, 1.3), OVERHANG_COVER * over);
     }
 
     // The mask, as a CHROMA shift toward a cool blue the matcap cannot produce,
