@@ -807,6 +807,10 @@ pub enum Message {
     /// Export, in two halves for the same reason: ask, then write.
     ExportRequested(ExportFormat),
     ExportChosen(ExportFormat, Option<std::path::PathBuf>),
+    /// The fit test for the parting keys, in the same two halves: ask where
+    /// it goes, then write it. See `app/fit_test.rs`.
+    FitTestRequested,
+    FitTestChosen(Option<std::path::PathBuf>),
     /// Rebuild the volume at a different voxel size, which is the explicit
     /// operation that increases or reduces detail.
     Resample(f32),

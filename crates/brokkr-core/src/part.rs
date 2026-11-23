@@ -61,6 +61,8 @@
 //! A cut by one plane. Freeform parting surfaces, dovetails, and proposing
 //! where to cut are in the plan and not here.
 
+pub mod coupon;
+
 use glam::{IVec3, Vec2, Vec3};
 
 use crate::body::{Document, NodeId};

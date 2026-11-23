@@ -3739,6 +3739,11 @@ impl Brokkr {
                 Message::KeySettingChanged(KeySetting::Clearance(mm))
             })
             .step(0.05_f32),
+            // The real answer: a plate of sockets at six clearances and a
+            // peg, to print and try. See `app/fit_test.rs`.
+            button(text("Print a fit test\u{2026}").size(theme::CAPTION_SIZE))
+                .style(theme::tool_button)
+                .on_press(Message::FitTestRequested),
         ]
         .spacing(theme::S1);
 
