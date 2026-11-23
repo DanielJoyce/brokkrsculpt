@@ -9634,7 +9634,11 @@ impl Brokkr {
                 // A classic brush chosen is the classic brush wanted.
                 self.studio.put_away();
             }
-            Message::FalloffChanged(curve) => self.brush.falloff = curve,
+            Message::FalloffChanged(curve) => {
+                self.brush.falloff = curve;
+                // One of upstream's curves, and not the studio's own shape.
+                self.studio.falloff_chosen();
+            }
             // Clamped rather than trusted. The slider's own range is already
             // voxel-aware, but a message can arrive from a typed field or the
             // right-click menu too, and at a resin lattice an unclamped 20 mm
