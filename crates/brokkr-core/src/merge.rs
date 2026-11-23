@@ -278,6 +278,7 @@ impl Volume {
         // And the paint: the incoming body's material brings its own slot,
         // where it really has material. Recorded, unlike the mask above.
         self.union_colour_from(other);
+        self.union_paint_from(other);
 
         written
     }

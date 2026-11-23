@@ -207,6 +207,18 @@ impl Volume {
                 }
             });
         }
+        // And the paint proper, the same way.
+        *out.paint_mut() = crate::paint::field::PaintField::default();
+        if !self.paint().is_empty() {
+            let paint = self.paint();
+            out.edit_paint(lo, hi, |_, position, _, protection| {
+                let free = 1.0 - f32::from(protection) / f32::from(PROTECTED);
+                match pull_back(position, free) {
+                    Some(from) => paint.at((from / voxel_size).round().as_ivec3()),
+                    None => crate::paint::field::BARE,
+                }
+            });
+        }
         out.mark_everything_dirty();
         Ok(out)
     }
@@ -607,6 +619,84 @@ mod tests {
         let plain = rippled_ball();
         let bulked = plain.bulked(&FormPyramid::build(&plain, LEVEL + 1), LEVEL, 5.0).unwrap();
         assert!(bulked.colour().is_empty(), "bulking an unpainted body painted it");
+        assert!(bulked.paint().is_empty(), "bulking an unpainted body gave it paint");
+    }
+
+    /// And the paint proper ([`crate::paint::field`]) goes out with it the
+    /// same way: a colour and its coverage, at the surface five voxels on.
+    #[test]
+    fn a_bulk_carries_the_rgba_paint_with_the_surface() {
+        const RED: [u8; 4] = [200, 30, 20, 255];
+        const BARE: [u8; 4] = crate::paint::field::BARE;
+        let mut ball = rippled_ball();
+        ball.edit_paint(IVec3::splat(0), IVec3::splat(128), |_, at, _, _| {
+            if at.z > CENTRE.z { RED } else { BARE }
+        });
+        let pyramid = FormPyramid::build(&ball, LEVEL + 1);
+        let bulked = ball.bulked(&pyramid, LEVEL, 5.0).expect("a bulk");
+        let paint_on = |volume: &Volume, direction: Vec3| {
+            let on_surface = CENTRE + direction.normalize() * radius_along(volume, direction);
+            volume.paint().at(on_surface.round().as_ivec3())
+        };
+        for (direction, paint) in [
+            (Vec3::new(1.0, 0.0, 0.5), RED),
+            (Vec3::new(0.0, 1.0, 1.0), RED),
+            (Vec3::Z, RED),
+            (Vec3::new(1.0, 0.0, -0.5), BARE),
+            (-Vec3::Z, BARE),
+        ] {
+            assert_eq!(paint_on(&ball, direction), paint, "the fixture, along {direction}");
+            assert_eq!(paint_on(&bulked, direction), paint, "after the bulk, along {direction}");
+        }
+        assert!(radius_along(&bulked, Vec3::Z) > RADIUS + 4.0);
+        // And none of it is left where the surface was: paint is only where
+        // paint can be, which five voxels under the new surface is not.
+        let mut painted = 0;
+        for z in 0..128 {
+            for y in 0..128 {
+                for x in 0..128 {
+                    let cell = IVec3::new(x, y, z);
+                    if bulked.paint().at(cell) != BARE {
+                        painted += 1;
+                        assert!(
+                            crate::paint::field::PaintField::paintable(bulked.sample_voxel(cell)),
+                            "paint left behind at {cell}, {} under the surface",
+                            -bulked.sample_voxel(cell)
+                        );
+                    }
+                }
+            }
+        }
+        assert!(painted > 10_000, "only {painted} voxels of the bulked ball are painted");
+
+        // Under the mask nothing moves, and the paint on it does not either.
+        // Painted on the inner half of the band only, so that paint pulled
+        // from deeper in would be seen to be.
+        let mut held = rippled_ball();
+        let inner = rippled_ball();
+        held.edit_paint(IVec3::splat(0), IVec3::splat(128), |cell, _, _, _| {
+            if inner.sample_voxel(cell) < 0.0 { RED } else { BARE }
+        });
+        held.edit_mask(IVec3::splat(0), IVec3::splat(128), |_, at, _| {
+            if at.x < CENTRE.x { PROTECTED } else { 0 }
+        });
+        let pyramid = FormPyramid::build(&held, LEVEL + 1);
+        let bulked = held.bulked(&pyramid, LEVEL, 5.0).expect("a bulk");
+        let mut compared = 0;
+        for z in 16..112 {
+            for y in 16..112 {
+                for x in 16..(CENTRE.x as i32 - 2) {
+                    let cell = IVec3::new(x, y, z);
+                    assert_eq!(
+                        bulked.paint().at(cell),
+                        held.paint().at(cell),
+                        "paint under the mask changed at {cell}"
+                    );
+                    compared += usize::from(held.paint().at(cell) == RED);
+                }
+            }
+        }
+        assert!(compared > 5_000, "only {compared} painted voxels were under the mask");
     }
 
     /// What is refused, and that nothing asked for is nothing done.

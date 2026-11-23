@@ -79,6 +79,7 @@ use crate::brick::{Brick, BrickCoord, StoredBrick};
 use crate::colour::ColourBrick;
 use crate::mask::{MaskBrick, MaskField};
 use crate::paint::PaintTable;
+use crate::paint::field::PaintBrick;
 use crate::volume::Volume;
 
 /// Bricks below which encoding a stroke's priors stays on one thread.
@@ -155,9 +156,15 @@ pub struct StrokeEdit {
     bricks: PriorBricks,
     masks: PriorMasks,
     colours: PriorColours,
+    /// The prior paint of each brick whose paint changed. Beside the other
+    /// three and not among `from_parts`' arguments: see
+    /// [`StrokeEdit::with_paints`].
+    paints: PriorPaints,
     polarity: Option<bool>,
     bytes: usize,
 }
+
+type PriorPaints = Vec<(BrickCoord, Option<PaintBrick>)>;
 
 /// The prior contents of a set of field bricks, run length encoded. `None` is
 /// a brick that did not exist, which undo puts back by removing it again.
@@ -241,7 +248,37 @@ impl StrokeEdit {
         let bytes = bricks.iter().map(|(_, brick)| prior_bytes(brick.as_ref())).sum::<usize>()
             + masks.iter().map(|(_, brick)| mask_prior_bytes(brick.as_ref())).sum::<usize>()
             + colours.iter().map(|(_, brick)| colour_prior_bytes(brick.as_ref())).sum::<usize>();
-        Self { bricks, masks, colours, polarity, bytes }
+        Self { bricks, masks, colours, paints: Vec::new(), polarity, bytes }
+    }
+
+    /// This edit, holding the prior paint of the bricks whose paint changed
+    /// as well.
+    ///
+    /// A method to chain and not a fifth argument to
+    /// [`StrokeEdit::from_parts`], so that the code that has nothing to do
+    /// with paint is left as it was.
+    pub(crate) fn with_paints(mut self, paints: PriorPaints) -> Self {
+        self.bytes += paints
+            .iter()
+            .map(|(_, brick)| {
+                size_of::<(BrickCoord, Option<PaintBrick>)>()
+                    + brick.as_ref().map_or(0, PaintBrick::heap_bytes)
+            })
+            .sum::<usize>();
+        self.paints = paints;
+        self
+    }
+
+    /// Take the prior paint out, leaving the rest for
+    /// [`StrokeEdit::into_parts`].
+    pub(crate) fn take_paints(&mut self) -> PriorPaints {
+        std::mem::take(&mut self.paints)
+    }
+
+    /// How many bricks' paint this edit holds.
+    #[inline]
+    pub fn paint_len(&self) -> usize {
+        self.paints.len()
     }
 
     pub(crate) fn into_parts(self) -> (PriorBricks, PriorMasks, PriorColours, Option<bool>) {
@@ -271,6 +308,7 @@ impl StrokeEdit {
         self.bricks.is_empty()
             && self.masks.is_empty()
             && self.colours.is_empty()
+            && self.paints.is_empty()
             && self.polarity.is_none()
     }
 

@@ -19,8 +19,9 @@ was built and what was measured.
 | S1c Overhang view | **Done**, 2026-11-23 (section 7.3). Not in the first plan | *show overhangs* on the export panel: what leans past the angle a printer manages is tinted, and an export says how much |
 | S2 Mini painting | **Done but for broad occlusion**, 2026-11-23 (section 8), which waits for S4 | Paint brush: *Mix paints*, then a rack of paints, each with a wash, an edge highlight and a zenithal undercoat; *Loaded*, *Drybrush*, *Sponge* and *Fill*; a flat view; export as PLY in colour, and 3MF by the filament each paint prints in |
 | S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). A textured tip and the gesture warps remain | A STUDIO block under the brush: *Crease*, *Stamp* with six images or any picture, one at a time or in a row *Along the stroke*, *Lazy*, *Size from pressure*; and PRESETS, a brush kept under a name |
-| S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush, form smooth and posing remain | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
+| S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush and form smooth remain. Posing is not planned (section 9.3) | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
 | S5 Unwrap and bake | **Done but for the other maps**, 2026-11-23 (sections 10.4 and 10.5): unwrap, the base colour bake, OBJ with a picture, and GLB. Normal, occlusion and finish maps remain | Export as *OBJ+PNG* or *GLB*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
+| P Painting engine | **Begun**, 2026-11-23 (section 15): the storage. The view, the brush and the exports follow | Nothing to see yet: a body can hold a colour and a coverage at every voxel of its surface, through every edit, undo, save and open |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
 repository, or the README's measured tables) or explicitly labelled
@@ -1565,6 +1566,11 @@ and `mask.rs:53-54` already guarantees the precondition, since "every path
 that writes the mask writes a feathered edge, never a step" was written to keep
 exactly this kind of warp invertible.
 
+**Not planned, 2026-11-23.** The posed transform was this plan's own addition
+and was never one of the six things asked for (section 1). The maintainer
+said so when it came up, and it is not being built. The row stays in the
+table above as a record of what the form pyramid could carry, and no more.
+
 #### Built, 2026-11-23 (S4.1): bulk the body, and the detail gain
 
 `brokkr-core/src/form.rs`, and a FORM block on the panel: a detail size in
@@ -2057,3 +2063,205 @@ proceeds on the stated default for each.
    yes.*
 6. **Names.** `feature/studio`, milestones S0 to S6, "Studio" for the effort.
    *Default: as written; all three are one search and replace.*
+
+---
+
+## 15. The painting engine (milestone P)
+
+Decided on 2026-11-23, by the maintainer, in one line: *"Don't worry about
+filament painting. Pull that out if it simplifies things. I want a real
+painting engine."*
+
+### 15.1 Why section 8 is not one
+
+Section 8 was built on upstream's filament painting, because the north star
+was a printer with a handful of spools. A voxel there holds a **slot**: one
+byte that names one of a few recipes, and the recipe holds the colour, the
+wash and the highlight (section 8.2). That gets a miniature painted quickly,
+and it is the wrong shape for a painting tool:
+
+- There is no colour under the brush. There is a rack, and the brush picks
+  from it. Painting a new colour means mixing a new paint first.
+- Nothing blends. A voxel is in one slot or another, so there is no soft
+  edge, no opacity, no thin coat over a thick one.
+- A wash or a highlight belongs to the recipe and covers everything in the
+  slot. It cannot be put where the brush goes and nowhere else.
+- A stroke cannot be half strength. Section 8.3's *Loaded*, *Drybrush* and
+  *Sponge* are gates on whether a voxel changes slot, and no more.
+
+### 15.2 What a voxel holds now
+
+Four bytes: a colour, sRGB, and a **coverage**. Coverage 0 is bare clay and
+is always stored as four zeroes, whatever colour it was last given, so that
+"is this painted" is one comparison and a wiped body compares equal to one
+never painted. Coverage 255 hides the clay entirely. Between the two the
+clay shows through, which is what a thin coat is.
+
+Straight alpha, not premultiplied: an eyedropper reads back the colour that
+was painted, at any coverage, and eight bits of colour are not lost at low
+coverage.
+
+It lives in a `PaintField` beside the mask and the slots, in the same sparse
+bricks (`paint/field.rs`). A brick that is one value throughout is 4 bytes; a
+brick with a different paint in every voxel is 131,072 (32,768 voxels of 4
+bytes). Only voxels in the narrow band can be painted, as with the slots, so
+a painted ball costs its shell and not its volume.
+
+Upstream's slot field is left exactly as it is. It is upstream's code, under
+upstream's tests and golden files, and it is what a 3MF's `paint_color`
+reads. Section 15.7 says what becomes of the recipes built on top of it.
+
+### 15.3 A stroke is a layer, laid once
+
+The brush does not blend into the surface at each stamp. A stroke that did
+would compound: where two stamps overlap the paint would go on twice, a slow
+stroke would be darker than a fast one, and at 8 bits a soft stroke of a
+hundred stamps is a hundred roundings.
+
+Instead, when a stroke begins the paint it is about to touch is **locked**
+(copied aside, brick by brick, as the Move brush already locks the field).
+Through the stroke each voxel keeps only a **coverage**: the most any stamp
+has given it. What the voxel holds is then always
+
+    blend(what it held when the stroke began, the brush's colour,
+          coverage x opacity, the mode)
+
+computed from the locked paint, not from the last stamp's result. Going over
+the same place twice in one stroke changes nothing. Going over it in a second
+stroke adds a second coat. That is how a real brush with one load of paint
+behaves, and it is how every painting program worth using does it.
+
+The blend is done in linear light and stored back as sRGB: red over green at
+half coverage is the olive it would be on a palette, not the brown that
+averaging the bytes gives.
+
+### 15.4 The modes
+
+One brush, one colour, an opacity, and a mode. The gates of section 8.3 are
+kept, because they were the good part, and they now scale coverage and no
+longer decide a slot.
+
+| Mode | What it does | How |
+|---|---|---|
+| **Paint** | Covers | Colour over what is there, by coverage |
+| **Glaze** | Tints without hiding | Multiplies what is there by the colour, as a transparent film does. Leaves bare clay tinted |
+| **Wash** | A glaze that runs into the recesses | A glaze whose coverage is scaled by the fine cavity signal (section 5.3): full in a crease, little on a flat, none on a ridge |
+| **Drybrush** | Catches the raised edges only | Paint whose coverage is scaled by the ridge side of the same signal |
+| **Sponge** | Stipples | Paint whose coverage is cut by a cellular noise in object space |
+| **Erase** | Back to clay | Coverage down, colour kept |
+
+And an **eyedropper**: the colour under the pointer becomes the brush's.
+
+### 15.5 Seeing it
+
+The mesh already carries a slot for each vertex. It carries the four bytes of
+paint as well (`BrickMesh::paint`, filled at mesh time and free for a body
+with no paint). The shader lays the paint over the clay, or over the slot's
+recipe where there is one, by its coverage. Interpolated across a triangle,
+which is the softness the slots could never have: a slot is flat-shaded by
+necessity, because the number between slot 2 and slot 3 means nothing.
+
+### 15.6 Getting it out
+
+The bake of section 10.2 samples the paint field at each texel and each
+vertex, trilinearly, so a PLY, an OBJ with a picture and a GLB all carry
+what was painted. For a 3MF, which can only name a filament, each painted
+facet takes the nearest of the filaments in the rack, and the export says how
+far off the worst of them was.
+
+### 15.7 What becomes of the recipes
+
+They are retired, in the last stage and not before the brush that replaces
+them is in hand. A document saved with recipes opens with each slot's own
+colour, wash and highlight laid into the paint field, voxel by voxel, by the
+same arithmetic that drew them, so nothing that was painted is lost. The
+*Mix paints* editor goes. The rack stays as what it should have been: a
+palette of colours to pick from, and the list of filaments for a 3MF.
+
+### 15.8 The limits
+
+- **A voxel is the smallest thing that can be painted.** At 0.1 mm that is
+  finer than a nozzle and coarser than a texture painter expects. Tying paint
+  to the lattice is what makes it survive every edit for free.
+- **Paint does not follow a sculpting stroke** that grows new surface: the new
+  surface is bare. It follows the Move brush, a bulk, and every transform of
+  a whole body. Sculpt, then paint. The slots have always had this limit.
+- **Nearest, not blended, under a warp or a change of voxel size.** A blended
+  sample would smear the edge between paint and bare clay into a halo of
+  half-covered voxels each time.
+- **No layers.** One coat of paint for each body. The stroke-as-a-layer of
+  section 15.3 is within a stroke only.
+
+### 15.9 The stages
+
+| Stage | What | State |
+|---|---|---|
+| P1 | The storage: the field, every edit that must carry it, undo, the file | **Built**, 2026-11-23 (below) |
+| P2 | The view: paint on the vertices, composited in the shader | Next |
+| P3 | The brush: the locked stroke, the modes, the colour picker, the eyedropper | |
+| P4 | The exports: bake, PLY, OBJ, GLB, and the nearest filament for 3MF | |
+| P5 | Retire the recipes: convert old documents, remove the editor | |
+
+#### Built, 2026-11-23 (P1): the storage
+
+`paint/field.rs` and `paint/file.rs`, and one or two lines in each upstream
+file that has to know.
+
+**The field.** `PaintField`, `PaintBrick`, and `Volume::edit_paint`, which
+offers each voxel of the narrow band in a box, with its world position, what
+it holds and the protection there, and stores what it is handed back. A
+saturated brick is never opened. A stroke that leaves a brick as it found it
+leaves no brick.
+
+**Everything that moves a body moves its paint.** One test for each, each
+failing without its line: duplicate, shift by whole bricks and by a part of
+one, the 24 turns, a warp, a change of voxel size, a split by mask and into
+islands, a merge, the Move brush, and a bulk (section 9). A merge takes the
+incoming paint only where the incoming body has material; a split gives each
+half only the paint on its own surface.
+
+**Undo.** A fourth record in the open stroke, beside the field, the mask and
+the slots: each paint brick as it was before the stroke first changed it. A
+stroke that changes paint and nothing else is a stroke, and undoes and
+redoes. Paint counts toward what a body weighs and toward what the history
+holds.
+
+**The file.** A tail of its own after the paint table's, `BRKRGBA1`: for each
+body, each brick as one value, as runs of equal values, or whole, whichever
+is smallest. The bytes do not depend on the order the bricks were made in. A
+file with no paint gains no bytes, and a build from before this skips the
+tail. Read on the same terms as the table: a tail that is cut short, claims a
+length the file does not have, or will not decode costs the paint and never
+the sculpt. Measured on the fixture, a 40 voxel ball with a flat coat on one
+side and a different paint in every voxel of the other: 106,938
+painted voxels in 32 bricks are 4,194,304 bytes in memory and 448,080 in the
+file, about a ninth.
+
+Fuzzed: 3,000 damaged copies of a real section (bytes changed, bits flipped,
+cut short, bytes inserted, half of them aimed at the first 400 bytes where
+the counts and kinds are), none of which may panic. The control is that both
+ends of the reader were walked: more than 200 of them must still read, and
+more than 200 must be refused.
+
+**Mutation testing.** 95 mutants across the field, the file, and every hook
+in a file that was already here. 65 were caught as first written. The 30
+that were not each pointed at something: 22 at a fixture that could not see
+the difference (a merge whose incoming bricks held no bare voxel beside a
+painted one, a split whose pieces were too far apart for one's band to reach
+the other's bricks, a lattice of 1 mm where millimetres and voxels are the
+same number, a drag too short for half of it to be told from all of it, an
+undo judged by what the stroke before it had marked), one at code that did
+nothing (a merge collapsed bricks the end of the stroke collapses anyway,
+which is gone), and 7 at the compiler, below. With the tests those asked
+for, the 94 that remain are all caught.
+
+**A thing found on the way: the release build can stall.** Seven of the
+mutants, and then one ordinary edit, sent `rustc` into a single optimiser
+thread for more than ten minutes on a build that takes forty seconds: LLVM's
+InstCombine, on one function of the test crate, by a debugger's account of
+the stuck thread. It depends on what gets inlined where and comes and goes
+with unrelated edits. Nothing in the paint code causes it, and the whole
+core suite builds and passes in release as committed. The mutation runs
+moved to the dev profile, which does not stall, is quicker to build, and
+also has the debug assertions on: two test fixtures of this stage merged
+outside a stroke, which only a debug build refuses.

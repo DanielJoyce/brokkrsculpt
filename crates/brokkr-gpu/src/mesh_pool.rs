@@ -1354,6 +1354,7 @@ mod tests {
             mask: vec![0; vertices],
             colour: vec![0; vertices],
             cavity: Vec::new(),
+            paint: Vec::new(),
         }
     }
 

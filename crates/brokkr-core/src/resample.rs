@@ -92,6 +92,7 @@ impl Volume {
         // with no bricks at all can still have one to carry.
         *resampled.mask_mut() = self.mask().resampled(self.voxel_size(), voxel_size);
         *resampled.colour_mut() = self.colour().resampled(self.voxel_size(), voxel_size);
+        *resampled.paint_mut() = self.paint().resampled(self.voxel_size(), voxel_size);
         let Some((world_min, world_max)) = self.world_bounds() else {
             return resampled;
         };
