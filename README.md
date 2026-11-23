@@ -384,7 +384,9 @@ true of it too, and what it adds is this.
   to do something about a chin.
 - **Parting with keys.** The plane cut with **alt** held makes two bodies
   with pegs and sockets that fit, for a model bigger than the bed or one
-  that prints better in halves.
+  that prints better in halves. *Print a fit test…* writes a plate of
+  sockets at six clearances and a peg, because how tight a fit your
+  printer makes is something only a print can say.
 - **Paints.** On the paint brush, *Mix paints* swaps filament slots for a
   rack of paints, each with a wash that pools in the recesses, a
   highlight that catches the edges, and an undercoat lit from above. Put on *Loaded*, *Drybrush* or *Sponge*,
@@ -405,6 +407,10 @@ true of it too, and what it adds is this.
 
 <p align="center">
   <img alt="A ball seen from below with the overhang view on: the cap that leans past 45 degrees is tinted orange, and the small patch that rests on the bed is not" src="docs/images/studio-overhang.png" width="420">
+</p>
+
+<p align="center">
+  <img alt="The fit test: a bar with six sockets and one corner cut off, and beside it a peg on a small base" src="docs/images/studio-fit-test.png" width="640">
 </p>
 
 <p align="center">

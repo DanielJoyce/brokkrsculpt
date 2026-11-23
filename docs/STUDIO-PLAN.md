@@ -15,7 +15,7 @@ was built and what was measured.
 |---|---|---|
 | S0 Groundwork | **Done**, 2026-11-22 (sections 5 and 6) | *show creases* in the viewport. The rest is foundations |
 | S1a Decimated export | **Done**, 2026-11-22 (section 7.1) | A *Detail* choice on export: Full, Fine, Standard, Draft |
-| S1b Parting with keys | **Done but for a preview**, 2026-11-22 (section 7.2) | Cut tool with **alt** held: the body becomes two, with pegs and sockets |
+| S1b Parting with keys | **Done but for a preview**, 2026-11-23 (section 7.2) | Cut tool with **alt** held: the body becomes two, with pegs and sockets. *Print a fit test…* writes a plate of sockets and a peg, to find the clearance a printer needs |
 | S1c Overhang view | **Done**, 2026-11-23 (section 7.3). Not in the first plan | *show overhangs* on the export panel: what leans past the angle a printer manages is tinted, and an export says how much |
 | S2 Mini painting | **Done but for broad occlusion**, 2026-11-23 (section 8), which waits for S4 | Paint brush: *Mix paints*, then a rack of paints, each with a wash, an edge highlight and a zenithal undercoat; *Loaded*, *Drybrush*, *Sponge* and *Fill*; a flat view; export as PLY in colour, and 3MF by the filament each paint prints in |
 | S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). A textured tip and the gesture warps remain | A STUDIO block under the brush: *Crease*, *Stamp* with six images or any picture, one at a time or in a row *Along the stroke*, *Lazy*, *Size from pressure*; and PRESETS, a brush kept under a name |
@@ -926,7 +926,35 @@ turned out to change nothing.
    not be keyed, drawn while the line is being dragged. Today the status line
    says it afterwards and undo is the way back.
 3. **The exploded view**, as a view-only offset.
-4. **The tolerance coupon.**
+4. ~~The tolerance coupon.~~ **Done**, 2026-11-23: see below.
+
+#### Built, 2026-11-23: the fit test
+
+*Print a fit test…* under the clearance slider writes a small STL: a
+plate with six sockets, cut at clearances from 0.05 to 0.40 mm, and one
+peg to try in them. The socket the peg goes into the way its owner wants
+is the clearance to set. For a pin hole or a magnet pocket there is no peg
+in the file: the pin or the magnet is the peg.
+
+The clearance belongs to the printer, the filament and the day, and no
+number in a panel is right for all of them. The comment over the slider
+has said since it was written that "a test print is the only real answer",
+and until now the application left the making of that test to its user.
+
+**It can be trusted because it is the thing itself.** The sockets and the
+peg are cut by the lines that cut a real part's (`Key::solid`, and the
+socket as that solid grown by the clearance), for the key as it is set in
+the panel, at the document's own voxel size. Measured on the plate: each
+socket is wider than the peg by its own clearance to within 0.3 of a
+voxel, at the height they meet.
+
+**Telling the sockets apart.** The plate has one corner cut off, at the
+tight end, and the sockets loosen in order from there. No letters: any
+small enough to fit would not survive the lattice or the nozzle.
+
+Nothing in the document changes. The pieces are made beside it and go to
+the file, standing on the bed as they print: sockets opening upward, the
+peg pointing up.
 
 **Deferred:** freeform parting surfaces (through `split_masked`, which needs a
 crisp boundary rather than a feathered one), dovetails, a "fit to bed"

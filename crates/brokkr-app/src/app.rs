@@ -2,6 +2,7 @@
 
 //! Application state, input handling and the widget tree.
 
+mod fit_test;
 mod form;
 mod overhang;
 mod paints;
@@ -10701,6 +10702,12 @@ impl Brokkr {
             Message::ExportChosen(format, path) => {
                 if let Some(path) = path {
                     self.export(format, &path);
+                }
+            }
+            Message::FitTestRequested => return self.fit_test_requested(),
+            Message::FitTestChosen(path) => {
+                if let Some(path) = path {
+                    self.write_fit_test(&path);
                 }
             }
         }
