@@ -61,6 +61,7 @@ use rayon::prelude::*;
 
 use crate::brick::{BRICK_VOXELS, Brick, BrickCoord, NARROW_BAND};
 use crate::mesh::{BrickMesh, MeshScratch};
+use crate::paint::PaintTable;
 use crate::project::MAX_VOLUME_BYTES;
 use crate::raycast::{Hit, raycast};
 use crate::undo::Change;
@@ -416,6 +417,10 @@ pub struct Document {
     /// Always names a node that HOLDS a volume.
     active: NodeId,
     next_id: u32,
+    /// The document's paints: what a painted slot means, in every body.
+    /// Empty until the document uses paints at all. See [`crate::paint`],
+    /// and [`Change::Paints`] for how a change to it is undone.
+    paints: PaintTable,
 }
 
 impl Document {
@@ -444,6 +449,7 @@ impl Document {
             nodes: vec![Node::body(id, 0, Self::FIRST_BODY_NAME.to_string(), volume)],
             active: id,
             next_id: 2,
+            paints: PaintTable::default(),
         };
         doc.assert_invariants();
         doc
@@ -507,7 +513,8 @@ impl Document {
         // `highest + 1` cannot overflow: the reader refuses an id of
         // `u32::MAX` for exactly this reason, so the highest id that can reach
         // here is `u32::MAX - 1`.
-        let doc = Self { voxel_size, nodes, active, next_id: highest + 1 };
+        let doc =
+            Self { voxel_size, nodes, active, next_id: highest + 1, paints: PaintTable::default() };
         doc.assert_invariants();
         doc
     }
@@ -521,6 +528,23 @@ impl Document {
     #[inline]
     pub fn voxel_size(&self) -> f32 {
         self.voxel_size
+    }
+
+    /// The document's paints. Empty means it is not using paints, and its
+    /// slots are filament slots.
+    #[inline]
+    pub fn paints(&self) -> &PaintTable {
+        &self.paints
+    }
+
+    /// Put a paint table in place of the document's and hand back the one
+    /// that was there.
+    ///
+    /// Nothing is recorded. A caller changing the paints of a document that
+    /// has a history pushes a [`Change::Paints`] holding what this returns;
+    /// one loading a file, which has no history yet, does not.
+    pub fn replace_paints(&mut self, paints: PaintTable) -> PaintTable {
+        std::mem::replace(&mut self.paints, paints)
     }
 
     /// The rows, in display order.

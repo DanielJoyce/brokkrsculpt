@@ -17,20 +17,21 @@
 //! none of them has anything to remesh once paints are in use, and why
 //! changing a wash recolours every voxel that wears it in the same frame.
 //!
-//! # What is owed
+//! # The exceptions, and undo
 //!
-//! * **Undo.** An edit here dirties the document and is not in the history.
-//!   The history is a list of changes to voxels and to the scene tree
-//!   (`brokkr_core::undo::Change`), and a table edit is neither. It needs a
-//!   variant of its own, in upstream's file, and that is its own piece of
-//!   work.
-//! * **Removing a paint.** Slots are positions in the table, so taking one
-//!   out renumbers every paint after it, and every voxel painted with those
-//!   would have to be rewritten to match. Until that pass exists a paint,
-//!   once mixed, stays.
+//! Two messages do touch voxels. Coating the body is a stroke by another
+//! name. Removing a paint has to renumber every voxel that named a paint
+//! after it (`brokkr_core::paint::remove`), on every body.
+//!
+//! The table is the document's (`Document::paints`) and a change to it is a
+//! step of the undo history like any other (`Change::Paints`). It was the
+//! application's until a paint could be removed, which is the first thing
+//! that changes the table and the voxels together and needs them to come
+//! back together. `Brokkr::change_paints` is the one way in for everything
+//! but a removal, and is where a slider's drag is made one step.
 
 use brokkr_core::paint::touch::{Coat, Drybrush, Sponge, Touch};
-use brokkr_core::paint::{Finish, MAX_PAINTS, Paint, Wash};
+use brokkr_core::paint::{Finish, MAX_PAINTS, Paint, PaintTable, Wash};
 use glam::Vec3;
 use iced::widget::{button, checkbox, column, container, pick_list, row, slider, text, text_input};
 use iced::{Alignment, Element, Length, Padding};
@@ -107,6 +108,15 @@ pub(super) const SHARPNESS_RANGE: std::ops::RangeInclusive<f32> = 0.05..=1.0;
 /// *Coat the body* button is for.
 pub(super) const FILL_LIMIT: usize = 150_000;
 
+/// What a run of paint edits has to have in common to be one undo step:
+/// the same setting, of the same coat, of the same paint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Merge {
+    slot: u8,
+    coat: PaintCoat,
+    what: std::mem::Discriminant<PaintEdit>,
+}
+
 /// How the paint brush touches the model, and the stroke in progress.
 ///
 /// One struct on the application and not seven fields, so that upstream's
@@ -114,6 +124,12 @@ pub(super) const FILL_LIMIT: usize = 150_000;
 /// saved with a document and no document changes when they do.
 #[derive(Debug)]
 pub(super) struct TouchState {
+    /// Whether the document had paints the last time the rack looked, and
+    /// the drag of a paint's slider that the newest undo entry belongs to,
+    /// with the history's counters as that entry left them. See
+    /// `Brokkr::paints_stepped` and `Brokkr::change_paints`.
+    painted: bool,
+    merged: Option<(Merge, brokkr_core::HistoryStats)>,
     pub kind: PaintTouch,
     pub dry: Drybrush,
     pub sponge: Sponge,
@@ -147,6 +163,8 @@ pub(super) struct LoadMm(pub f32);
 impl Default for TouchState {
     fn default() -> Self {
         Self {
+            painted: false,
+            merged: None,
             kind: PaintTouch::default(),
             dry: Drybrush::default(),
             sponge: Sponge::default(),
@@ -275,8 +293,11 @@ impl Brokkr {
     /// filament, as it was. Never zero, which is "unpainted" and is what the
     /// brush's erase direction writes.
     pub(super) fn last_paint_slot(&self) -> u8 {
-        let count =
-            if self.paints.is_empty() { self.palette.slots.len() } else { self.paints.len() };
+        let count = if self.doc.paints().is_empty() {
+            self.palette.slots.len()
+        } else {
+            self.doc.paints().len()
+        };
         count.clamp(1, usize::from(u8::MAX)) as u8
     }
 
@@ -311,7 +332,7 @@ impl Brokkr {
         use crate::message::ExportFormat;
         let filaments = self.filament_colours();
         let bake = brokkr_core::paint::bake::Bake {
-            table: &self.paints,
+            table: self.doc.paints(),
             filaments: &filaments,
             unpainted: UNPAINTED,
             crease_gain: super::CAVITY_FEATURE_MM / self.doc.voxel_size() / 4.0,
@@ -357,7 +378,7 @@ impl Brokkr {
 
         let filaments = self.filament_colours();
         let bake = brokkr_core::paint::bake::Bake {
-            table: &self.paints,
+            table: self.doc.paints(),
             filaments: &filaments,
             unpainted: UNPAINTED,
             crease_gain: super::CAVITY_FEATURE_MM / self.doc.voxel_size() / 4.0,
@@ -692,9 +713,61 @@ impl Brokkr {
 
     /// The paints belong to the document, so a new document has none: a
     /// fresh sphere and an imported mesh both start on filament slots.
+    /// Nothing to throw away here, then, but the rack's place in a table
+    /// that is no longer there.
     pub(super) fn forget_paints(&mut self) {
-        self.paints = brokkr_core::paint::PaintTable::default();
+        self.touch.merged = None;
+        self.paints_stepped();
+    }
+
+    /// Bring the rack back in step with a paint table that has just changed
+    /// under it: by an undo, a redo, a paint removed, a file opened.
+    ///
+    /// The paint in hand is brought back into the table. And when the
+    /// document has gone between having paints and having none, every mesh
+    /// is made again: a wash reads the crease signal, the signal travels in
+    /// the mesh, and a document without paints whose creases are switched
+    /// off has meshes without it.
+    pub(super) fn paints_stepped(&mut self) {
         self.paint_slot = self.paint_slot.clamp(1, self.last_paint_slot());
+        let painted = !self.doc.paints().is_empty();
+        if painted != self.touch.painted {
+            self.touch.painted = painted;
+            self.doc.mark_everything_dirty();
+        }
+    }
+
+    /// Change the document's paints, as one step of the undo history.
+    ///
+    /// `merge` says what is being dragged, when something is: a slider
+    /// sends a message for every pixel it moves, and a drag is one step and
+    /// not two hundred. A change is merged into the entry before it when
+    /// that entry was made by the same drag and nothing has been pushed,
+    /// undone or dropped since. "Nothing since" is read off the history's
+    /// own counters, entries and bytes both, taken when the entry went on:
+    /// the history has no other way to ask what is on top of it. An entry
+    /// of another kind landing on exactly the same counters would be merged
+    /// into by mistake, and would have to weigh, to the byte, what a paint
+    /// table does.
+    ///
+    /// `true` when the table changed.
+    fn change_paints(&mut self, merge: Option<Merge>, edit: impl FnOnce(&mut PaintTable)) -> bool {
+        let Some(change) = self.doc.change_paints(edit) else {
+            return false;
+        };
+        let stats = self.history.stats();
+        let same_drag = merge.is_some() && self.touch.merged == merge.map(|merge| (merge, stats));
+        if !same_drag {
+            // The entry on top is not this drag's. A drag that IS merged
+            // drops its change: the entry already there holds the table
+            // from before the drag began, which is the one to go back to.
+            self.history.push(brokkr_core::Entry::new(vec![change]));
+            self.record_history(stats);
+            self.touch.merged = merge.map(|merge| (merge, self.history.stats()));
+        }
+        self.unsaved = true;
+        self.paints_stepped();
+        true
     }
 
     /// Start using paints: one plain paint per filament slot.
@@ -702,32 +775,38 @@ impl Brokkr {
     /// In the filament's own name and colour, so that a body already painted
     /// by slot looks exactly as it did the moment before, and what was
     /// "filament 2" is now a paint that can be given a wash.
-    ///
-    /// The one message here that remeshes. A wash reads the crease signal,
-    /// the signal travels in the mesh, and a document without paints whose
-    /// creases are switched off has meshes without it.
     pub(super) fn start_paints(&mut self) {
-        if !self.paints.is_empty() {
+        if !self.doc.paints().is_empty() {
             return;
         }
-        for (index, slot) in self.palette.slots.iter().take(MAX_PAINTS).enumerate() {
-            let colour = slot.swatch().into_rgba8();
-            // Each names the filament it was, so a model painted by slot
-            // prints exactly as it did before its slots were paints.
-            self.paints.add(Paint {
-                filament: index as u8 + 1,
-                ..Paint::flat(slot.name.clone(), [colour[0], colour[1], colour[2]])
-            });
-        }
-        if self.paints.is_empty() {
+        let mut mixed: Vec<Paint> = self
+            .palette
+            .slots
+            .iter()
+            .take(MAX_PAINTS)
+            .enumerate()
+            .map(|(index, slot)| {
+                let colour = slot.swatch().into_rgba8();
+                // Each names the filament it was, so a model painted by slot
+                // prints exactly as it did before its slots were paints.
+                Paint {
+                    filament: index as u8 + 1,
+                    ..Paint::flat(slot.name.clone(), [colour[0], colour[1], colour[2]])
+                }
+            })
+            .collect();
+        if mixed.is_empty() {
             // A machine with no filament slots at all still gets something to
             // paint with.
-            self.paints.add(Paint::flat("Primer", RANGE[2].1));
+            mixed.push(Paint::flat("Primer", RANGE[2].1));
         }
-        self.paint_slot = self.paint_slot.clamp(1, self.last_paint_slot());
-        self.unsaved = true;
-        self.status = format!("mixed {} paints, one for each filament slot", self.paints.len());
-        self.doc.mark_everything_dirty();
+        self.change_paints(None, |paints| {
+            for paint in mixed {
+                paints.add(paint);
+            }
+        });
+        self.status =
+            format!("mixed {} paints, one for each filament slot", self.doc.paints().len());
         self.remesh_dirty();
     }
 
@@ -736,12 +815,13 @@ impl Brokkr {
         self.start_paints();
         // Walk the range, so that a run of new paints is a run of different
         // colours and not the same one eight times.
-        let (name, colour) = RANGE[self.paints.len() % RANGE.len()];
-        match self.paints.add(Paint::flat(name, colour)) {
+        let (name, colour) = RANGE[self.doc.paints().len() % RANGE.len()];
+        let mut added = None;
+        self.change_paints(None, |paints| added = paints.add(Paint::flat(name, colour)));
+        match added {
             Some(slot) => {
                 self.paint_slot = slot;
                 self.paint_coat = PaintCoat::Base;
-                self.unsaved = true;
                 self.status = format!("paint {slot} added");
             }
             None => {
@@ -750,57 +830,102 @@ impl Brokkr {
         }
     }
 
+    /// Take the paint in hand out of the document: off the rack, and off
+    /// the model, where what it was on is bare again. One undo brings back
+    /// both. See `brokkr_core::paint::remove`.
+    pub(super) fn remove_paint(&mut self) {
+        // A stroke still being recorded would be recorded over.
+        self.finish_stroke();
+        let Some(removed) = self.doc.remove_paint(self.paint_slot) else {
+            return;
+        };
+        let before = self.history.stats();
+        self.history.push(brokkr_core::Entry::new(removed.changes));
+        self.record_history(before);
+        self.touch.merged = None;
+        self.unsaved = true;
+        self.paints_stepped();
+        let bodies: Vec<brokkr_core::NodeId> = self.doc.bodies().map(|(id, _)| id).collect();
+        for body in bodies {
+            self.thumbs.geometry_changed(body);
+        }
+        self.remesh_dirty();
+        let name = removed.paint.name;
+        let left = self.doc.paints().len();
+        self.status = match (removed.bared, left) {
+            (0, 0) => format!("removed {name}, the last paint: the slots are filaments again"),
+            (0, _) => format!("removed {name}, which was on nothing"),
+            (bared, _) => {
+                format!(
+                    "removed {name}: the {bared} voxels it was on are bare, and undo puts it back"
+                )
+            }
+        };
+    }
+
     /// Change the paint in hand.
     ///
     /// Every number is clamped to its slider's range on arrival, for the
     /// reason the brush radius is: a message can come from anywhere.
     pub(super) fn edit_paint(&mut self, edit: PaintEdit) {
-        let coat = self.paint_coat;
-        let Some(paint) = self.paints.paint_mut(self.paint_slot) else {
-            return;
-        };
-        let before = paint.clone();
-        match edit {
-            PaintEdit::Name(name) => paint.name = name,
-            PaintEdit::Finish(finish) => paint.finish = finish,
-            PaintEdit::Filament(filament) => paint.filament = filament,
-            PaintEdit::Colour(colour) => *coat_colour(paint, coat) = colour,
-            PaintEdit::Channel(channel, level) => {
-                if let Some(slot) = coat_colour(paint, coat).get_mut(channel) {
-                    *slot = level;
+        let (coat, slot) = (self.paint_coat, self.paint_slot);
+        // What is dragged or typed is one step however many messages it
+        // sends. What is chosen, a swatch, a finish, a kind of wash, is a
+        // step each time it is chosen.
+        let dragged = matches!(
+            edit,
+            PaintEdit::Name(_)
+                | PaintEdit::Channel(..)
+                | PaintEdit::WashStain(_)
+                | PaintEdit::WashFlow(_)
+                | PaintEdit::WashEdge(_)
+                | PaintEdit::HighlightAmount(_)
+                | PaintEdit::HighlightStart(_)
+        );
+        let merge = dragged.then(|| Merge { slot, coat, what: std::mem::discriminant(&edit) });
+        self.change_paints(merge, |paints| {
+            let Some(paint) = paints.paint_mut(slot) else {
+                return;
+            };
+            match edit {
+                PaintEdit::Name(name) => paint.name = name,
+                PaintEdit::Finish(finish) => paint.finish = finish,
+                PaintEdit::Filament(filament) => paint.filament = filament,
+                PaintEdit::Colour(colour) => *coat_colour(paint, coat) = colour,
+                PaintEdit::Channel(channel, level) => {
+                    if let Some(slot) = coat_colour(paint, coat).get_mut(channel) {
+                        *slot = level;
+                    }
+                }
+                PaintEdit::WashKind(kind) => match kind {
+                    WashKind::None => {
+                        paint.wash = Wash { colour: paint.wash.colour, ..Wash::NONE };
+                    }
+                    WashKind::Shade => paint.wash = Wash::shade(shade_of(paint.base)),
+                    // A contrast paint is its pigment over a pale undercoat,
+                    // so the colour the paint had becomes the wash and the
+                    // base becomes the undercoat. Asked for twice, the base
+                    // already IS the undercoat, and then the pigment is left
+                    // alone: otherwise the second click would wash off-white
+                    // over off-white and the paint would be gone.
+                    WashKind::Contrast => {
+                        let pigment =
+                            if paint.base == UNDERCOAT { paint.wash.colour } else { paint.base };
+                        paint.wash = Wash::contrast(pigment);
+                        paint.base = UNDERCOAT;
+                    }
+                },
+                PaintEdit::WashStain(amount) => paint.wash.stain = clamped(amount, STAIN_RANGE),
+                PaintEdit::WashFlow(amount) => paint.wash.flow = clamped(amount, FLOW_RANGE),
+                PaintEdit::WashEdge(amount) => paint.wash.edge = clamped(amount, EDGE_RANGE),
+                PaintEdit::HighlightAmount(amount) => {
+                    paint.highlight.amount = clamped(amount, AMOUNT_RANGE);
+                }
+                PaintEdit::HighlightStart(start) => {
+                    paint.highlight.start = clamped(start, START_RANGE);
                 }
             }
-            PaintEdit::WashKind(kind) => match kind {
-                WashKind::None => {
-                    paint.wash = Wash { colour: paint.wash.colour, ..Wash::NONE };
-                }
-                WashKind::Shade => paint.wash = Wash::shade(shade_of(paint.base)),
-                // A contrast paint is its pigment over a pale undercoat, so
-                // the colour the paint had becomes the wash and the base
-                // becomes the undercoat. Asked for twice, the base already
-                // IS the undercoat, and then the pigment is left alone:
-                // otherwise the second click would wash off-white over
-                // off-white and the paint would be gone.
-                WashKind::Contrast => {
-                    let pigment =
-                        if paint.base == UNDERCOAT { paint.wash.colour } else { paint.base };
-                    paint.wash = Wash::contrast(pigment);
-                    paint.base = UNDERCOAT;
-                }
-            },
-            PaintEdit::WashStain(amount) => paint.wash.stain = clamped(amount, STAIN_RANGE),
-            PaintEdit::WashFlow(amount) => paint.wash.flow = clamped(amount, FLOW_RANGE),
-            PaintEdit::WashEdge(amount) => paint.wash.edge = clamped(amount, EDGE_RANGE),
-            PaintEdit::HighlightAmount(amount) => {
-                paint.highlight.amount = clamped(amount, AMOUNT_RANGE);
-            }
-            PaintEdit::HighlightStart(start) => {
-                paint.highlight.start = clamped(start, START_RANGE);
-            }
-        }
-        if *paint != before {
-            self.unsaved = true;
-        }
+        });
     }
 
     /// What the paint brush is offered: the filament slots while the document
@@ -809,7 +934,7 @@ impl Brokkr {
     /// `editing` is whether there is room for the editor under the rack. The
     /// panel has it and the pop-up menu does not.
     pub(super) fn paint_picker(&self, editing: bool) -> Element<'_, Message> {
-        if self.paints.is_empty() {
+        if self.doc.paints().is_empty() {
             return column![
                 self.touch_picker(editing),
                 self.filament_picker(),
@@ -825,7 +950,7 @@ impl Brokkr {
         }
 
         let mut rack = column![].spacing(theme::S1);
-        for (line, paints) in self.paints.paints().chunks(SWATCHES_A_ROW).enumerate() {
+        for (line, paints) in self.doc.paints().paints().chunks(SWATCHES_A_ROW).enumerate() {
             let mut swatches = row![].spacing(theme::S1);
             for (place, paint) in paints.iter().enumerate() {
                 let slot = (line * SWATCHES_A_ROW + place + 1) as u8;
@@ -845,8 +970,12 @@ impl Brokkr {
             rack = rack.push(swatches);
         }
 
-        let name =
-            self.paints.paint(self.paint_slot).map(|paint| paint.name.as_str()).unwrap_or("none");
+        let name = self
+            .doc
+            .paints()
+            .paint(self.paint_slot)
+            .map(|paint| paint.name.as_str())
+            .unwrap_or("none");
         let mut picker = column![
             self.touch_picker(editing),
             text(format!("Paint  {}. {name}", self.paint_slot))
@@ -864,11 +993,18 @@ impl Brokkr {
             );
             let mut add =
                 button(text("Add a paint").size(theme::TEXT_SIZE_SMALL)).style(theme::tool_button);
-            if self.paints.len() < MAX_PAINTS {
+            if self.doc.paints().len() < MAX_PAINTS {
                 add = add.on_press(Message::PaintAdded);
             }
-            picker = picker.push(add);
-            if let Some(paint) = self.paints.paint(self.paint_slot) {
+            // The paint in hand: off the rack and off the model, and one
+            // undo away from both.
+            let remove = button(text("Remove").size(theme::TEXT_SIZE_SMALL))
+                .style(theme::tool_button)
+                .on_press_maybe(
+                    self.doc.paints().paint(self.paint_slot).map(|_| Message::PaintRemoved),
+                );
+            picker = picker.push(row![add, remove].spacing(theme::S1));
+            if let Some(paint) = self.doc.paints().paint(self.paint_slot) {
                 picker = picker.push(self.paint_editor(paint));
             }
         }
@@ -1088,7 +1224,7 @@ mod tests {
     fn mixing_paints_copies_the_filament_slots_and_remeshes_with_the_signal() {
         let mut app = app();
         app.unsaved = false;
-        assert!(app.paints.is_empty(), "a new document already had paints");
+        assert!(app.doc.paints().is_empty(), "a new document already had paints");
         assert_eq!(
             app.shared.paint_view().paints,
             brokkr_gpu::PaintBlock::default(),
@@ -1098,8 +1234,12 @@ mod tests {
 
         update(&mut app, Message::PaintsStarted);
 
-        assert_eq!(app.paints.len(), app.palette.slots.len(), "not one paint per filament slot");
-        for (paint, slot) in app.paints.paints().iter().zip(&app.palette.slots) {
+        assert_eq!(
+            app.doc.paints().len(),
+            app.palette.slots.len(),
+            "not one paint per filament slot"
+        );
+        for (paint, slot) in app.doc.paints().paints().iter().zip(&app.palette.slots) {
             let colour = slot.swatch().into_rgba8();
             assert_eq!(paint.base, [colour[0], colour[1], colour[2]], "{}", slot.name);
             assert_eq!(paint.name, slot.name);
@@ -1110,7 +1250,7 @@ mod tests {
         let view = app.shared.paint_view();
         assert_eq!(
             view.paints,
-            brokkr_gpu::PaintBlock::from(&app.paints),
+            brokkr_gpu::PaintBlock::from(app.doc.paints()),
             "the table did not reach the shared frame"
         );
         assert_ne!(view.paints, brokkr_gpu::PaintBlock::default());
@@ -1124,9 +1264,9 @@ mod tests {
         );
 
         // Asked for again, nothing happens: the table is not doubled.
-        let count = app.paints.len();
+        let count = app.doc.paints().len();
         update(&mut app, Message::PaintsStarted);
-        assert_eq!(app.paints.len(), count, "mixing twice doubled the rack");
+        assert_eq!(app.doc.paints().len(), count, "mixing twice doubled the rack");
     }
 
     /// With paints in use the crease toggle is only a view toggle: the meshes
@@ -1167,7 +1307,7 @@ mod tests {
         assert_eq!(app.paint_slot, filaments, "without paints the limit is the filaments");
 
         update(&mut app, Message::PaintAdded);
-        assert_eq!(app.paints.len(), usize::from(filaments) + 1, "adding did not mix first");
+        assert_eq!(app.doc.paints().len(), usize::from(filaments) + 1, "adding did not mix first");
         assert_eq!(app.paint_slot, filaments + 1, "the new paint was not taken up");
 
         update(&mut app, Message::PaintSlotChanged(200));
@@ -1179,7 +1319,7 @@ mod tests {
         for _ in 0..MAX_PAINTS + 3 {
             update(&mut app, Message::PaintAdded);
         }
-        assert_eq!(app.paints.len(), MAX_PAINTS, "the rack went past what the shader holds");
+        assert_eq!(app.doc.paints().len(), MAX_PAINTS, "the rack went past what the shader holds");
         assert!(app.status.contains("full"), "a full rack was not reported: {}", app.status);
         assert!(usize::from(app.paint_slot) <= MAX_PAINTS);
     }
@@ -1192,7 +1332,8 @@ mod tests {
         update(&mut app, Message::PaintsStarted);
         update(&mut app, Message::PaintSlotChanged(2));
         let others: Vec<_> = app
-            .paints
+            .doc
+            .paints()
             .paints()
             .iter()
             .enumerate()
@@ -1204,19 +1345,23 @@ mod tests {
         app.unsaved = false;
 
         edit(&mut app, PaintEdit::Colour([10, 20, 30]));
-        assert_eq!(app.paints.paint(2).unwrap().base, [10, 20, 30]);
+        assert_eq!(app.doc.paints().paint(2).unwrap().base, [10, 20, 30]);
         assert!(app.unsaved, "an edit did not dirty the document");
 
         update(&mut app, Message::PaintCoatChosen(PaintCoat::Wash));
         edit(&mut app, PaintEdit::Colour([40, 50, 60]));
         edit(&mut app, PaintEdit::Channel(1, 99));
         edit(&mut app, PaintEdit::Channel(7, 1));
-        assert_eq!(app.paints.paint(2).unwrap().wash.colour, [40, 99, 60]);
-        assert_eq!(app.paints.paint(2).unwrap().base, [10, 20, 30], "the wash edit hit the base");
+        assert_eq!(app.doc.paints().paint(2).unwrap().wash.colour, [40, 99, 60]);
+        assert_eq!(
+            app.doc.paints().paint(2).unwrap().base,
+            [10, 20, 30],
+            "the wash edit hit the base"
+        );
 
         update(&mut app, Message::PaintCoatChosen(PaintCoat::Highlight));
         edit(&mut app, PaintEdit::Colour([200, 210, 220]));
-        assert_eq!(app.paints.paint(2).unwrap().highlight.colour, [200, 210, 220]);
+        assert_eq!(app.doc.paints().paint(2).unwrap().highlight.colour, [200, 210, 220]);
 
         edit(&mut app, PaintEdit::WashStain(0.4));
         edit(&mut app, PaintEdit::WashFlow(2.0));
@@ -1225,7 +1370,7 @@ mod tests {
         edit(&mut app, PaintEdit::HighlightStart(0.5));
         edit(&mut app, PaintEdit::Name("Cloak".to_string()));
         edit(&mut app, PaintEdit::Finish(Finish::Gloss));
-        let paint = app.paints.paint(2).unwrap().clone();
+        let paint = app.doc.paints().paint(2).unwrap().clone();
         assert_eq!(
             (paint.wash.stain, paint.wash.flow, paint.wash.edge),
             (0.4, 2.0, 0.3),
@@ -1235,7 +1380,8 @@ mod tests {
         assert_eq!((paint.name.as_str(), paint.finish), ("Cloak", Finish::Gloss));
 
         let after: Vec<_> = app
-            .paints
+            .doc
+            .paints()
             .paints()
             .iter()
             .enumerate()
@@ -1245,10 +1391,19 @@ mod tests {
         assert_eq!(after, others, "an edit reached a paint that was not in hand");
         assert_eq!(
             app.shared.paint_view().paints,
-            brokkr_gpu::PaintBlock::from(&app.paints),
+            brokkr_gpu::PaintBlock::from(app.doc.paints()),
             "the edited table did not reach the shared frame"
         );
-        assert_eq!(app.history.stats(), undo_before, "a table edit reached the voxel history");
+        // Each of those edits is a step of the history now, and none of
+        // them touched a voxel: the history grew by entries and by the few
+        // hundred bytes a paint table is, and not by a brick.
+        let undo_after = app.history.stats();
+        assert!(undo_after.undo_entries > undo_before.undo_entries);
+        assert!(
+            undo_after.bytes - undo_before.bytes < 64 * 1024,
+            "editing a paint cost the history {} bytes",
+            undo_after.bytes - undo_before.bytes
+        );
         assert_eq!(
             app.shared.pending_cavity_for_tests().len(),
             meshes_before,
@@ -1273,7 +1428,7 @@ mod tests {
         edit(&mut app, PaintEdit::WashEdge(f32::INFINITY));
         edit(&mut app, PaintEdit::HighlightAmount(7.0));
         edit(&mut app, PaintEdit::HighlightStart(1.0));
-        let paint = app.paints.paint(app.paint_slot).unwrap().clone();
+        let paint = app.doc.paints().paint(app.paint_slot).unwrap().clone();
         assert_eq!(paint.wash.stain, *STAIN_RANGE.end());
         assert_eq!(paint.wash.flow, *FLOW_RANGE.start());
         assert_eq!(paint.wash.edge, *EDGE_RANGE.end());
@@ -1289,7 +1444,7 @@ mod tests {
         ] {
             edit(&mut app, nan);
         }
-        let paint = app.paints.paint(app.paint_slot).unwrap();
+        let paint = app.doc.paints().paint(app.paint_slot).unwrap();
         for amount in [
             paint.wash.stain,
             paint.wash.flow,
@@ -1313,7 +1468,7 @@ mod tests {
         let slot = app.paint_slot;
 
         edit(&mut app, PaintEdit::WashKind(WashKind::Shade));
-        let paint = app.paints.paint(slot).unwrap().clone();
+        let paint = app.doc.paints().paint(slot).unwrap().clone();
         assert_eq!(paint.base, red, "a shade repainted the base coat");
         assert_eq!(paint.wash, Wash::shade(shade_of(red)));
         assert!(paint.wash.colour.iter().zip(red).all(|(wash, base)| *wash < base.max(1)));
@@ -1322,16 +1477,16 @@ mod tests {
         assert!(crease[0] < flat[0] * 0.5, "a shade did not darken the recess");
 
         edit(&mut app, PaintEdit::WashKind(WashKind::Contrast));
-        let paint = app.paints.paint(slot).unwrap().clone();
+        let paint = app.doc.paints().paint(slot).unwrap().clone();
         assert_eq!(paint.base, UNDERCOAT);
         assert_eq!(paint.wash, Wash::contrast(red), "the colour did not move into the wash");
 
         edit(&mut app, PaintEdit::WashKind(WashKind::Contrast));
-        let again = app.paints.paint(slot).unwrap().clone();
+        let again = app.doc.paints().paint(slot).unwrap().clone();
         assert_eq!(again, paint, "asking for contrast twice washed the pigment away");
 
         edit(&mut app, PaintEdit::WashKind(WashKind::None));
-        let paint = app.paints.paint(slot).unwrap().clone();
+        let paint = app.doc.paints().paint(slot).unwrap().clone();
         assert!(paint.wash.is_none(), "None left a wash on");
         assert_eq!(paint.wash.colour, red, "None threw the pigment away with the film");
         assert_eq!(paint.shade(1.0), paint.shade(0.0), "a paint with no wash still shades");
@@ -1351,7 +1506,7 @@ mod tests {
         edit(&mut app, PaintEdit::WashKind(WashKind::Contrast));
         update(&mut app, Message::PaintCoatChosen(PaintCoat::Highlight));
         edit(&mut app, PaintEdit::HighlightAmount(0.5));
-        let saved = app.paints.clone();
+        let saved = app.doc.paints().clone();
         let slot = app.paint_slot;
         app.save_project(&path);
         assert!(!app.unsaved, "the save failed: {}", app.status);
@@ -1359,7 +1514,12 @@ mod tests {
         let mut reopened = Brokkr::with_tablet(crate::tablet::Tablet::inert());
         reopened.paint_slot = 200;
         reopened.open_project(&path);
-        assert_eq!(reopened.paints, saved, "the paints did not come back: {}", reopened.status);
+        assert_eq!(
+            *reopened.doc.paints(),
+            saved,
+            "the paints did not come back: {}",
+            reopened.status
+        );
         assert!(usize::from(reopened.paint_slot) <= saved.len(), "the slot outran the rack");
         assert_eq!(
             reopened.shared.paint_view().paints,
@@ -1370,7 +1530,7 @@ mod tests {
 
         // A fresh sphere is a new document and starts with none.
         update(&mut reopened, Message::ResetSphere);
-        assert_eq!(reopened.paints, PaintTable::default(), "paints outlived their document");
+        assert_eq!(*reopened.doc.paints(), PaintTable::default(), "paints outlived their document");
         assert!(usize::from(reopened.paint_slot) <= reopened.palette.slots.len());
 
         // And so does a document opened over a painted one, when the file has
@@ -1379,7 +1539,7 @@ mod tests {
         let mut bare = Brokkr::with_tablet(crate::tablet::Tablet::inert());
         bare.save_project(&plain);
         app.open_project(&plain);
-        assert!(app.paints.is_empty(), "opening an unpainted file kept the old paints");
+        assert!(app.doc.paints().is_empty(), "opening an unpainted file kept the old paints");
 
         let _ = std::fs::remove_dir_all(&directory);
     }
@@ -1428,6 +1588,211 @@ mod tests {
     }
 
     /// How many voxels of the active body are painted at all.
+    /// How many voxels of the active body hold `slot`.
+    fn holding(app: &Brokkr, slot: u8) -> usize {
+        let volume = app.doc.active_volume();
+        let Some((low, high)) = volume.world_bounds() else {
+            return 0;
+        };
+        let (lo, hi) = volume.voxel_bounds(low, high);
+        let mut count = 0;
+        for z in lo.z..=hi.z {
+            for y in lo.y..=hi.y {
+                for x in lo.x..=hi.x {
+                    count += usize::from(volume.colour().at(glam::IVec3::new(x, y, z)) == slot);
+                }
+            }
+        }
+        count
+    }
+
+    /// A paint's settings are steps of the undo history: one for a slider
+    /// however far it is dragged, one for a name however many letters, one
+    /// each time something is chosen, and none for a change that changes
+    /// nothing. Undo walks them back to a document with no paints at all,
+    /// and redo walks them forward again.
+    #[test]
+    fn paint_edits_are_undo_steps_and_a_drag_is_one_step() {
+        let mut app = app();
+        let steps = |app: &Brokkr| app.history.stats().undo_entries;
+        assert_eq!(steps(&app), 0);
+        update(&mut app, Message::PaintsStarted);
+        assert_eq!(steps(&app), 1, "mixing the paints is a step");
+        update(&mut app, Message::PaintSlotChanged(2));
+        let mixed = app.doc.paints().clone();
+        let paint = |app: &Brokkr| app.doc.paints().paint(2).expect("paint 2").clone();
+
+        for flow in [0.2, 0.5, 0.9, 1.4] {
+            edit(&mut app, PaintEdit::WashFlow(flow));
+        }
+        assert_eq!(steps(&app), 2, "a slider dragged through four values is one step");
+        for stain in [0.1, 0.2] {
+            edit(&mut app, PaintEdit::WashStain(stain));
+        }
+        assert_eq!(steps(&app), 3, "another slider is another step");
+        edit(&mut app, PaintEdit::Colour([1, 2, 3]));
+        edit(&mut app, PaintEdit::Colour([4, 5, 6]));
+        assert_eq!(steps(&app), 5, "a swatch chosen is a step each time");
+        for name in ["C", "Cl", "Clo"] {
+            edit(&mut app, PaintEdit::Name(name.to_string()));
+        }
+        assert_eq!(steps(&app), 6, "a name typed is one step");
+        edit(&mut app, PaintEdit::WashFlow(0.3));
+        assert_eq!(steps(&app), 7, "the first slider again, after other things, is a new step");
+        edit(&mut app, PaintEdit::WashFlow(0.3));
+        assert_eq!(steps(&app), 7, "a change that changes nothing is no step");
+        let edited = app.doc.paints().clone();
+
+        // Back, a step at a time.
+        update(&mut app, Message::Undo);
+        assert_eq!(paint(&app).wash.flow, 1.4);
+        update(&mut app, Message::Undo);
+        assert_eq!(paint(&app).name, mixed.paint(2).expect("paint 2").name);
+        update(&mut app, Message::Undo);
+        assert_eq!(paint(&app).base, [1, 2, 3]);
+        update(&mut app, Message::Undo);
+        assert_eq!(paint(&app).base, mixed.paint(2).expect("paint 2").base);
+        assert_eq!(paint(&app).wash.stain, 0.2);
+        update(&mut app, Message::Undo);
+        assert_eq!((paint(&app).wash.stain, paint(&app).wash.flow), (0.0, 1.4));
+        update(&mut app, Message::Undo);
+        assert_eq!(*app.doc.paints(), mixed);
+        update(&mut app, Message::Undo);
+        assert!(app.doc.paints().is_empty(), "mixing the paints was not undone");
+        drop(app.paint_picker(true));
+
+        // And forward again, all the way.
+        for _ in 0..7 {
+            update(&mut app, Message::Redo);
+        }
+        assert_eq!(*app.doc.paints(), edited);
+        assert_eq!(app.paint_slot, 2);
+        drop(app.paint_picker(true));
+
+        // A paint added is in hand. Undone, the paint in hand is one that
+        // is still on the rack.
+        update(&mut app, Message::PaintAdded);
+        assert_eq!(usize::from(app.paint_slot), app.doc.paints().len());
+        update(&mut app, Message::Undo);
+        assert_eq!(usize::from(app.paint_slot), app.doc.paints().len());
+        assert_eq!(*app.doc.paints(), edited);
+        update(&mut app, Message::PaintSlotChanged(2));
+
+        // A stroke on the model between two halves of a drag is between
+        // them in the history too.
+        let before = steps(&app);
+        edit(&mut app, PaintEdit::WashEdge(0.2));
+        stroke(&mut app);
+        edit(&mut app, PaintEdit::WashEdge(0.3));
+        assert_eq!(steps(&app), before + 3);
+        // An undo and a redo in the middle of a drag are not: the entry on
+        // top is the drag's own again.
+        update(&mut app, Message::Undo);
+        update(&mut app, Message::Redo);
+        edit(&mut app, PaintEdit::WashEdge(0.4));
+        assert_eq!(steps(&app), before + 3);
+        update(&mut app, Message::Undo);
+        assert_eq!(paint(&app).wash.edge, 0.2);
+    }
+
+    /// A paint is taken off the rack and off the model together, and one
+    /// undo puts both back. A paint removed from before another keeps the
+    /// model in that other paint, under its new number.
+    #[test]
+    fn a_paint_is_removed_from_the_rack_and_the_model_and_undo_puts_both_back() {
+        let mut app = app();
+        update(&mut app, Message::PaintsStarted);
+        let mixed = app.doc.paints().clone();
+        let count = mixed.len();
+        assert!(count >= 3, "the fixture wants three paints and has {count}");
+        update(&mut app, Message::PaintSlotChanged(3));
+        stroke(&mut app);
+        let painted = holding(&app, 3);
+        assert!(painted > 0, "the stroke painted nothing");
+        let third = mixed.paint(3).expect("paint 3").name.clone();
+
+        // Paint 2 is on nothing. Without it, what was paint 3 is paint 2,
+        // and the model is still wearing it.
+        update(&mut app, Message::PaintSlotChanged(2));
+        drop(app.paint_picker(true));
+        // As if just saved: the removal has to say there is work to keep.
+        app.unsaved = false;
+        update(&mut app, Message::PaintRemoved);
+        assert_eq!(app.doc.paints().len(), count - 1);
+        assert_eq!((holding(&app, 2), holding(&app, 3)), (painted, 0));
+        assert_eq!(app.doc.paints().paint(2).expect("paint 2").name, third);
+        assert!(app.status.contains("on nothing"), "{}", app.status);
+        assert!(app.unsaved);
+
+        // The paint in hand is that one now. Removed, the model is bare.
+        update(&mut app, Message::PaintRemoved);
+        assert_eq!(app.doc.paints().len(), count - 2);
+        assert_eq!(painted_voxels(&app), 0);
+        assert!(app.status.contains("bare"), "{}", app.status);
+
+        update(&mut app, Message::Undo);
+        assert_eq!((app.doc.paints().len(), holding(&app, 2)), (count - 1, painted));
+        update(&mut app, Message::Undo);
+        assert_eq!(*app.doc.paints(), mixed);
+        assert_eq!((holding(&app, 2), holding(&app, 3)), (0, painted));
+        update(&mut app, Message::Redo);
+        update(&mut app, Message::Redo);
+        assert_eq!((app.doc.paints().len(), painted_voxels(&app)), (count - 2, 0));
+
+        // Removed in the middle of a stroke, with the button still down:
+        // the stroke is finished first and is a step of its own under the
+        // removal.
+        {
+            use crate::message::{PointerButton, PointerEvent};
+            let mut app = self::app();
+            update(&mut app, Message::PaintsStarted);
+            update(&mut app, Message::PaintSlotChanged(2));
+            let centre = iced::Vector::new(SIZE.x / 2.0, SIZE.y / 2.0);
+            update(
+                &mut app,
+                Message::Pointer(PointerEvent::Pressed {
+                    button: PointerButton::Left,
+                    position: centre,
+                    size: SIZE,
+                }),
+            );
+            let position = iced::Vector::new(centre.x + 30.0, centre.y);
+            update(&mut app, Message::Pointer(PointerEvent::Moved { position, size: SIZE }));
+            let painted = holding(&app, 2);
+            assert!(painted > 0);
+            update(&mut app, Message::PaintRemoved);
+            assert_eq!(painted_voxels(&app), 0);
+            update(&mut app, Message::Undo);
+            assert_eq!(
+                holding(&app, 2),
+                painted,
+                "the removal's undo did not bring the stroke back"
+            );
+            update(&mut app, Message::Undo);
+            assert_eq!(painted_voxels(&app), 0, "the stroke was not a step of its own");
+        }
+
+        // The last paint on the rack removed, the paint in hand is the one
+        // before it and not a paint that is not there.
+        let last = app.doc.paints().len() as u8;
+        update(&mut app, Message::PaintSlotChanged(last));
+        update(&mut app, Message::PaintRemoved);
+        assert_eq!(usize::from(app.paint_slot), app.doc.paints().len());
+
+        // Every paint removed, the document is on filament slots again,
+        // and there is nothing left for the button to remove.
+        while !app.doc.paints().is_empty() {
+            update(&mut app, Message::PaintRemoved);
+        }
+        assert!(app.status.contains("filaments again"), "{}", app.status);
+        drop(app.paint_picker(true));
+        let steps = app.history.stats().undo_entries;
+        update(&mut app, Message::PaintRemoved);
+        assert_eq!(app.history.stats().undo_entries, steps, "removing nothing was a step");
+        update(&mut app, Message::Undo);
+        assert_eq!(app.doc.paints().len(), 1, "the last paint did not come back");
+    }
+
     fn painted_voxels(app: &Brokkr) -> usize {
         let volume = app.doc.active_volume();
         let Some((low, high)) = volume.world_bounds() else {
@@ -1888,7 +2253,7 @@ mod tests {
         let slot = app.paint_slot;
         assert!(usize::from(slot) > app.palette.slots.len(), "the paint is not past the filaments");
         edit(&mut app, PaintEdit::Filament(2));
-        assert_eq!(app.paints.paint(slot).unwrap().filament, 2);
+        assert_eq!(app.doc.paints().paint(slot).unwrap().filament, 2);
         stroke(&mut app);
 
         let read = |app: &mut Brokkr| {
@@ -1965,7 +2330,7 @@ mod tests {
     fn mixed_paints_print_in_the_filaments_they_came_from() {
         let mut app = app();
         update(&mut app, Message::PaintsStarted);
-        for (index, paint) in app.paints.paints().iter().enumerate() {
+        for (index, paint) in app.doc.paints().paints().iter().enumerate() {
             assert_eq!(usize::from(paint.filament), index + 1, "{}", paint.name);
         }
         let choices = app.prints_in_choices();
@@ -1978,7 +2343,7 @@ mod tests {
         }
         // A new paint names none.
         update(&mut app, Message::PaintAdded);
-        assert_eq!(app.paints.paint(app.paint_slot).unwrap().filament, 0);
+        assert_eq!(app.doc.paints().paint(app.paint_slot).unwrap().filament, 0);
     }
 
     /// The range is the starting colours a painter is offered, so two entries

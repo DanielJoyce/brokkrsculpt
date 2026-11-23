@@ -889,11 +889,6 @@ pub struct Brokkr {
     /// The key a parting puts between two parts: its kind, its size, and the
     /// clearance, which belongs to the printer. See `brokkr_core::part`.
     key_spec: brokkr_core::part::KeySpec,
-    /// The document's paints: what each painted slot means once the document
-    /// uses paints at all. Empty until it does, and then every slot is a
-    /// filament, as upstream has it. Document state, saved with the sculpt.
-    /// See `app/paints.rs`.
-    paints: brokkr_core::paint::PaintTable,
     /// Which coat of the paint in hand the editor shows. View state.
     paint_coat: crate::message::PaintCoat,
     /// How the paint brush touches the model, its settings, and where the
@@ -2157,7 +2152,6 @@ impl Brokkr {
             show_cavity: false,
             export_detail: ExportDetail::default(),
             key_spec: brokkr_core::part::KeySpec::peg(),
-            paints: brokkr_core::paint::PaintTable::default(),
             paint_coat: crate::message::PaintCoat::default(),
             touch: paints::TouchState::default(),
             flat_paint: false,
@@ -3451,7 +3445,7 @@ impl Brokkr {
         // document's worth of scattered dirty bricks onto a single thread. At
         // the sizes M2 targets the parallel path is the difference between a
         // remesh at 70 percent of its budget and one at under 10.
-        if self.show_cavity || !self.paints.is_empty() {
+        if self.show_cavity || !self.doc.paints().is_empty() {
             self.doc.mesh_dirty_with_cavity(&self.dirty, &mut self.mesh_buffers[..count]);
         } else {
             self.doc.mesh_dirty(&self.dirty, &mut self.mesh_buffers[..count]);
@@ -6749,7 +6743,7 @@ impl Brokkr {
         brokkr_core::ProjectState {
             view: self.current_view(),
             keys: self.timeline.keys.clone(),
-            paints: self.paints.clone(),
+            paints: self.doc.paints().clone(),
         }
     }
 
@@ -7044,7 +7038,8 @@ impl Brokkr {
         self.status = format!("opened {}", path.display());
         self.apply_view(&state.view);
         self.timeline.adopt(state.keys);
-        self.paints = state.paints;
+        self.doc.replace_paints(state.paints);
+        self.forget_paints();
         self.paint_slot = self.paint_slot.clamp(1, self.last_paint_slot());
 
         // History belongs to the model that just went away.
@@ -8053,7 +8048,7 @@ impl Brokkr {
             shown: self.show_paint,
             flat: self.flat_paint,
             palette: self.palette.shader_palette(),
-            paints: brokkr_gpu::PaintBlock::from(&self.paints),
+            paints: brokkr_gpu::PaintBlock::from(self.doc.paints()),
         });
         // The gain is what makes the setting a size in millimetres: a feature
         // `w` voxels across reads a curvature of `4 / w`, so `w / 4` brings a
@@ -8918,6 +8913,9 @@ impl Brokkr {
             // banner down while leaving the geometry it refused missing.
             self.doc.mark_everything_dirty();
         }
+
+        // The step may have changed the paints. See `app/paints.rs`.
+        self.paints_stepped();
 
         self.history_stats = self.history.stats();
         self.unsaved = true;
@@ -10374,13 +10372,14 @@ impl Brokkr {
             // it looks like and there is nothing to remesh.
             Message::ShowCavityToggled => {
                 self.show_cavity = !self.show_cavity;
-                if self.paints.is_empty() {
+                if self.doc.paints().is_empty() {
                     self.doc.mark_everything_dirty();
                     self.remesh_dirty();
                 }
             }
             Message::PaintsStarted => self.start_paints(),
             Message::PaintAdded => self.add_paint(),
+            Message::PaintRemoved => self.remove_paint(),
             Message::PaintCoatChosen(coat) => self.paint_coat = coat,
             Message::PaintEdited(edit) => self.edit_paint(edit),
             Message::Studio(message) => return self.studio_changed(message),

@@ -78,6 +78,7 @@ use crate::body::{Document, Node, NodeId, NodeMeta};
 use crate::brick::{Brick, BrickCoord, StoredBrick};
 use crate::colour::ColourBrick;
 use crate::mask::{MaskBrick, MaskField};
+use crate::paint::PaintTable;
 use crate::volume::Volume;
 
 /// Bricks below which encoding a stroke's priors stays on one thread.
@@ -409,6 +410,21 @@ pub enum Change {
     /// folder, never instead of it, and the order between them is worked
     /// through in [`crate::body::Document::group`].
     Outline { before: Vec<NodeMeta>, after: Vec<NodeMeta> },
+    /// The document's paint table was changed. Applying puts this one back.
+    ///
+    /// The whole table and not the one paint that changed, as
+    /// [`Change::WholeMask`] is the whole mask: a table is at most 63 paints
+    /// of some eighty bytes, and one variant then covers a paint added, a
+    /// paint edited, a paint removed and the document's first use of paints
+    /// at all. Removing a paint also renumbers the voxels that named the
+    /// paints after it ([`crate::paint::remove`]), and those ride in the
+    /// same entry as ordinary [`Change::Bricks`], one for each body.
+    ///
+    /// `body` is the body that was active when the paints changed. A table
+    /// belongs to no body; this is here because every change names a node
+    /// for whoever reports on an undo, and that one is the least surprising
+    /// answer.
+    Paints { body: NodeId, paints: Box<PaintTable> },
 }
 
 impl Change {
@@ -445,6 +461,10 @@ impl Change {
                     .expect("a mask change names a body that is still in the document");
                 let previous = volume.replace_mask(*mask);
                 Change::WholeMask { body, mask: Box::new(previous) }
+            }
+            Change::Paints { body, paints } => {
+                let previous = doc.replace_paints(*paints);
+                Change::Paints { body, paints: Box::new(previous) }
             }
             Change::WholeVolume { body, volume } => {
                 // Always applicable, by the same invariant `Change::Bricks`
@@ -506,6 +526,7 @@ impl Change {
             Change::NodeRemoved { node, .. } => node.id,
             Change::WholeMask { body, .. } => *body,
             Change::WholeVolume { body, .. } => *body,
+            Change::Paints { body, .. } => *body,
             Change::Outline { before, after } => {
                 before.iter().zip(after).find(|(was, now)| was != now).map_or_else(
                     || before.first().map_or(NodeId(0), |meta| meta.id),
@@ -526,6 +547,7 @@ impl Change {
             Change::Outline { before, after } => {
                 before.iter().chain(after).map(NodeMeta::bytes).sum()
             }
+            Change::Paints { paints, .. } => paints.bytes(),
         }
     }
 
@@ -653,7 +675,12 @@ impl Entry {
                 Change::WholeMask { body, .. } => *body,
                 Change::WholeVolume { body, .. } => *body,
                 Change::NodeAdded { id, .. } => *id,
-                Change::NodeRemoved { .. } | Change::Outline { .. } => return None,
+                // The paint rack is on the panel whatever any eye says, as
+                // the outline is. The renumbered voxels that ride with a
+                // removed paint are `Bricks`, and are gated as bricks are.
+                Change::NodeRemoved { .. } | Change::Outline { .. } | Change::Paints { .. } => {
+                    return None;
+                }
             };
             // A node that is not in the document, or a mask too short to cover
             // it, counts as visible: refusing on a missing answer would be the

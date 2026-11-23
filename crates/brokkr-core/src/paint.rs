@@ -65,6 +65,7 @@
 
 pub mod bake;
 pub mod fill;
+pub mod remove;
 pub mod touch;
 
 /// The most paints a document can hold, not counting "unpainted".

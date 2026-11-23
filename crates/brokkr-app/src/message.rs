@@ -1035,6 +1035,9 @@ pub enum Message {
     PaintsStarted,
     /// Add one more paint to the rack and take it up.
     PaintAdded,
+    /// Take the paint in hand out of the document: off the rack, and off
+    /// every body it is on. One undo step.
+    PaintRemoved,
     /// Which of the chosen paint's three coats the editor shows. View state.
     PaintCoatChosen(PaintCoat),
     /// How the paint brush touches the model: loaded, nearly dry, or a

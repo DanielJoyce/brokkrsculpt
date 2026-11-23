@@ -386,6 +386,7 @@ true of it too, and what it adds is this.
   highlight that catches the edges. Put on *Loaded*, *Drybrush* or *Sponge*,
   or with *Fill*, which stops at creases and edges. Each paint names the
   filament it prints in, so a painted model is also a multi-colour print.
+  Everything the rack does is an undo step, removing a paint included.
 - **Studio brushes.** *Crease*, a *Stamp* that presses one of six images or
   any picture into the surface with one drag, or lays a row of them along
   a stroke (rivets, stitches, scales), a *Lazy* stroke for long clean
