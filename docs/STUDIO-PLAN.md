@@ -21,7 +21,7 @@ was built and what was measured.
 | S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). A textured tip and the gesture warps remain | A STUDIO block under the brush: *Crease*, *Stamp* with six images or any picture, one at a time or in a row *Along the stroke*, *Lazy*, *Size from pressure*; and PRESETS, a brush kept under a name |
 | S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush and form smooth remain. Posing is not planned (section 9.3) | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
 | S5 Unwrap and bake | **Done but for the other maps**, 2026-11-23 (sections 10.4 and 10.5): unwrap, the base colour bake, OBJ with a picture, and GLB. Normal, occlusion and finish maps remain | Export as *OBJ+PNG* or *GLB*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
-| P Painting engine | **Usable**, 2026-11-23 (section 15): the storage, the view and the brush. The exports follow, and until they do painted colour is on screen and in the project file and not in what is exported | The paint brush lays a colour: *Paint*, *Glaze* or *Erase*, put on *Loaded*, as a *Wash*, with a *Drybrush* or a *Sponge*, at any opacity, with a soft edge. *Pick from model* takes a colour back off it |
+| P Painting engine | **Usable**, 2026-11-23 (section 15): the storage, the view and the brush. Painted colour is on screen, in the project file and in every export that carries colour | The paint brush lays a colour: *Paint*, *Glaze* or *Erase*, put on *Loaded*, as a *Wash*, with a *Drybrush* or a *Sponge*, at any opacity, with a soft edge. *Pick from model* takes a colour back off it |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
 repository, or the README's measured tables) or explicitly labelled
@@ -2205,9 +2205,10 @@ necessity, because the number between slot 2 and slot 3 means nothing.
 
 The bake of section 10.2 samples the paint field at each texel and each
 vertex, trilinearly, so a PLY, an OBJ with a picture and a GLB all carry
-what was painted. For a 3MF, which can only name a filament, each painted
-facet takes the nearest of the filaments in the rack, and the export says how
-far off the worst of them was.
+what was painted. For a 3MF, which can only name a filament, each vertex
+that is at least half covered takes the nearest of the loaded filaments.
+(This said the export would also report how far off the worst of them was.
+It does not, and nobody has missed it yet.)
 
 ### 15.7 What becomes of the recipes
 
@@ -2239,8 +2240,8 @@ palette of colours to pick from, and the list of filaments for a 3MF.
 | P1 | The storage: the field, every edit that must carry it, undo, the file | **Built**, 2026-11-23 (below) |
 | P2 | The view: paint on the vertices, composited in the shader | **Built**, 2026-11-23 (below) |
 | P3 | The brush: the locked stroke, the modes, the colour picker, the eyedropper | **Built**, 2026-11-23 (below), but for a fill of colour |
-| P4 | The exports: bake, PLY, OBJ, GLB, and the nearest filament for 3MF | Next |
-| P5 | Retire the recipes: convert old documents, remove the editor | |
+| P4 | The exports: bake, PLY, OBJ, GLB, and the nearest filament for 3MF | **Built**, 2026-11-23 (below) |
+| P5 | Retire the recipes: convert old documents, remove the editor | Next, with a fill of colour |
 
 #### Built, 2026-11-23 (P1): the storage
 
@@ -2556,3 +2557,45 @@ meant to keep to, and that is owed.
 **Not here yet**: a fill of colour, which the plan owes; and the exports,
 which are P4. Until P4 the README says in bold that painted colour is not
 in what is exported.
+
+#### Built, 2026-11-23 (P4): the exports
+
+Painted colour is in every file that carries colour. Three additions to
+`paint/bake.rs` and one line in the application, because every export
+already took its colours from the one bake.
+
+- `PaintField::sample`: the paint at a point between voxels, blended from
+  the eight round it, as light already multiplied by coverage, for the
+  shader's reason: bare is stored as black, and a blend of straight
+  colours across the edge of a patch would darken the paint on its way
+  out.
+- `Bake::over`: what a slot comes to, with that laid over it by its
+  coverage. The shader's compositing line again. `surface_colour` (a
+  texel) and `vertex_colours` (a PLY) both end in it, so an *OBJ+PNG*, a
+  *GLB* and a PLY carry the paint. A body with no paint pays nothing.
+- `Bake::printed_slots`: for a 3MF. A vertex at least half covered prints
+  in the loaded filament nearest the colour it was painted, by the
+  "redmean" distance the paints already use, and one less covered prints
+  as its slot says. The nearest voxel's paint and not a blend, so that the
+  rim of a patch is not sent to whichever filament is nearest the colour
+  between. A glaze or a thin coat does not change what prints: a machine
+  with four spools cannot print a tint.
+
+**A hazard found on the way, and closed with a contract.** A test here laid
+a stroke at 0.3 opacity and found vertices more than half covered. It had
+not opened an undo stroke, and what a voxel held before the paint stroke is
+read from the undo record: with none open there is no "before", and each
+stamp laid over the last one's result. The application always opens one.
+Nothing said a caller had to. `PaintStroke::stamp_symmetric` now requires
+it (`debug_requires(volume.is_recording())`), a debug build refuses a stamp
+laid outside one, and thirty-odd stamps in the tests were bracketed to
+match.
+
+**Held by**: contracts on the sample (a coverage in its range, a colour no
+brighter than its coverage); two properties (asked at a voxel a sample is
+the voxel, and between voxels its coverage is between theirs); a core test
+that strokes one face of a cube and judges every vertex of the export by
+how far it is from the stroke, for the colours and for the filaments, over
+clay and over a slot, at full opacity and at 0.3; and an integration test
+that paints in the application, exports a PLY, an OBJ with its picture and
+a 3MF, and reads the colour back out of each file.

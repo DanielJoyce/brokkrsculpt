@@ -640,6 +640,110 @@ mod tests {
         assert_eq!(app.touch.kind, PaintTouch::Sponge, "a touch both have was dropped");
     }
 
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let directory =
+            std::env::temp_dir().join(format!("brokkr-colour-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("scratch directory");
+        directory
+    }
+
+    /// The colours of a PLY written by the application, read off its header
+    /// and its vertex records: 27 bytes each, the last three the colour.
+    fn ply_colours(bytes: &[u8]) -> Vec<[u8; 3]> {
+        let end = b"end_header\n";
+        let body =
+            bytes.windows(end.len()).position(|w| w == end).expect("no end_header") + end.len();
+        let header = std::str::from_utf8(&bytes[..body]).expect("the header is text");
+        let vertices: usize = header
+            .lines()
+            .find_map(|line| line.strip_prefix("element vertex "))
+            .expect("no vertex element")
+            .parse()
+            .expect("a count");
+        (0..vertices)
+            .map(|index| {
+                let at = body + index * 27 + 24;
+                [bytes[at], bytes[at + 1], bytes[at + 2]]
+            })
+            .collect()
+    }
+
+    /// What was painted is in what is exported: a stroke in the colour of
+    /// the machine's second filament, written as a PLY, as an OBJ with a
+    /// picture, and as a 3MF.
+    #[test]
+    fn painted_colour_is_in_the_files_that_carry_colour() {
+        use crate::message::ExportFormat;
+        let directory = scratch("exports");
+        let mut app = app();
+        let swatch = app.palette.slots[1].swatch().into_rgba8();
+        let colour = [swatch[0], swatch[1], swatch[2]];
+        let clay = crate::app::paints::UNPAINTED;
+        assert_ne!(colour, clay, "the fixture's filament is the clay's colour");
+        set(&mut app, PaintingMessage::Colour(colour));
+        // Wide, so that the middle of the stroke is all of the colour.
+        update(&mut app, Message::FalloffChanged(brokkr_core::FalloffCurve::Wide));
+        stroke(&mut app);
+
+        // A colour for every vertex: the paint, the clay, and the stroke's
+        // soft edge between them, which is neither.
+        let path = directory.join("painted.ply");
+        app.export(ExportFormat::Ply, &path);
+        assert!(app.status.starts_with("exported"), "{}", app.status);
+        let colours = ply_colours(&std::fs::read(&path).expect("the file should be there"));
+        // The colour to within a few levels: all of it is only where every
+        // voxel round a vertex took all the brush had.
+        let near = |one: &[u8], other: [u8; 3]| {
+            (0..3).all(|c| (i32::from(one[c]) - i32::from(other[c])).abs() <= 4)
+        };
+        let painted = colours.iter().filter(|c| near(&c[..], colour)).count();
+        let bare = colours.iter().filter(|c| **c == clay).count();
+        assert!(painted > 50, "only {painted} vertices of the PLY are the colour painted");
+        assert!(bare > painted, "the unpainted ball is not clay: {bare} of {}", colours.len());
+        assert!(painted + bare < colours.len(), "the stroke has no soft edge in the file");
+
+        // A picture: texels of the colour, and more of clay.
+        let path = directory.join("painted.obj");
+        app.export(ExportFormat::Textured, &path);
+        assert!(app.status.starts_with("exported"), "{}", app.status);
+        let picture = image::open(directory.join("painted_1.png"))
+            .expect("the picture beside the OBJ")
+            .into_rgba8();
+        let count =
+            |wanted: [u8; 3]| picture.pixels().filter(|pixel| near(&pixel.0[..3], wanted)).count();
+        assert!(count(colour) > 300, "only {} texels are the colour painted", count(colour));
+        assert!(count(clay) > count(colour));
+
+        // A filament for every triangle: the second, where the stroke is,
+        // and no other anywhere.
+        let path = directory.join("painted.3mf");
+        app.export(ExportFormat::ThreeMf, &path);
+        assert!(app.status.starts_with("exported"), "{}", app.status);
+        let written =
+            String::from_utf8_lossy(&std::fs::read(&path).expect("the file should be there"))
+                .into_owned();
+        // The 3MF's `paint_color` code for each of the first four slots.
+        let triangles = |filament: usize| {
+            let code = ["4", "8", "0C", "1C"][filament - 1];
+            written.matches(&format!("paint_color=\"{code}\"")).count()
+        };
+        assert!(triangles(2) > 100, "only {} triangles print in the filament", triangles(2));
+        for other in [1, 3, 4] {
+            assert_eq!(triangles(other), 0, "filament {other} prints something");
+        }
+
+        // And a body nobody painted is exported as it always was.
+        let mut plain = self::app();
+        let path = directory.join("plain.3mf");
+        plain.export(ExportFormat::ThreeMf, &path);
+        let written =
+            String::from_utf8_lossy(&std::fs::read(&path).expect("the file should be there"))
+                .into_owned();
+        assert!(!written.contains("paint_color"), "an unpainted body names a filament");
+
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
     /// What arrives from the panel is kept to what the brush can be, and
     /// the panel can be drawn for every state of it.
     #[test]

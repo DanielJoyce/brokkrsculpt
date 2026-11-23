@@ -394,9 +394,10 @@ true of it too, and what it adds is this.
   catches only what stands up; or with a *Sponge*. A stroke is one coat
   however often it crosses itself, and a second stroke is a second coat.
   *Pick from model* takes a colour back off the surface. The paint is
-  saved with the project and follows the model through every edit. **It is
-  not in the exports yet**: those still write the filaments and paints
-  below, and are the next thing to be done.
+  saved with the project, follows the model through every edit, and is in
+  every export that carries colour: a colour a vertex in a PLY, the
+  texture of an *OBJ+PNG* or a *GLB*, and in a 3MF the loaded filament
+  nearest the colour, wherever the paint covers at least half.
 - **Filaments and paints.** Behind *Filaments* on the paint brush is
   painting by filament slot, as upstream has it, and *Mix paints*, which
   swaps the slots for a rack of paints, each with a wash that pools in the

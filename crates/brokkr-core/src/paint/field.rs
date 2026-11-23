@@ -190,6 +190,51 @@ impl PaintField {
         }
     }
 
+    /// The paint at a point between voxels, `at` in voxels: its colour as
+    /// linear light ALREADY MULTIPLIED by its coverage, and the coverage,
+    /// each blended from the eight voxels round the point.
+    ///
+    /// Multiplied first for the reason the shader multiplies before it
+    /// interpolates: bare is stored as black, and a blend of straight
+    /// colours across the edge of a painted patch would darken the paint
+    /// on its way out. This is what a file is written from, where a
+    /// vertex or a texel is not at a voxel; the mesh on screen reads the
+    /// voxel of each vertex's cell and lets the triangles do the blending.
+    #[debug_ensures((0.0..=1.0).contains(&ret[3]), "a coverage")]
+    #[debug_ensures(
+        ret[..3].iter().all(|channel| (0.0..=ret[3] + 1e-5).contains(channel)),
+        "a colour no brighter than its coverage"
+    )]
+    pub fn sample(&self, at: Vec3) -> [f32; 4] {
+        if self.bricks.is_empty() {
+            return [0.0; 4];
+        }
+        let low = at.floor();
+        let share = at - low;
+        let low = low.as_ivec3();
+        let mut sum = [0.0_f32; 4];
+        for corner in 0..8 {
+            let step = IVec3::new(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1);
+            let weight = [share.x, share.y, share.z]
+                .into_iter()
+                .zip(step.to_array())
+                .map(|(share, step)| if step == 1 { share } else { 1.0 - share })
+                .product::<f32>();
+            if weight <= 0.0 {
+                continue;
+            }
+            let [r, g, b, a] = self.at(low + step);
+            let coverage = f32::from(a) / 255.0 * weight;
+            let colour = crate::paint::linear([r, g, b]);
+            for channel in 0..3 {
+                sum[channel] += colour[channel] * coverage;
+            }
+            sum[3] += coverage;
+        }
+        sum[3] = sum[3].min(1.0);
+        sum
+    }
+
     pub(crate) fn slab(&self, coord: BrickCoord) -> PaintSlab<'_> {
         if self.bricks.is_empty() {
             return PaintSlab::Bare;
