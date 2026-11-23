@@ -16,7 +16,7 @@ was built and what was measured.
 | S0 Groundwork | **Done**, 2026-11-22 (sections 5 and 6) | *show creases* in the viewport. The rest is foundations |
 | S1a Decimated export | **Done**, 2026-11-22 (section 7.1) | A *Detail* choice on export: Full, Fine, Standard, Draft |
 | S1b Parting with keys | **Done but for a preview**, 2026-11-22 (section 7.2) | Cut tool with **alt** held: the body becomes two, with pegs and sockets |
-| S2 Mini painting | **Done but for broad occlusion and zenithal**, 2026-11-22 (section 8), which wait for S4 | Paint brush: *Mix paints*, then a rack of paints, each with a wash and an edge highlight; *Loaded*, *Drybrush*, *Sponge* and *Fill*; a flat view; export as PLY in colour, and 3MF by the filament each paint prints in |
+| S2 Mini painting | **Done but for broad occlusion and zenithal**, 2026-11-23 (section 8), which wait for S4 | Paint brush: *Mix paints*, then a rack of paints, each with a wash and an edge highlight; *Loaded*, *Drybrush*, *Sponge* and *Fill*; a flat view; export as PLY in colour, and 3MF by the filament each paint prints in |
 | S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). A textured tip and the gesture warps remain | A STUDIO block under the brush: *Crease*, *Stamp* with six images or any picture, one at a time or in a row *Along the stroke*, *Lazy*, *Size from pressure*; and PRESETS, a brush kept under a name |
 | S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush, form smooth and posing remain | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
 | S5 Unwrap and bake | **Done but for the other maps**, 2026-11-23 (sections 10.4 and 10.5): unwrap, the base colour bake, OBJ with a picture, and GLB. Normal, occlusion and finish maps remain | Export as *OBJ+PNG* or *GLB*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
@@ -1130,9 +1130,59 @@ undercoat).
 - **No pigment flow simulation.** The wash is a transfer function of
   geometry, not a fluid. Gravity pooling is a possible extra term, not a
   solver.
-- **Editing a paint is not in the undo history yet**, and a paint cannot be
-  removed. Both are recorded in `brokkr-app/src/app/paints.rs` with the
-  reason.
+- ~~Editing a paint is not in the undo history yet, and a paint cannot be
+  removed.~~ Both built on 2026-11-23: see S2.5 below.
+
+#### Built, 2026-11-23 (S2.5): paints in the history, and a paint removed
+
+A **Remove** button beside *Add a paint*, and ctrl+Z for everything the
+rack does: the document's first paints, a paint added, a paint edited, a
+paint removed.
+
+**The paint table moved into the document** (`Document::paints`), out of
+the application, and the history gained one change for it
+(`Change::Paints`, the whole table, as `Change::WholeMask` is the whole
+mask). It was the application's because that was the smallest hook into
+upstream's types when paints began. Removing a paint is what made that
+wrong: a removal changes the table and the voxels together, and they have
+to come back together.
+
+**Why removing a paint touches the model.** A voxel names its paint by
+number. Take paint 2 out of a table and paint 3 is paint 2, so every voxel
+that said 3 has to say 2, on every body, hidden ones too, or the model
+changes colour from that paint on. `brokkr_core::paint::remove` does both
+halves: the voxels of the paint removed are bare, the voxels of every
+later paint are a number down, and a number past the end of the table,
+which is a filament slot and never was a paint, is left alone. The table
+and each body's renumbered bricks are one undo entry.
+
+Two things were tried on paper and dropped before any code:
+
+- **Leaving the number alone and marking the paint dead.** No voxel
+  changes, and it sounded cheap. But a slot with no paint already means "a
+  filament slot" to the shader, the bake and the 3MF writer, so a dead
+  paint would have been a third thing for each of the three to know, a new
+  byte in the file, and a number that could not safely be given to the
+  next paint added while any voxel still held it.
+- **Undo in the application, beside the history.** The history does not
+  say which entry is on top, so the application would have had to guess
+  when its removal had been undone from a count of entries, and a count
+  moves for other reasons.
+
+**A slider is one step.** A slider sends a message for every pixel it
+moves, and a drag is one undo step and not two hundred. An edit is merged
+into the entry before it when that entry was the same setting of the same
+coat of the same paint and nothing has been pushed, undone or dropped
+since. What is chosen and not dragged (a swatch, a finish, a kind of wash)
+is a step each time.
+
+**Limits.** The renumbering goes through the recorded way into the colour
+field, which opens only the voxels a brush could have painted. A voxel
+that was painted and has since been buried deeper than the band keeps its
+old number: nothing draws it and no export reads it, but if the surface is
+carved back down to it, it shows as whichever paint has that number then.
+And undoing a removal is refused while a body it touched is hidden, as
+undoing a stroke on that body would be.
 
 #### Built, 2026-11-22 (S2.4): fill, coat, and the flat view
 
