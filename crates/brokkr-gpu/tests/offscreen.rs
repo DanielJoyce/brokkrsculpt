@@ -3162,3 +3162,181 @@ fn overhangs_are_tinted_where_the_rule_says_and_nowhere_else() {
     assert!(over_raised_tinted * 100 >= over_raised * 98, "{over_raised_tinted} of {over_raised}");
     assert_eq!(clear_raised_tinted, 0, "{clear_raised_tinted} of {clear_raised} under the plate");
 }
+
+/// The body's own paint is drawn over what is under it, by its coverage:
+/// a full coat is the paint, half a coat is half way to it in linear light,
+/// over clay or over a slot's recipe alike. Drawn flat it is the colour that
+/// was painted, drawn lit it is lit as a filament of that colour is, and with
+/// the paint view off it is not drawn.
+#[test]
+fn a_bodys_paint_is_drawn_over_what_is_under_it_by_its_coverage() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the paint coverage test");
+        return;
+    };
+    use brokkr_core::paint::{Paint, PaintTable, linear, srgb};
+
+    const UNDER: [u8; 3] = [40, 90, 200];
+    const COAT: [u8; 3] = [150, 120, 90];
+    let distance = MODEL_RADIUS * 3.0;
+    // The undercoat test's camera: the plane x = 0 crosses the picture.
+    let eye = Vec3::new(0.5, -0.25, 1.0).normalize() * distance;
+    let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y);
+    let projection = glam::camera::rh::proj::directx::perspective(
+        45f32.to_radians(),
+        WIDTH as f32 / HEIGHT as f32,
+        0.1,
+        distance * 4.0,
+    );
+    let view_projection = projection * view;
+    harness.view_projection = view_projection;
+
+    let reach = (MODEL_RADIUS / VOXEL_SIZE) as i32 + 4;
+    let ball = |slot: u8, paint: &dyn Fn(Vec3) -> [u8; 4]| {
+        let mut volume = Volume::new(VOXEL_SIZE);
+        volume.seed_sphere(Vec3::ZERO, MODEL_RADIUS);
+        volume.edit_colour(IVec3::splat(-reach), IVec3::splat(reach), |_, _, _, _| slot);
+        volume.edit_paint(IVec3::splat(-reach), IVec3::splat(reach), |_, at, _, _| paint(at));
+        volume
+    };
+    let drawn = |mut volume: Volume, shown: u32, table: &PaintTable, palette| {
+        let mut renderer = SculptRenderer::new(&harness.device, &harness.queue, TARGET_FORMAT);
+        renderer.resize(&harness.device, WIDTH, HEIGHT);
+        upload_all(&mut renderer, &harness.device, &harness.queue, &mut volume);
+        renderer.write_uniforms(
+            &harness.queue,
+            &Uniforms {
+                view_projection: view_projection.to_cols_array_2d(),
+                view: view.to_cols_array_2d(),
+                paint_shown: shown,
+                paints: brokkr_gpu::PaintBlock::from(table),
+                palette,
+                ..uniforms(distance)
+            },
+        );
+        harness.frame(&renderer)
+    };
+    // Every pixel that shows the ball and is not on its silhouette, with the
+    // point of the ball it shows.
+    let pixels = |frame: &[u8]| -> Vec<([u8; 3], Vec3)> {
+        let mut out = Vec::new();
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let Some(point) = on_the_ball(view_projection, x, y) else {
+                    continue;
+                };
+                if point.normalize().dot((eye - point).normalize()) < 0.25 {
+                    continue;
+                }
+                let at = ((y * WIDTH + x) * 4) as usize;
+                out.push(([frame[at], frame[at + 1], frame[at + 2]], point));
+            }
+        }
+        out
+    };
+    let close = |pixel: [u8; 3], wanted: [u8; 3], by: i32| {
+        (0..3).all(|channel| (i32::from(pixel[channel]) - i32::from(wanted[channel])).abs() <= by)
+    };
+    let none = PaintTable::default();
+    let mut blue = PaintTable::default();
+    blue.add(Paint::flat("blue", UNDER));
+    let clay = uniforms(distance).palette;
+    let coat = |coverage: u8| [COAT[0], COAT[1], COAT[2], coverage];
+
+    // A full coat over clay, flat: the colour that was painted.
+    let full = drawn(ball(0, &|_| coat(255)), 2, &none, clay);
+    dump("paint-full-flat", &full);
+    let seen = pixels(&full);
+    assert!(seen.len() > 20_000, "only {} pixels of the ball to judge by", seen.len());
+    for (pixel, point) in &seen {
+        assert!(close(*pixel, COAT, 4), "a full coat drew {pixel:?} at {point}, not {COAT:?}");
+    }
+
+    // A dark one, where the engine's curve and a plain power of 2.2 are
+    // eight levels apart.
+    const DARK: [u8; 3] = [20, 24, 16];
+    let dark = drawn(ball(0, &|_| [DARK[0], DARK[1], DARK[2], 255]), 2, &none, clay);
+    for (pixel, point) in pixels(&dark) {
+        assert!(close(pixel, DARK, 2), "a dark coat drew {pixel:?} at {point}, not {DARK:?}");
+    }
+
+    // The paint view off: the clay, exactly as a ball never painted.
+    let hidden = drawn(ball(0, &|_| coat(255)), 0, &none, clay);
+    let bare = drawn(ball(0, &|_| [0; 4]), 0, &none, clay);
+    assert!(hidden == bare, "paint was drawn with the paint view off");
+    assert!(full != bare);
+
+    // Half a coat over a slot's recipe, flat: half way between the two in
+    // linear light, which is neither and is not the average of the bytes.
+    let half = 128;
+    let amount = f32::from(half) / 255.0;
+    let (under, over) = (linear(UNDER), linear(COAT));
+    let wanted = srgb(std::array::from_fn(|c| under[c] * (1.0 - amount) + over[c] * amount));
+    let averaged: [u8; 3] =
+        std::array::from_fn(|c| ((u16::from(UNDER[c]) + u16::from(COAT[c])) / 2) as u8);
+    assert!(!close(wanted, UNDER, 20) && !close(wanted, COAT, 20) && !close(wanted, averaged, 8));
+    let thin = drawn(ball(1, &|_| coat(half)), 2, &blue, clay);
+    dump("paint-half-flat", &thin);
+    for (pixel, point) in pixels(&thin) {
+        assert!(close(pixel, wanted, 4), "half a coat drew {pixel:?} at {point}, not {wanted:?}");
+    }
+
+    // Paint of the recipe's own colour on one side of the ball only, flat:
+    // one colour all over. The triangles that run from paint to bare fade
+    // from the paint to what is under it, and never through a darker paint.
+    let mut same = PaintTable::default();
+    same.add(Paint::flat("the coat", COAT));
+    let edge = drawn(ball(1, &|at| if at.x < 0.0 { coat(255) } else { [0; 4] }), 2, &same, clay);
+    dump("paint-edge-flat", &edge);
+    let mut on_the_edge = 0;
+    for (pixel, point) in pixels(&edge) {
+        assert!(close(pixel, COAT, 4), "the edge of the paint drew {pixel:?} at {point}");
+        on_the_edge += usize::from(point.x.abs() < VOXEL_SIZE);
+    }
+    assert!(on_the_edge > 150, "only {on_the_edge} pixels of the paint's edge were on screen");
+
+    // Lit: as a filament of the same colour is.
+    let mut palette = clay;
+    let filament = linear(COAT);
+    palette[1] = [filament[0], filament[1], filament[2], 1.0];
+    let lit = drawn(ball(0, &|_| coat(255)), 1, &none, clay);
+    let as_filament = drawn(ball(1, &|_| [0; 4]), 1, &none, palette);
+    dump("paint-full-lit", &lit);
+    let mut shaded = 0;
+    for ((pixel, point), (other, _)) in pixels(&lit).into_iter().zip(pixels(&as_filament)) {
+        assert!(
+            close(pixel, other, 2),
+            "lit paint is {pixel:?} and the filament {other:?} at {point}"
+        );
+        shaded += usize::from(!close(pixel, COAT, 12));
+    }
+    // Control: lit is not flat. Most of the ball is some other brightness
+    // than the paint's own.
+    assert!(shaded > 10_000, "only {shaded} lit pixels differ from the flat colour");
+    // And lit by the light on the clay, whatever is between the two: a full
+    // coat over a slot's blue is the same picture as one over clay.
+    let over_blue = drawn(ball(1, &|_| coat(255)), 1, &blue, clay);
+    for ((pixel, point), (other, _)) in pixels(&over_blue).into_iter().zip(pixels(&lit)) {
+        assert!(close(pixel, other, 2), "over a slot {pixel:?}, over clay {other:?}, at {point}");
+    }
+
+    // And in a thumbnail whatever the viewport's toggle says, as a slot is:
+    // paint is what a body is, and the toggle is how the viewport shows it.
+    const CELL: u32 = 2;
+    const BODY: NodeId = NodeId(1);
+    let thumbnail = |mut volume: Volume| {
+        let mut renderer = SculptRenderer::new(&harness.device, &harness.queue, TARGET_FORMAT);
+        renderer.resize(&harness.device, WIDTH, HEIGHT);
+        let bounds = volume.world_bounds().expect("a seeded sphere has bricks");
+        upload_body(&mut renderer, &harness.device, &harness.queue, &mut volume, BODY);
+        renderer.write_uniforms(&harness.queue, &Uniforms { paint_shown: 0, ..uniforms(distance) });
+        renderer.render_thumbnail(&harness.device, &harness.queue, CELL, BODY, bounds);
+        harness.cell(&renderer, CELL)
+    };
+    let bare_warmest =
+        warmth(&thumbnail(ball(0, &|_| [0; 4]))).into_iter().max().expect("a cell has texels");
+    let painted = thumbnail(ball(0, &|_| [220, 20, 20, 255]));
+    let red = warmth(&painted).into_iter().filter(|w| *w > bare_warmest).count();
+    let total = (THUMBNAIL_SIZE * THUMBNAIL_SIZE) as usize;
+    assert!(red * 8 > total, "only {red} of {total} thumbnail texels show the paint");
+}

@@ -431,12 +431,13 @@ impl SculptRenderer {
                     },
                     // The pool's third buffer, at the same block offsets as the
                     // first. `Unorm8x4` because a vertex buffer's stride must be
-                    // a multiple of four, so one byte would cost four anyway;
-                    // byte 0 is the mask and the rest are reserved for colour.
+                    // a multiple of four, so one byte would cost four anyway.
+                    // The mask, the slot and the cavity, and then the paint:
+                    // see `mesh_pool::ATTRIBUTE_BYTES`.
                     wgpu::VertexBufferLayout {
-                        array_stride: 4,
+                        array_stride: crate::mesh_pool::ATTRIBUTE_BYTES,
                         step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![2 => Unorm8x4],
+                        attributes: &wgpu::vertex_attr_array![2 => Unorm8x4, 3 => Unorm8x4],
                     },
                 ],
             },
@@ -1001,5 +1002,36 @@ mod tests {
         assert_eq!(shader_decode(CAVITY_ABSENT), 0.0);
         assert_eq!(shader_decode(CAVITY_FLAT), 0.0);
         assert_eq!(CAVITY_FLAT, 128, "the shader hardcodes 128 as flat");
+    }
+
+    /// The shader turns a vertex's paint into light by the engine's own
+    /// curve, toe and all. The toe cannot be held by a picture: at eight
+    /// bits it is within a level of the curve carried on down. So it is
+    /// held here, the way the cavity's decode is: the shader's lines, and
+    /// those lines transcribed and run against the engine for every byte.
+    #[test]
+    fn the_shader_decodes_srgb_the_way_the_engine_does() {
+        let shader = include_str!("shaders/sculpt.wgsl");
+        for line in [
+            "let low = c / 12.92;",
+            "let high = pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));",
+            "return select(high, low, c <= vec3<f32>(0.04045));",
+            "out.paint = vec4<f32>(srgb_to_linear(paint.rgb) * paint.a, paint.a);",
+        ] {
+            assert!(shader.contains(line), "sculpt.wgsl no longer has the line: {line}");
+        }
+        let shader_decode = |byte: u8| {
+            let c = f32::from(byte) / 255.0;
+            let low = c / 12.92;
+            let high = ((c + 0.055) / 1.055).powf(2.4);
+            if c <= 0.04045 { low } else { high }
+        };
+        let mut toe = 0;
+        for byte in 0..=u8::MAX {
+            let engine = brokkr_core::paint::linear([byte; 3])[0];
+            assert!((shader_decode(byte) - engine).abs() < 1e-6, "byte {byte}");
+            toe += usize::from(f32::from(byte) / 255.0 <= 0.04045);
+        }
+        assert_eq!(toe, 11, "the toe is bytes 0 to 10");
     }
 }

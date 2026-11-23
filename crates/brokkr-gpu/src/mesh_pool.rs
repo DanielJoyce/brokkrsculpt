@@ -46,20 +46,25 @@ pub const INDEX_CAPACITY: u64 = 66_000_000;
 /// byte 2 reserved for an imported slot, byte 3 spare -- which is why paint
 /// cost the pool no capacity at all when it landed.
 ///
-/// A buffer of its own rather than three more bytes on [`Vertex`], so `Vertex`
-/// stays 24 bytes and [`VERTEX_CAPACITY`] does not move. 11,000,000 x 4 =
-/// 44,000,000 B per pair, 16.4% of [`MAX_BUFFER_BYTES`].
-const ATTRIBUTE_BYTES: u64 = 4;
+/// **And four more for the body's paint**: a colour and a coverage, as
+/// `brokkr_core::paint::field` stores them. A second `Unorm8x4` in the same
+/// buffer and not a fourth buffer, because the two are written by the one
+/// upload from the one staging vector and can never be out of step.
+///
+/// A buffer of its own rather than more bytes on [`Vertex`], so `Vertex`
+/// stays 24 bytes and [`VERTEX_CAPACITY`] does not move. 11,000,000 x 8 =
+/// 88,000,000 B per pair, 32.8% of [`MAX_BUFFER_BYTES`].
+pub(crate) const ATTRIBUTE_BYTES: u64 = 8;
 
 /// How many buffer pairs the pool may grow to.
 ///
 /// Buffers are created **on demand**, so a small model pays for one pair
-/// (572 MB) and only a model that needs more allocates more. Eight pairs is
-/// 4.58 GB of VRAM at full stretch, which is the point at which refusing is
+/// (616 MB) and only a model that needs more allocates more. Eight pairs is
+/// 4.93 GB of VRAM at full stretch, which is the point at which refusing is
 /// kinder than trying on any card this application is likely to meet.
 ///
 /// A "pair" is three buffers since the mask landed -- 264 MB of vertices,
-/// 264 MB of indices and 44 MB of attributes -- and the name is kept because
+/// 264 MB of indices and 88 MB of attributes -- and the name is kept because
 /// what it means is "the set of buffers one brick's mesh must land in
 /// together".
 ///
@@ -101,7 +106,7 @@ const _: () = assert!(
 // on `Vertex` would be 28, which is 308 MB at this capacity -- over the ceiling
 // -- so `VERTEX_CAPACITY` would have to come DOWN to about 9.5 million, and
 // every model between there and 11 million would start needing a second pair.
-// A third buffer costs 44 MB and moves nothing.
+// A third buffer costs 88 MB and moves nothing.
 const _: () = assert!(
     size_of::<Vertex>() == 24,
     "Vertex must stay 24 bytes: per-vertex data belongs in the attribute buffer"
@@ -260,8 +265,8 @@ impl BlockAllocator {
 struct BufferPair {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
-    /// One `Unorm8x4` per vertex: the mask in byte 0, and three bytes reserved.
-    /// See [`ATTRIBUTE_BYTES`].
+    /// Two `Unorm8x4` per vertex: the mask, the slot and the cavity, and
+    /// then the paint. See [`ATTRIBUTE_BYTES`].
     attributes: wgpu::Buffer,
     vertex_allocator: BlockAllocator,
     index_allocator: BlockAllocator,
@@ -270,7 +275,7 @@ struct BufferPair {
 impl BufferPair {
     /// The capacities are passed in rather than read from [`VERTEX_CAPACITY`]
     /// and [`INDEX_CAPACITY`] so that a test can build a pool small enough to
-    /// FILL. The real one is 4.58 GB at full stretch, which is not a thing a
+    /// FILL. The real one is 4.93 GB at full stretch, which is not a thing a
     /// test can exhaust, and what happens at the ceiling is exactly the
     /// behaviour worth pinning.
     fn new(device: &wgpu::Device, index: u16, vertices: u64, indices: u64) -> Self {
@@ -494,7 +499,7 @@ impl MeshPool {
     /// real capacities, and the tests with capacities small enough that the
     /// pool can actually be run out of. Overflow behaviour is the part of this
     /// file that has put holes in a real model, and a ceiling of
-    /// [`TOTAL_VERTEX_CAPACITY`] vertices across 4.58 GB of buffers is not one
+    /// [`TOTAL_VERTEX_CAPACITY`] vertices across 4.93 GB of buffers is not one
     /// a test can reach.
     fn with_capacities(device: &wgpu::Device, vertices: u64, indices: u64) -> Self {
         Self {
@@ -717,6 +722,10 @@ impl MeshPool {
             mesh.cavity.is_empty() || mesh.cavity.len() == mesh.vertices.len(),
             "cavity must be one byte per vertex or absent entirely"
         );
+        debug_assert!(
+            mesh.paint.is_empty() || mesh.paint.len() == mesh.vertices.len(),
+            "paint must be four bytes per vertex or absent entirely"
+        );
         // Widened into the kept buffer before anything else is borrowed, so
         // that the three writes below can share `&self`. See `staging`.
         self.staging.clear();
@@ -727,12 +736,18 @@ impl MeshPool {
         //
         // A mesh made without the cavity signal has an empty run and uploads
         // zeros, which is `brokkr_core::signals::CAVITY_ABSENT` and draws flat.
+        //
+        // Bytes 4 to 7 the paint, as it is stored: sRGB and a coverage. A
+        // mesh with none uploads zeros, which is bare and draws as clay.
         self.staging.extend(
             mesh.mask
                 .iter()
                 .zip(mesh.colour.iter().chain(std::iter::repeat(&0)))
                 .zip(mesh.cavity.iter().chain(std::iter::repeat(&0)))
-                .map(|((mask, slot), cavity)| [*mask, *slot, *cavity, 0]),
+                .zip(mesh.paint.iter().chain(std::iter::repeat(&[0; 4])))
+                .map(|(((mask, slot), cavity), paint)| {
+                    [*mask, *slot, *cavity, 0, paint[0], paint[1], paint[2], paint[3]]
+                }),
         );
 
         let pair = &self.buffers[slot.vertices.buffer as usize];
@@ -1291,7 +1306,7 @@ mod tests {
     // a real buffer and there is no way to reserve one without creating them.
     // They build the pool through `with_capacities` with room for two bricks
     // per pair, which is the only way to reach the ceiling: the real pool is
-    // 4.58 GB at full stretch.
+    // 4.93 GB at full stretch.
 
     /// A device, or `None` when this machine has no adapter.
     fn open_device() -> Option<(wgpu::Device, wgpu::Queue)> {

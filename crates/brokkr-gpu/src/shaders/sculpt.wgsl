@@ -131,6 +131,20 @@ struct VertexOutput {
     // the camera is turned, and the vertex's height there. For overhangs.
     @location(4) world_normal: vec3<f32>,
     @location(5) height: f32,
+    // The body's own paint at this vertex: a colour in linear light, already
+    // multiplied by its coverage, and the coverage. Multiplied BEFORE it is
+    // interpolated, because bare is stored as black with no coverage and a
+    // triangle from paint to bare would otherwise fade through a darkened
+    // version of the paint on its way out: the dark fringe every painting
+    // program has had once.
+    @location(6) paint: vec4<f32>,
+}
+
+// sRGB to linear light. `brokkr_core::paint::linear`, and the same numbers.
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let low = c / 12.92;
+    let high = pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
+    return select(high, low, c <= vec3<f32>(0.04045));
 }
 
 @vertex
@@ -138,6 +152,7 @@ fn vertex_main(
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) attributes: vec4<f32>,
+    @location(3) paint: vec4<f32>,
 ) -> VertexOutput {
     var out: VertexOutput;
     out.clip_position = uniforms.view_projection * vec4<f32>(position, 1.0);
@@ -155,6 +170,7 @@ fn vertex_main(
     let cavity_byte = round(attributes.b * 255.0);
     let t = (cavity_byte - 128.0) / 127.0;
     out.cavity = select(CAVITY_RANGE * t * abs(t), 0.0, cavity_byte < 0.5);
+    out.paint = vec4<f32>(srgb_to_linear(paint.rgb) * paint.a, paint.a);
     return out;
 }
 
@@ -173,6 +189,11 @@ fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) ->
     // axis is flipped because texture row 0 is the top of the sphere.
     let uv = vec2<f32>(normal.x * 0.5 + 0.5, 0.5 - normal.y * 0.5);
     var colour = textureSample(matcap_texture, matcap_sampler, uv).rgb;
+    // How brightly the clay is lit here, as a multiple of its own colour:
+    // the light a slot's colour or a coat of paint over it is under. Taken
+    // here, from the clay, and not further down from whatever has been laid
+    // over it by then.
+    let brightness = dot(colour, vec3<f32>(0.2126, 0.7152, 0.0722)) / MATCAP_BASE_LUMA;
 
     // The paint, BEFORE the mask so protection still reads on a painted
     // surface: the clay's albedo is swapped for the filament's and the matcap's
@@ -205,16 +226,25 @@ fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) ->
             let caught = clamp(smoothstep(film.w, 1.0, edge) * film.z, 0.0, 1.0);
             albedo = mix(albedo, light.rgb, caught);
         }
-        let luma = dot(colour, vec3<f32>(0.2126, 0.7152, 0.0722));
         // Not clamped at 1: the lighting term is allowed to exceed the clay's
         // own, or every painted pixel on the key-lit side collapses to one
         // flat value and the form under the paint is gone.
-        colour = albedo * (luma / MATCAP_BASE_LUMA) * PAINT_EXPOSURE;
+        colour = albedo * brightness * PAINT_EXPOSURE;
         // Flat: the paint as it is, with no light on it. A wash is shading,
         // and it cannot be judged with the viewport's own shading on top.
         if (uniforms.paint_shown == 2u) {
             colour = albedo;
         }
+    }
+
+    // The body's own paint, over the clay or over the slot's recipe, by its
+    // coverage. Lit as a slot's colour is, and by the same switch drawn flat.
+    if (uniforms.paint_shown != 0u && in.paint.a > 0.0) {
+        var coat = in.paint.rgb * brightness * PAINT_EXPOSURE;
+        if (uniforms.paint_shown == 2u) {
+            coat = in.paint.rgb;
+        }
+        colour = colour * (1.0 - in.paint.a) + coat;
     }
 
     // The creases and edges, AFTER the paint so they model a painted surface
