@@ -2198,7 +2198,7 @@ palette of colours to pick from, and the list of filaments for a 3MF.
 |---|---|---|
 | P1 | The storage: the field, every edit that must carry it, undo, the file | **Built**, 2026-11-23 (below) |
 | P2 | The view: paint on the vertices, composited in the shader | **Built**, 2026-11-23 (below) |
-| P3 | The brush: the locked stroke, the modes, the colour picker, the eyedropper | Next |
+| P3 | The brush: the locked stroke, the modes, the colour picker, the eyedropper | The engine of it **built**, 2026-11-23 (below). On the panel next |
 | P4 | The exports: bake, PLY, OBJ, GLB, and the nearest filament for 3MF | |
 | P5 | Retire the recipes: convert old documents, remove the editor | |
 
@@ -2311,3 +2311,98 @@ upload. 14 caught as first written. The other three were the toe and a
 power of 2.2 in place of the curve, which got the test above and a dark
 coat to judge by, and a paint lit by whatever is under it, which got the
 picture of a coat over a slot. All 17 are caught.
+
+#### Built, 2026-11-23 (P3, the engine of it): the brush
+
+`paint/stroke.rs`. Not on the panel yet: that is the next thing, and until
+then nothing in the application calls this.
+
+**The stroke is a layer**, as section 15.3 said it would be. A
+`PaintStroke` keeps one byte for each voxel it has touched: the most any
+stamp of the stroke has given it. A stamp that would give a voxel no more
+than it has leaves it alone. One that gives it more lays the pigment over
+what the voxel held **before the stroke**, and not over what the last stamp
+left.
+
+What a voxel held before the stroke did not need keeping: the open undo
+record already holds each brick as the stroke first found it.
+`Volume::edit_paint_over` hands that to the edit beside what the voxel
+holds now, and costs nothing that undo was not already paying.
+
+**The arithmetic** is `laid(before, pigment, amount)`, in linear light,
+straight alpha in and out.
+
+| Mode | Colour | Coverage |
+|---|---|---|
+| Paint | The pigment over what is there, each by its share | Adds as two films do: `a + c(1 - a)` |
+| Glaze | What is there times the pigment, by how much film there is. Over bare clay, a thin coat of the pigment itself, half of what paint would leave | Unchanged over paint |
+| Erase | Kept | Down by the amount |
+
+Nothing laid is what was there to the bit. That needs the round trip
+through linear light to be exact, and it is: every byte comes back as
+itself, which a test holds for all 256.
+
+**What scales a stamp**: the brush's falloff, so a brush has a soft edge
+for the first time; the pen's pressure; the mask, in proportion, where a
+slot could only be held off or not; a pattern, as a weight where a slot
+had a stencil; and what the brush catches.
+
+**What the brush catches** is section 8.3's gates, kept, and made to answer
+with how much and no longer with yes or no:
+
+- *Wash*: the recesses. All of it in a full crease, 0.3 of it on a flat,
+  none on a full edge. Measured on a slot cut into a cube: 0.8 or more at
+  the foot of the walls, 0.3 on the floor, under 0.1 on the lips.
+- *Drybrush*: what stands up into the brush, heaviest on the sharpest of it
+  and fading down its sides, more on the side the brush comes at, in
+  bristle lines, and running out along the stroke.
+- *Sponge*: specks, at its density of a flat, each with a rim about a voxel
+  wide.
+
+As with the slots, a voxel takes what the surface under it takes, all the
+way through the band, so sculpting a voxel deeper does not shuffle the
+speckle; a mirrored stamp lays the mirror image, specks and bristles and
+all; and stamps of one stroke agree about what they share.
+
+**What it costs**, measured in release on one core of the build container
+with `what_a_stamp_of_paint_costs`. Runs differ by about a fifth.
+
+| Radius | Loaded, every voxel new | Loaded, along a stroke | Wash, drybrush or sponge |
+|---|---|---|---|
+| 12 voxels | 0.22 ms | 0.19 ms | 0.4 to 0.5 ms |
+| 40 voxels | 2.7 ms | 1.2 ms | 5.8 to 6.7 ms |
+| 50 voxels (5 mm at 0.1 mm) | 5.1 ms | 3.2 ms | 11 to 15 ms |
+
+"Along a stroke" is twenty stamps a quarter of a radius apart, which is
+what painting is: most of what a stamp covers, the one before it has
+covered already, and is left alone. A brush that asks about the surface
+costs what the same brush cost for a slot (section 8.3), and for the same
+reason: the curvature under it.
+
+Tried and kept, for a modest gain: the pigment made ready once a stamp, and
+both ends of the sRGB curve from tables. The table that encodes is exact
+and not approximate, held against the curve at every level's own threshold,
+a step either side of it, and 800,000 values between. Tried and dropped
+before it was committed: a copy of each brick for the undo record on every
+stamp, where the first stamp to change a brick is the only one that needs
+it.
+
+**Not here yet**: a flood fill of colour (the slot's fill reads "the same
+slot as where I clicked", which has no meaning for colours that blend), and
+the eyedropper, which is one line and belongs with the panel.
+
+**Mutation testing.** 58 mutants: against the arithmetic, the stamp, the
+catches, and the edit that hands a stroke what was there before it. 48 of
+the first 55 were caught as written. Six of the other seven each pointed at
+something a test did not look at (an opacity over one, a stamp that lays
+nothing still being counted, a voxel off the surface asked about itself and
+not the surface under it, the specks changing through the band, every
+stroke streaked with the same bristles, a crease counted as raised by a
+slot's sponge) and got the test. The seventh was a check for a brush of no
+size, which nothing is ever within, and is gone. Four more were written
+when the edit moved, for the hooks that moved with it. All 58 are caught.
+
+Mutants not written, because they change the time a stamp takes and
+nothing else: the one early way out of a stamp, for a voxel outside the
+brush or wholly protected, and the undo copy being taken for every stamp
+where once a brick will do.

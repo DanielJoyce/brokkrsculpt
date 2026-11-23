@@ -89,6 +89,17 @@ const DRY_FLOOR: f32 = 0.02;
 /// real pass leaves and why a painter goes over a model from two directions.
 const LEE_SHARE: f32 = 0.5;
 
+/// How far past just caught a drybrush has to be to lay a full touch, in
+/// the units `raised` is in: a quarter of the way from a flat to a full
+/// edge.
+const DRY_RAMP: f32 = 0.25;
+
+/// How wide the soft rim of a sponge's speck is, as a share of the noise's
+/// range. The noise crosses about this much in a voxel at a grain of two
+/// voxels, so the rim is about a voxel wide there and thinner, in voxels,
+/// on a coarser grain.
+const SPECK_RIM: f32 = 0.25;
+
 /// How much longer than it is wide one bristle mark is. Value noise is
 /// sampled this much more slowly along the stroke than across it.
 const STREAK_LENGTH: f32 = 12.0;
@@ -318,10 +329,25 @@ impl Drybrush {
     /// had. `a_drybrush_never_loses_a_point_by_being_given_more` holds it,
     /// and the stroke's consistency depends on it.
     pub fn catches(&self, raised: f32, facing: f32, bristle: f32, load: f32) -> bool {
+        self.margin(raised, facing, bristle, load) > 0.0
+    }
+
+    /// By how much a point is caught: what reaches it, less what the brush
+    /// asks for before it leaves anything.
+    fn margin(&self, raised: f32, facing: f32, bristle: f32, load: f32) -> f32 {
         let reach = raised * (LEE_SHARE + (1.0 - LEE_SHARE) * facing.clamp(0.0, 1.0));
         let asked =
             (1.0 - self.catch.clamp(0.0, 1.0)) + self.streak.clamp(0.0, 1.0) * (bristle - 0.5);
-        reach * load.clamp(0.0, 1.0) > asked.max(DRY_FLOOR)
+        reach * load.clamp(0.0, 1.0) - asked.max(DRY_FLOOR)
+    }
+
+    /// How much of a full touch a point takes, 0..=1, for paint that can be
+    /// laid in part ([`crate::paint::stroke`]). More than nothing exactly
+    /// where [`Drybrush::catches`], and more the further the surface stands
+    /// into the brush: a drybrush is heaviest on the sharpest edge and
+    /// fades off down its sides.
+    pub fn amount(&self, raised: f32, facing: f32, bristle: f32, load: f32) -> f32 {
+        (self.margin(raised, facing, bristle, load) / DRY_RAMP).clamp(0.0, 1.0)
     }
 }
 
@@ -329,16 +355,30 @@ impl Sponge {
     /// Whether a point is caught. `speck` is uniform in 0..1 over the
     /// surface, so on a flat the share caught is the density.
     pub fn catches(&self, raised: f32, speck: f32) -> bool {
-        let share = self.density.clamp(0.0, 1.0)
-            + (1.0 - self.density.clamp(0.0, 1.0)) * self.edges.clamp(0.0, 1.0) * raised;
-        speck < share
+        speck < self.share(raised)
+    }
+
+    /// The share of the surface a sponge covers where it is this raised.
+    fn share(&self, raised: f32) -> f32 {
+        self.density.clamp(0.0, 1.0)
+            + (1.0 - self.density.clamp(0.0, 1.0)) * self.edges.clamp(0.0, 1.0) * raised
+    }
+
+    /// How much of a full touch a point takes, 0..=1, for paint that can be
+    /// laid in part ([`crate::paint::stroke`]). A speck has a soft rim and
+    /// not a staircase: full inside it, nothing outside, and half about
+    /// where [`Sponge::catches`] draws the line. The rim is laid so that a
+    /// share of everything is still everything and a share of nothing is
+    /// still nothing.
+    pub fn amount(&self, raised: f32, speck: f32) -> f32 {
+        ((self.share(raised) * (1.0 + SPECK_RIM) - speck) / SPECK_RIM).clamp(0.0, 1.0)
     }
 }
 
 /// The directions a gate's pattern is laid out along: the stroke, across it,
 /// and out of the surface.
 #[derive(Clone, Copy)]
-struct Frame {
+pub(super) struct Frame {
     origin: Vec3,
     along: Vec3,
     across: Vec3,
@@ -346,7 +386,7 @@ struct Frame {
 }
 
 impl Frame {
-    fn of(stamp: &Stamp, origin: Vec3) -> Self {
+    pub(super) fn of(stamp: &Stamp, origin: Vec3) -> Self {
         let out = stamp.normal.normalize_or(Vec3::Z);
         // The stroke's direction, laid into the surface. A stroke that has
         // not travelled, or is travelling straight in, has none: then any
@@ -363,7 +403,7 @@ impl Frame {
     /// Which bristle a point is under, as a number in 0..1 that is nearly
     /// constant along the stroke and changes from bristle to bristle across
     /// it.
-    fn bristle(&self, world: Vec3, dry: Drybrush, seed: u32) -> f32 {
+    pub(super) fn bristle(&self, world: Vec3, dry: Drybrush, seed: u32) -> f32 {
         let width = dry.bristle_mm.max(1e-3);
         let from = world - self.origin;
         // Evened like the sponge's, so that "streak" takes the same share of
@@ -385,7 +425,7 @@ impl Frame {
     /// voxel two answers from two stamps of a curving stroke. It does not
     /// read the frame at all, and is here beside `bristle` so that the two
     /// gates are fed the same way.
-    fn speck(world: Vec3, sponge: Sponge, seed: u32) -> f32 {
+    pub(super) fn speck(world: Vec3, sponge: Sponge, seed: u32) -> f32 {
         let grain = sponge.grain_mm.max(1e-3);
         evened(value_noise(TURNED * (world / grain), seed))
     }
@@ -413,10 +453,10 @@ const TURNED: glam::Mat3 = glam::Mat3::from_cols(
 #[derive(Debug, Default)]
 pub struct TouchScratch {
     /// The field under the stamp, and a margin round it.
-    region: FieldRegion,
+    pub(super) region: FieldRegion,
     /// The curvature of each cell of the region, worked out the first time
     /// a voxel asks for it. See [`Curvatures`].
-    cavity: Vec<std::cell::Cell<f32>>,
+    pub(super) cavity: Vec<std::cell::Cell<f32>>,
 }
 
 impl TouchScratch {
@@ -444,7 +484,7 @@ const NOT_ASKED: f32 = f32::NAN;
 /// and is a small gain everywhere else. A loaded stamp of the same size is
 /// 0.7 ms; the rest of a gated one is the gradient and the noise, a voxel at
 /// a time.
-struct Curvatures<'a> {
+pub(super) struct Curvatures<'a> {
     region: &'a FieldRegion,
     lo: IVec3,
     size: IVec3,
@@ -452,7 +492,7 @@ struct Curvatures<'a> {
 }
 
 impl<'a> Curvatures<'a> {
-    fn over(region: &'a FieldRegion, cells: &'a mut Vec<std::cell::Cell<f32>>) -> Self {
+    pub(super) fn over(region: &'a FieldRegion, cells: &'a mut Vec<std::cell::Cell<f32>>) -> Self {
         let (lo, hi) = region.bounds();
         let size = hi - lo + IVec3::ONE;
         let count = (size.x * size.y * size.z) as usize;
@@ -502,6 +542,13 @@ impl<'a> Curvatures<'a> {
     /// a mirror visits the samples in another. A voxel sitting within a
     /// rounding error of the threshold can still differ from its twin.
     fn raised(&self, at: Vec3, gain: f32) -> f32 {
+        self.relief(at, gain).max(0.0)
+    }
+
+    /// How far the surface stands up at a point: 1 on a full edge, 0 on a
+    /// flat, -1 in a full crease. [`Curvatures::raised`] is the upper half
+    /// of it, and a wash runs into the lower.
+    pub(super) fn relief(&self, at: Vec3, gain: f32) -> f32 {
         let below = at.floor().as_ivec3();
         // One step back along each axis the point is exactly on.
         let span = below - (at.ceil().as_ivec3() - IVec3::ONE);
@@ -514,12 +561,12 @@ impl<'a> Curvatures<'a> {
             }
         }
         let cells = (span + IVec3::ONE).element_product() as f32;
-        (-(sum / cells) * gain).clamp(0.0, 1.0)
+        (-(sum / cells) * gain).clamp(-1.0, 1.0)
     }
 }
 
 /// The gradient of the stored field at a voxel, by central differences.
-fn gradient_at(region: &FieldRegion, voxel: IVec3) -> Vec3 {
+pub(super) fn gradient_at(region: &FieldRegion, voxel: IVec3) -> Vec3 {
     Vec3::new(
         region.get(voxel + IVec3::X) - region.get(voxel - IVec3::X),
         region.get(voxel + IVec3::Y) - region.get(voxel - IVec3::Y),
@@ -674,6 +721,34 @@ mod tests {
         gaps.sort_by(f32::total_cmp);
         // On an edge the two smallest gaps are both nothing.
         gaps[1]
+    }
+
+    /// An edge is raised and a crease is not: what stands up is the upper
+    /// half of the relief, and a crease's is all in the lower.
+    #[test]
+    fn a_crease_is_not_raised() {
+        // The cube with a square slot cut across its top face: creases
+        // along the foot of the slot's walls, edges along their tops.
+        let (depth, half) = (4.0, 3.0);
+        let mut volume = Volume::new(VOXEL);
+        let reach = Vec3::splat(HALF + NARROW_BAND * VOXEL * 2.0);
+        volume.edit_box(-reach, reach, move |position, _| {
+            let outside = position.abs() - Vec3::splat(HALF);
+            let cube = outside.max(Vec3::ZERO).length() + outside.max_element().min(0.0);
+            let slot = (position.x.abs() - half).max(HALF - depth - position.z);
+            (cube.max(-slot) / VOXEL).clamp(crate::brick::INSIDE, crate::brick::OUTSIDE)
+        });
+        let mut region = FieldRegion::new();
+        volume.snapshot(IVec3::new(-16, -8, 8), IVec3::new(16, 8, 32), &mut region);
+        let mut cells = Vec::new();
+        let curvatures = Curvatures::over(&region, &mut cells);
+        // In voxels, a little off the lattice so that each is in one cell.
+        let foot = Vec3::new(half / VOXEL - 0.3, 0.4, (HALF - depth) / VOXEL + 0.3);
+        let lip = Vec3::new(half / VOXEL + 0.3, 0.4, HALF / VOXEL - 0.3);
+        assert!(curvatures.relief(foot, 1.0) < -0.5, "{}", curvatures.relief(foot, 1.0));
+        assert_eq!(curvatures.raised(foot, 1.0), 0.0);
+        assert!(curvatures.relief(lip, 1.0) > 0.5, "{}", curvatures.relief(lip, 1.0));
+        assert_eq!(curvatures.raised(lip, 1.0), curvatures.relief(lip, 1.0));
     }
 
     /// A loaded coat is upstream's paint stamp and not a copy of it.
