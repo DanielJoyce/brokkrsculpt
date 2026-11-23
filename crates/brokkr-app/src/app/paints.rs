@@ -576,7 +576,10 @@ impl Brokkr {
             PaintTouch::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, kind| {
                 assembled.push(
                     button(text(kind.label()).size(theme::CAPTION_SIZE))
-                        .width(Length::Fill)
+                        // A share of the row for each letter and two for
+                        // the padding: in four equal buttons, seen on a
+                        // screen, "Drybrush" ran into its own edge.
+                        .width(Length::FillPortion(kind.label().len() as u16 + 2))
                         .style(if kind == self.touch.kind {
                             theme::tool_button_active
                         } else {

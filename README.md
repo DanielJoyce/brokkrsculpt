@@ -398,6 +398,10 @@ true of it too, and what it adds is this.
   paint prints in, and *OBJ+PNG* or *GLB*, where the paint is baked to a
   texture that stays sharp however far the mesh is thinned.
 
+<p align="center">
+  <img alt="A row of rivets laid along two drags with the Rivet row preset, the studio and presets blocks in the panel on the right" src="docs/images/studio-rivet-row.png" width="820">
+</p>
+
 [docs/STUDIO-PLAN.md](docs/STUDIO-PLAN.md) is the design, the state of each
 part, what was measured, and what was tried and dropped. Everything on the
 branch passes the same gates as the rest: `cargo fmt`, `cargo clippy` with
