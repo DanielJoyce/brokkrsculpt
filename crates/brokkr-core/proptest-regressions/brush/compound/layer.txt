@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3bcd3c777d813a45863bd384c049f5164d7c6efe0ae16ebab5ea32cdb7a22fc2 # shrinks to actions = Actions { push: 0.0, inflate: 0.0, pinch: -1.0, smooth: 0.0, level: 0.0, plane: 0.0, side: Both }, shape = Smooth, plateau = 0.0, radius = 4.0, strength = 0.05, subtract = false, stamps = 2

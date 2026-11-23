@@ -409,15 +409,17 @@ true of it too, and what it adds is this.
   stops at creases and edges. Each paint names the filament it prints in,
   so a model painted this way is also a multi-colour print. Everything the
   rack does is an undo step, removing a paint included.
-- **A palette of brushes.** Eighteen come with it: Draw, Clay, Inflate,
+- **A palette of brushes.** Twenty-one come with it: Draw, Clay, Inflate,
   Pinch, Smooth and Flatten, and *Spread*, *Scrape*, *Fill*, *Polish*,
-  *Crease*, *Bead*, *Band* and more. Every one is the same brush with
-  different settings, and *What it does* shows them: how much it pushes,
-  inflates, pinches, smooths and levels. Change them, choose the
-  *Profile* of the stroke (five shapes, and a flat middle), and *Keep*
-  the brush under a name. A brush you keep is one small file in your data
-  directory (`~/.local/share/brokkrsculpt/brushes` on Linux), so a brush
-  can be handed to somebody else.
+  *Crease*, *Bead*, *Band*, *Layer*, *Clay strips*, *Stitches* and more.
+  Every one is the same brush with different settings, and *What it does*
+  shows them: how much it pushes, inflates, pinches, smooths and levels.
+  Change them, choose the *Profile* of the stroke (five shapes, and a flat
+  middle), lay a *Picture across the tip*, have it *Build up* or lay *One
+  layer* however long you scrub, set it down as a line or in separate
+  dabs, and *Keep* the brush under a name. A brush you keep is one small
+  file in your data directory (`~/.local/share/brokkrsculpt/brushes` on
+  Linux), so a brush can be handed to somebody else.
 - **Stamps and strokes.** A *Stamp* that presses one of six images or any
   picture into the surface with one drag, or lays a row of them along a
   stroke (rivets, stitches, scales), a *Lazy* stroke for long clean
@@ -434,7 +436,11 @@ true of it too, and what it adds is this.
 </p>
 
 <p align="center">
-  <img alt="A ball with five strokes across it, each from a different brush on the palette: a band with a flat top, a bead, a crease, a scraped flat and a row of rivets. Beside it the panel: BRUSHES, eighteen buttons with Crease lit, the radius and strength, the Profile row of five shapes, and What it does opened to show Crease as a push of 0.60 in and a pinch of 1.00 together" src="docs/images/studio-brush-palette.png" width="760">
+  <img alt="A ball with three strokes: an X drawn with the Layer brush, no taller where its two lines cross; a strip of clay scrubbed over three times and still one thickness; and a row of bars set down a width apart. Beside it the panel: BRUSHES, twenty-one buttons with Stitches lit, and under the profile, Picture across the tip with the six pictures and Bar chosen" src="docs/images/studio-brush-layer.png" width="760">
+</p>
+
+<p align="center">
+  <img alt="A ball with five strokes across it, each from a different brush on the palette: a band with a flat top, a bead, a crease, a scraped flat and a row of rivets. Beside it the brush's own settings: radius and strength, the Profile row of five shapes and its flat middle, Picture across the tip, Builds up or One layer, Set down as a line, and What it does opened to show Crease as a push of 0.60 in and a pinch of 1.00 together" src="docs/images/studio-brush-palette.png" width="760">
 </p>
 
 <p align="center">

@@ -22,7 +22,7 @@ was built and what was measured.
 | S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush and form smooth remain. Posing is not planned (section 9.3) | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
 | S5 Unwrap and bake | **Done but for the other maps**, 2026-11-23 (sections 10.4 and 10.5): unwrap, the base colour bake, OBJ with a picture, and GLB. Normal, occlusion and finish maps remain | Export as *OBJ+PNG* or *GLB*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
 | P Painting engine | **Usable**, 2026-11-23 (section 15): the storage, the view and the brush. Painted colour is on screen, in the project file and in every export that carries colour | The paint brush lays a colour: *Paint*, *Glaze* or *Erase*, put on *Loaded*, as a *Wash*, with a *Drybrush* or a *Sponge*, at any opacity, with a soft edge. *Pick from model* takes a colour back off it |
-| B A brush is its settings | **The palette is built**, 2026-11-23 (section 16): files in the right directories, one generic brush, the palette. Build-up and a picture across the tip are next | BRUSHES: eighteen that come with the application, upstream's six among them, and the user's own, a file each. *What it does* shows a brush as five amounts to change. *Profile*: five shapes and a flat middle |
+| B A brush is its settings | **Done but for B5**, 2026-11-23 (section 16): files in the right directories, one generic brush, the palette, a picture across the tip, build-up on or off, lines or dabs. Brushes that stamp a shape (B5) are a later stage | BRUSHES: twenty-one that come with the application, upstream's six among them, and the user's own, a file each. *What it does* shows a brush as five amounts to change. *Profile*: five shapes and a flat middle. *Picture across the tip*, *Builds up* or *One layer*, and *Set down* as a line or every so many widths |
 | B Brushes as settings | **Begun**, 2026-11-23 (section 16): where the files go, and the generic brush in the engine. The palette and build-up follow | Settings, brushes and autosave each in the folder the operating system keeps for them |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
@@ -2780,7 +2780,7 @@ is made, and it is worth handing to somebody else.
 | B1 | Where the files go | **Built**, 2026-11-23 (below) |
 | B2 | The generic brush in the core, held to the classic kernels | **Built**, 2026-11-23 (below) |
 | B3 | The palette, the core presets, and a brush's settings on the panel | **Built**, 2026-11-23 (below) |
-| B4 | Build-up on or off, and choosing a bitmap for a brush's tip | Next |
+| B4 | Build-up on or off, a bitmap for a brush's tip, and a line or dabs | **Built**, 2026-11-23 (below) |
 | B5 | Brushes that stamp a shape and not a height: an implicit surface, or a vector displacement map | Later. Asked for as a later stage, and written down here so that it is not lost |
 
 #### Built, 2026-11-23 (B1): where the files go
@@ -2997,6 +2997,138 @@ moved.
   spacing to follow the profile.
 * A file named for a device on Windows (`CON.brush`) would not be
   written. A brush would have to be called exactly that.
+
+#### Built, 2026-11-23 (B4): a picture across the tip, one layer, dabs
+
+Three settings of a brush on the field, on the panel under its profile,
+kept in a preset and in its file (`tip:`, `buildup:off`, `dabs:`), and
+three brushes on the palette that are made of them: *Layer*, *Clay
+strips* and *Stitches*. Twenty-one come with the application now.
+
+**Picture across the tip.** The picture in hand, which is the one the
+stamp presses: one of the six that come with the application or any
+picture. Where it is bright the brush works, with its top along the
+stroke. The kernel took a picture from B2; this is the button for it.
+
+**Set down** as a line, or every so many of the brush's own widths: the
+user's "strokes or repeated stamps". A line is upstream's spacing, a
+quarter of a radius. Smooth under shift is a line whatever is in hand.
+
+**Builds up, or one layer.** `brush/compound/layer.rs`, and it is most of
+this stage.
+
+A brush builds up: every stamp works on what the last one left, so a
+stroke that dwells or crosses itself is taller there. With build-up off a
+stroke lays one layer, as section 16.3 said and by the two means it said:
+
+* every stamp works from the field **as it was before the stroke**, which
+  is the stroke's own undo record read back (`Volume::snapshot_before`);
+* each voxel keeps **the most any stamp has given it**, and a stamp writes
+  a voxel only when it gives it more.
+
+Four things section 16.3 did not say, each found by a test or on a
+screen:
+
+1. **How tall a layer is.** A stamp that builds up moves the surface a
+   voxel at most, because stamps compound. A layer is laid once from a
+   clean field, so that is not its limit, and at that limit a layer would
+   be too thin to see. A push at full strength moves the surface half the
+   brush's radius. A blend toward the plane or the mean, and a pinch, are
+   worth four stamps, which is how many a stroke at upstream's spacing
+   lays across any one point: the weights of the stamps that reach a
+   point on the line, with upstream's smooth falloff, are 1, and 0.844,
+   0.5 and 0.156 from the three either side, which is arithmetic and
+   comes to four. An inflation is an offset of the level set and is held
+   to two voxels, because the field is only kept three either side of the
+   surface.
+2. **A layer's footprint is measured across the surface.** Weighed by
+   distance from the stamp's centre in any direction, as a brush that
+   builds up is, a layer of 2.5 voxels came out 2.19: its top is that far
+   from the centre however near the axis it is. Found by the first test
+   of how tall a layer is. A layer weighs a voxel by how far it is from
+   the stamp's axis.
+3. **A line is one footprint, swept.** Keeping the most any stamp gives
+   each voxel leaves ribs along a line, a little lower half way between
+   two stamps than at one: the paint brush found the same (section 15).
+   Seen on a screen. Each stamp of a line is the brush swept from where
+   the last was put down. Dabs are not joined, which is what makes them
+   dabs.
+4. **A layer has to be aimed at the surface as it was.** A ray from the
+   pointer lands on what the stroke has already built, facing the way
+   that faces. Clay's plane is held off the surface and faces the way the
+   stamp does, so three passes of clay with build-up off were a strip of
+   rubble: seen on a screen. Putting each stamp back along its normal
+   (built first) was wrong on the sloping end of a strip, where the
+   normal is not the way down. Working out in the core which way the
+   surface used to face (built second) meant taking any difference
+   between the stamp's normal and the surface as it is now for a pen's
+   lean, and a second pass was then steered by the first. What is right
+   is for the application, which knows where the pointer is, to aim the
+   stamp along the pointer's own ray at the surface as it was and to face
+   it the way that faces (`Brokkr::layer_aim`, `Brokkr::stamp_facing`,
+   two changed lines in upstream's stroke). The core still puts back
+   along its normal a stamp that is off that surface, which is all it can
+   do without the pointer.
+
+**What "one layer" promises.** A brush that dwells, and dabs set down
+over the same ground in any order, leave the field the same to the bit.
+A line scrubbed back over itself is one layer too and no taller, but not
+to the bit: a step of the line is measured across the way its later end
+faces, and walked the other way that is the other end.
+
+**What a layer costs.** Measured with `what_a_layer_costs` (ignored, run
+by hand in release), forty stamps along a stroke on a ball of sixty
+voxels, on the four cores of the build container. A comparison on one
+machine.
+
+| Brush, radius | A stamp that builds up | A stamp of a layer | |
+|---|---|---|---|
+| Draw, 8 voxels | 0.14 ms | 0.28 ms | 1.9 times |
+| Draw, 24 voxels | 1.33 ms | 2.10 ms | 1.6 times |
+| Clay, 8 voxels | 0.06 ms | 0.16 ms | 2.9 times |
+| Clay, 24 voxels | 0.46 ms | 1.23 ms | 2.7 times |
+
+Where the difference goes was not measured. What a layer's stamp does
+that the other does not: it copies the field before the stroke over its
+whole box, where Clay with build-up on copies nothing; its box is 1.41
+times as wide each way, to hold a layer above and below the brush; and it
+asks about each action at each voxel, where the generic brush has a loop
+for each set of them. **Owed**: the largest brush on the finest lattice
+(a radius of 80 voxels) was not measured, and at 1.6 times Draw's cost
+there a layer's stamp would be over the 4 ms a stamp is given.
+
+**Held by.** In the core: a layer is as tall as its strength says and no
+taller for dwelling, bit for bit, where build-up is; a line has no ribs
+and dabs do; a stamp off the surface as it was is put back on it; clay
+with build-up off is a strip as thick as its plane is proud, three passes
+or one, where clay with build-up on is taller for each; a layer is one
+undo, honours a mask, and mirrors; a layer laid with no stroke open is
+refused by a contract; and a property: whatever the brush is made of, its
+dabs set down twice are its dabs set down once to the bit, what it leaves
+is a field, and nothing changes out of its reach. In the application,
+through pointer events: Layer scrubbed three times is as tall as scrubbed
+once and as tall as strength times radius times a half says, where Draw is
+taller for each pass; Clay strips likewise against Clay; one undo; a
+stamp mid-stroke is aimed under what the stroke built, at the surface as
+it was, facing as it faced; a brush set down in dabs lays as many
+separate marks as the drag has room for, and a bar across its tip makes
+each narrower; a picture across the tip moves less of the surface than a
+plain one, which picture matters, and Smooth under shift does not have
+it.
+
+**Not done, and known:**
+
+* A pen's lean still steers a layer, but from the surface as it was.
+* A tip's picture is laid out from each stamp's own centre, so a line
+  with a picture across its tip is the picture dragged, not the picture
+  tiled. Tiling it along the stroke wants the distance travelled.
+* The Stamp gesture ("Along the stroke") and a brush set down in dabs
+  with a picture across its tip now overlap. The stamp presses the
+  picture to a height of its own and sizes it by the drag; the brush lays
+  it a layer deep at the brush's size. They have not been made one.
+* Smoothing with build-up off is one pass of the smoothing kernel at
+  most, which is little. Smoothing is the one action that is its
+  repetition.
 
 ---
 
