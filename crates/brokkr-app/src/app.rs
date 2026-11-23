@@ -905,6 +905,8 @@ pub struct Brokkr {
     studio: studio::StudioState,
     /// The form tools' settings. See `app/form.rs`.
     form: form::FormState,
+    /// How many texels on a side a baked texture is. See `app/paints.rs`.
+    texture_size: u32,
     /// How strong the tint is when it is shown at all, 0..1.
     ///
     /// The shader has its own floor under this (`0.30 + 0.70 * m`), which is
@@ -2158,6 +2160,7 @@ impl Brokkr {
             flat_paint: false,
             studio: studio::StudioState::default(),
             form: form::FormState::default(),
+            texture_size: paints::TEXTURE_SIZES[1],
             mask_tint: DEFAULT_MASK_TINT,
             mask_peek: false,
             mask_filter: MaskFilter::Blur,
@@ -7324,6 +7327,7 @@ impl Brokkr {
                     },
                     &mut file,
                 )?,
+                ExportFormat::Textured => self.write_textured(&bodies, path, &mut file)?,
                 ExportFormat::Ply => {
                     let coloured: Vec<brokkr_core::export::ply::Coloured<'_>> = bodies
                         .iter()
@@ -10377,6 +10381,12 @@ impl Brokkr {
             Message::PaintEdited(edit) => self.edit_paint(edit),
             Message::Studio(message) => return self.studio_changed(message),
             Message::Form(message) => self.form_changed(message),
+            // One of the sizes on offer, or the setting stays as it is.
+            Message::TextureSizeChanged(size) => {
+                if paints::TEXTURE_SIZES.contains(&size) {
+                    self.texture_size = size;
+                }
+            }
             Message::FlatPaintToggled => self.flat_paint = !self.flat_paint,
             Message::PaintAllApplied => self.coat_the_body(),
             Message::PaintTouchChosen(touch) => self.touch.kind = touch,

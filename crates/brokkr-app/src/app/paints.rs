@@ -64,6 +64,11 @@ pub(super) const START_RANGE: std::ops::RangeInclusive<f32> = 0.0..=0.95;
 /// paint somebody chose.
 pub(super) const UNPAINTED: [u8; 3] = [168, 160, 150];
 
+/// The sizes a baked texture can be, in texels on a side. The middle one is
+/// what the application starts on: at a 28 mm figure it is a texel every 30
+/// microns or so, which is finer than the voxels the paint is in.
+pub(super) const TEXTURE_SIZES: [u32; 3] = [1024, 2048, 4096];
+
 /// One entry of the "prints in" list: a filament slot, or 0 for the nearest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PrintsIn {
@@ -329,8 +334,99 @@ impl Brokkr {
                 }
                 Vec::new()
             }
-            ExportFormat::Stl | ExportFormat::Obj => Vec::new(),
+            // A texture is baked from the model and not from the mesh's
+            // slots, by `write_textured`.
+            ExportFormat::Stl | ExportFormat::Obj | ExportFormat::Textured => Vec::new(),
         }
+    }
+
+    /// Write the bodies as an OBJ with a material file and a picture each.
+    ///
+    /// The OBJ goes to `obj`, which the caller has open at `path`. The
+    /// material file and the pictures go beside it under the same name:
+    /// `figure.obj`, `figure.mtl`, `figure_1.png`, `figure_2.png`.
+    ///
+    /// Each body is unwrapped and baked here, from the mesh that is being
+    /// written, whatever detail it was exported at: the texture is read off
+    /// the model and not off the mesh, so a decimated export keeps its
+    /// washes. See `brokkr_core::export::texture`.
+    pub(super) fn write_textured(
+        &self,
+        bodies: &[brokkr_core::ExportedBody],
+        path: &std::path::Path,
+        obj: &mut impl std::io::Write,
+    ) -> std::io::Result<()> {
+        use brokkr_core::export::textured::{Textured, write_mtl, write_obj};
+        use brokkr_core::export::unwrap::UnwrapSpec;
+
+        let stem =
+            path.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
+        let filaments = self.filament_colours();
+        let bake = brokkr_core::paint::bake::Bake {
+            table: &self.paints,
+            filaments: &filaments,
+            unpainted: UNPAINTED,
+            crease_gain: super::CAVITY_FEATURE_MM / self.doc.voxel_size() / 4.0,
+        };
+        let spec = UnwrapSpec { size: self.texture_size, ..UnwrapSpec::default() };
+
+        let mut unwraps = Vec::with_capacity(bodies.len());
+        let mut pictures = Vec::with_capacity(bodies.len());
+        for (index, (meta, mesh, _)) in bodies.iter().enumerate() {
+            let unwrap = mesh.unwrapped(spec);
+            let picture = format!("{stem}_{}.png", index + 1);
+            if let Some(volume) = self.doc.volume(meta.id) {
+                let texture = unwrap.baked(mesh, volume, &bake, spec.margin);
+                image::save_buffer(
+                    path.with_file_name(&picture),
+                    &texture.rgba,
+                    texture.size,
+                    texture.size,
+                    image::ExtendedColorType::Rgba8,
+                )
+                .map_err(std::io::Error::other)?;
+            }
+            unwraps.push(unwrap);
+            pictures.push(picture);
+        }
+        let textured: Vec<Textured<'_>> = bodies
+            .iter()
+            .zip(&unwraps)
+            .zip(&pictures)
+            .map(|(((meta, mesh, _), unwrap), picture)| Textured {
+                name: meta.name.as_str(),
+                mesh,
+                unwrap,
+                picture,
+            })
+            .collect();
+        let materials = format!("{stem}.mtl");
+        write_obj(&textured, &materials, obj)?;
+        let mut file =
+            std::io::BufWriter::new(std::fs::File::create(path.with_file_name(&materials))?);
+        write_mtl(&textured, &mut file)
+    }
+
+    /// How big a baked texture is: the three sizes, the one in use lit.
+    pub(super) fn texture_size_picker(&self) -> Element<'_, Message> {
+        let sizes = TEXTURE_SIZES.into_iter().fold(row![].spacing(theme::S1), |assembled, size| {
+            assembled.push(
+                button(text(format!("{size}")).size(theme::CAPTION_SIZE))
+                    .width(Length::Fill)
+                    .style(if size == self.texture_size {
+                        theme::tool_button_active
+                    } else {
+                        theme::tool_button
+                    })
+                    .on_press(Message::TextureSizeChanged(size)),
+            )
+        });
+        column![
+            text("Texture, for OBJ+PNG").size(theme::CAPTION_SIZE).color(theme::TEXT_DIM),
+            sizes
+        ]
+        .spacing(theme::S1)
+        .into()
     }
 
     /// The coat the paint stroke lays with the stamp at `centre`.
@@ -1563,6 +1659,52 @@ mod tests {
         plain.export(crate::message::ExportFormat::Ply, &path);
         let colours = ply_colours(&std::fs::read(&path).expect("the file should be there"));
         assert!(colours.iter().filter(|c| **c == filament).count() > 200);
+
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    /// A painted body exported with a texture: three files that name each
+    /// other, and a picture with the paint in it.
+    #[test]
+    fn a_painted_body_exports_as_an_obj_a_material_file_and_a_picture() {
+        let directory = scratch("textured");
+        let path = directory.join("figure.obj");
+        let mut app = app();
+        update(&mut app, Message::PaintAdded);
+        let colour = [20, 140, 200];
+        edit(&mut app, PaintEdit::Colour(colour));
+        stroke(&mut app);
+
+        // The size is one of those on offer, or it is not taken.
+        update(&mut app, Message::TextureSizeChanged(1024));
+        assert_eq!(app.texture_size, 1024);
+        update(&mut app, Message::TextureSizeChanged(3000));
+        assert_eq!(app.texture_size, 1024, "a size not on offer was taken");
+        drop(app.texture_size_picker());
+
+        app.export(crate::message::ExportFormat::Textured, &path);
+        assert!(app.status.starts_with("exported"), "{}", app.status);
+
+        let obj = std::fs::read_to_string(&path).expect("the OBJ should be there");
+        assert!(obj.contains("mtllib figure.mtl"), "the OBJ does not name its material file");
+        let places = obj.lines().filter(|line| line.starts_with("vt ")).count();
+        let faces = obj.lines().filter(|line| line.starts_with("f ")).count();
+        assert!(places > 1000 && faces > 1000, "{places} places and {faces} faces");
+        assert!(obj.lines().filter(|line| line.starts_with("f ")).all(|line| line.contains('/')));
+
+        let materials =
+            std::fs::read_to_string(directory.join("figure.mtl")).expect("the material file");
+        assert!(materials.contains("map_Kd figure_1.png"), "{materials}");
+
+        let picture =
+            image::open(directory.join("figure_1.png")).expect("the picture").into_rgba8();
+        assert_eq!((picture.width(), picture.height()), (1024, 1024));
+        let count =
+            |wanted: [u8; 3]| picture.pixels().filter(|pixel| pixel.0[..3] == wanted).count();
+        let (painted, clay) = (count(colour), count(UNPAINTED));
+        assert!(painted > 500, "only {painted} texels are the paint's colour");
+        assert!(clay > painted, "the unpainted ball is not clay: {clay} texels");
+        assert!(picture.pixels().all(|pixel| pixel.0[3] == 255), "the picture is not opaque");
 
         std::fs::remove_dir_all(&directory).ok();
     }

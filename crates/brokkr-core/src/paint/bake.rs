@@ -68,6 +68,26 @@ impl Bake<'_> {
             .unwrap_or(self.unpainted)
     }
 
+    /// The colour of the surface nearest a point in the world, sRGB: the
+    /// paint the nearest voxel holds, shaded by how creased the surface is
+    /// there.
+    ///
+    /// For a texture, which asks at a great many points that are not
+    /// vertices of anything. `position` should be on the surface or within
+    /// a voxel of it; a texel on a decimated triangle is, by the tolerance
+    /// the decimation was held to.
+    pub fn surface_colour(&self, volume: &Volume, position: Vec3) -> [u8; 3] {
+        let voxel_size = volume.voxel_size();
+        let slot = volume.colour().at((position / voxel_size).round().as_ivec3());
+        let crease = match self.paint(slot) {
+            Some(paint) if !(paint.wash.is_none() && paint.highlight.is_none()) => {
+                crease_at(volume, position, voxel_size) * self.crease_gain
+            }
+            _ => 0.0,
+        };
+        self.colour(slot, crease)
+    }
+
     /// One sRGB colour for each vertex of `mesh`, which must be a mesh of
     /// `volume`: the paint its slot names, shaded by how creased the surface
     /// is at it.

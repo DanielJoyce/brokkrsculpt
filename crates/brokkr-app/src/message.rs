@@ -21,11 +21,20 @@ pub enum ExportFormat {
     /// for a full colour process, where a 3MF says which filament prints
     /// what. See `brokkr_core::export::ply`.
     Ply,
+    /// OBJ with a material file and a picture for each body: the paint
+    /// baked into a texture, so that a small mesh still looks like the
+    /// model. See `brokkr_core::export::texture`.
+    Textured,
 }
 
 impl ExportFormat {
-    pub const ALL: [ExportFormat; 4] =
-        [ExportFormat::Stl, ExportFormat::Obj, ExportFormat::ThreeMf, ExportFormat::Ply];
+    pub const ALL: [ExportFormat; 5] = [
+        ExportFormat::Stl,
+        ExportFormat::Obj,
+        ExportFormat::ThreeMf,
+        ExportFormat::Ply,
+        ExportFormat::Textured,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -33,6 +42,7 @@ impl ExportFormat {
             ExportFormat::Obj => "OBJ",
             ExportFormat::ThreeMf => "3MF",
             ExportFormat::Ply => "PLY",
+            ExportFormat::Textured => "OBJ+PNG",
         }
     }
 
@@ -42,6 +52,7 @@ impl ExportFormat {
             ExportFormat::Obj => "obj",
             ExportFormat::ThreeMf => "3mf",
             ExportFormat::Ply => "ply",
+            ExportFormat::Textured => "obj",
         }
     }
 }
@@ -961,6 +972,9 @@ pub enum Message {
     Studio(StudioMessage),
     /// One of the form tools' controls. See `app/form.rs`.
     Form(FormMessage),
+    /// How many texels on a side a baked texture is: 1024, 2048 or 4096. A
+    /// setting of the application, like the export detail.
+    TextureSizeChanged(u32),
     /// Coat the whole of the active body in the paint in hand, wherever the
     /// mask leaves it free. One undo entry.
     PaintAllApplied,
