@@ -22,7 +22,7 @@ was built and what was measured.
 | S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush and form smooth remain. Posing is not planned (section 9.3) | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
 | S5 Unwrap and bake | **Done but for the other maps**, 2026-11-23 (sections 10.4 and 10.5): unwrap, the base colour bake, OBJ with a picture, and GLB. Normal, occlusion and finish maps remain | Export as *OBJ+PNG* or *GLB*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
 | P Painting engine | **Usable**, 2026-11-23 (section 15): the storage, the view and the brush. Painted colour is on screen, in the project file and in every export that carries colour | The paint brush lays a colour: *Paint*, *Glaze* or *Erase*, put on *Loaded*, as a *Wash*, with a *Drybrush* or a *Sponge*, at any opacity, with a soft edge. *Pick from model* takes a colour back off it |
-| B Brushes as settings | **Begun**, 2026-11-23 (section 16): where the files go. The generic brush, the palette and build-up follow | Settings, brushes and autosave each in the folder the operating system keeps for them |
+| B Brushes as settings | **Begun**, 2026-11-23 (section 16): where the files go, and the generic brush in the engine. The palette and build-up follow | Settings, brushes and autosave each in the folder the operating system keeps for them |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
 repository, or the README's measured tables) or explicitly labelled
@@ -2772,9 +2772,10 @@ is made, and it is worth handing to somebody else.
 | Stage | What | State |
 |---|---|---|
 | B1 | Where the files go | **Built**, 2026-11-23 (below) |
-| B2 | The generic brush in the core, held to the classic kernels | Next |
-| B3 | The palette, the core presets, and a brush's settings on the panel | |
-| B4 | Build-up on or off, and a bitmap along a stroke | |
+| B2 | The generic brush in the core, held to the classic kernels | **Built**, 2026-11-23 (below) |
+| B3 | The palette, the core presets, and a brush's settings on the panel | Next |
+| B4 | Build-up on or off, and choosing a bitmap for a brush's tip | |
+| B5 | Brushes that stamp a shape and not a height: an implicit surface, or a vector displacement map | Later. Asked for as a later stage, and written down here so that it is not lost |
 
 #### Built, 2026-11-23 (B1): where the files go
 
@@ -2798,3 +2799,66 @@ and the next change is written to the new one.
 absolute and under the application's name, that a kind which would share
 the settings' directory is put inside it, that on Linux they are where the
 specification says, and that brushes in the old place are still found.
+
+#### Built, 2026-11-23 (B2): the generic brush
+
+`brush/compound.rs`. Nothing in the application uses it yet: the palette is
+B3.
+
+`Actions` is the five amounts of section 16.2 (push, inflate, pinch, smooth,
+level) with the plane a levelling brush works to: how far off the surface
+it is held, and whether the brush fills up to it, cuts down to it, or
+both. `Profile` is a shape and a plateau. `Compound` is the two of them
+with a size, a strength and a pattern, and `Compound::apply` is one kernel
+for all of it, with an image across the tip as one more factor when it is
+handed one.
+
+**Held to the classic brushes, bit for bit.**
+`one_action_is_the_classic_brush_of_that_name` runs each of the six
+classic operators and the compound of its one action through the same
+stroke, over every falloff, pattern, direction, pressure and mask: 1,728
+pairs. Each pair has to leave the same field, the same bricks stored the
+same way, and the same undo entry. A second test does it mirrored and at a
+radius that has whole bricks of solid under the brush, which is the only
+place the decision to skip a brick is exercised. Both passed as first
+written, which is what arranging the arithmetic for it was for.
+
+A crease is the classic Crease to within 0.0001 of a voxel and not to the
+bit: the classic multiplies its depth in at another place in the product.
+
+**What is new, and held by its own tests**: two actions at once do what
+neither does alone; half a push moves the surface less than a whole one
+and a negative one cuts; a scraper takes off what stands proud of its
+plane and fills nothing; a profile is flat on its plateau, its shape
+beyond it and never rises outward; a dome is a dome; and an image across
+the tip is nothing where the image is nothing and turns with the stroke.
+
+**Properties**: any amounts at all are brought to what a brush can be, and
+legal ones are left exactly as they were; a profile gives a share whatever
+it is asked; and whatever a brush is made of, three stamps of it leave
+every value within the band, change nothing outside its radius, and get
+nothing under a mask that protects everything.
+
+**One rule the amounts keep that a slider would not**: the push and the
+inflation together are no more than one stamp may move the surface, a
+voxel. Asked for more, both are brought down in proportion. Two actions
+that each move the surface a voxel would be two.
+
+---
+
+## 17. Reading sizes off the screen (asked for, not begun)
+
+Asked for by the maintainer on 2026-11-23, while section 16 was being
+built: *"some kind of on screen size display, like how maps show a
+distance that changes as you zoom, and maybe a quick way to get the
+distance between two clicked points."*
+
+Two small things, and a stage of their own after the brushes:
+
+- **A scale bar** in a corner of the viewport: a bar and a round number of
+  millimetres, which changes as the view is zoomed, as a map's does. The
+  length it stands for is the length at the point the view is turning
+  about, since under a perspective view a millimetre is not one size
+  everywhere on the screen.
+- **A measure**: click two points on the model and read the straight-line
+  distance between them, with the line drawn between the two.

@@ -70,6 +70,7 @@ use crate::region::FieldRegion;
 use crate::volume::{BrickPreview, BrickVerdict, Volume};
 
 pub mod alpha;
+pub mod compound;
 pub mod engine;
 pub mod stamp;
 
