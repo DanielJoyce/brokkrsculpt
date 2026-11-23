@@ -162,6 +162,17 @@ pub enum StudioMessage {
     /// Show what the brush in hand is made of, to change it, or put that
     /// away.
     SettingsShown(bool),
+    /// Lay the picture in hand across the tip of the brush, or take it
+    /// off. The picture is the one the stamp presses: one of the six that
+    /// come with the application, or any picture.
+    TipToggled(bool),
+    /// Whether the brush builds up, every stamp on the last, as a brush
+    /// always has; or, `false`, a stroke lays one layer however long it
+    /// dwells and however often it crosses itself.
+    BuildUpToggled(bool),
+    /// Set the brush down this many of its own widths apart along the
+    /// stroke, for separate dabs. Nothing, or less, is a line.
+    DabsChanged(f32),
     /// How far the brush trails the pointer, in pixels. Zero is off.
     LazyChanged(f32),
     /// How much of the brush's size pen pressure decides, 0..=1.

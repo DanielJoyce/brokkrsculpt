@@ -56,7 +56,7 @@
 use std::sync::Arc;
 
 use brokkr_core::brush::alpha::{Alpha, BuiltIn};
-use brokkr_core::brush::compound::{Actions, Compound, MOST_PLATEAU, Profile, Shape, Side};
+use brokkr_core::brush::compound::{Actions, Compound, Layer, MOST_PLATEAU, Profile, Shape, Side};
 use brokkr_core::brush::stamp::{Placement, StampError, StampGesture};
 use brokkr_core::{Brush, BrushDirection, FalloffCurve, Stamp};
 use glam::{Vec2, Vec3};
@@ -85,6 +85,10 @@ pub(super) const ALONG_RANGE: std::ops::RangeInclusive<f32> = 0.5..=4.0;
 /// a gap of half a stamp between them, which reads as a row of separate
 /// things.
 const DEFAULT_ALONG: f32 = 1.5;
+
+/// The most steps taken along the pointer's ray to find the surface as it
+/// was before a stroke. See [`Brokkr::layer_aim`].
+const AIM_STEPS: usize = 48;
 
 /// How many times the pointer's line is halved to find where a step ends.
 /// Twelve is a four thousandth of the line: under a hundredth of a
@@ -122,6 +126,17 @@ pub(super) struct StudioState {
     pub plateau: f32,
     /// Whether the panel shows what the brush is made of.
     pub open: bool,
+    /// The picture in hand is laid across the tip of the brush.
+    pub tip_on: bool,
+    /// Every stamp works on what the last one left, as a brush always
+    /// has. Off, a stroke lays one layer.
+    pub build_up: bool,
+    /// What the stroke in progress has given each voxel, for a stroke
+    /// that lays one layer.
+    layer: Layer,
+    /// How far apart the brush is set down along a stroke, in its own
+    /// widths, or nothing for a line.
+    pub dabs: f32,
     /// How far the brush trails the pointer, in pixels. Zero is off.
     pub lazy_px: f32,
     /// How much of the brush's size pressure decides.
@@ -160,6 +175,10 @@ impl Default for StudioState {
             round: false,
             plateau: 0.0,
             open: false,
+            tip_on: false,
+            build_up: true,
+            layer: Layer::new(),
+            dabs: 0.0,
             lazy_px: 0.0,
             size_from_pressure: 0.0,
             anchor: Vec2::ZERO,
@@ -187,6 +206,11 @@ impl StudioState {
     /// So a wobble smaller than the lead moves nothing, and a deliberate
     /// stroke is followed along a line smoother than the hand's.
     pub(super) fn follow(&mut self, pixel: Vec2, start: bool) -> Vec2 {
+        if start {
+            // A new stroke, and for one that lays a layer, a new layer:
+            // one line of it, unless the brush is set down in dabs.
+            self.layer.begin(self.dabs <= 0.0);
+        }
         if start || self.lazy_px <= 0.0 {
             self.anchor = pixel;
             return pixel;
@@ -219,6 +243,9 @@ impl StudioState {
         self.custom = None;
         self.round = false;
         self.plateau = 0.0;
+        self.tip_on = false;
+        self.build_up = true;
+        self.dabs = 0.0;
         self.stamp_on = false;
     }
 
@@ -241,6 +268,19 @@ impl StudioState {
             StudioMessage::RoundChosen => self.round = true,
             StudioMessage::PlateauChanged(share) => self.plateau = clamped(share, PLATEAU_RANGE),
             StudioMessage::SettingsShown(shown) => self.open = shown,
+            StudioMessage::BuildUpToggled(on) => self.build_up = on,
+            StudioMessage::DabsChanged(widths) => {
+                // Not a number is not more than nothing, and is a line.
+                self.dabs = if widths > 0.0 { clamped(widths, ALONG_RANGE) } else { 0.0 };
+            }
+            StudioMessage::TipToggled(on) => {
+                self.tip_on = on;
+                if on {
+                    // The stamp is the picture pressed in whole, and is
+                    // not a brush that has a tip.
+                    self.stamp_on = false;
+                }
+            }
             StudioMessage::LazyChanged(pixels) => self.lazy_px = clamped(pixels, LAZY_RANGE),
             StudioMessage::SizeFromPressureChanged(share) => {
                 self.size_from_pressure = clamped(share, SIZE_RANGE);
@@ -249,6 +289,7 @@ impl StudioState {
                 self.stamp_on = on;
                 if on {
                     self.custom = None;
+                    self.tip_on = false;
                     return Some(
                         "stamp: press where it goes, drag to size and turn it".to_string(),
                     );
@@ -383,10 +424,8 @@ impl Brokkr {
 
     /// The brush as it is set up now, as a preset under `name`.
     fn preset_now(&self, name: String) -> Preset {
-        let stamp = self.studio.stamp_on.then(|| {
-            let picture = self.studio.built_in.map_or(StampOf::InHand, StampOf::BuiltIn);
-            (picture, self.studio.stamp_height)
-        });
+        let picture = self.studio.built_in.map_or(StampOf::InHand, StampOf::BuiltIn);
+        let stamp = self.studio.stamp_on.then_some((picture, self.studio.stamp_height));
         Preset {
             name,
             kind: self.brush.kind,
@@ -396,6 +435,9 @@ impl Brokkr {
             strength: Some(self.own_strength()),
             stamp,
             along: if self.studio.stamp_on { self.studio.stamp_along } else { 0.0 },
+            tip: self.studio.tip_on.then_some(picture),
+            build_up: self.studio.build_up,
+            dabs: self.studio.dabs,
             lazy_px: self.studio.lazy_px,
             size_from_pressure: self.studio.size_from_pressure,
         }
@@ -454,13 +496,19 @@ impl Brokkr {
                 self.studio.custom = preset.custom;
                 self.studio.round = preset.profile.shape == Shape::Round;
                 self.studio.set(StudioMessage::PlateauChanged(preset.profile.plateau));
-                if let Some((picture, height)) = preset.stamp {
-                    if let StampOf::BuiltIn(kind) = picture {
-                        self.studio.set(StudioMessage::StampChosen(kind));
-                    }
+                // The picture, for the stamp or for the tip: one of the
+                // application's by name, or whichever is in hand.
+                let picture = preset.stamp.map(|(picture, _)| picture).or(preset.tip);
+                if let Some(StampOf::BuiltIn(kind)) = picture {
+                    self.studio.set(StudioMessage::StampChosen(kind));
+                }
+                if let Some((_, height)) = preset.stamp {
                     self.studio.set(StudioMessage::StampHeightChanged(height));
                     self.studio.set(StudioMessage::StampToggled(true));
                 }
+                self.studio.set(StudioMessage::TipToggled(preset.tip.is_some()));
+                self.studio.set(StudioMessage::BuildUpToggled(preset.build_up));
+                self.studio.set(StudioMessage::DabsChanged(preset.dabs));
                 self.studio.set(StudioMessage::StampAlongChanged(preset.along));
                 self.studio.set(StudioMessage::LazyChanged(preset.lazy_px));
                 self.studio.set(StudioMessage::SizeFromPressureChanged(preset.size_from_pressure));
@@ -668,6 +716,79 @@ impl Brokkr {
         }
     }
 
+    /// Whether the stroke the brush in hand makes lays one layer: a brush
+    /// on the field with build-up off, and not Smooth under shift.
+    fn lays_a_layer(&self) -> bool {
+        let brush = self.effective_brush();
+        !self.studio.build_up
+            && !self.studio.stamping()
+            && brush.kind == self.brush.kind
+            && (self.studio.custom.is_some() || Actions::of(brush.kind).is_some())
+    }
+
+    /// Where a stamp under `pixel` is aimed, given where the pointer's ray
+    /// meets the surface as it is now.
+    ///
+    /// There, for a brush that builds up. A stroke that lays one layer
+    /// works from the surface as it was before the stroke
+    /// (`brokkr_core::brush::compound::layer`), and is aimed at that
+    /// surface: on along the same ray to where it meets it, or back along
+    /// it for a stroke that cuts. The field as it was says how far off its
+    /// surface a point is, up to three voxels, and a step of that much
+    /// along the ray never passes through the surface.
+    ///
+    /// A ray that has not met it within two of the brush's radii was not
+    /// going to: the pointer is over the layer's own edge, past where the
+    /// model used to be. That stamp is left where the ray landed, and the
+    /// core puts it back along its normal.
+    pub(super) fn layer_aim(&self, pixel: Vec2, landed: Vec3) -> Vec3 {
+        if !self.lays_a_layer() {
+            return landed;
+        }
+        let volume = self.doc.active_volume();
+        let voxel_size = volume.voxel_size();
+        let (_, ray) = self.ray_through(pixel);
+        let furthest = self.brush.radius * 2.0;
+        let mut at = landed;
+        // Steps of up to three voxels: enough of them for the furthest it
+        // may go and for the last short ones of a ray that grazes.
+        for _ in 0..AIM_STEPS {
+            let off = volume.sample_world_before(at);
+            if off.abs() < 0.01 {
+                return at;
+            }
+            at += ray * (off * voxel_size);
+            if at.distance(landed) >= furthest {
+                break;
+            }
+        }
+        landed
+    }
+
+    /// Which way the surface faces at a stamp's centre: as it is now, or
+    /// for a stroke that lays one layer, as it was before the stroke.
+    pub(super) fn stamp_facing(&self, centre: Vec3) -> Vec3 {
+        let volume = self.doc.active_volume();
+        if self.lays_a_layer() {
+            volume.gradient_world_before(centre)
+        } else {
+            volume.gradient_world(centre)
+        }
+    }
+
+    /// How far apart the stamps of a stroke are laid: a quarter of the
+    /// brush's radius, which reads as a line and is upstream's, or for a
+    /// brush set down in dabs, that many of its widths. Shift is Smooth,
+    /// which is a line whatever is in hand.
+    pub(super) fn stroke_spacing(&self) -> f32 {
+        let brush = self.effective_brush();
+        if brush.kind == self.brush.kind && self.studio.dabs > 0.0 && !self.studio.stamping() {
+            brush.radius * 2.0 * self.studio.dabs
+        } else {
+            brush.spacing(self.doc.voxel_size())
+        }
+    }
+
     /// What the brush in hand is called, for the panel's heading: its
     /// name on the palette when it is one of those, and otherwise the
     /// classic brush it goes by, marked as changed when it is not that
@@ -681,8 +802,12 @@ impl Brokkr {
         if self.studio.stamping() {
             return "STAMP".to_string();
         }
+        // A brush on the field that is none of the palette's is not the
+        // classic brush it goes by either, which is on the palette: it
+        // has amounts of its own, or a profile, a tip or a lead that one
+        // does not.
         let family = self.brush.kind.label().to_uppercase();
-        if self.studio.custom.is_some() { format!("{family}, CHANGED") } else { family }
+        if Actions::of(self.brush.kind).is_some() { format!("{family}, CHANGED") } else { family }
     }
 
     /// Lay one stamp of the field brush, and its mirrors.
@@ -692,31 +817,54 @@ impl Brokkr {
     /// does what its own amounts say, and Smooth under shift what Smooth
     /// does; both have the profile in hand.
     ///
-    /// A classic brush with a classic curve is upstream's stamp, called
-    /// and not copied. See the module documentation.
+    /// A classic brush with a classic curve and no picture across its tip
+    /// is upstream's stamp, called and not copied. See the module
+    /// documentation.
     pub(super) fn stamp_field(&mut self, brush: Brush, stamp: &Stamp) {
         let brush = self.studio.sized(brush, stamp.pressure);
-        let custom = self.studio.custom.filter(|_| brush.kind == self.brush.kind);
+        // Shift is Smooth, and not the brush in hand with its amounts and
+        // the picture across its tip.
+        let in_hand = brush.kind == self.brush.kind;
+        let custom = self.studio.custom.filter(|_| in_hand);
+        let tip = (in_hand && self.studio.tip_on).then(|| Arc::clone(&self.studio.alpha));
         let profile = self.studio.profile(brush.falloff);
-        let classic = custom.is_none() && profile == Profile::of(brush.falloff);
+        let one_layer = in_hand && !self.studio.build_up;
+        let classic = custom.is_none()
+            && tip.is_none()
+            && !one_layer
+            && profile == Profile::of(brush.falloff);
         let actions = custom.or_else(|| Actions::of(brush.kind)).filter(|_| !classic);
         let volume = self.doc.active_volume_mut();
         match actions {
-            Some(actions) => Compound {
-                actions,
-                radius: brush.radius,
-                strength: brush.strength,
-                profile,
-                pattern: brush.pattern,
+            Some(actions) => {
+                let compound = Compound {
+                    actions,
+                    radius: brush.radius,
+                    strength: brush.strength,
+                    profile,
+                    pattern: brush.pattern,
+                };
+                if one_layer {
+                    compound.lay_symmetric(
+                        volume,
+                        stamp,
+                        tip.as_deref(),
+                        self.symmetry,
+                        super::MIRROR_CENTRE,
+                        &mut self.studio.layer,
+                        &mut self.brush_scratch,
+                    );
+                } else {
+                    compound.apply_symmetric(
+                        volume,
+                        stamp,
+                        tip.as_deref(),
+                        self.symmetry,
+                        super::MIRROR_CENTRE,
+                        &mut self.brush_scratch,
+                    );
+                }
             }
-            .apply_symmetric(
-                volume,
-                stamp,
-                None,
-                self.symmetry,
-                super::MIRROR_CENTRE,
-                &mut self.brush_scratch,
-            ),
             None => brush.apply_symmetric(
                 volume,
                 stamp,
@@ -975,6 +1123,46 @@ impl Brokkr {
         .into()
     }
 
+    /// Which picture is in hand, for the stamp to press or to lay across
+    /// a brush's tip: the six that come with the application, three to a
+    /// row, and a button that asks for any picture.
+    fn picture_picker(&self) -> Element<'_, Message> {
+        let changed = |message: StudioMessage| Message::Studio(message);
+        let mut pictures = column![].spacing(theme::S1);
+        for kinds in BuiltIn::ALL.chunks(3) {
+            pictures =
+                pictures.push(kinds.iter().fold(row![].spacing(theme::S1), |assembled, kind| {
+                    let live = self.studio.built_in == Some(*kind);
+                    assembled.push(
+                        button(text(kind.label()).size(theme::CAPTION_SIZE))
+                            .width(Length::Fill)
+                            .style(if live {
+                                theme::tool_button_active
+                            } else {
+                                theme::tool_button
+                            })
+                            .on_press(changed(StudioMessage::StampChosen(*kind))),
+                    )
+                }));
+        }
+        let own = self.studio.built_in.is_none();
+        pictures
+            .push(
+                button(
+                    text(if own {
+                        format!("Picture: {}", self.studio.alpha_name)
+                    } else {
+                        "A picture…".to_string()
+                    })
+                    .size(theme::CAPTION_SIZE),
+                )
+                .width(Length::Fill)
+                .style(if own { theme::tool_button_active } else { theme::tool_button })
+                .on_press(changed(StudioMessage::StampImageRequested)),
+            )
+            .into()
+    }
+
     /// What the brush in hand is made of and how it is led: under the
     /// classic brush's size and strength.
     pub(super) fn studio_panel(&self) -> Element<'_, Message> {
@@ -989,40 +1177,8 @@ impl Brokkr {
         ]
         .spacing(theme::S1);
         if stamping {
-            for kinds in BuiltIn::ALL.chunks(3) {
-                stamp =
-                    stamp.push(kinds.iter().fold(row![].spacing(theme::S1), |assembled, kind| {
-                        let live = self.studio.built_in == Some(*kind);
-                        assembled.push(
-                            button(text(kind.label()).size(theme::CAPTION_SIZE))
-                                .width(Length::Fill)
-                                .style(if live {
-                                    theme::tool_button_active
-                                } else {
-                                    theme::tool_button
-                                })
-                                .on_press(changed(StudioMessage::StampChosen(*kind))),
-                        )
-                    }));
-            }
             stamp = stamp
-                .push(
-                    button(
-                        text(if self.studio.built_in.is_none() {
-                            format!("Picture: {}", self.studio.alpha_name)
-                        } else {
-                            "A picture…".to_string()
-                        })
-                        .size(theme::CAPTION_SIZE),
-                    )
-                    .width(Length::Fill)
-                    .style(if self.studio.built_in.is_none() {
-                        theme::tool_button_active
-                    } else {
-                        theme::tool_button
-                    })
-                    .on_press(changed(StudioMessage::StampImageRequested)),
-                )
+                .push(self.picture_picker())
                 .push(reading(format!("Height  {:.2} of its size", self.studio.stamp_height)))
                 .push(
                     slider(HEIGHT_RANGE, self.studio.stamp_height, move |share| {
@@ -1072,6 +1228,48 @@ impl Brokkr {
         let made_of = self.studio.custom.or_else(|| Actions::of(self.brush.kind));
         let mut settings = column![].spacing(theme::S1);
         if let Some(actions) = made_of.filter(|_| !stamping) {
+            // A picture across the tip: the one in hand, which is the one
+            // the stamp presses.
+            let tipped = self.studio.tip_on;
+            settings = settings.push(
+                button(text("Picture across the tip").size(theme::CAPTION_SIZE))
+                    .width(Length::Fill)
+                    .style(if tipped { theme::tool_button_active } else { theme::tool_button })
+                    .on_press(changed(StudioMessage::TipToggled(!tipped))),
+            );
+            if tipped {
+                settings = settings.push(self.picture_picker()).push(
+                    text("where the picture is bright the brush works, its top along the stroke")
+                        .size(theme::CAPTION_SIZE)
+                        .color(theme::TEXT_MUTE),
+                );
+            }
+            // Whether a stroke builds on itself, and whether it is a line
+            // or the brush set down every so often.
+            let builds = self.studio.build_up;
+            let way = |label: &'static str, on: bool| {
+                button(text(label).size(theme::CAPTION_SIZE).width(Length::Fill).center())
+                    .width(Length::Fill)
+                    .style(if builds == on {
+                        theme::tool_button_active
+                    } else {
+                        theme::tool_button
+                    })
+                    .on_press(changed(StudioMessage::BuildUpToggled(on)))
+            };
+            settings = settings
+                .push(row![way("Builds up", true), way("One layer", false)].spacing(theme::S1))
+                .push(reading(if self.studio.dabs > 0.0 {
+                    format!("Set down every  {:.1} of its width", self.studio.dabs)
+                } else {
+                    "Set down  as a line".to_string()
+                }))
+                .push(
+                    slider(0.0..=*ALONG_RANGE.end(), self.studio.dabs, move |widths| {
+                        changed(StudioMessage::DabsChanged(widths))
+                    })
+                    .step(0.5_f32),
+                );
             let open = self.studio.open;
             settings = settings.push(
                 button(
@@ -2484,5 +2682,234 @@ mod tests {
         assert_eq!(app.studio.stamp_height, 0.8);
         assert_eq!(app.studio.alpha_name, "mine.png", "the picture in hand was put down");
         assert_eq!(app.studio.built_in, None);
+    }
+
+    /// A drag from the middle of the view out to `pixels` and back, `times`
+    /// over, in one stroke: a hand scrubbing.
+    fn scrub(app: &mut Brokkr, pixels: f32, times: usize) {
+        press(app);
+        for _ in 0..times {
+            for step in 1..=8 {
+                drag_by(app, pixels * step as f32 / 8.0);
+            }
+            for step in (0..8).rev() {
+                drag_by(app, pixels * step as f32 / 8.0);
+            }
+        }
+        release(app);
+    }
+
+    /// With build-up off a stroke lays one layer: as tall as the strength
+    /// and the size say, no taller for being scrubbed, and one undo. The
+    /// same scrubbing with build-up on is taller for every pass.
+    #[test]
+    fn a_brush_with_build_up_off_lays_one_layer_however_it_is_scrubbed() {
+        let scrubbed = |name: &str, strength: f32, times: usize| {
+            let mut app = app();
+            choose(&mut app, name);
+            update(&mut app, Message::BrushRadiusChanged(3.0));
+            update(&mut app, Message::BrushStrengthChanged(strength));
+            scrub(&mut app, 60.0, times);
+            app
+        };
+        let (once, thrice) = (scrubbed("Layer", 0.4, 1), scrubbed("Layer", 0.4, 3));
+        assert!(!once.studio.build_up && once.lays_a_layer());
+        let (tall, again) = (height_under_the_press(&once), height_under_the_press(&thrice));
+        // Strength times the radius times the half of it a layer may be.
+        let expected = 0.4 * 3.0 * brokkr_core::brush::compound::LAYER_DEPTH;
+        assert!((tall - expected).abs() < 0.1, "a layer is {tall} mm tall and not {expected}");
+        assert!((again - tall).abs() <= 0.02, "scrubbed three times it is {again} mm, not {tall}");
+        // Control: the same brush building up is taller each time.
+        let (built, more) = (scrubbed("Draw", 0.4, 1), scrubbed("Draw", 0.4, 3));
+        let (first, third) = (height_under_the_press(&built), height_under_the_press(&more));
+        assert!(third > first + 0.3, "build-up scrubbed: {first} mm, then {third} mm");
+
+        // Clay that does not build on itself is a strip of one thickness.
+        let (strip, strips) = (scrubbed("Clay strips", 0.3, 1), scrubbed("Clay strips", 0.3, 3));
+        let (thick, still) = (height_under_the_press(&strip), height_under_the_press(&strips));
+        assert!(thick > 0.5, "a strip of clay is only {thick} mm thick");
+        assert!(
+            (still - thick).abs() <= 0.04,
+            "scrubbed three times it is {still} mm, not {thick}"
+        );
+        let (clay, clays) = (scrubbed("Clay", 0.3, 1), scrubbed("Clay", 0.3, 3));
+        assert!(
+            height_under_the_press(&clays) > height_under_the_press(&clay) + 0.3,
+            "clay did not build on itself"
+        );
+
+        // One undo, and shift still smooths with a classic Smooth.
+        let mut app = scrubbed("Layer", 0.4, 2);
+        update(&mut app, Message::Undo);
+        assert!(same_field(&app, &self::app()), "a layer was not one undo");
+        app.shift = true;
+        assert!(!app.lays_a_layer(), "Smooth under shift was taken for a layer");
+        stroke(&mut app);
+        app.shift = false;
+
+        // Upstream's own button is a brush that builds up.
+        update(&mut app, Message::BrushKindChanged(BrushKind::Draw));
+        assert!(app.studio.build_up && !app.lays_a_layer());
+    }
+
+    /// A stroke that lays one layer is aimed at the surface as it was
+    /// before the stroke: along the pointer's ray, under what the stroke
+    /// has built, and facing the way that surface faced.
+    #[test]
+    fn a_layer_is_aimed_at_the_surface_as_it_was() {
+        let mut app = app();
+        let middle = Vec2::new(centre().x, centre().y);
+        // Where the ray lands on a ball nobody has touched. (Asked of an
+        // application that has had a pointer event, and so knows how big
+        // its viewport is: asked of this one, yet to have one, the answer
+        // was 20 mm away.)
+        let landed = on_the_ball(0.0, ACROSS);
+        // A brush that builds up is aimed where the ray lands.
+        assert_eq!(app.layer_aim(middle, landed), landed);
+
+        choose(&mut app, "Layer");
+        update(&mut app, Message::BrushStrengthChanged(0.6));
+        press(&mut app);
+        drag_by(&mut app, 30.0);
+        // Mid stroke: the ray lands on top of the layer, most of a
+        // millimetre nearer the camera than the ball was.
+        let on_top = app.surface_under(middle).expect("the layer is under the pointer");
+        let risen = (on_top - landed).length();
+        assert!(risen > 0.5, "the fixture's layer is only {risen} mm tall");
+        let aimed = app.layer_aim(middle, on_top);
+        assert!((aimed - landed).length() < 0.03, "aimed {} mm off", (aimed - landed).length());
+        let volume = app.doc.active_volume();
+        assert!(volume.sample_world_before(aimed).abs() < 0.02);
+        let faces = app.stamp_facing(aimed);
+        assert!(faces.dot(landed.normalize()) > 0.999, "it faces {faces}");
+        release(&mut app);
+        // The stroke over, the surface as it was is the surface as it is.
+        assert_eq!(app.layer_aim(middle, on_top), on_top);
+    }
+
+    /// A brush set down in dabs lays separate marks a width or so apart,
+    /// and with a picture across its tip each mark is the picture.
+    #[test]
+    fn a_brush_set_down_in_dabs_lays_separate_marks() {
+        let dragged = |configure: &dyn Fn(&mut Brokkr)| {
+            let mut app = app();
+            choose(&mut app, "Layer");
+            update(&mut app, Message::BrushRadiusChanged(1.0));
+            update(&mut app, Message::BrushStrengthChanged(0.6));
+            configure(&mut app);
+            press(&mut app);
+            for part in 1..=6 {
+                drag_by(&mut app, 20.0 * part as f32);
+            }
+            release(&mut app);
+            app
+        };
+        let length = (on_the_ball(120.0, ACROSS) - on_the_ball(0.0, ACROSS)).length();
+        let marks =
+            |app: &Brokkr| runs(&profile(app, ACROSS, length + 2.0), |rise| rise > 0.12).len();
+
+        // As a line: one mark, the length of the drag.
+        let line = dragged(&|_| {});
+        assert_eq!(line.stroke_spacing(), 0.25);
+        assert_eq!(marks(&line), 1, "a line is in pieces");
+
+        // Every width and a half: a mark each 3 mm, with gaps between.
+        let dabs = dragged(&|app| set(app, StudioMessage::DabsChanged(1.5)));
+        assert_eq!(dabs.stroke_spacing(), 3.0);
+        let expected = (length / 3.0).floor() as usize + 1;
+        assert!(expected >= 3, "the fixture's drag is only {length} mm");
+        assert_eq!(marks(&dabs), expected, "over a drag of {length} mm");
+        // Shift is Smooth, which is a line whatever is in hand.
+        let mut smoothing = dragged(&|app| set(app, StudioMessage::DabsChanged(1.5)));
+        smoothing.shift = true;
+        assert_eq!(smoothing.stroke_spacing(), 0.25);
+
+        // With a picture across the tip, a dab is the picture: a bar
+        // across the stroke is narrower along it than the brush is.
+        let wide = |app: &Brokkr| {
+            let found = runs(&profile(app, ACROSS, length + 2.0), |rise| rise > 0.12);
+            found.iter().map(|(from, to)| to - from).fold(0.0_f32, f32::max)
+        };
+        let bars = dragged(&|app| {
+            set(app, StudioMessage::DabsChanged(1.5));
+            set(app, StudioMessage::StampChosen(BuiltIn::Bar));
+            set(app, StudioMessage::TipToggled(true));
+        });
+        assert_eq!(marks(&bars), expected);
+        assert!(
+            wide(&bars) < wide(&dabs) * 0.7,
+            "a bar is {} mm along the stroke and a plain dab {}",
+            wide(&bars),
+            wide(&dabs)
+        );
+        // And Stitches on the palette is that brush.
+        let mut app = app();
+        choose(&mut app, "Stitches");
+        assert!(app.studio.tip_on && !app.studio.build_up && !app.studio.stamp_on);
+        assert_eq!((app.studio.built_in, app.studio.dabs), (Some(BuiltIn::Bar), 1.0));
+
+        // Dabs are clamped as a row's spacing is, and nothing is a line.
+        set(&mut app, StudioMessage::DabsChanged(99.0));
+        assert_eq!(app.studio.dabs, *ALONG_RANGE.end());
+        set(&mut app, StudioMessage::DabsChanged(0.1));
+        assert_eq!(app.studio.dabs, *ALONG_RANGE.start());
+        for nothing in [0.0, -1.0, f32::NAN] {
+            set(&mut app, StudioMessage::DabsChanged(nothing));
+            assert_eq!(app.studio.dabs, 0.0);
+        }
+    }
+
+    /// A picture across the tip shapes what a stroke does: less of the
+    /// surface is moved than with a plain tip, which picture it is matters,
+    /// taking it off is the plain brush again, and Smooth under shift does
+    /// not have it.
+    #[test]
+    fn a_picture_across_the_tip_shapes_the_stroke() {
+        let stroked = |picture: Option<BuiltIn>| {
+            let mut app = app();
+            update(&mut app, Message::BrushStrengthChanged(0.6));
+            if let Some(picture) = picture {
+                set(&mut app, StudioMessage::StampChosen(picture));
+                set(&mut app, StudioMessage::TipToggled(true));
+            }
+            stroke(&mut app);
+            app
+        };
+        let (plain, bar, star) =
+            (stroked(None), stroked(Some(BuiltIn::Bar)), stroked(Some(BuiltIn::Star)));
+        let (all, some) = (moved_voxels(&plain), moved_voxels(&bar));
+        assert!(some > 100 && some < all * 9 / 10, "a bar moved {some} voxels, a plain tip {all}");
+        assert!(!same_field(&bar, &star), "which picture is across the tip made no difference");
+
+        let mut app = app();
+        update(&mut app, Message::BrushStrengthChanged(0.6));
+        set(&mut app, StudioMessage::StampChosen(BuiltIn::Bar));
+        set(&mut app, StudioMessage::TipToggled(true));
+        assert_eq!(app.live_brush_name(), "DRAW, CHANGED");
+        set(&mut app, StudioMessage::TipToggled(false));
+        stroke(&mut app);
+        assert!(same_field(&app, &plain), "with the picture taken off it is not the plain brush");
+
+        // The stamp and a tip are two uses of the one picture in hand,
+        // and taking up either puts the other away.
+        set(&mut app, StudioMessage::TipToggled(true));
+        set(&mut app, StudioMessage::StampToggled(true));
+        assert!(app.studio.stamp_on && !app.studio.tip_on);
+        set(&mut app, StudioMessage::TipToggled(true));
+        assert!(!app.studio.stamp_on && app.studio.tip_on);
+        // And a classic brush chosen has a plain tip.
+        update(&mut app, Message::BrushKindChanged(BrushKind::Clay));
+        assert!(!app.studio.tip_on);
+
+        // Shift smooths with a plain Smooth, tip or no tip.
+        let smoothed = |tipped: bool| {
+            let mut app = stroked(None);
+            set(&mut app, StudioMessage::TipToggled(tipped));
+            app.shift = true;
+            stroke(&mut app);
+            app
+        };
+        assert!(same_field(&smoothed(true), &smoothed(false)), "the tip was on Smooth under shift");
+        drop(app.studio_panel());
     }
 }

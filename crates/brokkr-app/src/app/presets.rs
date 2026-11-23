@@ -37,6 +37,7 @@
 //! Fine crease = brush:Draw, push:-0.6, pinch:1, size:1.5, strength:0.3, lazy:12
 //! Scrape = brush:Clay, plane:-0.15, side:Cut
 //! Rivet row = brush:Draw, size:1, stamp:Rivet, along:1.5
+//! Stitches = brush:Draw, tip:Bar, buildup:off, dabs:1, size:1.5, strength:0.6
 //! ```
 //!
 //! `brush:` names the classic brush the settings start from, and the
@@ -104,7 +105,7 @@ pub(super) const LONGEST_NAME: usize = 24;
 /// the preset is chosen; this only keeps the number sane.
 const BIGGEST_MM: f32 = 100.0;
 
-/// The stamp a preset takes up.
+/// The picture a preset takes up, as its stamp or across its tip.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum StampOf {
     /// One of the pictures that come with the application.
@@ -136,6 +137,20 @@ pub(super) struct Preset {
     /// How far apart the stamp is laid along a drag, in stamp widths, or
     /// nothing for one stamp sized by the drag. Nothing without a stamp.
     pub along: f32,
+    /// A picture across the tip of a brush on the field: one more factor
+    /// on what each stamp does, laid out along the stroke. Nothing for the
+    /// stamp, which is a picture already, and for the two classic brushes
+    /// that are not brushes on the field.
+    pub tip: Option<StampOf>,
+    /// Whether every stamp works on what the last one left, so that a
+    /// stroke is taller where it dwelt or crossed itself, which is how a
+    /// brush has always worked; or, `false`, a stroke lays one layer. Only
+    /// a brush on the field can lay one.
+    pub build_up: bool,
+    /// How far apart the brush is set down along a stroke, in its own
+    /// widths, or nothing for a line. Nothing for the stamp, which has
+    /// `along`.
+    pub dabs: f32,
     pub lazy_px: f32,
     pub size_from_pressure: f32,
 }
@@ -157,6 +172,9 @@ impl Preset {
             strength: None,
             stamp: None,
             along: 0.0,
+            tip: None,
+            build_up: true,
+            dabs: 0.0,
             lazy_px: 0.0,
             size_from_pressure: 0.0,
         }
@@ -178,9 +196,20 @@ impl Preset {
     pub fn settled(mut self) -> Self {
         if self.stamp.is_some() {
             self.custom = None;
+            self.tip = None;
         } else {
             self.along = 0.0;
         }
+        if self.stamp.is_some() || (self.custom.is_none() && Actions::of(self.kind).is_none()) {
+            self.tip = None;
+            self.build_up = true;
+            self.dabs = 0.0;
+        }
+        self.dabs = if self.dabs > 0.0 {
+            self.dabs.clamp(*ALONG_RANGE.start(), *ALONG_RANGE.end())
+        } else {
+            0.0
+        };
         if let Some(actions) = self.custom {
             let mut actions = actions.legal();
             // A plane nothing is levelled to is no setting at all, and two
@@ -203,6 +232,8 @@ impl Preset {
     /// * amounts of its own are legal, are not just what its classic brush
     ///   does, and have that brush as their family;
     /// * a stamp has no amounts of its own, and only a stamp is in a row;
+    /// * only a brush on the field has a picture across its tip, lays one
+    ///   layer, or is set down in dabs, and dabs are a width apart or so;
     /// * the plateau is within what a profile can have.
     ///
     /// Two presets that are the same brush are then equal, which is what
@@ -215,7 +246,11 @@ impl Preset {
                 && (actions.level != 0.0 || (actions.plane == 0.0 && actions.side == Side::Both))
         });
         let stamp = if self.stamp.is_some() { self.custom.is_none() } else { self.along == 0.0 };
-        amounts && stamp && (0.0..=MOST_PLATEAU).contains(&self.profile.plateau)
+        let on_the_field =
+            self.stamp.is_none() && (self.custom.is_some() || Actions::of(self.kind).is_some());
+        let tip = on_the_field || (self.tip.is_none() && self.build_up && self.dabs == 0.0);
+        let dabs = self.dabs == 0.0 || ALONG_RANGE.contains(&self.dabs);
+        amounts && stamp && tip && dabs && (0.0..=MOST_PLATEAU).contains(&self.profile.plateau)
     }
 
     /// Whether the brush in hand, as the preset `now`, is this brush: the
@@ -229,6 +264,9 @@ impl Preset {
             && self.strength.is_none_or(|strength| Some(strength) == now.strength)
             && self.stamp == now.stamp
             && self.along == now.along
+            && self.tip == now.tip
+            && self.build_up == now.build_up
+            && self.dabs == now.dabs
             && self.lazy_px == now.lazy_px
             && self.size_from_pressure == now.size_from_pressure
     }
@@ -263,11 +301,21 @@ impl Preset {
         if let Some(strength) = self.strength {
             fields.push(format!("strength:{strength}"));
         }
+        let pictured = |picture: StampOf| match picture {
+            StampOf::BuiltIn(kind) => kind.label(),
+            StampOf::InHand => IN_HAND,
+        };
+        if let Some(tip) = self.tip {
+            fields.push(format!("tip:{}", pictured(tip)));
+        }
+        if !self.build_up {
+            fields.push(format!("buildup:{OFF}"));
+        }
+        if self.dabs > 0.0 {
+            fields.push(format!("dabs:{}", self.dabs));
+        }
         if let Some((stamp, height)) = self.stamp {
-            let picture = match stamp {
-                StampOf::BuiltIn(kind) => kind.label(),
-                StampOf::InHand => IN_HAND,
-            };
+            let picture = pictured(stamp);
             fields.push(format!("stamp:{picture}"));
             fields.push(format!("height:{height}"));
             if self.along > 0.0 {
@@ -341,8 +389,8 @@ impl Preset {
                         self.profile.plateau = plateau;
                     }
                 }
-                "stamp" => {
-                    let stamp = if named(IN_HAND) {
+                "stamp" | "tip" => {
+                    let picture = if named(IN_HAND) {
                         Some(StampOf::InHand)
                     } else {
                         BuiltIn::ALL
@@ -350,8 +398,24 @@ impl Preset {
                             .find(|kind| named(kind.label()))
                             .map(StampOf::BuiltIn)
                     };
-                    if let Some(stamp) = stamp {
-                        self.stamp = Some((stamp, DEFAULT_HEIGHT));
+                    match picture {
+                        Some(picture) if key == "stamp" => {
+                            self.stamp = Some((picture, DEFAULT_HEIGHT));
+                        }
+                        Some(picture) => self.tip = Some(picture),
+                        None => {}
+                    }
+                }
+                "buildup" => {
+                    if named(OFF) {
+                        self.build_up = false;
+                    } else if named("on") {
+                        self.build_up = true;
+                    }
+                }
+                "dabs" => {
+                    if let Some(widths) = number(ALONG_RANGE) {
+                        self.dabs = widths;
                     }
                 }
                 "height" => height = number(HEIGHT_RANGE).or(height),
@@ -407,6 +471,9 @@ pub(super) fn held(actions: Actions) -> (BrushKind, Option<Actions>) {
     let preset = Preset::doing("", actions);
     (preset.kind, preset.custom)
 }
+
+/// How a preset's line says a brush lays one layer: `buildup:off`.
+const OFF: &str = "off";
 
 /// How a preset's line says "the stamp, with the picture in hand".
 const IN_HAND: &str = "picture";
@@ -488,6 +555,26 @@ pub(super) fn core() -> &'static [Preset] {
             stamp("Rivets", BuiltIn::Rivet),
             Preset { size_mm: Some(1.0), along: 1.5, ..stamp("Rivet row", BuiltIn::Rivet) },
             Preset { size_mm: Some(2.0), along: 0.5, ..stamp("Scales", BuiltIn::Scale) },
+            // One layer a stroke, as tall as the strength says however
+            // long the brush dwells.
+            Preset { build_up: false, ..Preset::plain("Layer") },
+            // Clay that does not build on itself: a strip of one
+            // thickness, at a strength that reaches its plane.
+            Preset {
+                build_up: false,
+                strength: Some(0.3),
+                ..Preset::classic("Clay strips", BrushKind::Clay)
+            },
+            // A picture across the tip, set down a width apart, a layer
+            // each: a bar across the stroke every so often.
+            Preset {
+                tip: Some(StampOf::BuiltIn(BuiltIn::Bar)),
+                build_up: false,
+                dabs: 1.0,
+                size_mm: Some(1.5),
+                strength: Some(0.6),
+                ..Preset::plain("Stitches")
+            },
         ]
     });
     &CORE
@@ -778,14 +865,20 @@ mod tests {
             strength: Some(0.33),
             stamp: Some((StampOf::BuiltIn(BuiltIn::Scale), 0.6)),
             along: 2.5,
+            tip: None,
+            build_up: true,
+            dabs: 0.0,
             lazy_px: 17.5,
             size_from_pressure: 0.4,
         }
     }
 
-    /// The same, as a brush on the field with amounts of its own.
+    /// The same, as a brush on the field with amounts of its own, a
+    /// picture across its tip, one layer a stroke, in dabs.
     fn made(name: &str, actions: Actions) -> Preset {
-        Preset { stamp: None, custom: Some(actions), ..full(name) }.settled()
+        let tip = Some(StampOf::BuiltIn(BuiltIn::Star));
+        let of_its_own = Preset { stamp: None, custom: Some(actions), tip, ..full(name) };
+        Preset { build_up: false, dabs: 1.5, ..of_its_own }.settled()
     }
 
     /// Brushes written and read back are the brushes that were written:
@@ -817,6 +910,7 @@ mod tests {
             ),
             made("Nothing at all", nothing),
             Preset::plain("Plain"),
+            Preset { tip: Some(StampOf::InHand), ..Preset::plain("My own tip") },
             Preset { kind: BrushKind::Paint, stamp: None, along: 0.0, ..full("Paint") },
             Preset { kind: BrushKind::Move, stamp: None, along: 0.0, ..full("Move") },
             Preset {
@@ -910,6 +1004,25 @@ mod tests {
             let line = format!("a = stamp:{}", kind.label());
             assert_eq!(read(&line).stamp, Some((StampOf::BuiltIn(kind), DEFAULT_HEIGHT)), "{line}");
         }
+        for kind in BuiltIn::ALL {
+            let line = format!("a = TIP:{}", kind.label().to_lowercase());
+            assert_eq!(read(&line).tip, Some(StampOf::BuiltIn(kind)), "{line}");
+        }
+        assert_eq!(read("a = tip:picture").tip, Some(StampOf::InHand));
+        // A picture across the tip is a brush on the field's: the stamp
+        // is a picture already, and Move and Paint have no tip.
+        assert_eq!(read("a = tip:Star, stamp:Dome").tip, None);
+        assert_eq!(read("a = brush:Paint, tip:Star").tip, None);
+        assert_eq!(read("a = tip:Cog").tip, None);
+        // One layer a stroke, and dabs, are a brush on the field's too.
+        let layered = read("a = buildup:OFF, dabs:2");
+        assert_eq!((layered.build_up, layered.dabs), (false, 2.0));
+        assert!(read("a = buildup:off, buildup:on").build_up);
+        assert!(read("a = buildup:sometimes").build_up, "a setting that made no sense was taken");
+        let stamp = read("a = stamp:Dome, buildup:off, dabs:2");
+        assert_eq!((stamp.build_up, stamp.dabs), (true, 0.0));
+        assert_eq!(read("a = dabs:0.1").dabs, *ALONG_RANGE.start());
+        assert_eq!(read("a = dabs:99").dabs, *ALONG_RANGE.end());
         // As the five the application used to start with were written.
         let crease = read("a = brush:Draw, size:1.5, strength:0.3, studio:Crease, lazy:12");
         assert_eq!(crease.custom, Some(Actions::CREASE));
@@ -1368,6 +1481,9 @@ mod tests {
                 size_mm in prop::option::of(MIN_RADIUS_MM..=BIGGEST_MM),
                 strength in prop::option::of(MIN_STRENGTH..=MAX_STRENGTH),
                 stamp in stamp(),
+                tip in stamp(),
+                build_up in any::<bool>(),
+                dabs in prop_oneof![Just(0.0_f32), -1.0_f32..=6.0],
                 along in prop_oneof![Just(0.0_f32), 0.5_f32..=4.0],
                 lazy_px in prop_oneof![Just(0.0_f32), 0.0_f32..=80.0],
                 size_from_pressure in 0.0_f32..=1.0,
@@ -1381,6 +1497,9 @@ mod tests {
                     strength,
                     stamp,
                     along,
+                    tip: tip.map(|(picture, _)| picture),
+                    build_up,
+                    dabs,
                     lazy_px,
                     size_from_pressure,
                 }

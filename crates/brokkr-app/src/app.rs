@@ -5661,13 +5661,19 @@ impl Brokkr {
         // about to be carved and only once there is something to carve. See
         // `arm_recorder`.
         self.arm_recorder();
+        // A stroke that lays one layer is aimed at the surface as it was
+        // before the stroke, and faces the way that did. See
+        // `app/studio.rs`.
+        let point = self.layer_aim(pixel, point);
 
         let started = Instant::now();
         self.stamp_centres.clear();
         if start {
             self.stroke.begin(point, &mut self.stamp_centres);
         } else {
-            let spacing = self.effective_brush().spacing(self.doc.voxel_size());
+            // Upstream's spacing, or the studio's for a brush set down in
+            // dabs. See `app/studio.rs`.
+            let spacing = self.stroke_spacing();
             self.stroke.advance(point, spacing, &mut self.stamp_centres);
         }
 
@@ -5698,12 +5704,12 @@ impl Brokkr {
                 // Leaning the pen rotates the direction the brush pushes in,
                 // which steers every brush at once because they all read this
                 // normal.
-                let normal = lean_normal(self.doc.active_volume().gradient_world(centre), lean);
+                let normal = lean_normal(self.stamp_facing(centre), lean);
                 let stamp = Stamp::new(centre, normal, direction)
                     .with_pressure(pressure)
                     .with_tangent(tangent);
-                // Upstream's stamp, or a studio operator with the same
-                // brush's size, strength and tip. See `app/studio.rs`.
+                // Upstream's stamp, or the studio's generic brush. See
+                // `app/studio.rs`.
                 self.stamp_field(brush, &stamp);
             }
             self.perf.stamps = self.stamp_centres.len();
