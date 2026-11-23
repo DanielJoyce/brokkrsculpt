@@ -2340,6 +2340,7 @@ impl Brokkr {
                 strength,
                 falloff,
                 self.studio_panel(),
+                self.form_panel(),
                 self.section(PanelSection::Pattern, || self.pattern_panel()),
                 self.section(PanelSection::Pen, || self.pen_panel()),
                 self.section(PanelSection::SpaceMouse, || self.spacemouse_panel()),

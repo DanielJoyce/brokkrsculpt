@@ -104,6 +104,21 @@ impl std::fmt::Display for ExportDetail {
 
 /// One setting of the key a parting puts between two parts.
 ///
+/// One of the form tools' controls: thicken or thin a body, soften or
+/// exaggerate its detail. The three settings change nothing in a document;
+/// the two verbs rebuild the active body, each as one undo entry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FormMessage {
+    /// What counts as detail, in millimetres.
+    DetailSizeChanged(f32),
+    /// How far a bulk moves the surface, in millimetres. Negative thins.
+    AmountChanged(f32),
+    /// What the detail is multiplied by.
+    GainChanged(f32),
+    BulkApplied,
+    DetailGainApplied,
+}
+
 /// One change to the studio brushes, on [`KeySetting`]'s pattern: one
 /// message with a payload and not three entries in the message table.
 /// Settings of the application and not of the document.
@@ -944,6 +959,8 @@ pub enum Message {
     PaintSlotChanged(u8),
     /// One of the studio brush controls. See `app/studio.rs`.
     Studio(StudioMessage),
+    /// One of the form tools' controls. See `app/form.rs`.
+    Form(FormMessage),
     /// Coat the whole of the active body in the paint in hand, wherever the
     /// mask leaves it free. One undo entry.
     PaintAllApplied,
