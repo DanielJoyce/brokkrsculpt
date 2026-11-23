@@ -19,7 +19,7 @@ was built and what was measured.
 | S2 Mini painting | **Done but for broad occlusion and zenithal**, 2026-11-22 (section 8), which wait for S4 | Paint brush: *Mix paints*, then a rack of paints, each with a wash and an edge highlight; *Loaded*, *Drybrush*, *Sponge* and *Fill*; a flat view; export as PLY in colour, and 3MF by the filament each paint prints in |
 | S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). Presets, a textured tip and the gesture warps remain | A STUDIO block under the brush: *Crease*, *Stamp* with six images or any picture, *Lazy*, *Size from pressure* |
 | S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush, form smooth and posing remain | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
-| S5 Unwrap and bake | Not started | |
+| S5 Unwrap and bake | **Begun**, 2026-11-23 (section 10.4): unwrap, the base colour bake and OBJ with a picture. GLB and the other maps remain | Export as *OBJ+PNG*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
 repository, or the README's measured tables) or explicitly labelled
@@ -69,7 +69,7 @@ pull a printing capability after it:
 | Decimation (S1a) | Files a slicer loads in seconds; later, handing a slicer geometry sized to the process |
 | Parting and keys (S1b) | Parts sized to a bed and oriented to print without support |
 | Detail gain (S4) | Detail exaggerated to survive a given nozzle or layer height |
-| Unwrap and bake (S5) | Textured output for full colour processes that take an atlas |
+| Unwrap and bake (S5) | Textured output for full colour processes that take an atlas: OBJ with a picture (done), GLB (next) |
 
 When a design choice is between a better picture on screen and a better object
 off the printer, the object wins. Slicing itself stays out of this plan: the
@@ -1455,6 +1455,60 @@ point" is the question the data structure exists to answer.
 
 The 3MF writer keeps writing filament slots. That is still the right contract
 with a slicer.
+
+### 10.4 Built, 2026-11-23 (S5.1): unwrap, base colour, and an OBJ with a picture
+
+`brokkr-core/src/export/unwrap.rs`, `export/texture.rs` and
+`export/textured.rs`, and a fifth format on the export panel, *OBJ+PNG*, with
+a texture size of 1024, 2048 or 4096. It writes `model.obj`, `model.mtl`
+beside it, and a PNG for each body.
+
+**Unwrap.** The first version of 10.1, and plainer than it was drawn:
+
+- A chart is every triangle within 60 degrees of the way its first triangle
+  faces, reached across shared edges, and laid flat by looking along that
+  way. No triangle is flipped, and stretch is bounded at 2, both by
+  construction and both tested.
+- Charts start from the flattest triangles. Started in index order, a chart
+  on a bevelled cube began on a bevel and took half of each face either
+  side of it. The flattest first is the nearest this comes to "end the chart
+  in a crevice".
+- **Facing the axis is not enough to keep a chart off itself**, which 10.1
+  did not say. A ramp that winds round like a spiral stair faces up
+  everywhere and lies over itself seen from above. A triangle is only taken
+  if it does not overlap what the chart already holds. The first overlap
+  test sampled points and let 64 texels of the ramp overlap; the one built
+  is exact (separating axes), and so is the test that checks it.
+- Packing is in rows, tallest first, at one scale for every chart, the
+  largest at which they fit. A skyline packer would waste less. Rows waste
+  little enough that the density below is already more than the paint has.
+
+**Bake.** As 10.2 says: each texel's point on its triangle is stepped onto
+the surface, once, and the colour is asked for there, which is the paint the
+voxel holds shaded by the field's own curvature. The colours at chart edges
+are then spread into the margin, so that a blurred lookup at a seam reads
+the same colour from either side.
+
+The test this milestone exists for: a ball with a wash in a groove,
+decimated until the groove is narrower than the triangles across it. A
+colour a vertex (the PLY) loses the groove. The texture has it.
+
+**Measured** (release, the starting ball at a quarter millimetre, decimated
+from 125,408 triangles to 10,004): 28 charts, the unwrap 10 ms, the bake at
+1024 texels 0.46 s, 14 texels to the millimetre. The paint is one value a
+voxel, which is 4 to the millimetre, so 1024 already holds it three times
+over on a model this size, and the estimate in 10.1 stands.
+
+**Build or depend: built.** The evaluation of `uvunwrap` was not made. The
+projection charts were the fallback and they turned out to be enough for a
+picture nobody edits by hand, in under 800 lines with nothing new in the
+build.
+The PNG is written by the `image` crate, which the application already
+used; the core has no picture format in it and gained none.
+
+**Not built from this section:** seam hiding and the mask as "protect"
+(seams are where they fall; the bake makes them not show), conformal
+flattening, the maps other than base colour, and GLB, which is next.
 
 ---
 

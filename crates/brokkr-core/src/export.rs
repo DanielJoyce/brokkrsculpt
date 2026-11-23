@@ -41,7 +41,10 @@ pub mod decimate;
 pub mod obj;
 pub mod ply;
 pub mod stl;
+pub mod texture;
+pub mod textured;
 pub mod threemf;
+pub mod unwrap;
 
 use glam::Vec3;
 use rustc_hash::FxHashMap;

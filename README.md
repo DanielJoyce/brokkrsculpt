@@ -367,6 +367,41 @@ in exotic corner cases:
   big model sculpts happily at broad scale and resists fine detail. The finest
   setting is 0.03 mm, which is below what a resin printer resolves.
 
+## The studio branch
+
+This is a fork, and its `feature/studio` branch carries work that is not
+upstream's: sculpting and painting taken further, **so that there is more
+worth printing**. It is still a printing application. Everything above is
+true of it too, and what it adds is this.
+
+- **Export detail.** Full, Fine, Standard or Draft: the mesh is thinned to a
+  tolerance in millimetres, checked against the model and not against the
+  mesh it came from, and handed back at full density if thinning would make
+  it unprintable.
+- **Parting with keys.** The plane cut with **alt** held makes two bodies
+  with pegs and sockets that fit, for a model bigger than the bed or one
+  that prints better in halves.
+- **Paints.** On the paint brush, *Mix paints* swaps filament slots for a
+  rack of paints, each with a wash that pools in the recesses and a
+  highlight that catches the edges. Put on *Loaded*, *Drybrush* or *Sponge*,
+  or with *Fill*, which stops at creases and edges. Each paint names the
+  filament it prints in, so a painted model is also a multi-colour print.
+- **Studio brushes.** *Crease*, a *Stamp* that presses one of six images or
+  any picture into the surface with one drag, a *Lazy* stroke for long
+  clean lines, and *Size from pressure*.
+- **Form.** Thicken or thin a body by millimetres, or soften or exaggerate
+  its detail, with the surface texture kept. Exaggerating is for print:
+  detail a nozzle would lose can be made to survive it.
+- **Colour out.** PLY with a colour a vertex, 3MF by the filament each
+  paint prints in, and *OBJ+PNG*, where the paint is baked to a texture
+  that stays sharp however far the mesh is thinned.
+
+[docs/STUDIO-PLAN.md](docs/STUDIO-PLAN.md) is the design, the state of each
+part, what was measured, and what was tried and dropped. Everything on the
+branch passes the same gates as the rest: `cargo fmt`, `cargo clippy` with
+`-D warnings`, and the tests, which ship with controls and were themselves
+checked by breaking the code on purpose.
+
 ---
 
 Everything past this point is for people who want to know how it works.

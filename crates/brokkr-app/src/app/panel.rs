@@ -1072,6 +1072,7 @@ impl Brokkr {
                                 ExportFormat::Obj => "Export OBJ…",
                                 ExportFormat::ThreeMf => "Export 3MF…",
                                 ExportFormat::Ply => "Export PLY, in colour…",
+                                ExportFormat::Textured => "Export OBJ with a texture…",
                             },
                             Message::ExportRequested(format),
                         ))
@@ -3736,7 +3737,7 @@ impl Brokkr {
         ]
         .spacing(theme::S1);
 
-        column![detail, buttons, status, keys].spacing(theme::S2).into()
+        column![detail, self.texture_size_picker(), buttons, status, keys].spacing(theme::S2).into()
     }
 
     /// Pen controls, plus enough of a live readout that a user can tell whether
