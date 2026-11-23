@@ -21,7 +21,7 @@ was built and what was measured.
 | S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). A textured tip and the gesture warps remain | A STUDIO block under the brush: *Crease*, *Stamp* with six images or any picture, one at a time or in a row *Along the stroke*, *Lazy*, *Size from pressure*; and PRESETS, a brush kept under a name |
 | S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush and form smooth remain. Posing is not planned (section 9.3) | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
 | S5 Unwrap and bake | **Done but for the other maps**, 2026-11-23 (sections 10.4 and 10.5): unwrap, the base colour bake, OBJ with a picture, and GLB. Normal, occlusion and finish maps remain | Export as *OBJ+PNG* or *GLB*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
-| P Painting engine | **Begun**, 2026-11-23 (section 15): the storage. The view, the brush and the exports follow | Nothing to see yet: a body can hold a colour and a coverage at every voxel of its surface, through every edit, undo, save and open |
+| P Painting engine | **Begun**, 2026-11-23 (section 15): the storage and the view. The brush and the exports follow | Nothing to use yet: a body can hold a colour and a coverage at every voxel of its surface, through every edit, undo, save and open, and it is drawn |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
 repository, or the README's measured tables) or explicitly labelled
@@ -2197,8 +2197,8 @@ palette of colours to pick from, and the list of filaments for a 3MF.
 | Stage | What | State |
 |---|---|---|
 | P1 | The storage: the field, every edit that must carry it, undo, the file | **Built**, 2026-11-23 (below) |
-| P2 | The view: paint on the vertices, composited in the shader | Next |
-| P3 | The brush: the locked stroke, the modes, the colour picker, the eyedropper | |
+| P2 | The view: paint on the vertices, composited in the shader | **Built**, 2026-11-23 (below) |
+| P3 | The brush: the locked stroke, the modes, the colour picker, the eyedropper | Next |
 | P4 | The exports: bake, PLY, OBJ, GLB, and the nearest filament for 3MF | |
 | P5 | Retire the recipes: convert old documents, remove the editor | |
 
@@ -2265,3 +2265,49 @@ core suite builds and passes in release as committed. The mutation runs
 moved to the dev profile, which does not stall, is quicker to build, and
 also has the debug assertions on: two test fixtures of this stage merged
 outside a stroke, which only a debug build refuses.
+
+#### Built, 2026-11-23 (P2): the view
+
+A vertex carries its paint to the GPU, and the shader lays it over what is
+under it.
+
+**The buffer.** The pool's attribute buffer goes from four bytes a vertex
+to eight: the mask, the slot and the cavity as before, and then the paint
+as it is stored. One buffer and one upload, so the two cannot be out of
+step. It costs 44 MB more for each pair of buffers, 616 MB a pair where it
+was 572, whether or not anything is painted. A buffer of its own, made
+only when a body is first painted, would save that for people who never
+paint and was not thought worth a second thing to keep in step.
+
+**The shader.** The paint is turned into linear light and multiplied by its
+coverage in the vertex stage, before it is interpolated. Bare is stored as
+black with no coverage, so a triangle that runs from paint to bare would
+otherwise fade out through a darkened version of the paint. By arithmetic
+and not by measurement: half way across such a triangle, a paint at level
+150 over its own colour would draw at 131. Then over the clay, or over the slot's recipe where there is one, by coverage.
+Lit by the light on the clay under it, as a slot's colour is, and drawn
+flat by the same switch. With the paint view off it is not drawn. A
+thumbnail draws it whatever the view says, as it does a slot.
+
+`a_bodys_paint_is_drawn_over_what_is_under_it_by_its_coverage` renders each
+of those and reads the pixels back: a full coat is the colour painted to
+within 4 levels of 255, and a dark one to within 2; half a coat over a
+slot's blue is half way between the two in linear light, which is neither
+colour and is not the average of their bytes; paint of the recipe's own
+colour on half a ball is one colour all over, edge and all; lit paint is
+the picture a filament of that colour gives, and the same picture whatever
+slot is under it.
+
+The decode is the engine's own curve, toe and all, held the way the cavity
+decode is: the shader's lines, and those lines transcribed and run against
+`paint::linear` for every byte. The toe cannot be held by a picture. At
+eight bits it is within a level of the curve carried on down.
+
+One thing tidied on the way: the slot's colour and the paint are lit by one
+term, taken once from the clay, where the slot used to work its own out.
+
+**Mutation testing.** 17 mutants: 13 against the shader and 4 against the
+upload. 14 caught as first written. The other three were the toe and a
+power of 2.2 in place of the curve, which got the test above and a dark
+coat to judge by, and a paint lit by whatever is under it, which got the
+picture of a coat over a slot. All 17 are caught.
