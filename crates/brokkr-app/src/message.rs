@@ -25,15 +25,20 @@ pub enum ExportFormat {
     /// baked into a texture, so that a small mesh still looks like the
     /// model. See `brokkr_core::export::texture`.
     Textured,
+    /// Binary glTF: the same mesh and the same pictures as [`Self::Textured`],
+    /// in one file, in metres and Y up as that format is. See
+    /// `brokkr_core::export::glb`.
+    Glb,
 }
 
 impl ExportFormat {
-    pub const ALL: [ExportFormat; 5] = [
+    pub const ALL: [ExportFormat; 6] = [
         ExportFormat::Stl,
         ExportFormat::Obj,
         ExportFormat::ThreeMf,
         ExportFormat::Ply,
         ExportFormat::Textured,
+        ExportFormat::Glb,
     ];
 
     pub fn label(self) -> &'static str {
@@ -43,6 +48,7 @@ impl ExportFormat {
             ExportFormat::ThreeMf => "3MF",
             ExportFormat::Ply => "PLY",
             ExportFormat::Textured => "OBJ+PNG",
+            ExportFormat::Glb => "GLB",
         }
     }
 
@@ -53,7 +59,14 @@ impl ExportFormat {
             ExportFormat::ThreeMf => "3mf",
             ExportFormat::Ply => "ply",
             ExportFormat::Textured => "obj",
+            ExportFormat::Glb => "glb",
         }
+    }
+
+    /// Whether the format carries the paint as a picture, and so has a
+    /// texture size to choose.
+    pub fn has_texture(self) -> bool {
+        matches!(self, ExportFormat::Textured | ExportFormat::Glb)
     }
 }
 
