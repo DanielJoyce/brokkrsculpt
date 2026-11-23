@@ -17,7 +17,7 @@ was built and what was measured.
 | S1a Decimated export | **Done**, 2026-11-22 (section 7.1) | A *Detail* choice on export: Full, Fine, Standard, Draft |
 | S1b Parting with keys | **Done but for a preview**, 2026-11-22 (section 7.2) | Cut tool with **alt** held: the body becomes two, with pegs and sockets |
 | S2 Mini painting | **Done but for broad occlusion and zenithal**, 2026-11-22 (section 8), which wait for S4 | Paint brush: *Mix paints*, then a rack of paints, each with a wash and an edge highlight; *Loaded*, *Drybrush*, *Sponge* and *Fill*; a flat view; export as PLY in colour, and 3MF by the filament each paint prints in |
-| S3 Brush engine, surfaced | **Begun**, 2026-11-22 (section 6.3): Crease, lazy stroke, size from pressure. Alphas, drag rect and presets next | A STUDIO block under the brush: *Crease*, *Lazy*, *Size from pressure* |
+| S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). Presets, a textured tip and the gesture warps remain | A STUDIO block under the brush: *Crease*, *Stamp* with six images or any picture, *Lazy*, *Size from pressure* |
 | S4 Form tools | Not started | |
 | S5 Unwrap and bake | Not started | |
 
@@ -500,9 +500,9 @@ break them:
 | Gates | Cavity range, occlusion range, facing, slot filter | Built in S0 with the signals; the paint brushes of S2 are the first customers |
 | Operator | Paint operators (section 8) | S2 |
 | Operator | Crease (pinch plus inverted draw in one warp) | **Built** (S3.1). Scrape and Fill were listed here too and are not needed: upstream's Clay blends toward a plane held just off the surface and keeps only the half that adds, and inverted it is a plane just under the surface keeping only the half that removes. That is a fill and a scrape already |
-| Tip | Alpha image: a greyscale stamp, bilinear sampled in the stamp frame | 16 bit PNG, decoded in `brokkr-app` and handed to core as `&[f32]`; core stays free of file formats |
-| Stroke | Drag rect: one stamp placed at the press, sized and turned by the drag | The natural partner of an alpha |
-| Operator | Displace: draw whose depth is the alpha's value | Scales, runes, stitches as stamps |
+| Tip | Alpha image: a greyscale stamp, bilinear sampled in the stamp frame | The image type and its reading are **built** (S3.2), decoded in `brokkr-app` and handed to core as heights. As a tip on ordinary strokes it is not wired yet |
+| Stroke | Drag rect: one stamp placed at the press, sized and turned by the drag | **Built** (S3.2), as a gesture |
+| Operator | Displace: draw whose depth is the alpha's value | **Built** (S3.2), inside the gesture and not as a kernel: a kernel is held to one voxel a stamp |
 | Dynamics | Curves from pressure, tilt, speed and stroke distance to radius, strength, rotation | Pressure to radius **built** (S3.1), as one share. Pressure to strength and tilt to lean were upstream's already. The rest follows the alpha, which is what rotation is for |
 | Stroke | Lazy (stabilised), spray (jittered), curve (along a drawn spline) | Lazy **built** (S3.1) |
 | Operator | Gesture warps on the `MoveStroke` machinery: twist, elastic grab (regularised Kelvinlets) | Volume preserving by construction |
@@ -511,6 +511,54 @@ break them:
 
 The digit keys keep meaning the classic brushes in the order they have always
 had (`brush.rs:344`, "Appended and never reordered").
+
+#### Built, 2026-11-23 (S3.2): the stamp
+
+`brokkr-core/src/brush/alpha.rs` and `brush/stamp.rs`. A *Stamp* button in
+the STUDIO block. With it up, a drag on the model presses one image into the
+surface: press where it goes, drag to size it and to turn it, let go. The
+top of the image points along the drag. Inverted, it engraves. Six images
+come with it (dome, rivet, bolt, scale, star, bar) and any PNG or JPEG can
+be one, its brightness read as height, sixteen bits of it where the file has
+them.
+
+```mermaid
+flowchart LR
+    P["Press: the point and<br/>the surface normal are fixed"] --> D["Each move of the drag:<br/>size and turn from the pointer,<br/>measured in the surface's plane"]
+    D --> C{"Does the copy of the<br/>field still cover it?"}
+    C -->|no| L["Put the field back.<br/>Copy a larger box"]
+    C -->|yes| W
+    L --> W["Rewrite the whole box from the copy:<br/>new(p) = copy(p - n * height * image * near)"]
+    W --> D
+    W --> R["Release: one undo entry"]
+```
+
+**It is a gesture and not a stroke**, on the terms upstream's Move sets out.
+A stroke's stamps each move the surface by no more than a voxel because they
+overlap and compound. A rivet is one image as tall as it is, so every event
+of the drag is worked out from the surface as it was at the press, and a
+stamp dragged out and back in is the stamp it ended as, to the bit.
+
+**Only the near side moves.** The plain warp shifts the whole column under a
+texel, all the way through the model: a rivet on a breastplate would dent
+the inside by as much as it raised the outside. So the shift is whole down
+to a band under the surface, where it is exact, and then fades to nothing
+over twice the stamp's height. A plate's far side is untouched to the bit
+when the plate is thicker than that. Thinner, it is not, and cannot be: the
+material has to come from somewhere.
+
+**Mirrors** each have their own copy, and where two overlap across the plane
+both take the higher stamp at every voxel, so the order they are written in
+does not show. A mirror image's `right` is reflected and not recomputed,
+because a cross product turns a left hand back into a right and would press
+the image the wrong way round on the far side.
+
+**Limits.** A stamp's box is at most 320 voxels a side, which at a quarter
+millimetre is a stamp about 25 mm across; larger is refused and the field
+put back. The side of a stamp is steeper than the field's gradient is
+supposed to be, as after a Move, until the field is redistanced. And the
+image is not yet a tip for ordinary strokes: a textured brush is the same
+image as one more factor on the weight, and is the next thing here.
 
 #### Built, 2026-11-22 (S3.1): the engine, where a user can reach it
 
