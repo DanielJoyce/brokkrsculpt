@@ -107,7 +107,7 @@ impl std::fmt::Display for ExportDetail {
 /// One change to the studio brushes, on [`KeySetting`]'s pattern: one
 /// message with a payload and not three entries in the message table.
 /// Settings of the application and not of the document.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum StudioMessage {
     /// Take up an operator upstream has no brush for, or `None` to put it
     /// away and go back to the classic brush.
@@ -116,6 +116,30 @@ pub enum StudioMessage {
     LazyChanged(f32),
     /// How much of the brush's size pen pressure decides, 0..=1.
     SizeFromPressureChanged(f32),
+    /// Take up the stamp, or put it away. With it up, a drag on the model
+    /// presses the stamp image in: press where it goes, drag to size and
+    /// turn it.
+    StampToggled(bool),
+    /// Use one of the stamp images that come with the application.
+    StampChosen(brokkr_core::brush::alpha::BuiltIn),
+    /// How tall the stamp is, as a share of its size.
+    StampHeightChanged(f32),
+    /// Ask for a picture to use as the stamp image.
+    StampImageRequested,
+    /// The picture that was chosen, read and turned into heights: its name
+    /// and the image, or why it could not be used. `None` when the dialog
+    /// was dismissed.
+    StampImageLoaded(Option<Result<LoadedStamp, String>>),
+}
+
+/// A stamp image read from a file.
+///
+/// Behind an `Arc` because a message is cloned on its way through the
+/// runtime and an image is up to a megabyte of heights.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoadedStamp {
+    pub name: String,
+    pub alpha: std::sync::Arc<brokkr_core::brush::alpha::Alpha>,
 }
 
 /// How the paint brush is put to the model. See

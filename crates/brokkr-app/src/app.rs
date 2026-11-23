@@ -5597,6 +5597,12 @@ impl Brokkr {
     }
 
     fn sculpt_to(&mut self, pixel: Vec2, direction: BrushDirection, start: bool) {
+        // A stamp is a gesture of its own and not a stroke of any brush.
+        // See `app/studio.rs`.
+        if self.studio.stamping() {
+            self.stamp_to(pixel, direction, start);
+            return;
+        }
         // Move is handled before anything else, because it wants the pointer
         // rather than the surface under the pointer, and it must keep working
         // once the cursor has been dragged off the model.
@@ -9586,7 +9592,7 @@ impl Brokkr {
                 // it -- which is the whole point of the mask having a slot.
                 self.swap_strength(|app| app.brush.kind = kind);
                 // A classic brush chosen is the classic brush wanted.
-                self.studio.op = None;
+                self.studio.put_away();
             }
             Message::FalloffChanged(curve) => self.brush.falloff = curve,
             // Clamped rather than trusted. The slider's own range is already
@@ -10365,7 +10371,7 @@ impl Brokkr {
             Message::PaintAdded => self.add_paint(),
             Message::PaintCoatChosen(coat) => self.paint_coat = coat,
             Message::PaintEdited(edit) => self.edit_paint(edit),
-            Message::Studio(message) => self.studio_changed(message),
+            Message::Studio(message) => return self.studio_changed(message),
             Message::FlatPaintToggled => self.flat_paint = !self.flat_paint,
             Message::PaintAllApplied => self.coat_the_body(),
             Message::PaintTouchChosen(touch) => self.touch.kind = touch,

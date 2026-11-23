@@ -69,7 +69,9 @@ use crate::pattern::{Pattern, Prepared};
 use crate::region::FieldRegion;
 use crate::volume::{BrickPreview, BrickVerdict, Volume};
 
+pub mod alpha;
 pub mod engine;
+pub mod stamp;
 
 /// How far outside the surface the clay plane sits, as a fraction of radius.
 ///
