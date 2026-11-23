@@ -2918,6 +2918,130 @@ fn a_thumbnail_shows_a_paint_with_its_wash_at_the_viewports_gain() {
     );
 }
 
+/// The point of a ball of the model's radius that a pixel shows, worked out
+/// from the ball and not from the renderer: where the ray through the pixel
+/// first meets the sphere. `None` for a pixel that misses it.
+fn on_the_ball(view_projection: glam::Mat4, x: u32, y: u32) -> Option<Vec3> {
+    let back = view_projection.inverse();
+    let ndc = glam::Vec2::new(
+        (x as f32 + 0.5) / WIDTH as f32 * 2.0 - 1.0,
+        1.0 - (y as f32 + 0.5) / HEIGHT as f32 * 2.0,
+    );
+    let near = back.project_point3(ndc.extend(0.0));
+    let far = back.project_point3(ndc.extend(1.0));
+    let along = (far - near).normalize();
+    let middle = -near.dot(along);
+    let miss = (near + along * middle).length_squared();
+    let half = MODEL_RADIUS * MODEL_RADIUS - miss;
+    (half > 0.0).then(|| near + along * (middle - half.sqrt()))
+}
+
+/// A paint's zenithal undercoat is drawn by the way the MODEL faces: on a
+/// ball in one paint, drawn flat, every pixel is the colour the recipe
+/// gives for the normal of the point of the ball it shows. And a paint with
+/// no undercoat is one colour all over.
+#[test]
+fn a_paints_undercoat_is_drawn_lighter_from_above_and_darker_from_below() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the undercoat test");
+        return;
+    };
+    use brokkr_core::paint::{Paint, PaintTable, srgb};
+
+    let distance = MODEL_RADIUS * 3.0;
+    let mut renderer = SculptRenderer::new(&harness.device, &harness.queue, TARGET_FORMAT);
+    renderer.resize(&harness.device, WIDTH, HEIGHT);
+    let mut volume = Volume::new(VOXEL_SIZE);
+    volume.seed_sphere(Vec3::ZERO, MODEL_RADIUS);
+    volume.edit_colour(IVec3::splat(-200), IVec3::splat(200), |_, _, _, _| 1);
+    upload_all(&mut renderer, &harness.device, &harness.queue, &mut volume);
+
+    // From a little below the middle, so that the picture runs from faces
+    // looking well up to faces looking well down.
+    let eye = Vec3::new(0.5, -0.25, 1.0).normalize() * distance;
+    let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y);
+    let projection = glam::camera::rh::proj::directx::perspective(
+        45f32.to_radians(),
+        WIDTH as f32 / HEIGHT as f32,
+        0.1,
+        distance * 4.0,
+    );
+    let view_projection = projection * view;
+    harness.view_projection = view_projection;
+
+    let base = [150, 120, 90];
+    let table_of = |zenith: f32| {
+        let mut table = PaintTable::default();
+        table.add(Paint { zenith, ..Paint::flat("ochre", base) });
+        table
+    };
+    let drawn = |renderer: &mut SculptRenderer, table: &PaintTable| {
+        renderer.write_uniforms(
+            &harness.queue,
+            &Uniforms {
+                view_projection: view_projection.to_cols_array_2d(),
+                view: view.to_cols_array_2d(),
+                // Flat: the paint as it is, with no light of the viewport's
+                // on it, which is what an export writes.
+                paint_shown: 2,
+                paints: brokkr_gpu::PaintBlock::from(table),
+                ..uniforms(distance)
+            },
+        );
+        harness.frame(renderer)
+    };
+
+    // No undercoat: one colour, whichever way the surface faces.
+    let plain = drawn(&mut renderer, &table_of(0.0));
+    let primed_table = table_of(1.0);
+    let primed = drawn(&mut renderer, &primed_table);
+    dump("undercoat-none", &plain);
+    dump("undercoat-full", &primed);
+    let paint = &primed_table.paints()[0];
+
+    let (mut compared, mut lifted, mut darkened) = (0, 0, 0);
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let Some(point) = on_the_ball(view_projection, x, y) else {
+                continue;
+            };
+            // Not the silhouette, where a pixel is half the background.
+            if point.normalize().dot((eye - point).normalize()) < 0.25 {
+                continue;
+            }
+            let at = ((y * WIDTH + x) * 4) as usize;
+            let close = |pixel: &[u8], wanted: [u8; 3]| {
+                (0..3).all(|channel| {
+                    (i32::from(pixel[channel]) - i32::from(wanted[channel])).abs() <= 4
+                })
+            };
+            assert!(
+                close(&plain[at..at + 3], base),
+                "with no undercoat the pixel at {x}, {y} is {:?} and the paint is {base:?}",
+                &plain[at..at + 3]
+            );
+            let up = point.normalize().y;
+            let wanted = srgb(paint.shade_facing(0.0, up));
+            assert!(
+                close(&primed[at..at + 3], wanted),
+                "facing {up} up, the pixel at {x}, {y} is {:?} and the recipe gives {wanted:?}",
+                &primed[at..at + 3]
+            );
+            compared += 1;
+            lifted += usize::from(up > 0.5);
+            darkened += usize::from(up < -0.5);
+        }
+    }
+    // Controls: the picture held faces looking well up and well down, and
+    // those two are different colours by more than the comparison allows.
+    assert!(
+        compared > 20_000 && lifted > 1500 && darkened > 3000,
+        "{compared} {lifted} {darkened}"
+    );
+    let (top, bottom) = (srgb(paint.shade_facing(0.0, 1.0)), srgb(paint.shade_facing(0.0, -1.0)));
+    assert!(i32::from(top[0]) - i32::from(bottom[0]) > 60, "{top:?} and {bottom:?}");
+}
+
 /// Overhangs are tinted where the surface faces down past the limit, above
 /// the plate, and nowhere else: checked a pixel at a time against the rule
 /// in `brokkr_core::overhang`, on a ball seen from underneath, where what a
@@ -2957,22 +3081,7 @@ fn overhangs_are_tinted_where_the_rule_says_and_nowhere_else() {
     renderer.write_uniforms(&harness.queue, &off);
     let plain = harness.frame(&renderer);
 
-    // The surface a pixel shows, worked out from the ball itself: where the
-    // ray through the pixel first meets a sphere of the model's radius.
-    let back = view_projection.inverse();
-    let shown = |x: u32, y: u32| -> Option<Vec3> {
-        let ndc = glam::Vec2::new(
-            (x as f32 + 0.5) / WIDTH as f32 * 2.0 - 1.0,
-            1.0 - (y as f32 + 0.5) / HEIGHT as f32 * 2.0,
-        );
-        let near = back.project_point3(ndc.extend(0.0));
-        let far = back.project_point3(ndc.extend(1.0));
-        let along = (far - near).normalize();
-        let middle = -near.dot(along);
-        let miss = (near + along * middle).length_squared();
-        let half = MODEL_RADIUS * MODEL_RADIUS - miss;
-        (half > 0.0).then(|| near + along * (middle - half.sqrt()))
-    };
+    let shown = |x: u32, y: u32| on_the_ball(view_projection, x, y);
     // A tinted pixel is redder than the clay can be: the clay's red is
     // never more than a few levels over its blue.
     let tinted = |pixels: &[u8], x: u32, y: u32| {

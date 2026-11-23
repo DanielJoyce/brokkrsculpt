@@ -76,6 +76,11 @@ const PAINT_EXPOSURE: f32 = 0.8;
 // edge is `floor^0` and not `0^0`. `brokkr_core::paint::WASH_FLOOR` is the
 // other copy and `paints::tests` reads this line.
 const WASH_FLOOR: f32 = 0.003;
+// How far a paint's zenithal undercoat lifts a surface facing straight up and
+// darkens one facing straight down. `brokkr_core::paint` has the other copy
+// of both and the reason they are uneven, and `paints::tests` reads these.
+const ZENITH_LIFT: f32 = 0.35;
+const ZENITH_SHADE: f32 = 0.55;
 // The largest curvature the cavity byte carries, in 1/voxel. One fact in two
 // places: `brokkr_core::signals::CAVITY_RANGE` is the other, and
 // `renderer::tests::the_shader_decodes_cavity_the_way_the_engine_encodes_it`
@@ -187,7 +192,12 @@ fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) ->
             let s = clamp(in.cavity * uniforms.cavity.y, -1.0, 1.0);
             let recess = max(s, 0.0);
             let edge = max(-s, 0.0);
-            albedo = base.rgb;
+            // The undercoat first, under everything: lighter where the
+            // surface faces up, darker where it faces down, in the model's
+            // own space and not the camera's.
+            let up = normalize(in.world_normal).y;
+            let undercoat = 1.0 + light.w * (ZENITH_LIFT * max(up, 0.0) - ZENITH_SHADE * max(-up, 0.0));
+            albedo = base.rgb * undercoat;
             // The wash is a film of pigment, by Beer and Lambert: thin on an
             // edge, `stain` thick on a flat, pooled in a crease.
             let thickness = max(wash.w + film.x * recess - film.y * edge, 0.0);

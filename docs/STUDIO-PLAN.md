@@ -17,7 +17,7 @@ was built and what was measured.
 | S1a Decimated export | **Done**, 2026-11-22 (section 7.1) | A *Detail* choice on export: Full, Fine, Standard, Draft |
 | S1b Parting with keys | **Done but for a preview**, 2026-11-22 (section 7.2) | Cut tool with **alt** held: the body becomes two, with pegs and sockets |
 | S1c Overhang view | **Done**, 2026-11-23 (section 7.3). Not in the first plan | *show overhangs* on the export panel: what leans past the angle a printer manages is tinted, and an export says how much |
-| S2 Mini painting | **Done but for broad occlusion and zenithal**, 2026-11-23 (section 8), which wait for S4 | Paint brush: *Mix paints*, then a rack of paints, each with a wash and an edge highlight; *Loaded*, *Drybrush*, *Sponge* and *Fill*; a flat view; export as PLY in colour, and 3MF by the filament each paint prints in |
+| S2 Mini painting | **Done but for broad occlusion**, 2026-11-23 (section 8), which waits for S4 | Paint brush: *Mix paints*, then a rack of paints, each with a wash, an edge highlight and a zenithal undercoat; *Loaded*, *Drybrush*, *Sponge* and *Fill*; a flat view; export as PLY in colour, and 3MF by the filament each paint prints in |
 | S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). A textured tip and the gesture warps remain | A STUDIO block under the brush: *Crease*, *Stamp* with six images or any picture, one at a time or in a row *Along the stroke*, *Lazy*, *Size from pressure*; and PRESETS, a brush kept under a name |
 | S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush, form smooth and posing remain | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
 | S5 Unwrap and bake | **Done but for the other maps**, 2026-11-23 (sections 10.4 and 10.5): unwrap, the base colour bake, OBJ with a picture, and GLB. Normal, occlusion and finish maps remain | Export as *OBJ+PNG* or *GLB*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
@@ -1187,6 +1187,49 @@ undercoat).
   solver.
 - ~~Editing a paint is not in the undo history yet, and a paint cannot be
   removed.~~ Both built on 2026-11-23: see S2.5 below.
+
+#### Built, 2026-11-23 (S2.6): the zenithal undercoat
+
+*Lit from above* on a paint's base coat, 0 to 1: the paint is lighter
+where the surface faces up and darker where it faces down, as on a model
+primed dark from below and light from above before its colours go on.
+
+```text
+undercoat = 1 + amount * (0.35 * up - 0.55 * down)
+```
+
+`up` and `down` are the two halves of the normal's vertical part, so a
+surface that faces sideways is left alone and a paint's own colour is the
+colour of its upright faces, which is what the rack shows. Uneven for the
+reason a crease is darkened further than an edge is lifted: a shadow can
+go most of the way to black and still read as that paint, and a light
+lifted as far would clip.
+
+It is under everything, in the painter's order: the base coat is lifted or
+darkened first, the wash is a film over that, and the highlight is laid on
+last and shaded by neither.
+
+**Where it earns its place is the exports.** In the viewport the matcap
+already lights the model. A texture, a PLY and a full colour print have no
+light of their own, and a model with its shading painted in reads as a
+solid thing where a flatly coloured one does not. The bake reads the way
+the MODEL faces, from the field, and not the normals a decimated mesh
+happens to carry.
+
+Table 8.1 drew this as "normal against a direction, times
+directional occlusion". This is the first half. The second, that spray
+does not land where the nozzle cannot see, is the broad occlusion that
+still waits for the pyramid.
+
+One more float a paint in the file, which is table version 3. Versions 1
+and 2 still read, with no undercoat.
+
+**Checked.** The shader and the engine agree on 980 cases of paint, crease
+and facing. A render test compares every pixel of a ball in one paint,
+drawn flat, with the recipe's colour for the normal of the point of the
+ball that pixel shows: within 4 levels of 255, all of them. A cube bakes
+to exactly the recipe's top, bottom and side colours on its top, bottom
+and side faces, with the mesh's own normals deliberately wrong.
 
 #### Built, 2026-11-23 (S2.5): paints in the history, and a paint removed
 

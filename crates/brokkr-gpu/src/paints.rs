@@ -32,7 +32,8 @@ pub struct PaintBlock {
     pub wash: [[f32; 4]; PAINT_SLOTS],
     /// `[wash flow, wash edge, highlight amount, highlight start]`.
     pub film: [[f32; 4]; PAINT_SLOTS],
-    /// The highlight's colour, linear RGB. `w` is spare.
+    /// The highlight's colour, linear RGB, and in `w` how much of a
+    /// zenithal undercoat shows through the base coat, 0..=1.
     pub light: [[f32; 4]; PAINT_SLOTS],
 }
 
@@ -64,7 +65,7 @@ impl From<&PaintTable> for PaintBlock {
             block.film[slot] =
                 [paint.wash.flow, paint.wash.edge, paint.highlight.amount.clamp(0.0, 1.0), start];
             let [r, g, b] = linear(paint.highlight.colour);
-            block.light[slot] = [r, g, b, 0.0];
+            block.light[slot] = [r, g, b, paint.zenith.clamp(0.0, 1.0)];
         }
         block
     }
@@ -79,8 +80,8 @@ impl PaintBlock {
     /// transcribed from are asserted to be IN the shader source, so editing
     /// either the shader or this fails that test.
     #[cfg(test)]
-    pub(crate) fn shade_as_the_shader_does(&self, slot: usize, crease: f32) -> [f32; 3] {
-        use brokkr_core::paint::WASH_FLOOR;
+    pub(crate) fn shade_as_the_shader_does(&self, slot: usize, crease: f32, up: f32) -> [f32; 3] {
+        use brokkr_core::paint::{WASH_FLOOR, ZENITH_LIFT, ZENITH_SHADE};
 
         let s = crease.clamp(-1.0, 1.0);
         let recess = s.max(0.0);
@@ -93,9 +94,12 @@ impl PaintBlock {
             t * t * (3.0 - 2.0 * t)
         };
         let caught = (smoothstep(film[3], 1.0, edge) * film[2]).clamp(0.0, 1.0);
+        let undercoat =
+            1.0 + light[3] * (ZENITH_LIFT * up.max(0.0) - ZENITH_SHADE * (-up).max(0.0));
         let mut out = [0.0; 3];
         for channel in 0..3 {
-            let washed = base[channel] * wash[channel].max(WASH_FLOOR).powf(thickness);
+            let primed = base[channel] * undercoat;
+            let washed = primed * wash[channel].max(WASH_FLOOR).powf(thickness);
             out[channel] = washed + (light[channel] - washed) * caught;
         }
         out
@@ -105,7 +109,9 @@ impl PaintBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use brokkr_core::paint::{Finish, Highlight, Paint, WASH_FLOOR, Wash};
+    use brokkr_core::paint::{
+        Finish, Highlight, Paint, WASH_FLOOR, Wash, ZENITH_LIFT, ZENITH_SHADE,
+    };
 
     fn table() -> PaintTable {
         let mut table = PaintTable::default();
@@ -114,10 +120,12 @@ mod tests {
             finish: Finish::Satin,
             wash: Wash::shade([70, 40, 25]),
             highlight: Highlight { colour: [240, 225, 200], amount: 0.7, start: 0.25 },
+            zenith: 0.6,
             ..Paint::flat("leather", [90, 55, 30])
         });
         table.add(Paint {
             wash: Wash::contrast([30, 60, 150]),
+            zenith: 1.0,
             ..Paint::flat("primer", [235, 235, 235])
         });
         // A wash of pure black, and a highlight that starts at the very edge:
@@ -125,6 +133,9 @@ mod tests {
         table.add(Paint {
             wash: Wash { colour: [0, 0, 0], stain: 0.0, flow: 2.0, edge: 0.5 },
             highlight: Highlight { colour: [255, 255, 255], amount: 1.0, start: 0.0 },
+            // More undercoat than there is, as a file from elsewhere might
+            // hold: all of it, to the engine and to the shader both.
+            zenith: 3.0,
             ..Paint::flat("soot", [120, 120, 120])
         });
         table
@@ -153,6 +164,9 @@ mod tests {
         for line in [
             "let recess = max(s, 0.0);",
             "let edge = max(-s, 0.0);",
+            "let up = normalize(in.world_normal).y;",
+            "let undercoat = 1.0 + light.w * (ZENITH_LIFT * max(up, 0.0) - ZENITH_SHADE * max(-up, 0.0));",
+            "albedo = base.rgb * undercoat;",
             "let thickness = max(wash.w + film.x * recess - film.y * edge, 0.0);",
             "albedo = albedo * pow(max(wash.rgb, vec3<f32>(WASH_FLOOR)), vec3<f32>(thickness));",
             "let caught = clamp(smoothstep(film.w, 1.0, edge) * film.z, 0.0, 1.0);",
@@ -164,6 +178,12 @@ mod tests {
             shader.contains(&format!("const WASH_FLOOR: f32 = {WASH_FLOOR};")),
             "sculpt.wgsl's WASH_FLOOR is not the engine's {WASH_FLOOR}"
         );
+        for (name, value) in [("ZENITH_LIFT", ZENITH_LIFT), ("ZENITH_SHADE", ZENITH_SHADE)] {
+            assert!(
+                shader.contains(&format!("const {name}: f32 = {value};")),
+                "sculpt.wgsl's {name} is not the engine's {value}"
+            );
+        }
         assert!(
             shader.contains(&format!("paint_base: array<vec4<f32>, {PAINT_SLOTS}>,")),
             "sculpt.wgsl's paint arrays are not {PAINT_SLOTS} long"
@@ -180,19 +200,24 @@ mod tests {
         for (index, paint) in table.paints().iter().enumerate() {
             for step in -24..=24 {
                 let crease = step as f32 / 20.0;
-                let engine = paint.shade(crease);
-                let shader = block.shade_as_the_shader_does(index + 1, crease);
-                for channel in 0..3 {
-                    assert!(
-                        (engine[channel] - shader[channel]).abs() < 1.0e-5,
-                        "{} at a crease of {crease}: the engine gives {engine:?} and the shader \
-                         {shader:?}",
-                        paint.name
-                    );
+                for up in [-1.0, -0.4, 0.0, 0.3, 1.0] {
+                    let engine = paint.shade_facing(crease, up);
+                    let shader = block.shade_as_the_shader_does(index + 1, crease, up);
+                    for channel in 0..3 {
+                        assert!(
+                            (engine[channel] - shader[channel]).abs() < 1.0e-5,
+                            "{} at a crease of {crease} facing {up} up: the engine gives \
+                             {engine:?} and the shader {shader:?}",
+                            paint.name
+                        );
+                    }
+                    compared += 1;
                 }
-                compared += 1;
             }
         }
-        assert_eq!(compared, 4 * 49);
+        assert_eq!(compared, 4 * 5 * 49);
+        // Control: one of the fixture's paints has an undercoat, so the
+        // comparison above was of something.
+        assert!(table.paints().iter().any(|paint| paint.zenith > 0.0));
     }
 }
