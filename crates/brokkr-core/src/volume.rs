@@ -1154,6 +1154,82 @@ impl Volume {
     /// -- which is what lets [`FieldRegion::resize`] hand back a dirty buffer
     /// rather than zeroing it first.
     pub fn snapshot(&self, lo: IVec3, hi: IVec3, region: &mut FieldRegion) {
+        self.snapshot_of(lo, hi, region, |coord| self.bricks.get(&coord));
+    }
+
+    /// [`Volume::snapshot`] of the field **as it was before the open
+    /// stroke**: each brick the stroke has changed is copied from the
+    /// stroke's own undo record and not from the volume. With no stroke
+    /// open it is [`Volume::snapshot`].
+    ///
+    /// What lets a stroke lay one layer however often it crosses itself:
+    /// every stamp works from what was there before any of them. See
+    /// `brush::compound::layer`, and [`Volume::edit_paint_over`], which is
+    /// the same idea for paint.
+    pub fn snapshot_before(&self, lo: IVec3, hi: IVec3, region: &mut FieldRegion) {
+        self.snapshot_of(lo, hi, region, |coord| self.brick_before(coord));
+    }
+
+    /// The brick at `coord` as it was before the open stroke: out of the
+    /// stroke's undo record if the stroke has changed it, and the brick the
+    /// volume holds if it has not or no stroke is open.
+    #[inline]
+    fn brick_before(&self, coord: BrickCoord) -> Option<&Brick> {
+        match self.recorder.as_ref().and_then(|recorder| recorder.get(&coord)) {
+            Some(prior) => prior.as_ref(),
+            None => self.bricks.get(&coord),
+        }
+    }
+
+    /// [`Volume::sample_voxel`] of the field as it was before the open
+    /// stroke.
+    pub fn sample_voxel_before(&self, voxel: IVec3) -> f32 {
+        let coord = BrickCoord::containing(voxel);
+        match self.brick_before(coord) {
+            None => OUTSIDE,
+            Some(brick) => {
+                let local = voxel - coord.origin();
+                brick.get(local.x as usize, local.y as usize, local.z as usize)
+            }
+        }
+    }
+
+    /// [`Volume::sample_world`] of the field as it was before the open
+    /// stroke.
+    pub fn sample_world_before(&self, point: Vec3) -> f32 {
+        let grid = point / self.voxel_size;
+        let base = grid.floor();
+        let frac = grid - base;
+        let b = base.as_ivec3();
+        let c = |dx: i32, dy: i32, dz: i32| self.sample_voxel_before(b + IVec3::new(dx, dy, dz));
+        let x00 = lerp(c(0, 0, 0), c(1, 0, 0), frac.x);
+        let x10 = lerp(c(0, 1, 0), c(1, 1, 0), frac.x);
+        let x01 = lerp(c(0, 0, 1), c(1, 0, 1), frac.x);
+        let x11 = lerp(c(0, 1, 1), c(1, 1, 1), frac.x);
+        lerp(lerp(x00, x10, frac.y), lerp(x01, x11, frac.y), frac.z)
+    }
+
+    /// [`Volume::gradient_world`] of the field as it was before the open
+    /// stroke: the way the surface faced there.
+    pub fn gradient_world_before(&self, point: Vec3) -> Vec3 {
+        let h = self.voxel_size;
+        let across = |axis: Vec3| {
+            self.sample_world_before(point + axis * h) - self.sample_world_before(point - axis * h)
+        };
+        Vec3::new(across(Vec3::X), across(Vec3::Y), across(Vec3::Z))
+            .try_normalize()
+            .unwrap_or(Vec3::Y)
+    }
+
+    /// The copy [`Volume::snapshot`] and [`Volume::snapshot_before`] share,
+    /// with where a brick comes from left to the caller.
+    fn snapshot_of<'a>(
+        &'a self,
+        lo: IVec3,
+        hi: IVec3,
+        region: &mut FieldRegion,
+        brick_at: impl Fn(BrickCoord) -> Option<&'a Brick> + Sync,
+    ) {
         /// Samples in the box below which the copy stays on one core.
         const PARALLEL_SNAPSHOT_THRESHOLD: usize = 8 * BRICK_VOXELS;
 
@@ -1184,7 +1260,7 @@ impl Volume {
                     }
 
                     let run = (to_x - from_x + 1) as usize;
-                    let brick = self.bricks.get(&coord);
+                    let brick = brick_at(coord);
 
                     for wy in from_y..=to_y {
                         let start = ((from_x - lo.x) + (wy - lo.y) * size.x) as usize;

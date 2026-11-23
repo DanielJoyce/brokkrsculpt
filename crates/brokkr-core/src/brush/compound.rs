@@ -48,6 +48,10 @@
 use contracts::{debug_ensures, debug_requires};
 use glam::Vec3;
 
+mod layer;
+
+pub use layer::{LAYER_DEPTH, LAYER_STAMPS, Layer, MOST_OFFSET_VOXELS};
+
 use super::alpha::Alpha;
 use super::{
     BrushDirection, BrushKind, BrushScratch, CLAY_OFFSET, FalloffCurve, MAX_STAMP_VOXELS,
