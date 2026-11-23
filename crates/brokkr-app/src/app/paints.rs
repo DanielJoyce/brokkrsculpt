@@ -227,8 +227,9 @@ impl TouchState {
             PaintTouch::Drybrush => Touch::Drybrush(self.dry),
             PaintTouch::Sponge => Touch::Sponge(self.sponge),
             // A fill lays no stamps, so this is never asked for one. A
-            // loaded coat is the answer that does least if it ever is.
-            PaintTouch::Fill => Touch::Loaded,
+            // loaded coat is the answer that does least if it ever is. And
+            // a wash is the colour brush's, which reads the kind itself.
+            PaintTouch::Fill | PaintTouch::Wash => Touch::Loaded,
         };
         let load = if self.load_mm.0 > 0.0 {
             (1.0 - self.travelled / self.load_mm.0).clamp(0.0, 1.0)
@@ -592,10 +593,14 @@ impl Brokkr {
 
     /// How the brush touches: a button each, and the settings of the one
     /// chosen.
-    fn touch_picker(&self, settings: bool) -> Element<'_, Message> {
+    pub(super) fn touch_picker(&self, settings: bool) -> Element<'_, Message> {
         let reading = |label: String| text(label).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM);
-        let kinds =
-            PaintTouch::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, kind| {
+        // Each way of painting has one touch the other has not: a slot
+        // cannot take some of a wash, and a fill of colour is not built.
+        let left_out = if self.painting_colour() { PaintTouch::Fill } else { PaintTouch::Wash };
+        let kinds = PaintTouch::ALL.into_iter().filter(|kind| *kind != left_out).fold(
+            row![].spacing(theme::S1),
+            |assembled, kind| {
                 assembled.push(
                     button(text(kind.label()).size(theme::CAPTION_SIZE))
                         // A share of the row for each letter and two for
@@ -609,7 +614,8 @@ impl Brokkr {
                         })
                         .on_press(Message::PaintTouchChosen(kind)),
                 )
-            });
+            },
+        );
         let mut picker = column![kinds].spacing(theme::S1);
         if !settings {
             return picker.into();
@@ -617,6 +623,13 @@ impl Brokkr {
         let changed = |setting: TouchSetting| Message::PaintTouchChanged(setting);
         match self.touch.kind {
             PaintTouch::Loaded => {}
+            PaintTouch::Wash => {
+                picker = picker.push(
+                    text("runs into the creases and off the edges. Best as a glaze")
+                        .size(theme::CAPTION_SIZE)
+                        .color(theme::TEXT_MUTE),
+                );
+            }
             PaintTouch::Drybrush => {
                 let dry = self.touch.dry;
                 let load = self.touch.load_mm.0;
@@ -1216,9 +1229,16 @@ mod tests {
         drop(app.update(message));
     }
 
+    /// The paint brush in hand, painting by slot: what this module is.
     fn app() -> Brokkr {
         let mut app = Brokkr::with_tablet(crate::tablet::Tablet::inert());
         update(&mut app, Message::BrushKindChanged(BrushKind::Paint));
+        update(
+            &mut app,
+            Message::Painting(crate::message::PaintingMessage::Target(
+                crate::message::PaintTarget::Slots,
+            )),
+        );
         app
     }
 

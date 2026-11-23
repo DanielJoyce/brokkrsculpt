@@ -185,6 +185,67 @@ pub enum StudioMessage {
     PresetRemoved(usize),
 }
 
+/// What the paint brush lays. See `app/painting.rs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PaintTarget {
+    /// A colour, by an amount.
+    #[default]
+    Colour,
+    /// One of the machine's filaments, or a recipe mixed on the rack.
+    Slots,
+}
+
+impl PaintTarget {
+    pub const ALL: [PaintTarget; 2] = [PaintTarget::Colour, PaintTarget::Slots];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PaintTarget::Colour => "Colour",
+            PaintTarget::Slots => "Filaments",
+        }
+    }
+}
+
+/// How a colour combines with what is under it. See
+/// [`brokkr_core::paint::stroke::Mode`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PaintMode {
+    #[default]
+    Paint,
+    Glaze,
+    Erase,
+}
+
+impl PaintMode {
+    pub const ALL: [PaintMode; 3] = [PaintMode::Paint, PaintMode::Glaze, PaintMode::Erase];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PaintMode::Paint => "Paint",
+            PaintMode::Glaze => "Glaze",
+            PaintMode::Erase => "Erase",
+        }
+    }
+}
+
+/// The colour brush's panel. See `app/painting.rs`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PaintingMessage {
+    /// Paint in colour, or by filament slot.
+    Target(PaintTarget),
+    /// The colour in hand, whole, as a swatch gives it.
+    Colour([u8; 3]),
+    /// One channel of it, as a slider gives it.
+    Channel(usize, u8),
+    /// How much of itself a full touch of the brush lays.
+    Opacity(f32),
+    Mode(PaintMode),
+    /// Arm the eyedropper, or put it down again.
+    PickArmed,
+    /// Coat the whole body in the colour in hand.
+    Coated,
+}
+
 /// The overhang view. See `app/overhang.rs`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OverhangMessage {
@@ -216,16 +277,25 @@ pub enum PaintTouch {
     /// A speckle, as a dabbed sponge leaves.
     Sponge,
     /// Not a stroke at all: the paint is poured where the pointer is and
-    /// runs until a line of the model stops it.
+    /// runs until a line of the model stops it. For a filament slot only.
     Fill,
+    /// Into the recesses and off the edges, as a wash runs. For colour
+    /// only: a slot has no "some of it".
+    Wash,
 }
 
 impl PaintTouch {
-    pub const ALL: [PaintTouch; 4] =
-        [PaintTouch::Loaded, PaintTouch::Drybrush, PaintTouch::Sponge, PaintTouch::Fill];
+    pub const ALL: [PaintTouch; 5] = [
+        PaintTouch::Loaded,
+        PaintTouch::Wash,
+        PaintTouch::Drybrush,
+        PaintTouch::Sponge,
+        PaintTouch::Fill,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
+            PaintTouch::Wash => "Wash",
             PaintTouch::Loaded => "Loaded",
             PaintTouch::Drybrush => "Drybrush",
             PaintTouch::Sponge => "Sponge",
@@ -1056,6 +1126,8 @@ pub enum Message {
     PaintRemoved,
     /// The overhang view's switch and its one setting.
     Overhang(OverhangMessage),
+    /// The colour brush's panel.
+    Painting(PaintingMessage),
     /// Which of the chosen paint's three coats the editor shows. View state.
     PaintCoatChosen(PaintCoat),
     /// How the paint brush touches the model: loaded, nearly dry, or a

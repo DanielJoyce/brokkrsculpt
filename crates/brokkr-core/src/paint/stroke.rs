@@ -280,7 +280,112 @@ pub struct PaintStroke {
     /// The most any stamp of this stroke has given each voxel, 0..=255, a
     /// brick at a time. Only the bricks a stamp has laid paint in.
     coverage: FxHashMap<BrickCoord, Box<[u8; BRICK_VOXELS]>>,
+    /// The last stamp of this stroke: the brush is swept from there to the
+    /// next.
+    last: Option<End>,
     scratch: TouchScratch,
+}
+
+/// The brush's footprint between two stamps: a disc pressed onto the
+/// surface and dragged from one to the other.
+///
+/// Not a ball about each stamp, for two reasons that were both seen on a
+/// screen before this was written. A ball lays less on a voxel a layer
+/// under the surface than on the one above it, since the one under is
+/// further from the middle; neighbouring vertices of the mesh read from
+/// different layers, and a stroke came out hatched at the scale of the
+/// lattice. And balls a quarter of a radius apart are a string of beads
+/// once the stroke is faster than the stamps.
+///
+/// So how much of the brush a voxel is under is measured ACROSS the
+/// surface, along the stamps' own normal, and to the path between the two
+/// stamps and not to either one. Every voxel on a line through the band
+/// gets the same, and the path is one stripe.
+#[derive(Debug, Clone, Copy)]
+struct Sweep {
+    from: Vec3,
+    to: Vec3,
+    /// How hard the pen was pressed at each end. Between them it is taken
+    /// to have changed evenly, so that a stroke swells and thins along its
+    /// length and not in steps a stamp long.
+    pressed: (f32, f32),
+    along: Vec3,
+    /// One over the squared length of the path as seen along the axis, or
+    /// nothing for a stamp that has not moved.
+    per_length: f32,
+    axis: Vec3,
+    radius: f32,
+}
+
+impl Sweep {
+    /// The sweep from `one` stamp to `other`.
+    ///
+    /// The same sweep whichever of the two is given first, to the bit, and
+    /// its mirror image for mirrored stamps, to the bit: the ends are put
+    /// in an order that neither a reversal nor a mirror changes before
+    /// anything is worked out from them. A stroke walked backwards lays
+    /// the paint it lays forwards, and a property test holds it to that.
+    fn between(one: End, other: End, radius: f32) -> Self {
+        let key = |end: End| end.at.abs().to_array();
+        let (first, second) = if key(other) < key(one) { (other, one) } else { (one, other) };
+        let axis = (first.facing.normalize_or_zero() + second.facing.normalize_or_zero())
+            .normalize_or_zero();
+        let path = second.at - first.at;
+        let along = path - axis * path.dot(axis);
+        let length_squared = along.length_squared();
+        let per_length = if length_squared > 0.0 { 1.0 / length_squared } else { 0.0 };
+        let pressed = (first.pressure.clamp(0.0, 1.0), second.pressure.clamp(0.0, 1.0));
+        // A stamp that has not moved is both its ends at once: pressed as
+        // hard as the harder of them.
+        let pressed = if length_squared > 0.0 {
+            pressed
+        } else {
+            (pressed.0.max(pressed.1), pressed.0.max(pressed.1))
+        };
+        Self { from: first.at, to: second.at, pressed, along, per_length, axis, radius }
+    }
+
+    /// The box of the world the sweep can reach.
+    fn bounds(&self) -> (Vec3, Vec3) {
+        let extent = Vec3::splat(self.radius);
+        (self.from.min(self.to) - extent, self.from.max(self.to) + extent)
+    }
+
+    /// How far `position` is from the path, across the surface, as a share
+    /// of the radius: 0 on the path, 1 at the brush's rim. More than 1,
+    /// and out of the brush, for a point further than a radius above or
+    /// below the path, which is some other part of the model. And how hard
+    /// the pen was pressed at the point of the path nearest it.
+    #[debug_requires(self.radius > 0.0, "a brush of some size")]
+    #[debug_ensures(ret.0 >= 0.0 && (0.0..=1.0).contains(&ret.1), "a distance and a pressure")]
+    fn reach(&self, position: Vec3) -> (f32, f32) {
+        let offset = position - self.from;
+        let across = offset - self.axis * offset.dot(self.axis);
+        let t = (across.dot(self.along) * self.per_length).clamp(0.0, 1.0);
+        let nearest = self.from + (self.to - self.from) * t;
+        let pressed = self.pressed.0 + (self.pressed.1 - self.pressed.0) * t;
+        let gap = position - nearest;
+        let depth = gap.dot(self.axis);
+        if depth.abs() > self.radius {
+            return (2.0, pressed);
+        }
+        ((gap - self.axis * depth).length() / self.radius, pressed)
+    }
+}
+
+/// One end of a sweep: where a stamp was, which way the surface faced
+/// there, and how hard the pen was pressed.
+#[derive(Debug, Clone, Copy)]
+struct End {
+    at: Vec3,
+    facing: Vec3,
+    pressure: f32,
+}
+
+impl End {
+    fn of(stamp: &Stamp) -> Self {
+        Self { at: stamp.centre, facing: stamp.normal, pressure: stamp.pressure }
+    }
 }
 
 impl PaintStroke {
@@ -292,6 +397,7 @@ impl PaintStroke {
     /// one lays a coat over it.
     pub fn begin(&mut self) {
         self.coverage.clear();
+        self.last = None;
     }
 
     /// How many bricks this stroke has laid paint in.
@@ -299,13 +405,14 @@ impl PaintStroke {
         self.coverage.len()
     }
 
-    /// Lay one stamp of the stroke.
+    /// Lay one stamp of the stroke: the brush, swept here from where the
+    /// stroke's last stamp was.
     ///
     /// The brush gives the radius, the falloff and the pattern. The mask
     /// holds paint off in proportion: a voxel half protected takes half.
     /// The stamp's pressure scales what it lays.
     pub fn stamp(&mut self, volume: &mut Volume, brush: &Brush, stamp: &Stamp, lay: &Lay) {
-        self.stamp_flipped(volume, brush, stamp, stamp, Flip::IDENTITY, lay);
+        self.stamp_symmetric(volume, brush, stamp, lay, Symmetry::OFF, Vec3::ZERO);
     }
 
     /// One stamp and its mirrors.
@@ -322,22 +429,34 @@ impl PaintStroke {
         symmetry: Symmetry,
         centre: Vec3,
     ) {
-        self.stamp(volume, brush, stamp, lay);
-        if symmetry.is_off() {
-            return;
+        let here = End::of(stamp);
+        // The first stamp of a stroke is swept from itself.
+        let from = self.last.unwrap_or(here);
+        let own = Mirror { of: stamp, flip: Flip::IDENTITY, from };
+        self.stamp_flipped(volume, brush, stamp, own, lay);
+        if !symmetry.is_off() {
+            let mut twins = [*stamp; Symmetry::MAX_MIRRORS];
+            let mut flips = [Flip::IDENTITY; Symmetry::MAX_MIRRORS];
+            let count = symmetry.mirrors(stamp, centre, &mut twins);
+            let flipped = symmetry.flips(centre, &mut flips);
+            debug_assert_eq!(count, flipped, "a stamp has one twin a flip");
+            for (twin, flip) in twins[..count].iter().zip(&flips[..count]) {
+                // Where the twin is swept from is the mirror image of
+                // where the stamp is.
+                let from = End {
+                    at: from.at * flip.sign + flip.offset,
+                    facing: from.facing * flip.sign,
+                    ..from
+                };
+                let mirror = Mirror { of: stamp, flip: *flip, from };
+                self.stamp_flipped(volume, brush, twin, mirror, lay);
+            }
         }
-        let mut twins = [*stamp; Symmetry::MAX_MIRRORS];
-        let mut flips = [Flip::IDENTITY; Symmetry::MAX_MIRRORS];
-        let count = symmetry.mirrors(stamp, centre, &mut twins);
-        let flipped = symmetry.flips(centre, &mut flips);
-        debug_assert_eq!(count, flipped, "a stamp has one twin a flip");
-        for (twin, flip) in twins[..count].iter().zip(&flips[..count]) {
-            self.stamp_flipped(volume, brush, twin, stamp, *flip, lay);
-        }
+        self.last = Some(here);
     }
 
-    /// `stamp` is where the paint goes. `source` and `flip` say which stamp
-    /// it is the mirror image of.
+    /// `stamp` is where the paint goes. `mirror` says which stamp it is the
+    /// mirror image of, and where it is swept from.
     #[debug_requires(brush.radius.is_finite(), "a brush has a size")]
     #[debug_ensures(
         self.coverage.len() >= old(self.coverage.len()),
@@ -348,20 +467,30 @@ impl PaintStroke {
         volume: &mut Volume,
         brush: &Brush,
         stamp: &Stamp,
-        source: &Stamp,
-        flip: Flip,
+        mirror: Mirror<'_>,
         lay: &Lay,
     ) {
         let radius = brush.radius;
-        // A brush of no size needs no test of its own: nothing is within
-        // it, and nothing is laid.
-        if lay.pigment.opacity <= 0.0 {
+        if radius <= 0.0 || lay.pigment.opacity <= 0.0 {
             return;
         }
-        let Self { coverage, scratch } = self;
+        let Mirror { of: source, flip, from } = mirror;
+        // The path here from the last stamp, and the brush set down here
+        // as well, square to the surface where it is: on a curved surface
+        // the path's own axis is a compromise between its two ends, and
+        // each end is owed its own. (It is also what makes a path the same
+        // paint walked either way: each stamp is set down once, whichever
+        // end the stroke came from.)
+        let here = End::of(stamp);
+        let sweep = Sweep::between(from, here, radius);
+        // A stamp that has not moved or turned is swept from itself, and
+        // the sweep is the brush set down already.
+        let moved = from.at != here.at || from.facing != here.facing;
+        let dab = moved.then(|| Sweep::between(here, here, radius));
+        let Self { coverage, scratch, .. } = self;
         let voxel_size = volume.voxel_size();
-        let extent = Vec3::splat(radius);
-        let (lo, hi) = volume.voxel_bounds(stamp.centre - extent, stamp.centre + extent);
+        let (low, high) = sweep.bounds();
+        let (lo, hi) = volume.voxel_bounds(low, high);
 
         // What the surface is like under the stamp, for a brush that asks.
         // The surface point a voxel answers for is up to a band away, and
@@ -381,9 +510,7 @@ impl PaintStroke {
             brush.pattern.prepare(voxel_size, stamp.normal, stamp.tangent)
         };
         let frame = Frame::of(source, lay.origin);
-        let centre = stamp.centre;
         let falloff = brush.falloff;
-        let pressure = stamp.pressure.clamp(0.0, 1.0);
         // Which way the brush is travelling over this stamp, for the lee
         // side of a drybrush. A stroke that has not moved has none.
         let travel = stamp.tangent.normalize_or_zero();
@@ -399,7 +526,13 @@ impl PaintStroke {
             let mut cover = coverage.remove(&coord);
             volume.edit_paint_over(from, to, |voxel, position, held, before, protection| {
                 let free = 1.0 - f32::from(protection) / f32::from(PROTECTED);
-                let reach = falloff.weight((position - centre).length() / radius) * pressure * free;
+                let (across, pressed) = sweep.reach(position);
+                let mut reach = falloff.weight(across) * pressed;
+                if let Some(dab) = &dab {
+                    let (across, pressed) = dab.reach(position);
+                    reach = reach.max(falloff.weight(across) * pressed);
+                }
+                let reach = reach * free;
                 // Outside the brush, or wholly protected. Only for speed:
                 // nothing would be laid here further down either.
                 if reach <= 0.0 {
@@ -444,6 +577,16 @@ impl PaintStroke {
             }
         }
     }
+}
+
+/// Which stamp a stamp is the mirror image of, through which flip, and
+/// where it is swept from: the last stamp's place and facing, mirrored the
+/// same way. A stamp that is nobody's twin is its own, through no flip.
+#[derive(Debug, Clone, Copy)]
+struct Mirror<'a> {
+    of: &'a Stamp,
+    flip: Flip,
+    from: End,
 }
 
 fn nothing_covered() -> Box<[u8; BRICK_VOXELS]> {
@@ -671,13 +814,13 @@ mod tests {
         let half_red = pigment(RED, 0.5);
         let stamps: Vec<Stamp> =
             (0..=12).map(|step| on(ON_FLAT + Vec3::X * (step as f32 * 0.5), Vec3::Z)).collect();
-        // What the stroke should leave on a voxel that held `before`.
+        // What the stroke should leave on a voxel that held `before`: the
+        // brush swept along the line the stamps are on, from x = 0 to
+        // x = 6, measured across the face and not through it.
         let wanted = |position: Vec3, before: Rgba| {
-            let most = stamps
-                .iter()
-                .map(|stamp| brush.falloff.weight((position - stamp.centre).length() / 4.0))
-                .fold(0.0_f32, f32::max);
-            let coverage = (most * 255.0).round() as u8;
+            let along = position.x.clamp(0.0, 6.0);
+            let across = Vec3::new(position.x - along, position.y, 0.0).length();
+            let coverage = (brush.falloff.weight(across / 4.0) * 255.0).round() as u8;
             laid(before, half_red, f32::from(coverage) / 255.0)
         };
 
@@ -702,6 +845,13 @@ mod tests {
             }
             // Controls: the brush has a soft edge, and a middle that is not.
             assert!(soft > 500 && full > 5, "{soft} voxels part covered and {full} wholly");
+            // And through the band a voxel holds what the one on the
+            // surface holds, to the bit: the brush is measured across the
+            // surface, and a voxel under it is no further from it.
+            for (voxel, _, paint) in &after {
+                let on_the_face = IVec3::new(voxel.x, voxel.y, (HALF / VOXEL) as i32);
+                assert_eq!(*paint, volume.paint().at(on_the_face), "{voxel} and the face over it");
+            }
             assert!(stroke.bricks() > 0);
 
             // The same stamps again, still in the stroke: nothing.
@@ -745,7 +895,9 @@ mod tests {
             stroke.stamp(&mut volume, brush, stamp, &Lay::loaded(red));
             volume
         };
-        let weight = |position: Vec3| brush.falloff.weight((position - ON_FLAT).length() / 5.0);
+        // Across the face, as the brush is measured.
+        let weight =
+            |position: Vec3| brush.falloff.weight((position - ON_FLAT).truncate().length() / 5.0);
         let alpha = |amount: f32| (((amount * 255.0).round() / 255.0) * 255.0).round() as u8;
 
         // A ramp of protection across the left half of the stamp, and the

@@ -5,6 +5,7 @@
 mod fit_test;
 mod form;
 mod overhang;
+mod painting;
 mod paints;
 mod panel;
 mod presets;
@@ -906,6 +907,8 @@ pub struct Brokkr {
     /// The overhang view: whether it is on, and how steep a lean the
     /// printer manages. See `app/overhang.rs`.
     overhang: overhang::OverhangState,
+    /// The paint brush, painting in colour. See `app/painting.rs`.
+    painting: painting::PaintingState,
     /// How many texels on a side a baked texture is. See `app/paints.rs`.
     texture_size: u32,
     /// How strong the tint is when it is shown at all, 0..1.
@@ -2163,6 +2166,7 @@ impl Brokkr {
             studio: studio::StudioState::default(),
             form: form::FormState::default(),
             overhang: overhang::OverhangState::default(),
+            painting: painting::PaintingState::default(),
             texture_size: paints::TEXTURE_SIZES[1],
             mask_tint: DEFAULT_MASK_TINT,
             mask_peek: false,
@@ -5550,6 +5554,11 @@ impl Brokkr {
         let Some(point) = self.surface_under(pixel) else {
             return;
         };
+        // The eyedropper, before anything is armed: taking a colour is not
+        // an edit. See `app/painting.rs`.
+        if self.eyedropper_takes(point, start) {
+            return;
+        }
         self.arm_recorder();
 
         let started = Instant::now();
@@ -5567,7 +5576,7 @@ impl Brokkr {
         };
         // A fill is not a stroke: the paint is poured where the pointer is.
         // See `app/paints.rs`.
-        if self.touch.kind == crate::message::PaintTouch::Fill {
+        if self.touch.kind == crate::message::PaintTouch::Fill && !self.painting_colour() {
             self.pour(point, slot);
             self.remesh_dirty();
             return;
@@ -5589,6 +5598,12 @@ impl Brokkr {
             // a drybrush or a sponge is the same stamp asked one more
             // question per voxel. See `app/paints.rs`.
             let coat = self.coat_for(centre, start && index == 0);
+            // In colour, the same stamp is a stamp of the colour brush.
+            // See `app/painting.rs`.
+            if self.painting_colour() {
+                self.lay_colour(&brush, &stamp, coat, direction, start && index == 0);
+                continue;
+            }
             coat.apply_symmetric(
                 &brush,
                 self.doc.active_volume_mut(),
@@ -10392,6 +10407,7 @@ impl Brokkr {
             Message::PaintAdded => self.add_paint(),
             Message::PaintRemoved => self.remove_paint(),
             Message::Overhang(message) => self.overhang_changed(message),
+            Message::Painting(message) => self.painting_changed(message),
             Message::PaintCoatChosen(coat) => self.paint_coat = coat,
             Message::PaintEdited(edit) => self.edit_paint(edit),
             Message::Studio(message) => return self.studio_changed(message),
@@ -21685,9 +21701,17 @@ mod paint_brush_tests {
         drop(app.update(message));
     }
 
+    /// The paint brush in hand, painting by filament slot, which is what
+    /// these tests are of. The colour brush's are in `app/painting.rs`.
     fn app() -> Brokkr {
         let mut app = Brokkr::with_tablet(crate::tablet::Tablet::inert());
         update(&mut app, Message::BrushKindChanged(BrushKind::Paint));
+        update(
+            &mut app,
+            Message::Painting(crate::message::PaintingMessage::Target(
+                crate::message::PaintTarget::Slots,
+            )),
+        );
         app
     }
 

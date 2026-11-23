@@ -20,7 +20,7 @@ use proptest::prelude::*;
 use super::field::{BARE, PaintBrick, PaintField, Rgba, stored};
 use super::file::{decode, encode};
 use super::stroke::{Catch, Lay, Mode, PaintStroke, Pigment, laid};
-use super::touch::{Drybrush, Sponge};
+use super::touch::Sponge;
 use crate::brick::{BRICK_VOXELS, BrickCoord};
 use crate::brush::{Brush, BrushDirection, BrushKind, Stamp};
 use crate::orientation::AxisRotation;
@@ -275,24 +275,23 @@ fn on_top(x: f32, y: f32, pressure: f32) -> Stamp {
     Stamp::new(centre, centre.normalize(), BrushDirection::Add).with_pressure(pressure)
 }
 
+/// What a brush with no direction catches. A drybrush is left out: its
+/// bristles lie along the stroke, so which way a path was walked is part
+/// of what it leaves, and a real one is the same.
 fn catch() -> impl Strategy<Value = Catch> {
-    prop_oneof![
-        Just(Catch::All),
-        Just(Catch::Recesses),
-        Just(Catch::Raised(Drybrush { catch: 1.0, streak: 0.5, bristle_mm: 0.5 })),
-        Just(Catch::Specks(Sponge::default())),
-    ]
+    prop_oneof![Just(Catch::All), Just(Catch::Recesses), Just(Catch::Specks(Sponge::default()))]
 }
 
 proptest! {
     // Each case paints a ball several times over: fewer of them.
     #![proptest_config(ProptestConfig::with_cases(24))]
 
-    /// A stroke is a layer: what it leaves does not depend on the order
-    /// its stamps were laid in, nor on any of them being laid twice, for
-    /// any pigment over any paint and whatever the brush catches.
+    /// A stroke is a layer over the path it took: the same paint whichever
+    /// way the path is walked, and walked there and back again in one
+    /// stroke, for any pigment over any paint, any pressures along it, and
+    /// anything a brush with no direction catches.
     #[test]
-    fn a_stroke_is_its_stamps_in_any_order(
+    fn a_path_is_the_same_paint_walked_either_way(
         stamps in prop::collection::vec((-4.0_f32..4.0, -4.0_f32..4.0, 0.1_f32..=1.0), 1..7),
         radius in 1.0_f32..4.0,
         pigment in pigment(),
@@ -317,8 +316,8 @@ proptest! {
         let forwards = painted(&mut stamps.iter());
         let backwards = painted(&mut stamps.iter().rev());
         let twice = painted(&mut stamps.iter().chain(stamps.iter().rev()));
-        prop_assert!(same(forwards.paint(), backwards.paint()), "the order mattered");
-        prop_assert!(same(forwards.paint(), twice.paint()), "a stamp laid twice mattered");
+        prop_assert!(same(forwards.paint(), backwards.paint()), "the direction mattered");
+        prop_assert!(same(forwards.paint(), twice.paint()), "walking it back again mattered");
     }
 
     /// A stroke undone is the paint that was there, and done again is the
