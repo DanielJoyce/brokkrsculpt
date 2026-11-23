@@ -56,6 +56,26 @@ pub(super) const HEIGHT_RANGE: std::ops::RangeInclusive<f32> = 0.02..=1.0;
 /// viewport. Eighty is a long lead: at that the brush is being towed.
 pub(super) const LAZY_RANGE: std::ops::RangeInclusive<f32> = 0.0..=80.0;
 
+/// How far apart the stamps of a row may be, centre to centre, in stamp
+/// widths. Half a width is stamps overlapping by half, which is a rope or
+/// a row of scales; past four the row is not read as a row.
+pub(super) const ALONG_RANGE: std::ops::RangeInclusive<f32> = 0.5..=4.0;
+
+/// How far apart a row's stamps are when the row is first asked for: with
+/// a gap of half a stamp between them, which reads as a row of separate
+/// things.
+const DEFAULT_ALONG: f32 = 1.5;
+
+/// How many times the pointer's line is halved to find where a step ends.
+/// Twelve is a four thousandth of the line: under a hundredth of a
+/// millimetre for any drag a viewport has room for.
+const HALVINGS: usize = 12;
+
+/// The most stamps one pointer event lays along a stroke. A pointer that
+/// jumps the width of the model in one event is a row that long, and no
+/// longer than this.
+const MOST_A_MOVE: usize = 64;
+
 /// How much of the brush's size pressure decides, 0 for none of it.
 pub(super) const SIZE_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
 
@@ -88,6 +108,12 @@ pub(super) struct StudioState {
     /// the point on the surface and the surface's normal there.
     gesture: StampGesture,
     press: Option<(Vec3, Vec3)>,
+    /// How far apart stamps are laid along a drag, in stamp widths, or
+    /// nothing for one stamp sized by the drag.
+    pub stamp_along: f32,
+    /// Where the next stamp of a row is owed: a point on the surface, and
+    /// the pixel it was under.
+    trail: Option<(Vec3, Vec2)>,
     /// The brushes kept under a name, and the name being typed for the
     /// next. See [`super::presets`].
     pub presets: Presets,
@@ -108,6 +134,8 @@ impl Default for StudioState {
             stamp_height: 0.35,
             gesture: StampGesture::new(),
             press: None,
+            stamp_along: 0.0,
+            trail: None,
             presets: Presets::default(),
             preset_name: String::new(),
         }
@@ -187,6 +215,10 @@ impl StudioState {
             }
             StudioMessage::StampHeightChanged(share) => {
                 self.stamp_height = clamped(share, HEIGHT_RANGE);
+            }
+            StudioMessage::StampAlongChanged(widths) => {
+                // Not a number is not more than nothing, and is off.
+                self.stamp_along = if widths > 0.0 { clamped(widths, ALONG_RANGE) } else { 0.0 };
             }
             // The dialog is opened by `Brokkr::studio_changed`, which is the
             // one that can return a task.
@@ -292,6 +324,7 @@ impl Brokkr {
             falloff: self.brush.falloff,
             op: self.studio.op,
             stamp,
+            along: if self.studio.stamp_on { self.studio.stamp_along } else { 0.0 },
             lazy_px: self.studio.lazy_px,
             size_from_pressure: self.studio.size_from_pressure,
         }
@@ -325,6 +358,7 @@ impl Brokkr {
                     self.studio.set(StudioMessage::StampHeightChanged(height));
                     self.studio.set(StudioMessage::StampToggled(true));
                 }
+                self.studio.set(StudioMessage::StampAlongChanged(preset.along));
                 self.studio.set(StudioMessage::LazyChanged(preset.lazy_px));
                 self.studio.set(StudioMessage::SizeFromPressureChanged(preset.size_from_pressure));
                 self.status = format!("brush: {}", preset.name);
@@ -368,6 +402,10 @@ impl Brokkr {
     /// a face seen at a slant is not squashed. The top of the image points
     /// along the drag. The inverted direction engraves.
     pub(super) fn stamp_to(&mut self, pixel: Vec2, direction: BrushDirection, start: bool) {
+        if self.studio.stamp_along > 0.0 {
+            self.stamp_along(pixel, direction, start);
+            return;
+        }
         if start {
             self.studio.press = None;
             let Some(point) = self.surface_under(pixel) else {
@@ -416,6 +454,104 @@ impl Brokkr {
             self.status = "that stamp is too big to press: drag back in".to_string();
         }
         self.remesh_dirty();
+    }
+
+    /// One pointer event of a row of stamps: the image pressed in again and
+    /// again along the drag, each at the brush's size, with its top
+    /// pointing the way the row is going.
+    ///
+    /// A stamp is laid where the last one's step ended, once the pointer
+    /// has gone a step on from there, because until then there is no
+    /// telling which way it should face. So the first is at the press, the
+    /// row follows the pointer a step behind, and a press with no drag
+    /// lays nothing.
+    ///
+    /// **Where a step ends is looked for on the screen and not in space.**
+    /// The straight line from a stamp toward the pointer cuts under a
+    /// curved surface, by 3 mm for a 12 mm step on the starting ball, and
+    /// the field cannot bring a point back from there: three voxels under
+    /// the surface it is flat and has no gradient to follow. (That was
+    /// built first, and a test of a long step found it.) What is always on
+    /// the surface is whatever is under a pixel. So the next stamp's place
+    /// is the point under the line the pointer drew, from the last stamp's
+    /// pixel to where the pointer is now, that is one step from the last
+    /// stamp, found by halving.
+    ///
+    /// Each stamp is a whole gesture of the core's, begun and ended here,
+    /// so a row is as many stamps as it looks like and none is pressed
+    /// twice. The undo entry is the drag's: one for the row.
+    fn stamp_along(&mut self, pixel: Vec2, direction: BrushDirection, start: bool) {
+        // A row is a stroke, and can be led like one.
+        let pixel = self.studio.follow(pixel, start);
+        if start {
+            self.studio.trail = None;
+            let Some(point) = self.surface_under(pixel) else {
+                return;
+            };
+            self.arm_recorder();
+            self.studio.trail = Some((point, pixel));
+            return;
+        }
+        let (Some((mut anchor, mut under)), Some(pointer)) =
+            (self.studio.trail, self.surface_under(pixel))
+        else {
+            return;
+        };
+        let radius = self.brush.radius;
+        let step = radius * 2.0 * self.studio.stamp_along;
+        let height = radius * self.studio.stamp_height * direction.outward_sign();
+        let mut laid = false;
+        for _ in 0..MOST_A_MOVE {
+            if (pointer - anchor).length() < step {
+                break;
+            }
+            // The furthest point along the pointer's line that is still
+            // within a step of this stamp.
+            let (mut near, mut far) = (0.0_f32, 1.0_f32);
+            for _ in 0..HALVINGS {
+                let middle = (near + far) / 2.0;
+                match self.surface_under(under.lerp(pixel, middle)) {
+                    Some(at) if (at - anchor).length() < step => near = middle,
+                    _ => far = middle,
+                }
+            }
+            let next_under = under.lerp(pixel, near);
+            let next = self.surface_under(next_under).filter(|_| near > 0.0);
+            let Some(next) = next else {
+                // Nothing within a step along that line: a gap in the
+                // model, or a drop behind an edge. The row takes up again
+                // from under the pointer. NOT UNDER TEST: it wants a model
+                // with a gap in it, and the fixtures here are a ball.
+                (anchor, under) = (pointer, pixel);
+                break;
+            };
+            let normal = self.doc.active_volume().gradient_world(anchor).try_normalize();
+            if let Some(normal) = normal {
+                let placement =
+                    Placement { centre: anchor, normal, up: next - anchor, radius, height };
+                let studio = &mut self.studio;
+                studio.gesture.begin();
+                let pressed = studio.gesture.apply(
+                    self.doc.active_volume_mut(),
+                    &studio.alpha,
+                    &placement,
+                    self.symmetry,
+                    super::MIRROR_CENTRE,
+                );
+                studio.gesture.end();
+                if pressed == Err(StampError::TooBig) {
+                    self.status =
+                        "that stamp is too big to press: make the brush smaller".to_string();
+                    break;
+                }
+                laid |= pressed.is_ok();
+            }
+            (anchor, under) = (next, next_under);
+        }
+        self.studio.trail = Some((anchor, under));
+        if laid {
+            self.remesh_dirty();
+        }
     }
 
     /// The operator a field stamp runs with: the studio one, unless shift is
@@ -535,11 +671,41 @@ impl Brokkr {
                     })
                     .step(0.01_f32),
                 )
-                .push(
-                    text("press where it goes, drag to size and turn it")
-                        .size(theme::CAPTION_SIZE)
-                        .color(theme::TEXT_MUTE),
-                );
+                .push({
+                    // One stamp sized by the drag, or a row of them at the
+                    // brush's size: pressed again, the row is put away.
+                    let row = self.studio.stamp_along > 0.0;
+                    button(text("Along the stroke").size(theme::CAPTION_SIZE))
+                        .width(Length::Fill)
+                        .style(if row { theme::tool_button_active } else { theme::tool_button })
+                        .on_press(changed(StudioMessage::StampAlongChanged(if row {
+                            0.0
+                        } else {
+                            DEFAULT_ALONG
+                        })))
+                });
+            if self.studio.stamp_along > 0.0 {
+                stamp = stamp
+                    .push(reading(format!(
+                        "One every  {:.1} of its width",
+                        self.studio.stamp_along
+                    )))
+                    .push(
+                        slider(ALONG_RANGE, self.studio.stamp_along, move |widths| {
+                            changed(StudioMessage::StampAlongChanged(widths))
+                        })
+                        .step(0.1_f32),
+                    );
+            }
+            stamp = stamp.push(
+                text(if self.studio.stamp_along > 0.0 {
+                    "drag to lay a row, each the brush's size"
+                } else {
+                    "press where it goes, drag to size and turn it"
+                })
+                .size(theme::CAPTION_SIZE)
+                .color(theme::TEXT_MUTE),
+            );
         }
         // The presets, two to a row: a button that takes one up, lit when
         // the brush is set up exactly as it says, and a small one beside it
@@ -1128,6 +1294,316 @@ mod tests {
         update(app, Message::Studio(message));
     }
 
+    /// A unit step across the viewport: the way a test's drag runs.
+    #[derive(Clone, Copy)]
+    struct Way(f32, f32);
+
+    const ACROSS: Way = Way(1.0, 0.0);
+    const UP_THE_VIEW: Way = Way(0.0, -1.0);
+
+    /// A row of stamps: the stamp taken up, set to lay along the stroke,
+    /// and dragged `pixels` from the middle of the view the way `way` runs.
+    fn row(pixels: f32, way: Way, configure: impl Fn(&mut Brokkr)) -> Brokkr {
+        let mut app = app();
+        set(&mut app, StudioMessage::StampToggled(true));
+        set(&mut app, StudioMessage::StampAlongChanged(1.5));
+        update(&mut app, Message::BrushRadiusChanged(1.0));
+        configure(&mut app);
+        press(&mut app);
+        // In a few moves, as a hand makes them.
+        for part in 1..=5 {
+            let far = pixels * part as f32 / 5.0;
+            let position = iced::Vector::new(centre().x + way.0 * far, centre().y + way.1 * far);
+            update(&mut app, Message::Pointer(PointerEvent::Moved { position, size: SIZE }));
+        }
+        release(&mut app);
+        app
+    }
+
+    /// Where on a ball nothing has been pressed into the pointer is,
+    /// `pixels` from the middle of the view along `way`.
+    fn on_the_ball(pixels: f32, way: Way) -> Vec3 {
+        // A press and a release with the stamp up lay nothing, and tell
+        // the application how big its viewport is.
+        let looking = stamped(&[], |_| {});
+        let pixel = Vec2::new(centre().x + way.0 * pixels, centre().y + way.1 * pixels);
+        looking.surface_under(pixel).expect("the ball is under the pointer")
+    }
+
+    /// How far the surface has risen above a fresh ball's, every tenth of
+    /// a millimetre from the press along the line a drag ran: a row of
+    /// stamps in profile.
+    fn profile(app: &Brokkr, way: Way, length_mm: f32) -> Vec<f32> {
+        let (from, toward) =
+            (on_the_ball(0.0, way).normalize(), on_the_ball(40.0, way).normalize());
+        let side = (toward - from * from.dot(toward)).normalize();
+        let radius = super::super::MODEL_RADIUS_MM;
+        let volume = app.doc.active_volume();
+        (0..(length_mm * 10.0) as usize)
+            .map(|step| {
+                let angle = step as f32 * 0.1 / radius;
+                let out = from * angle.cos() + side * angle.sin();
+                let inside = |along: f32| volume.sample_world(out * (radius + along)) < 0.0;
+                let mut along = -3.0;
+                while along < 6.0 && inside(along) {
+                    along += 0.02;
+                }
+                along
+            })
+            .collect()
+    }
+
+    /// The runs of a profile that pass `over`: where each begins and ends,
+    /// in millimetres along it.
+    fn runs(profile: &[f32], over: impl Fn(f32) -> bool) -> Vec<(f32, f32)> {
+        let mut found: Vec<(f32, f32)> = Vec::new();
+        let mut open = None;
+        for (index, rise) in profile.iter().enumerate() {
+            let at = index as f32 * 0.1;
+            match (over(*rise), open) {
+                (true, None) => open = Some(at),
+                (false, Some(began)) => {
+                    found.push((began, at));
+                    open = None;
+                }
+                _ => {}
+            }
+        }
+        if let Some(began) = open {
+            found.push((began, profile.len() as f32 * 0.1));
+        }
+        found
+    }
+
+    /// The stamp laid along a stroke: a row of them, the first at the
+    /// press, each the brush's size and a step from the last, as many as
+    /// the drag is steps long. Inverted they are engraved, a bigger brush
+    /// is bigger stamps further apart, and the row is one undo.
+    #[test]
+    fn a_stamp_along_the_stroke_lays_a_row_at_the_brushs_size() {
+        let drag = 150.0;
+        let length = (on_the_ball(drag, ACROSS) - on_the_ball(0.0, ACROSS)).length();
+        // A brush 1 mm in radius, every 1.5 widths: a step of 3 mm.
+        let step = 3.0;
+        let expected = (length / step).floor() as usize;
+        let spare = (length / step).fract();
+        assert!(
+            expected >= 3 && (0.15..0.85).contains(&spare),
+            "the fixture's drag is {length} mm: too short, or too near a whole number of steps"
+        );
+
+        let laid = row(drag, ACROSS, |_| {});
+        assert_eq!(laid.live_brush_name(), "STAMP");
+        let risen = profile(&laid, ACROSS, length + 4.0);
+        let tallest = risen.iter().copied().fold(0.0_f32, f32::max);
+        assert!(
+            (0.25..0.45).contains(&tallest),
+            "a rivet 1 mm in radius at a height of 0.35 rose {tallest} mm"
+        );
+        let found = runs(&risen, |rise| rise > tallest / 2.0);
+        assert_eq!(found.len(), expected, "{found:?} along a drag of {length} mm");
+        // The first is at the press: the profile begins in the middle of it.
+        assert!(found[0].0 == 0.0 && found[0].1 < 1.0, "{found:?}");
+        for (index, (began, ended)) in found.iter().enumerate().skip(1) {
+            let middle = (began + ended) / 2.0;
+            assert!(
+                (middle - step * index as f32).abs() < 0.3,
+                "stamp {index} is {middle} mm along: {found:?}"
+            );
+            // The brush's size, and not the drag's: a rivet's flat top and
+            // half its bevel, of a stamp 2 mm across.
+            assert!((1.0..2.0).contains(&(ended - began)), "stamp {index}: {found:?}");
+        }
+        assert!(laid.unsaved, "a row did not dirty the document");
+
+        // A brush twice the size: stamps twice as far apart and twice as
+        // tall, so half as many of them.
+        let big = row(drag, ACROSS, |app| update(app, Message::BrushRadiusChanged(2.0)));
+        let big_risen = profile(&big, ACROSS, length + 6.0);
+        let big_tallest = big_risen.iter().copied().fold(0.0_f32, f32::max);
+        assert!((big_tallest / tallest - 2.0).abs() < 0.3, "{big_tallest} mm against {tallest}");
+        let big_found = runs(&big_risen, |rise| rise > big_tallest / 2.0);
+        assert_eq!(big_found.len(), (length / (2.0 * step)).floor() as usize, "{big_found:?}");
+
+        // Taller when told to be.
+        let tall = row(drag, ACROSS, |app| set(app, StudioMessage::StampHeightChanged(0.7)));
+        let tall_tallest =
+            profile(&tall, ACROSS, length + 4.0).iter().copied().fold(0.0_f32, f32::max);
+        assert!(
+            (tall_tallest / tallest - 2.0).abs() < 0.3,
+            "at twice the height setting the row rose {tall_tallest} mm against {tallest}"
+        );
+
+        // Closer together when told to be.
+        let close = row(drag, ACROSS, |app| set(app, StudioMessage::StampAlongChanged(1.0)));
+        let close_found = runs(&profile(&close, ACROSS, length + 4.0), |rise| rise > tallest / 2.0);
+        assert_eq!(close_found.len(), (length / 2.0).floor() as usize, "{close_found:?}");
+
+        // Inverted, the row is engraved.
+        let engraved = row(drag, ACROSS, |app| app.control = true);
+        let sunk = profile(&engraved, ACROSS, length + 4.0);
+        let deepest = sunk.iter().copied().fold(0.0_f32, f32::min);
+        assert!((deepest + tallest).abs() < 0.1, "engraved to {deepest} mm against {tallest}");
+        assert_eq!(runs(&sunk, |rise| rise < deepest / 2.0).len(), expected);
+
+        // A pointer that covers the whole drag in one move lays the whole
+        // row, and not one stamp of it.
+        let mut jumped = app();
+        set(&mut jumped, StudioMessage::StampToggled(true));
+        set(&mut jumped, StudioMessage::StampAlongChanged(1.5));
+        update(&mut jumped, Message::BrushRadiusChanged(1.0));
+        press(&mut jumped);
+        drag_by(&mut jumped, drag);
+        // Each stamp of a row is a gesture begun and ended: with the
+        // button still down there is none open, for an Escape to take the
+        // last stamp back out of the middle of.
+        assert!(moved_voxels(&jumped) > 0 && !jumped.studio.gesture.is_active());
+        release(&mut jumped);
+        let jumped_found =
+            runs(&profile(&jumped, ACROSS, length + 4.0), |rise| rise > tallest / 2.0);
+        assert_eq!(jumped_found.len(), expected, "{jumped_found:?}");
+
+        // A row can be led, as a stroke can: on a lead of 60 pixels it is
+        // the row of a drag 60 pixels shorter.
+        let lead = 60.0;
+        let led = row(drag, ACROSS, |app| set(app, StudioMessage::LazyChanged(lead)));
+        let led_length = (on_the_ball(drag - lead, ACROSS) - on_the_ball(0.0, ACROSS)).length();
+        let led_found = runs(&profile(&led, ACROSS, length + 4.0), |rise| rise > tallest / 2.0);
+        assert!(
+            (0.15..0.85).contains(&(led_length / step).fract()),
+            "the led fixture is {led_length} mm: too near a whole number of steps"
+        );
+        assert_eq!(led_found.len(), (led_length / step).floor() as usize, "{led_found:?}");
+        assert!(led_found.len() < expected, "the lead made no difference: no test of it");
+
+        // A second press off the model does not carry the row on from
+        // where the first left it.
+        let mut again = row(drag, ACROSS, |_| {});
+        let before = moved_voxels(&again);
+        let corner = iced::Vector::new(3.0, 3.0);
+        update(
+            &mut again,
+            Message::Pointer(PointerEvent::Pressed {
+                button: PointerButton::Left,
+                position: corner,
+                size: SIZE,
+            }),
+        );
+        drag_by(&mut again, 0.0);
+        release(&mut again);
+        assert_eq!(moved_voxels(&again), before, "a press off the model went on with the row");
+
+        // One undo takes the whole row off.
+        let mut undone = laid;
+        update(&mut undone, Message::Undo);
+        assert_eq!(moved_voxels(&undone), 0, "a row was not one undo");
+
+        // A press with no drag, or a drag shorter than a step, lays nothing
+        // and leaves nothing to undo.
+        for short in [0.0, 20.0] {
+            let none = row(short, ACROSS, |_| {});
+            assert_eq!(moved_voxels(&none), 0, "a drag of {short} pixels laid a stamp");
+            assert!(!none.unsaved, "a row of nothing dirtied the document");
+        }
+    }
+
+    /// A long step on a curved surface still lands on it. The straight
+    /// line from one stamp toward the pointer cuts under a ball, and a
+    /// stamp pressed from under the surface is not the stamp it should be:
+    /// the second of a row a long way from the first is as tall as the
+    /// first.
+    #[test]
+    fn a_long_step_of_a_row_lands_back_on_the_surface() {
+        let drag = 240.0;
+        let length = (on_the_ball(drag, ACROSS) - on_the_ball(0.0, ACROSS)).length();
+        let laid = row(drag, ACROSS, |app| {
+            update(app, Message::BrushRadiusChanged(2.0));
+            set(app, StudioMessage::StampAlongChanged(3.0));
+        });
+        let risen = profile(&laid, ACROSS, length + 6.0);
+        let first = risen[..20].iter().copied().fold(0.0_f32, f32::max);
+        let found = runs(&risen, |rise| rise > first / 2.0);
+        assert!(found.len() >= 2, "a drag of {length} mm laid {found:?}");
+        let (began, ended) = found[1];
+        let second = risen[(began * 10.0) as usize..(ended * 10.0) as usize]
+            .iter()
+            .copied()
+            .fold(0.0_f32, f32::max);
+        assert!((second / first - 1.0).abs() < 0.1, "{second} mm against {first}");
+        // A step of 12 mm in a straight line is 12.08 mm round a ball of
+        // 30, which is how the profile measures.
+        let middle = (began + ended) / 2.0;
+        assert!((middle - 12.08).abs() < 0.3, "the second stamp is {middle} mm along");
+        let (first_run, second_run) = (found[0], found[1]);
+        // The first is cut in half by where the profile begins.
+        assert!(
+            ((second_run.1 - second_run.0) / (2.0 * (first_run.1 - first_run.0)) - 1.0).abs()
+                < 0.15,
+            "{found:?}"
+        );
+    }
+
+    /// The stamps of a row face the way the row is going. A bar, which is
+    /// longer one way than the other, is the same length along a row
+    /// dragged up the view as along one dragged across it.
+    #[test]
+    fn the_stamps_of_a_row_face_along_it() {
+        let bars = |way: Way| {
+            let laid = row(150.0, way, |app| set(app, StudioMessage::StampChosen(BuiltIn::Bar)));
+            let risen = profile(&laid, way, 14.0);
+            let tallest = risen.iter().copied().fold(0.0_f32, f32::max);
+            let found = runs(&risen, |rise| rise > tallest / 2.0);
+            assert!(found.len() >= 3, "{found:?}");
+            // The second: the first is cut in half by where the profile begins.
+            found[1].1 - found[1].0
+        };
+        let (across, up) = (bars(ACROSS), bars(UP_THE_VIEW));
+        assert!(
+            (across - up).abs() < 0.25,
+            "{across} mm along one row and {up} mm along the other"
+        );
+
+        // Control: the bar is longer one way than the other, so a row that
+        // ignored its direction would have shown here. A bar pressed once,
+        // by a drag across, measured along the drag and across it.
+        let one = stamped(&[30.0], |app| set(app, StudioMessage::StampChosen(BuiltIn::Bar)));
+        let length_of = |way: Way| {
+            let risen = profile(&one, way, 4.0);
+            let tallest = risen.iter().copied().fold(0.0_f32, f32::max);
+            runs(&risen, |rise| rise > tallest / 2.0).first().map_or(0.0, |run| run.1 - run.0)
+        };
+        let (along, athwart) = (length_of(ACROSS), length_of(UP_THE_VIEW));
+        assert!(
+            (along - athwart).abs() > 0.5,
+            "a bar is {along} mm one way and {athwart} mm the other: no test of which way it faces"
+        );
+    }
+
+    /// The row's spacing is kept in range, and nothing or less is no row.
+    #[test]
+    fn a_rows_spacing_is_clamped_and_nothing_is_one_stamp() {
+        let mut app = app();
+        for (asked, taken) in
+            [(1.5, 1.5), (99.0, 4.0), (0.1, 0.5), (0.0, 0.0), (-2.0, 0.0), (f32::NAN, 0.0)]
+        {
+            set(&mut app, StudioMessage::StampAlongChanged(asked));
+            assert_eq!(app.studio.stamp_along, taken, "asked for {asked}");
+        }
+        set(&mut app, StudioMessage::StampToggled(true));
+        for along in [0.0, 1.5] {
+            set(&mut app, StudioMessage::StampAlongChanged(along));
+            drop(app.studio_panel());
+        }
+
+        // Put away again, a drag is the one stamp it always was.
+        let single = stamped(&[30.0], |_| {});
+        let back = stamped(&[30.0], |app| {
+            set(app, StudioMessage::StampAlongChanged(1.5));
+            set(app, StudioMessage::StampAlongChanged(0.0));
+        });
+        assert!(same_field(&single, &back));
+    }
+
     fn preset_called(app: &Brokkr, name: &str) -> usize {
         app.studio
             .presets
@@ -1149,6 +1625,7 @@ mod tests {
         update(&mut app, Message::FalloffChanged(brokkr_core::FalloffCurve::Wide));
         set(&mut app, StudioMessage::StampChosen(BuiltIn::Star));
         set(&mut app, StudioMessage::StampHeightChanged(0.9));
+        set(&mut app, StudioMessage::StampAlongChanged(3.0));
         let crease = preset_called(&app, "Fine crease");
         set(&mut app, StudioMessage::PresetChosen(crease));
         assert_eq!(app.brush.kind, BrushKind::Draw);
@@ -1165,8 +1642,14 @@ mod tests {
         assert_eq!(app.studio.built_in, Some(BuiltIn::Rivet));
         assert_eq!(app.studio.alpha_name, "Rivet");
         assert_eq!(app.studio.stamp_height, 0.35);
+        assert_eq!(app.studio.stamp_along, 0.0, "one rivet came up as a row of them");
         assert_eq!(app.studio.op, None, "the crease stayed up under the stamp");
         assert_eq!(app.studio.lazy_px, 0.0, "the crease's lazy stroke stayed on");
+
+        let rivet_row = preset_called(&app, "Rivet row");
+        set(&mut app, StudioMessage::PresetChosen(rivet_row));
+        assert!(app.studio.stamp_on);
+        assert_eq!((app.brush.radius, app.studio.stamp_along), (1.0, 1.5));
 
         let clay = preset_called(&app, "Clay build");
         set(&mut app, StudioMessage::PresetChosen(clay));
@@ -1326,6 +1809,16 @@ mod tests {
 
         set(&mut app, StudioMessage::PresetChosen(huge));
         assert!(!app.studio.stamp_on);
+
+        // A row is a row of stamps. With the stamp put away, the spacing
+        // it was last given is not part of the brush in hand.
+        set(&mut app, StudioMessage::StampAlongChanged(2.0));
+        set(&mut app, StudioMessage::PresetNamed("No stamp".to_string()));
+        set(&mut app, StudioMessage::PresetSaved);
+        let plain = preset_called(&app, "No stamp");
+        assert_eq!(app.studio.presets.list[plain].along, 0.0);
+        set(&mut app, StudioMessage::StampAlongChanged(0.0));
+
         set(&mut app, StudioMessage::PresetChosen(kept));
         assert!(app.studio.stamp_on);
         assert_eq!(app.studio.stamp_height, 0.8);

@@ -18,6 +18,7 @@
 //! ```text
 //! Fine crease = brush:Draw, size:1.5, strength:0.3, studio:Crease, lazy:12
 //! Rivets = brush:Draw, size:2, stamp:Rivet, height:0.4
+//! Rivet row = brush:Draw, size:1, stamp:Rivet, along:1.5
 //! ```
 //!
 //! **A setting this module cannot make sense of is left at its default and
@@ -41,7 +42,7 @@ use brokkr_core::brush::alpha::BuiltIn;
 use brokkr_core::brush::engine::FieldOp;
 use brokkr_core::{BrushKind, FalloffCurve};
 
-use super::studio::{HEIGHT_RANGE, LAZY_RANGE, SIZE_RANGE};
+use super::studio::{ALONG_RANGE, HEIGHT_RANGE, LAZY_RANGE, SIZE_RANGE};
 use super::{MAX_STRENGTH, MIN_RADIUS_MM, MIN_STRENGTH};
 
 /// The file the presets live in.
@@ -80,6 +81,9 @@ pub(super) struct Preset {
     /// The stamp, and how tall it is as a share of half its width. A preset
     /// has an operator or the stamp and not both: the stamp wins.
     pub stamp: Option<(StampOf, f32)>,
+    /// How far apart the stamp is laid along a drag, in stamp widths, or
+    /// nothing for one stamp sized by the drag. Nothing without a stamp.
+    pub along: f32,
     pub lazy_px: f32,
     pub size_from_pressure: f32,
 }
@@ -96,6 +100,7 @@ impl Preset {
             falloff: brush.falloff,
             op: None,
             stamp: None,
+            along: 0.0,
             lazy_px: 0.0,
             size_from_pressure: 0.0,
         }
@@ -119,6 +124,9 @@ impl Preset {
             };
             fields.push(format!("stamp:{picture}"));
             fields.push(format!("height:{height}"));
+            if self.along > 0.0 {
+                fields.push(format!("along:{}", self.along));
+            }
         }
         if self.lazy_px > 0.0 {
             fields.push(format!("lazy:{}", self.lazy_px));
@@ -194,6 +202,11 @@ impl Preset {
                     }
                 }
                 "height" => height = number(HEIGHT_RANGE).or(height),
+                "along" => {
+                    if let Some(widths) = number(ALONG_RANGE) {
+                        self.along = widths;
+                    }
+                }
                 "lazy" => {
                     if let Some(pixels) = number(LAZY_RANGE) {
                         self.lazy_px = pixels;
@@ -210,9 +223,12 @@ impl Preset {
         if let (Some((stamp, _)), Some(height)) = (self.stamp, height) {
             self.stamp = Some((stamp, height));
         }
-        // An operator or the stamp, as the studio block itself has it.
+        // An operator or the stamp, as the studio block itself has it,
+        // and a row only of stamps.
         if self.stamp.is_some() {
             self.op = None;
+        } else {
+            self.along = 0.0;
         }
     }
 }
@@ -248,7 +264,7 @@ pub(super) struct Presets {
 }
 
 impl Default for Presets {
-    /// What a machine with no file has: four brushes that show what the
+    /// What a machine with no file has: five brushes that show what the
     /// studio block is for, and which are a user's to change or remove.
     fn default() -> Self {
         let plain = Preset::plain("");
@@ -266,6 +282,12 @@ impl Default for Presets {
                 Preset {
                     stamp: Some((StampOf::BuiltIn(BuiltIn::Rivet), DEFAULT_HEIGHT)),
                     ..named("Rivets")
+                },
+                Preset {
+                    radius_mm: 1.0,
+                    stamp: Some((StampOf::BuiltIn(BuiltIn::Rivet), DEFAULT_HEIGHT)),
+                    along: 1.5,
+                    ..named("Rivet row")
                 },
                 Preset {
                     kind: BrushKind::Clay,
@@ -297,7 +319,7 @@ impl Presets {
     /// Read presets out of the config text.
     ///
     /// A file that is there and names none is no presets, and not the
-    /// starting four: somebody removed them. A name used twice is one
+    /// starting five: somebody removed them. A name used twice is one
     /// preset, the later line's, where the earlier one stood.
     pub fn parse(text: &str) -> Self {
         let mut presets = Self { list: Vec::new() };
@@ -374,6 +396,7 @@ mod tests {
             falloff: FalloffCurve::Sharp,
             op: None,
             stamp: Some((StampOf::BuiltIn(BuiltIn::Scale), 0.6)),
+            along: 2.5,
             lazy_px: 17.5,
             size_from_pressure: 0.4,
         }
@@ -388,7 +411,13 @@ mod tests {
             list: vec![
                 full("Scales, big"),
                 Preset { stamp: Some((StampOf::InHand, 0.11)), ..full("My own picture") },
-                Preset { stamp: None, op: Some(FieldOp::Crease), ..full("Crease: fine") },
+                Preset {
+                    stamp: None,
+                    along: 0.0,
+                    op: Some(FieldOp::Crease),
+                    ..full("Crease: fine")
+                },
+                Preset { along: 0.0, ..full("One scale") },
                 Preset::plain("Plain"),
                 Preset { kind: BrushKind::Paint, falloff: FalloffCurve::Wide, ..full("Paint") },
                 Preset { kind: BrushKind::Move, falloff: FalloffCurve::Linear, ..full("Move") },
@@ -401,7 +430,7 @@ mod tests {
         assert_ne!(Preset { name: String::new(), ..full("") }, Preset::plain(""));
         // And the starting presets are themselves a file that reads back.
         assert_eq!(Presets::parse(&Presets::default().to_config()), Presets::default());
-        assert_eq!(Presets::default().list.len(), 4);
+        assert_eq!(Presets::default().list.len(), 5);
     }
 
     /// Every brush, falloff, operator and picture there is can be named in
@@ -464,6 +493,15 @@ mod tests {
         assert_eq!(preset.op, None);
         // Control: the operator on its own is taken.
         assert_eq!(read("studio:Crease").op, Some(FieldOp::Crease));
+
+        // A row is a row of stamps: its spacing is brought into range,
+        // and without a stamp it is nothing.
+        assert_eq!(read("stamp:Dome, along:9").along, *ALONG_RANGE.end());
+        assert_eq!(read("along:0.1, stamp:Dome").along, *ALONG_RANGE.start());
+        assert_eq!(read("along:2").along, 0.0, "a row of no stamp");
+        assert_eq!(read("along:2, studio:Crease").along, 0.0);
+        assert_eq!(read("stamp:Dome, along:x").along, 0.0);
+        assert_eq!(read("stamp:Dome, along:2").along, 2.0);
     }
 
     /// A name is what the file can hold as a key: no `=`, no `#`, no line
@@ -545,7 +583,7 @@ mod tests {
         let good = Presets {
             list: vec![
                 full("Scales"),
-                Preset { stamp: None, op: Some(FieldOp::Crease), ..full("Crease") },
+                Preset { stamp: None, along: 0.0, op: Some(FieldOp::Crease), ..full("Crease") },
                 Preset::plain("Plain"),
             ],
         }
@@ -587,6 +625,9 @@ mod tests {
                 if let Some((_, height)) = preset.stamp {
                     assert!(HEIGHT_RANGE.contains(&height), "{text:?}");
                     assert_eq!(preset.op, None, "{text:?}");
+                    assert!(preset.along == 0.0 || ALONG_RANGE.contains(&preset.along), "{text:?}");
+                } else {
+                    assert_eq!(preset.along, 0.0, "{text:?}");
                 }
                 // And what was read is itself a file that reads back.
                 let alone = Presets { list: vec![preset.clone()] };

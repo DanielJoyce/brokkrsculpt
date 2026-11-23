@@ -17,7 +17,7 @@ was built and what was measured.
 | S1a Decimated export | **Done**, 2026-11-22 (section 7.1) | A *Detail* choice on export: Full, Fine, Standard, Draft |
 | S1b Parting with keys | **Done but for a preview**, 2026-11-22 (section 7.2) | Cut tool with **alt** held: the body becomes two, with pegs and sockets |
 | S2 Mini painting | **Done but for broad occlusion and zenithal**, 2026-11-22 (section 8), which wait for S4 | Paint brush: *Mix paints*, then a rack of paints, each with a wash and an edge highlight; *Loaded*, *Drybrush*, *Sponge* and *Fill*; a flat view; export as PLY in colour, and 3MF by the filament each paint prints in |
-| S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). A textured tip and the gesture warps remain | A STUDIO block under the brush: *Crease*, *Stamp* with six images or any picture, *Lazy*, *Size from pressure*; and PRESETS, a brush kept under a name |
+| S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). A textured tip and the gesture warps remain | A STUDIO block under the brush: *Crease*, *Stamp* with six images or any picture, one at a time or in a row *Along the stroke*, *Lazy*, *Size from pressure*; and PRESETS, a brush kept under a name |
 | S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush, form smooth and posing remain | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
 | S5 Unwrap and bake | **Done but for the other maps**, 2026-11-23 (sections 10.4 and 10.5): unwrap, the base colour bake, OBJ with a picture, and GLB. Normal, occlusion and finish maps remain | Export as *OBJ+PNG* or *GLB*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
 
@@ -504,13 +504,52 @@ break them:
 | Stroke | Drag rect: one stamp placed at the press, sized and turned by the drag | **Built** (S3.2), as a gesture |
 | Operator | Displace: draw whose depth is the alpha's value | **Built** (S3.2), inside the gesture and not as a kernel: a kernel is held to one voxel a stamp |
 | Dynamics | Curves from pressure, tilt, speed and stroke distance to radius, strength, rotation | Pressure to radius **built** (S3.1), as one share. Pressure to strength and tilt to lean were upstream's already. The rest follows the alpha, which is what rotation is for |
-| Stroke | Lazy (stabilised), spray (jittered), curve (along a drawn spline) | Lazy **built** (S3.1) |
+| Stroke | Lazy (stabilised), spray (jittered), curve (along a drawn spline) | Lazy **built** (S3.1). A row of stamps along the stroke **built** (S3.4) |
 | Operator | Gesture warps on the `MoveStroke` machinery: twist, elastic grab (regularised Kelvinlets) | Volume preserving by construction |
 | Operator | Layer: draw capped at a fixed height above the stroke's starting surface | Needs a stroke long locked region; memory to be measured first |
 | Presets | One flat `key = value` file per brush under the config directory | **Built** (S3.3), as one file with a line a brush. The format `palette.rs` and `printer.rs` already use |
 
 The digit keys keep meaning the classic brushes in the order they have always
 had (`brush.rs:344`, "Appended and never reordered").
+
+#### Built, 2026-11-23 (S3.4): the stamp, along the stroke
+
+With the stamp up, *Along the stroke* turns one stamp sized by the drag
+into a row of them at the brush's size: rivets down a seam, stitches,
+scales, the links of a chain. A slider sets how far apart, from half a
+stamp's width (overlapping, a rope) to four.
+
+This is the "alpha as a tip on ordinary strokes" of the table above, done
+the other way round. An image multiplied into a brush that stamps every
+quarter radius is a smear of that image. What a row of rivets wants is the
+image whole, at intervals, facing the way the row runs, and the stamp
+gesture already presses an image whole. So a row is that gesture, begun
+and ended once for each stamp, and the core did not change.
+
+- **A stamp is laid a step behind the pointer**, because until the pointer
+  has gone a step on there is no telling which way the stamp should face.
+  The first is at the press, and a press with no drag lays nothing.
+- **Where a step ends is looked for on the screen and not in space.** The
+  straight line from one stamp toward the pointer cuts under a curved
+  surface: by 3 mm for a 12 mm step on the starting ball. The first
+  version stepped along that line and dropped the point back onto the
+  surface down the field's gradient, and a test of a long step found that
+  it cannot: three voxels under the surface the field is flat and has no
+  gradient to follow. What is always on the surface is whatever is under a
+  pixel. So the next stamp's place is the point under the line the pointer
+  drew, from the last stamp's pixel to where the pointer is now, that is
+  one step from the last stamp, found by halving. On the test's ball the
+  second stamp of a 12 mm step lands 12.15 mm round it where 12.08 is
+  exact, and is as tall as the first.
+- **A row is a stroke**: it can be led by the lazy brush, it mirrors, it
+  engraves when inverted, and it is one undo.
+- A preset holds the spacing (`along:1.5`), and *Rivet row* is one of the
+  starting five.
+
+Tested by cutting a profile through the model along the drag and counting
+the bumps: as many as the drag is steps long, a step apart, the brush's
+size, and for a bar (which is longer one way than the other) the same
+length along a row dragged up the view as along one dragged across it.
 
 #### Built, 2026-11-23 (S3.3): presets
 
@@ -521,9 +560,9 @@ box to name the brush in hand and keep it.
 A brush here is a dozen settings in two places: the classic brush's (which
 brush, how big, how hard, which falloff) and the studio block's (an
 operator or the stamp, the lazy stroke, size from pressure). A preset is
-all of them at once. A machine with no file starts with four, which are
+all of them at once. A machine with no file starts with five, which are
 there to show what the studio block is for: *Fine crease*, *Long line*,
-*Rivets* and *Clay build*.
+*Rivets*, *Rivet row* and *Clay build*.
 
 **The file** is `brushes.conf` in the config directory:
 
@@ -532,7 +571,7 @@ Fine crease = brush:Draw, size:1.5, strength:0.3, falloff:Smooth, studio:Crease,
 Rivets = brush:Draw, size:3, strength:0.15, falloff:Smooth, stamp:Rivet, height:0.35
 ```
 
-Those are two of the starting four as the application writes them. A line
+Those are two of the starting five as the application writes them. A line
 written by hand may leave out whatever it does not care about.
 
 One file with a line a brush, where the table above said a file a brush:
