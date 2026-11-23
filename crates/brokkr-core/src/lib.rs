@@ -28,6 +28,7 @@ pub mod cavity;
 pub mod clip;
 pub mod colour;
 pub mod export;
+pub mod form;
 pub mod generate;
 pub mod import;
 pub mod mask;

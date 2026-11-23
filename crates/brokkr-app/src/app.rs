@@ -2,6 +2,7 @@
 
 //! Application state, input handling and the widget tree.
 
+mod form;
 mod paints;
 mod panel;
 mod studio;
@@ -902,6 +903,8 @@ pub struct Brokkr {
     /// The studio brushes: an operator upstream has no brush for, a lazy
     /// stroke, size from pressure. See `app/studio.rs`.
     studio: studio::StudioState,
+    /// The form tools' settings. See `app/form.rs`.
+    form: form::FormState,
     /// How strong the tint is when it is shown at all, 0..1.
     ///
     /// The shader has its own floor under this (`0.30 + 0.70 * m`), which is
@@ -2154,6 +2157,7 @@ impl Brokkr {
             touch: paints::TouchState::default(),
             flat_paint: false,
             studio: studio::StudioState::default(),
+            form: form::FormState::default(),
             mask_tint: DEFAULT_MASK_TINT,
             mask_peek: false,
             mask_filter: MaskFilter::Blur,
@@ -10372,6 +10376,7 @@ impl Brokkr {
             Message::PaintCoatChosen(coat) => self.paint_coat = coat,
             Message::PaintEdited(edit) => self.edit_paint(edit),
             Message::Studio(message) => return self.studio_changed(message),
+            Message::Form(message) => self.form_changed(message),
             Message::FlatPaintToggled => self.flat_paint = !self.flat_paint,
             Message::PaintAllApplied => self.coat_the_body(),
             Message::PaintTouchChosen(touch) => self.touch.kind = touch,

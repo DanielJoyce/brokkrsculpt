@@ -18,7 +18,7 @@ was built and what was measured.
 | S1b Parting with keys | **Done but for a preview**, 2026-11-22 (section 7.2) | Cut tool with **alt** held: the body becomes two, with pegs and sockets |
 | S2 Mini painting | **Done but for broad occlusion and zenithal**, 2026-11-22 (section 8), which wait for S4 | Paint brush: *Mix paints*, then a rack of paints, each with a wash and an edge highlight; *Loaded*, *Drybrush*, *Sponge* and *Fill*; a flat view; export as PLY in colour, and 3MF by the filament each paint prints in |
 | S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). Presets, a textured tip and the gesture warps remain | A STUDIO block under the brush: *Crease*, *Stamp* with six images or any picture, *Lazy*, *Size from pressure* |
-| S4 Form tools | Not started | |
+| S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush, form smooth and posing remain | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
 | S5 Unwrap and bake | Not started | |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
@@ -1300,6 +1300,74 @@ Posing is worth singling out: gizmo plus mask is how a ZBrush figure is posed,
 and `mask.rs:53-54` already guarantees the precondition, since "every path
 that writes the mask writes a feathered edge, never a step" was written to keep
 exactly this kind of warp invertible.
+
+#### Built, 2026-11-23 (S4.1): bulk the body, and the detail gain
+
+`brokkr-core/src/form.rs`, and a FORM block on the panel: a detail size in
+millimetres, a *Bulk* amount with its Apply, and a *Detail* multiplier with
+its Apply. Both work on the whole of the active body, less what the mask
+protects, and each is one undo entry.
+
+**The measurement the plan said to make first**, on a ball 40 voxels in
+radius with a ripple 8 voxels from crest to crest and 0.8 of a voxel high:
+
+| | Surface moved | Ripple left |
+|---|---|---|
+| Bulk by 3 voxels | 2.999 | 96% |
+| Bulk by 9 voxels | 8.995 | 98% |
+| Thin by 6 voxels | 6.008 | 94% |
+| Inflate by 3 voxels | 3.19 | 80% |
+| Inflate by 6 voxels | 6.30 | 61% |
+| Inflate by 9 voxels | 9.36 | 49% |
+
+A bulk keeps the detail by about the same however far it goes, the few
+percent being its one trilinear read. Offsetting the field loses it as it
+goes. So the cubic sampler the plan thought might be needed for detail under
+5 voxels is not needed at 8, and has not been measured below that.
+
+**The detail gain** is `new = form + gain * (old - form)`, once, from a field
+nobody is editing. At a gain of nothing the ripple is 13% of what it was, at
+a half 55%, at two 1.97 times.
+
+**The form of a ball is a smaller ball**, and this was the part that took
+three goes. Smoothing pulls a surface toward its centre of curvature, so a
+level of the pyramid sits inside every bulge, and scaling detail about it
+would change the model's size too. On a ball 30 mm in radius at a quarter
+millimetre, taking all the detail off moved the surface in by 0.05 mm on
+average at a detail size of 2 mm and 0.22 mm at 4.
+
+1. Estimating that from the next coarser level (Richardson) fixed the small
+   test ball and made the real one worse at two sizes of four: the coarser
+   level is the one least able to hold the model.
+2. Smoothing the form itself again by the same steps and adding back what
+   that took off is right on average to 0.008 mm, and bringing the form back
+   to full resolution to do it cost 45 seconds at a detail size of 8 mm.
+3. Bringing it back two halvings only, which is fifteen sixteenths of the
+   smoothing, is what is built: under a second at every size, and the
+   average within 0.013 mm up to a detail size of 4 mm.
+
+The first measurement of the uncorrected form was along one axis and said
+0.017 mm where 300 directions say 0.22. The lattice flatters its own axes.
+The table in the module is the 300.
+
+**Cost, measured** (release, the starting ball at a quarter millimetre): the
+pyramid 0.5 s, a bulk of 1 mm 0.8 s, the redistance after it 0.5 s, a detail
+gain 0.3 s. On the update thread, which is owed a task, as export is.
+
+**One step, not many.** The plan drew the pull-back as a walk in small
+steps, re-reading the form's normal at each. A mutant that took one step
+where the code took three survived every test, and it was right to: the form
+is a distance field, the lines its gradient follows are straight, and the
+normal a point starts with is the normal all the way back. The walk is gone.
+
+**And a NaN in the test fixture.** The rippled ball's centre voxel divided
+nothing by nothing. Every surface measurement passed, because none of them
+looked inside the ball, and the NaN was quietly switching off the
+redistance the fixture was supposed to have had. A test that checked the
+far field of a bulk, written to kill another mutant, read it.
+
+**Not built yet from the table above:** the bulk as a brush, form smooth,
+the posed transform, and the form scale on any brush.
 
 ### 9.4 The limits, stated before anyone finds them
 
