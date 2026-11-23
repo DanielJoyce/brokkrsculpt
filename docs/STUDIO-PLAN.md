@@ -1114,6 +1114,14 @@ undercoat).
   paint cells tall. The boundary between two paints is cut at half-triangle
   precision by the mesher (`mesh.rs`), which is finer than the cells, and a
   wash is shaded per pixel from an interpolated signal, which is finer again.
+- **Fill needs a line it can see, and so does the eye.** Seen on a screen on
+  2026-11-23 (section 13): on rivets 3 mm in radius at a quarter millimetre
+  a fill stops at each rivet's bevel and leaves it as a ring. On rivets
+  1 mm in radius, which stand 1.4 voxels tall, the bevel is hardly a line
+  at all and some fills come out with ragged, spilling edges. And the edge
+  of any paint is stepped at the size of a voxel, which at a close zoom is
+  several pixels. Detail at the limit of resolution is fragile under paint
+  as under everything else; the cure is the same, a finer voxel.
 - **The wash sees fine creases only.** It reads the fine cavity signal of
   section 5.3, a few voxels wide. The broad occlusion that darkens the inside
   of a cloak comes from the pyramid, through the one free attribute byte.
@@ -1812,6 +1820,36 @@ build to the beta channel by accident.
 - No reformatting, renaming or refactoring of upstream code for taste.
 - House conventions hold: SPDX header on every new file, no em-dashes in
   prose, fish for any shell command, warnings before command blocks.
+
+### Seeing it run without a screen
+
+Every panel on this branch was built and tested without anybody seeing it,
+which is how a preset's name came to have 74 pixels to wrap in. On
+2026-11-23 the application was run on a virtual display and looked at, and
+this is how, for whoever next works on it from a machine with no screen:
+
+```text
+Xvfb :99 -screen 0 1500x950x24 &
+DISPLAY=:99 WAYLAND_DISPLAY= HOME=<a scratch directory> ./target/debug/brokkrsculpt &
+DISPLAY=:99 xdotool mousemove 935 388 click 1        # press a button
+DISPLAY=:99 import -window root shot.png              # look
+```
+
+It wants `libxkbcommon-x11` installed (winit panics without it), a software
+Vulkan (lavapipe), and `show_on_startup = false` in the scratch home's
+`brokkrsculpt/welcome.conf` to get past the welcome screen. A scratch
+`HOME` keeps it off anybody's real config. Keys do not arrive, there being
+no window manager to give the window focus; the pointer and the wheel do.
+File dialogs do not open, so export was not driven this way.
+
+**What looking found.** Two faults of layout, both fixed: a button to
+forget each preset left the names too narrow, so there is one *Forget* for
+the lit preset; and "Drybrush" ran into the edge of a quarter of a row, so
+the four touches share the row by the length of their names. And one limit,
+now in 8.6: fill on features a voxel or two tall. Everything else did what
+its tests said: the row of rivets follows the drag and faces along it, a
+wash pools round each rivet, a fill stops at a rivet's bevel, a preset
+lights when the brush matches it.
 
 ---
 

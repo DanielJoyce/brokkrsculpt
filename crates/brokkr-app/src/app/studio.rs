@@ -708,32 +708,28 @@ impl Brokkr {
             );
         }
         // The presets, two to a row: a button that takes one up, lit when
-        // the brush is set up exactly as it says, and a small one beside it
-        // that forgets it.
+        // the brush is set up exactly as it says. One button forgets the
+        // lit one. A button to forget beside each was tried first, and
+        // seen on a screen it left the names 74 pixels to wrap in.
         let now = self.preset_now(String::new());
+        let is_now = |preset: &Preset| Preset { name: String::new(), ..preset.clone() } == now;
+        let lit = self.studio.presets.list.iter().position(is_now);
         let mut presets = column![].spacing(theme::S1);
         for (pair, held) in self.studio.presets.list.chunks(2).enumerate() {
             presets = presets.push(held.iter().enumerate().fold(
                 row![].spacing(theme::S1),
                 |assembled, (offset, preset)| {
                     let index = pair * 2 + offset;
-                    let live = Preset { name: String::new(), ..preset.clone() } == now;
-                    assembled
-                        .push(
-                            button(text(preset.name.clone()).size(theme::CAPTION_SIZE))
-                                .width(Length::Fill)
-                                .style(if live {
-                                    theme::tool_button_active
-                                } else {
-                                    theme::tool_button
-                                })
-                                .on_press(changed(StudioMessage::PresetChosen(index))),
-                        )
-                        .push(
-                            button(text("\u{d7}").size(theme::CAPTION_SIZE))
-                                .style(theme::tool_button)
-                                .on_press(changed(StudioMessage::PresetRemoved(index))),
-                        )
+                    assembled.push(
+                        button(text(preset.name.clone()).size(theme::CAPTION_SIZE))
+                            .width(Length::Fill)
+                            .style(if lit == Some(index) {
+                                theme::tool_button_active
+                            } else {
+                                theme::tool_button
+                            })
+                            .on_press(changed(StudioMessage::PresetChosen(index))),
+                    )
                 },
             ));
         }
@@ -747,6 +743,10 @@ impl Brokkr {
             button(text("Keep").size(theme::CAPTION_SIZE))
                 .style(theme::tool_button)
                 .on_press(changed(StudioMessage::PresetSaved)),
+            // Pressable only with a preset lit: that is the one it means.
+            button(text("Forget").size(theme::CAPTION_SIZE))
+                .style(theme::tool_button)
+                .on_press_maybe(lit.map(|index| changed(StudioMessage::PresetRemoved(index)))),
         ]
         .spacing(theme::S1);
         column![
