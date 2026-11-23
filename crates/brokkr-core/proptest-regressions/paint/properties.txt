@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc bb48079105fa4f5d5cd3295779ec3567b8b97129b6577f3b720de5b3c6fb5765 # shrinks to stamps = [(0.0, 0.0, 0.1), (0.0, -3.6066175, 0.1)], radius = 1.0, pigment = Pigment { colour: [0, 0, 0], opacity: 0.41530663, mode: Paint }, catch = All, under = [0, 0, 0, 0]
+cc 3358c18c79e46f6cbaf2092cd9021acb495dfef5d00c9b382c80227eb164361b # shrinks to stamps = [(0.0, 0.0, 0.1), (0.0, 0.19638737, 0.1)], radius = 1.0, pigment = Pigment { colour: [0, 0, 0], opacity: 0.81309724, mode: Paint }, catch = Raised(Drybrush { catch: 1.0, streak: 0.5, bristle_mm: 0.5 }), under = [0, 0, 0, 0]

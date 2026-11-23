@@ -982,6 +982,14 @@ mod tests {
         let painted = |share: f32, pressure: f32| {
             let mut app = app();
             update(&mut app, Message::BrushKindChanged(BrushKind::Paint));
+            // By slot, where a voxel is painted or is not: in colour a
+            // light touch is a thinner coat as well as a narrower one.
+            update(
+                &mut app,
+                Message::Painting(crate::message::PaintingMessage::Target(
+                    crate::message::PaintTarget::Slots,
+                )),
+            );
             update(&mut app, Message::Studio(StudioMessage::SizeFromPressureChanged(share)));
             app.tablet.simulate(crate::tablet::PenState {
                 in_proximity: true,

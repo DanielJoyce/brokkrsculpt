@@ -387,12 +387,24 @@ true of it too, and what it adds is this.
   that prints better in halves. *Print a fit test…* writes a plate of
   sockets at six clearances and a peg, because how tight a fit your
   printer makes is something only a print can say.
-- **Paints.** On the paint brush, *Mix paints* swaps filament slots for a
-  rack of paints, each with a wash that pools in the recesses, a
-  highlight that catches the edges, and an undercoat lit from above. Put on *Loaded*, *Drybrush* or *Sponge*,
-  or with *Fill*, which stops at creases and edges. Each paint names the
-  filament it prints in, so a painted model is also a multi-colour print.
-  Everything the rack does is an undo step, removing a paint included.
+- **Painting in colour.** The paint brush lays a colour: any colour, at any
+  opacity, with a soft edge. *Paint* covers, *Glaze* tints what is under it
+  without hiding it, *Erase* takes paint off. Put on *Loaded*; as a *Wash*,
+  which runs into the creases and off the edges; with a *Drybrush*, which
+  catches only what stands up; or with a *Sponge*. A stroke is one coat
+  however often it crosses itself, and a second stroke is a second coat.
+  *Pick from model* takes a colour back off the surface. The paint is
+  saved with the project and follows the model through every edit. **It is
+  not in the exports yet**: those still write the filaments and paints
+  below, and are the next thing to be done.
+- **Filaments and paints.** Behind *Filaments* on the paint brush is
+  painting by filament slot, as upstream has it, and *Mix paints*, which
+  swaps the slots for a rack of paints, each with a wash that pools in the
+  recesses, a highlight that catches the edges, and an undercoat lit from
+  above. Put on *Loaded*, *Drybrush* or *Sponge*, or with *Fill*, which
+  stops at creases and edges. Each paint names the filament it prints in,
+  so a model painted this way is also a multi-colour print. Everything the
+  rack does is an undo step, removing a paint included.
 - **Studio brushes.** *Crease*, a *Stamp* that presses one of six images or
   any picture into the surface with one drag, or lays a row of them along
   a stroke (rivets, stitches, scales), a *Lazy* stroke for long clean
@@ -404,6 +416,10 @@ true of it too, and what it adds is this.
 - **Colour out.** PLY with a colour a vertex, 3MF by the filament each
   paint prints in, and *OBJ+PNG* or *GLB*, where the paint is baked to a
   texture that stays sharp however far the mesh is thinned.
+
+<p align="center">
+  <img alt="A ball painted with the colour brush: a red stroke and a blue one, a yellow sponge speckle, a dark glaze drawn down across all three that darkens each where it crosses, and a stripe of white at half opacity that the red and the blue show through. Beside it the panel: Colour or Filaments, Paint, Glaze or Erase, Loaded, Wash, Drybrush or Sponge, the colour in hand, its opacity, a range of swatches and three sliders" src="docs/images/studio-colour-brush.png" width="760">
+</p>
 
 <p align="center">
   <img alt="A ball seen from below with the overhang view on: the cap that leans past 45 degrees is tinted orange, and the small patch that rests on the bed is not" src="docs/images/studio-overhang.png" width="420">

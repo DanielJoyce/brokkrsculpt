@@ -1743,7 +1743,13 @@ impl Brokkr {
         // the filament. A menu that listed both under PAINT contradicted the
         // panel beside it.
         if self.brush.kind == BrushKind::Paint && self.tool != Tool::Mask {
-            body = body.push(self.paint_picker(false));
+            body = body.push(self.painting_picker(false));
+            // A colour has a soft edge where a slot has none.
+            if self.painting_colour() {
+                body = body
+                    .push(text("Falloff").size(theme::CAPTION_SIZE).color(theme::TEXT_DIM))
+                    .push(falloff);
+            }
         } else {
             body = body
                 .push(numeric(
@@ -2296,7 +2302,7 @@ impl Brokkr {
         .spacing(theme::S2);
 
         let strength: Element<'_, Message> = if painting {
-            self.paint_picker(true)
+            self.painting_picker(true)
         } else {
             column![
                 text(format!("Strength  {:.2}", self.brush.strength))
@@ -2313,10 +2319,11 @@ impl Brokkr {
             .into()
         };
 
-        // Falloff goes the way strength does while painting: a slot has no
-        // rim to feather, so the row would be four buttons that change nothing.
+        // Falloff goes the way strength does while painting a slot: a slot
+        // has no rim to feather, so the row would be four buttons that change
+        // nothing. A colour has one, and keeps the row.
         let falloff: Element<'_, Message> =
-            if painting { column![].into() } else { self.falloff_row() };
+            if painting && !self.painting_colour() { column![].into() } else { self.falloff_row() };
 
         let history = row![
             button(text("Undo").size(theme::TEXT_SIZE_SMALL))

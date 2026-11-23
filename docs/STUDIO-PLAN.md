@@ -21,7 +21,7 @@ was built and what was measured.
 | S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). A textured tip and the gesture warps remain | A STUDIO block under the brush: *Crease*, *Stamp* with six images or any picture, one at a time or in a row *Along the stroke*, *Lazy*, *Size from pressure*; and PRESETS, a brush kept under a name |
 | S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush and form smooth remain. Posing is not planned (section 9.3) | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
 | S5 Unwrap and bake | **Done but for the other maps**, 2026-11-23 (sections 10.4 and 10.5): unwrap, the base colour bake, OBJ with a picture, and GLB. Normal, occlusion and finish maps remain | Export as *OBJ+PNG* or *GLB*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
-| P Painting engine | **Begun**, 2026-11-23 (section 15): the storage and the view. The brush and the exports follow | Nothing to use yet: a body can hold a colour and a coverage at every voxel of its surface, through every edit, undo, save and open, and it is drawn |
+| P Painting engine | **Usable**, 2026-11-23 (section 15): the storage, the view and the brush. The exports follow, and until they do painted colour is on screen and in the project file and not in what is exported | The paint brush lays a colour: *Paint*, *Glaze* or *Erase*, put on *Loaded*, as a *Wash*, with a *Drybrush* or a *Sponge*, at any opacity, with a soft edge. *Pick from model* takes a colour back off it |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
 repository, or the README's measured tables) or explicitly labelled
@@ -2238,8 +2238,8 @@ palette of colours to pick from, and the list of filaments for a 3MF.
 |---|---|---|
 | P1 | The storage: the field, every edit that must carry it, undo, the file | **Built**, 2026-11-23 (below) |
 | P2 | The view: paint on the vertices, composited in the shader | **Built**, 2026-11-23 (below) |
-| P3 | The brush: the locked stroke, the modes, the colour picker, the eyedropper | The engine of it **built**, 2026-11-23 (below). On the panel next |
-| P4 | The exports: bake, PLY, OBJ, GLB, and the nearest filament for 3MF | |
+| P3 | The brush: the locked stroke, the modes, the colour picker, the eyedropper | **Built**, 2026-11-23 (below), but for a fill of colour |
+| P4 | The exports: bake, PLY, OBJ, GLB, and the nearest filament for 3MF | Next |
 | P5 | Retire the recipes: convert old documents, remove the editor | |
 
 #### Built, 2026-11-23 (P1): the storage
@@ -2480,3 +2480,79 @@ the contracts being live is itself tested.
 All of it passed as first written, which after three stages of mutation
 testing is what should happen. The whole core suite is 975 tests and a
 minute in the dev profile.
+
+#### Built, 2026-11-23 (P3, on the panel): the colour brush
+
+`app/painting.rs`, and five small hooks in files that were there. The paint
+brush now lays colour. Painting by filament slot is behind the second of
+two buttons at the top of its block, *Filaments*, untouched, until the
+exports read the paint and an old document's slots are laid into it (P4
+and P5).
+
+What the panel offers: *Paint*, *Glaze* or *Erase*; *Loaded*, *Wash*,
+*Drybrush* or *Sponge*, with the drybrush's and the sponge's own settings as
+they were; the colour in hand, from a range of 24, three sliders, or *Pick
+from model*; its opacity; the brush's falloff, which a slot had no use for;
+*flat colour, no light*; and *Coat the body*. Ctrl or alt takes paint off,
+as it unpaints a slot. Taking a colour with the eyedropper paints nothing
+and is not a step of the undo history.
+
+**The footprint changed once it was seen on a screen.** As first built the
+brush was a ball about each stamp. In the application a stroke came out
+hatched at the scale of the lattice: a voxel a layer under the surface is
+further from the middle of a ball than the one above it, takes a little
+less, and neighbouring vertices of the mesh read from different layers. The
+brush is now a disc pressed onto the surface and swept from each stamp to
+the next (`stroke::Sweep`): how much of it a voxel is under is measured
+across the surface, along the stamps' own normal, to the path between them.
+Every voxel on a line through the band takes the same, to the bit, and a
+fast stroke is a stripe and not a string of beads. The pen's pressure runs
+evenly along each sweep where it stepped at each stamp.
+
+**What the property test found.** "A path is the same paint whichever way
+it is walked" failed three times while the sweep was being written, each
+time shrunk to two stamps: a sweep took its pressure from the stamp it
+arrived at, so the direction chose the pressure; a stamp that had not moved
+took the pressure of whichever stamp came first; and on a curved surface
+the path's ends were set down along the path's own axis, which is a
+compromise between the two, and not along their own. All three are fixed,
+and the third is why each stamp is set down square to the surface where it
+is as well as swept to. A drybrush is left out of that property, and says
+so: its bristles lie along the stroke, and a real one is the same.
+
+**Held by**, in the way of section 13: contracts on the sweep (a brush of
+some size, a distance, a pressure in its range); that property; and eight
+integration tests that drive the application by messages and pointer
+events and look at the body's paint afterwards. A drag lays the colour in
+hand with a soft edge on the paint and on nothing else, and is one undo. A
+stroke that goes over itself at half opacity leaves 128 of 255 at most, and
+a second stroke 192. Ctrl and *Erase* take paint off and lay no colour.
+The eyedropper takes a colour, paints nothing, and leaves the history as
+it was. *Coat the body* goes by the opacity and the mask. The touch chosen
+is the touch laid. *Filaments* paints slots as before. And every state of
+the panel draws.
+
+Looked at as well as tested: the picture in the README is the application,
+painted with the pointer.
+
+**What the sweep cost.** Measured again with `what_a_stamp_of_paint_costs`,
+in release on one core, runs differing by about a fifth. The table under
+the engine above is the ball it was first built as, and this is the brush
+as it now is:
+
+| Radius | Loaded, every voxel new | Loaded, along a stroke | Wash, drybrush or sponge |
+|---|---|---|---|
+| 12 voxels | 0.30 ms | 0.35 ms | 0.5 to 0.6 ms |
+| 40 voxels | 4.1 ms | 2.3 ms | 7.9 to 9.9 ms |
+| 50 voxels (5 mm at 0.1 mm) | 5.6 ms | 5.1 ms | 13 to 14 ms |
+
+About twice what a ball cost along a stroke, where the footprint is most of
+the work: each voxel is measured against the path and against the brush set
+down at its end, and the box a stamp walks is longer by the step. A stamp
+that has not moved is measured once. Paid for a stroke with no hatching in
+it. The largest brush on the finest lattice is over the 4 ms a stamp is
+meant to keep to, and that is owed.
+
+**Not here yet**: a fill of colour, which the plan owes; and the exports,
+which are P4. Until P4 the README says in bold that painted colour is not
+in what is exported.
