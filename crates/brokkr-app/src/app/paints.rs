@@ -58,6 +58,7 @@ pub(super) const FLOW_RANGE: std::ops::RangeInclusive<f32> = 0.0..=3.0;
 pub(super) const EDGE_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.5;
 pub(super) const AMOUNT_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
 pub(super) const START_RANGE: std::ops::RangeInclusive<f32> = 0.0..=0.95;
+pub(super) const ZENITH_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
 
 /// The colour a PLY gives a surface nobody painted: the viewport's clay, as
 /// near as one flat colour can be to a lit material. A warm mid grey, so
@@ -881,6 +882,7 @@ impl Brokkr {
                 | PaintEdit::WashEdge(_)
                 | PaintEdit::HighlightAmount(_)
                 | PaintEdit::HighlightStart(_)
+                | PaintEdit::Zenith(_)
         );
         let merge = dragged.then(|| Merge { slot, coat, what: std::mem::discriminant(&edit) });
         self.change_paints(merge, |paints| {
@@ -924,6 +926,7 @@ impl Brokkr {
                 PaintEdit::HighlightStart(start) => {
                     paint.highlight.start = clamped(start, START_RANGE);
                 }
+                PaintEdit::Zenith(amount) => paint.zenith = clamped(amount, ZENITH_RANGE),
             }
         });
     }
@@ -1099,6 +1102,13 @@ impl Brokkr {
                     .or(choices.first())
                     .cloned();
                 column![
+                    // A zenithal undercoat: as if the model were primed dark
+                    // from below and light from above before this coat.
+                    reading(format!("Lit from above  {:.2}", paint.zenith)),
+                    slider(ZENITH_RANGE, paint.zenith, |amount| {
+                        Message::PaintEdited(PaintEdit::Zenith(amount))
+                    })
+                    .step(0.01_f32),
                     reading("Finish".to_string()),
                     pick_list(Finish::ALL, Some(paint.finish), |finish| {
                         Message::PaintEdited(PaintEdit::Finish(finish))
@@ -1693,6 +1703,74 @@ mod tests {
         assert_eq!(steps(&app), before + 3);
         update(&mut app, Message::Undo);
         assert_eq!(paint(&app).wash.edge, 0.2);
+    }
+
+    /// A paint's zenithal undercoat is a setting like its others: kept to
+    /// its range, one undo step for a drag, and in what an export writes.
+    /// A body coated in such a paint comes out of a textured export lighter
+    /// on top and darker underneath, where a plain paint is one colour.
+    #[test]
+    fn an_undercoat_is_a_setting_of_the_paint_and_is_in_what_an_export_writes() {
+        let directory = scratch("undercoat");
+        let path = directory.join("ball.obj");
+        let mut app = app();
+        update(&mut app, Message::PaintsStarted);
+        update(&mut app, Message::PaintSlotChanged(2));
+        let base = [150, 120, 90];
+        edit(&mut app, PaintEdit::Colour(base));
+        update(&mut app, Message::PaintAllApplied);
+        update(&mut app, Message::TextureSizeChanged(1024));
+        let paint = |app: &Brokkr| app.doc.paints().paint(2).expect("paint 2").clone();
+
+        // How light and how dark the picture gets, over the texels that
+        // are the model: the background grey is neither.
+        let range = |app: &mut Brokkr| {
+            app.export(crate::message::ExportFormat::Textured, &path);
+            assert!(app.status.starts_with("exported"), "{}", app.status);
+            let picture =
+                image::open(directory.join("ball_1.png")).expect("the picture").into_rgba8();
+            let lumas: Vec<u32> = picture
+                .pixels()
+                .filter(|pixel| pixel.0[..3] != brokkr_core::export::texture::BACKGROUND)
+                .map(|pixel| {
+                    (2126 * u32::from(pixel.0[0])
+                        + 7152 * u32::from(pixel.0[1])
+                        + 722 * u32::from(pixel.0[2]))
+                        / 10000
+                })
+                .collect();
+            assert!(lumas.len() > 100_000, "only {} texels are the model", lumas.len());
+            (*lumas.iter().min().expect("texels"), *lumas.iter().max().expect("texels"))
+        };
+        let (darkest, lightest) = range(&mut app);
+        assert!(lightest - darkest <= 2, "a plain paint baked from {darkest} to {lightest}");
+        let plain = darkest;
+
+        let steps = app.history.stats().undo_entries;
+        for amount in [0.2, 0.6, 1.0] {
+            edit(&mut app, PaintEdit::Zenith(amount));
+        }
+        assert_eq!(paint(&app).zenith, 1.0);
+        assert_eq!(app.history.stats().undo_entries, steps + 1, "a drag is one step");
+        for (asked, taken) in [(7.0, 1.0), (-2.0, 0.0), (f32::NAN, 0.0), (0.25, 0.25), (1.0, 1.0)] {
+            edit(&mut app, PaintEdit::Zenith(asked));
+            assert_eq!(paint(&app).zenith, taken, "asked for {asked}");
+        }
+        update(&mut app, Message::PaintCoatChosen(PaintCoat::Base));
+        drop(app.paint_picker(true));
+
+        let (darkest, lightest) = range(&mut app);
+        assert!(
+            lightest > plain + 12 && darkest + 30 < plain,
+            "with an undercoat the picture runs from {darkest} to {lightest} round {plain}"
+        );
+
+        // Undone, the paint is plain again and so is the picture.
+        update(&mut app, Message::Undo);
+        assert_eq!(paint(&app).zenith, 0.0);
+        let (darkest, lightest) = range(&mut app);
+        assert!(lightest - darkest <= 2 && darkest == plain);
+        std::fs::remove_dir_all(&directory).ok();
     }
 
     /// A paint is taken off the rack and off the model together, and one

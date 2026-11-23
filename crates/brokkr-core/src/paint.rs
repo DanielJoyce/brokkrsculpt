@@ -192,7 +192,22 @@ pub struct Paint {
     /// filaments, 1-based, or 0 for whichever loaded filament is nearest its
     /// colour. See [`bake`]. Nothing on screen reads it.
     pub filament: u8,
+    /// How much of a zenithal undercoat shows through the base coat, 0..=1:
+    /// lighter where the surface faces up and darker where it faces down,
+    /// as a model primed dark from below and light from above is. Nothing
+    /// changes on a surface that faces sideways, so a paint's own colour
+    /// is the colour of its upright faces. See [`Paint::shade_facing`].
+    pub zenith: f32,
 }
+
+/// How far a full zenithal undercoat lifts a surface facing straight up,
+/// and how far it darkens one facing straight down, as fractions of the
+/// base coat. Uneven for the reason a crease is darkened further than an
+/// edge is lifted: a shadow can go most of the way to black and still read
+/// as that paint, and a light lifted as far would clip. The shader has the
+/// same two numbers.
+pub const ZENITH_LIFT: f32 = 0.35;
+pub const ZENITH_SHADE: f32 = 0.55;
 
 /// The longest a paint's name is kept, in bytes.
 pub const MAX_PAINT_NAME_BYTES: usize = 48;
@@ -207,6 +222,7 @@ impl Paint {
             wash: Wash::NONE,
             highlight: Highlight::NONE,
             filament: 0,
+            zenith: 0.0,
         }
     }
 
@@ -219,11 +235,35 @@ impl Paint {
     ///
     /// Not lit. The viewport multiplies this by its lighting and an export
     /// writes it as it is.
+    ///
+    /// On a surface that faces sideways, which is where a zenithal
+    /// undercoat changes nothing: what a rack or a legend shows.
     pub fn shade(&self, crease: f32) -> [f32; 3] {
+        self.shade_facing(crease, 0.0)
+    }
+
+    /// [`Paint::shade`] on a surface whose normal has `up` of itself
+    /// pointing up: 1 for a surface facing straight up, -1 for one facing
+    /// straight down.
+    ///
+    /// The order is the painter's. The undercoat is under everything, so
+    /// the base coat is lifted or darkened by it first; the wash is a film
+    /// over that; and the highlight is laid on last and is not shaded by
+    /// either.
+    pub fn shade_facing(&self, crease: f32, up: f32) -> [f32; 3] {
         let crease = crease.clamp(-1.0, 1.0);
         let recess = crease.max(0.0);
         let edge = (-crease).max(0.0);
         let mut colour = linear(self.base);
+        let zenith = self.zenith.clamp(0.0, 1.0);
+        if zenith > 0.0 {
+            let up = up.clamp(-1.0, 1.0);
+            let undercoat =
+                1.0 + zenith * (ZENITH_LIFT * up.max(0.0) - ZENITH_SHADE * (-up).max(0.0));
+            for channel in &mut colour {
+                *channel *= undercoat;
+            }
+        }
 
         if !self.wash.is_none() {
             let film = (self.wash.stain + self.wash.flow * recess - self.wash.edge * edge).max(0.0);
@@ -328,8 +368,9 @@ impl std::fmt::Display for PaintError {
 ///
 /// Version 1 had no filament byte. It was only ever written by builds of
 /// this branch on the day it was made, and is still read: a paint from one
-/// names no filament and takes the nearest.
-const TABLE_VERSION: u8 = 2;
+/// names no filament and takes the nearest. Version 2 had no zenithal
+/// undercoat, and a paint from one has none.
+const TABLE_VERSION: u8 = 3;
 /// The oldest version [`PaintTable::decode`] reads.
 const OLDEST_TABLE_VERSION: u8 = 1;
 
@@ -392,7 +433,7 @@ impl PaintTable {
                 out.extend_from_slice(&amount.to_le_bytes());
             }
             out.extend_from_slice(&paint.highlight.colour);
-            for amount in [paint.highlight.amount, paint.highlight.start] {
+            for amount in [paint.highlight.amount, paint.highlight.start, paint.zenith] {
                 out.extend_from_slice(&amount.to_le_bytes());
             }
         }
@@ -454,6 +495,7 @@ impl PaintTable {
                 if value.is_finite() { Ok(value) } else { Err(PaintError::NotFinite) }
             };
             let (amount_at_edge, start) = (amount()?, amount()?);
+            let zenith = if version >= 3 { amount()? } else { 0.0 };
             paints.push(Paint {
                 name,
                 base,
@@ -461,6 +503,7 @@ impl PaintTable {
                 wash: Wash { colour: wash_colour, stain, flow, edge },
                 highlight: Highlight { colour: highlight_colour, amount: amount_at_edge, start },
                 filament,
+                zenith,
             });
         }
         if !rest.is_empty() {
@@ -636,15 +679,114 @@ mod tests {
             finish: Finish::Satin,
             wash: Wash::shade([70, 40, 25]),
             highlight: Highlight { colour: [240, 220, 200], amount: 0.6, start: 0.25 },
+            zenith: 0.4,
             ..Paint::flat("x", [90, 55, 30])
         });
         table.add(Paint {
             finish: Finish::Metallic,
             wash: Wash::contrast([30, 60, 150]),
             filament: 3,
+            zenith: 1.0,
             ..Paint::flat("", [200, 200, 205])
         });
         table
+    }
+
+    /// The table as version 2 wrote it: a filament byte, and no undercoat.
+    fn as_version_two(table: &PaintTable) -> Vec<u8> {
+        let mut out = vec![2, table.len() as u8];
+        for paint in table.paints() {
+            out.push(paint.name.len() as u8);
+            out.extend_from_slice(paint.name.as_bytes());
+            out.extend_from_slice(&paint.base);
+            out.push(paint.finish.byte());
+            out.push(paint.filament);
+            out.extend_from_slice(&paint.wash.colour);
+            for amount in [paint.wash.stain, paint.wash.flow, paint.wash.edge] {
+                out.extend_from_slice(&amount.to_le_bytes());
+            }
+            out.extend_from_slice(&paint.highlight.colour);
+            for amount in [paint.highlight.amount, paint.highlight.start] {
+                out.extend_from_slice(&amount.to_le_bytes());
+            }
+        }
+        out
+    }
+
+    /// A table from before the zenithal undercoat reads, every paint as it
+    /// was and with no undercoat. The current version is not those bytes
+    /// relabelled: it is four bytes a paint longer, and carries the
+    /// undercoat back.
+    #[test]
+    fn a_table_from_before_the_undercoat_still_reads_with_none() {
+        let table = a_table();
+        assert!(table.paints().iter().any(|paint| paint.zenith != 0.0), "the fixture has none");
+        let old = PaintTable::decode(&as_version_two(&table)).expect("version 2 was refused");
+        assert_eq!(old.len(), table.len());
+        for (old, new) in old.paints().iter().zip(table.paints()) {
+            assert_eq!(*old, Paint { zenith: 0.0, ..new.clone() });
+        }
+        let mut relabelled = as_version_two(&table);
+        relabelled[0] = TABLE_VERSION;
+        assert!(PaintTable::decode(&relabelled).is_err(), "version 2 bytes read as version 3");
+        assert_eq!(table.encode().len(), as_version_two(&table).len() + 4 * table.len());
+        assert_eq!(PaintTable::decode(&table.encode()).expect("the current version"), table);
+    }
+
+    /// A zenithal undercoat lifts what faces up, darkens what faces down by
+    /// more, and leaves what faces sideways alone, in proportion to how
+    /// much of it the paint is given. A wash goes over it and a highlight
+    /// over both.
+    #[test]
+    fn an_undercoat_lifts_what_faces_up_and_darkens_what_faces_down() {
+        let plain = bone();
+        let primed = Paint { zenith: 1.0, ..bone() };
+        let half = Paint { zenith: 0.5, ..bone() };
+        let flat = luma(plain.shade(0.0));
+        // No undercoat: the way a surface faces is nothing to the paint.
+        for up in [-1.0, -0.3, 0.0, 0.6, 1.0] {
+            assert_eq!(plain.shade_facing(0.0, up), plain.shade(0.0));
+        }
+        // Sideways, and what a rack shows, is the paint's own colour.
+        assert_eq!(primed.shade_facing(0.0, 0.0), plain.shade(0.0));
+        assert_eq!(primed.shade(0.0), plain.shade(0.0));
+
+        let ratio = |paint: &Paint, up: f32| luma(paint.shade_facing(0.0, up)) / flat;
+        assert!((ratio(&primed, 1.0) - (1.0 + ZENITH_LIFT)).abs() < 1e-5);
+        assert!((ratio(&primed, -1.0) - (1.0 - ZENITH_SHADE)).abs() < 1e-5);
+        assert!((ratio(&primed, 0.5) - (1.0 + ZENITH_LIFT / 2.0)).abs() < 1e-5);
+        assert!((ratio(&primed, -0.5) - (1.0 - ZENITH_SHADE / 2.0)).abs() < 1e-5);
+        assert!((ratio(&half, 1.0) - (1.0 + ZENITH_LIFT / 2.0)).abs() < 1e-5);
+        assert!((ratio(&half, -1.0) - (1.0 - ZENITH_SHADE / 2.0)).abs() < 1e-5);
+        // Past straight up is straight up, and more than all of an
+        // undercoat is all of it.
+        assert_eq!(primed.shade_facing(0.0, 7.0), primed.shade_facing(0.0, 1.0));
+        assert_eq!(primed.shade_facing(0.0, -7.0), primed.shade_facing(0.0, -1.0));
+        let over = Paint { zenith: 9.0, ..bone() };
+        assert_eq!(over.shade_facing(0.0, -1.0), primed.shade_facing(0.0, -1.0));
+        let under = Paint { zenith: -3.0, ..bone() };
+        assert_eq!(under.shade_facing(0.0, -1.0), plain.shade(0.0));
+
+        // A wash is a film over the undercoat: the same share of the light
+        // comes through it whichever way the surface under it faces.
+        let washed = Paint { wash: Wash::shade([70, 40, 25]), ..primed.clone() };
+        let through =
+            |up: f32| luma(washed.shade_facing(0.8, up)) / luma(primed.shade_facing(0.8, up));
+        assert!(
+            (through(1.0) - through(-1.0)).abs() < 0.02,
+            "{} and {}",
+            through(1.0),
+            through(-1.0)
+        );
+        assert!(through(0.0) < 0.9, "the wash took nothing off");
+        // A highlight laid on full is the highlight's colour, undercoat or
+        // none, up or down.
+        let lit = Paint {
+            highlight: Highlight { colour: [250, 240, 230], amount: 1.0, start: 0.0 },
+            ..primed.clone()
+        };
+        assert_eq!(lit.shade_facing(-1.0, -1.0), lit.shade_facing(-1.0, 1.0));
+        assert_eq!(lit.shade_facing(-1.0, -1.0), linear([250, 240, 230]));
     }
 
     /// A table as the first version of the format wrote it: the same bytes
@@ -679,7 +821,7 @@ mod tests {
         assert_eq!(old.len(), table.len());
         for (old, new) in old.paints().iter().zip(table.paints()) {
             assert_eq!(old.filament, 0, "a version 1 paint named a filament");
-            assert_eq!(*old, Paint { filament: 0, ..new.clone() });
+            assert_eq!(*old, Paint { filament: 0, zenith: 0.0, ..new.clone() });
         }
         // The control for the version switch: the same bytes relabelled as
         // the current version are one byte a paint short and do not read.

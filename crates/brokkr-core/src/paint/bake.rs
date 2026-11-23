@@ -54,12 +54,14 @@ impl Bake<'_> {
     /// before paints existed, and is its filament's colour. Slot 0, and a
     /// slot that is neither, is the unpainted colour.
     pub fn flat_colour(&self, slot: u8) -> [u8; 3] {
-        self.colour(slot, 0.0)
+        self.colour(slot, 0.0, 0.0)
     }
 
-    fn colour(&self, slot: u8, crease: f32) -> [u8; 3] {
+    /// `up` is how much of the surface's normal points up, for a paint with
+    /// a zenithal undercoat ([`Paint::shade_facing`]).
+    fn colour(&self, slot: u8, crease: f32, up: f32) -> [u8; 3] {
         if let Some(paint) = self.paint(slot) {
-            return srgb(paint.shade(crease));
+            return srgb(paint.shade_facing(crease, up));
         }
         usize::from(slot)
             .checked_sub(1)
@@ -85,7 +87,19 @@ impl Bake<'_> {
             }
             _ => 0.0,
         };
-        self.colour(slot, crease)
+        self.colour(slot, crease, self.up_at(volume, position, slot))
+    }
+
+    /// How much of the surface's normal at `position` points up, or 0 for a
+    /// slot whose paint has no undercoat to care: the field's gradient is
+    /// eight samples, and most paints are not asked for it.
+    fn up_at(&self, volume: &Volume, position: Vec3, slot: u8) -> f32 {
+        match self.paint(slot) {
+            Some(paint) if paint.zenith > 0.0 => {
+                volume.gradient_world(position).normalize_or_zero().y
+            }
+            _ => 0.0,
+        }
     }
 
     /// One sRGB colour for each vertex of `mesh`, which must be a mesh of
@@ -115,7 +129,10 @@ impl Bake<'_> {
                     }
                     _ => 0.0,
                 };
-                self.colour(*slot, crease)
+                // From the field and not from the mesh's own normals: a
+                // mesh that has been decimated has few of them, and the
+                // model is what the paint is on.
+                self.colour(*slot, crease, self.up_at(volume, *position, *slot))
             })
             .collect()
     }
@@ -239,6 +256,66 @@ mod tests {
     fn luma(colour: [u8; 3]) -> i32 {
         (2126 * i32::from(colour[0]) + 7152 * i32::from(colour[1]) + 722 * i32::from(colour[2]))
             / 10000
+    }
+
+    /// A paint with a zenithal undercoat bakes lighter on the faces that
+    /// look up, darker on the ones that look down, and as itself on the
+    /// ones that look sideways: by the engine's own arithmetic, from the
+    /// way the MODEL faces and not from the normals the mesh carries.
+    #[test]
+    fn an_undercoat_bakes_by_the_way_the_model_faces() {
+        let (volume, mut mesh) = painted(|_| 1);
+        let primed = table_of(Paint { zenith: 1.0, ..Paint::flat("bone", BONE) });
+        let plain = table_of(Paint::flat("bone", BONE));
+        // The mesh's own normals are wrong on purpose: every one points up.
+        // What is baked must not be read from them.
+        mesh.normals = vec![Vec3::Y; mesh.positions.len()];
+        let baked = bake(&primed).vertex_colours(&volume, &mesh);
+        let unprimed = bake(&plain).vertex_colours(&volume, &mesh);
+        assert!(unprimed.iter().all(|colour| *colour == BONE));
+
+        // The middle of a face, well off its edges, where the way it faces
+        // is not in doubt.
+        let on_face = |axis: usize, sign: f32| {
+            let colours: Vec<[u8; 3]> = mesh
+                .positions
+                .iter()
+                .zip(&baked)
+                .filter(|(position, _)| {
+                    (0..3).all(|other| {
+                        if other == axis {
+                            (position[other] - sign * HALF).abs() < 0.3
+                        } else {
+                            // Clear of the edges, and of the slot in +z.
+                            position[other].abs() < HALF - 3.0 && position[other].abs() > 5.0
+                        }
+                    })
+                })
+                .map(|(_, colour)| *colour)
+                .collect();
+            assert!(colours.len() > 20, "only {} vertices on that face", colours.len());
+            colours
+        };
+        let expected = |up: f32| srgb(primed.paints()[0].shade_facing(0.0, up));
+        for colour in on_face(1, 1.0) {
+            assert_eq!(colour, expected(1.0), "the top face");
+        }
+        for colour in on_face(1, -1.0) {
+            assert_eq!(colour, expected(-1.0), "the bottom face");
+        }
+        for colour in on_face(0, 1.0).into_iter().chain(on_face(0, -1.0)) {
+            assert_eq!(colour, BONE, "a side face");
+        }
+        assert!(luma(expected(1.0)) > luma(BONE) + 10 && luma(expected(-1.0)) < luma(BONE) - 40);
+
+        // The same at a point that is not a vertex, which is what a
+        // texture asks.
+        let top = bake(&primed).surface_colour(&volume, Vec3::new(7.3, HALF, -6.1));
+        let bottom = bake(&primed).surface_colour(&volume, Vec3::new(7.3, -HALF, -6.1));
+        let side = bake(&primed).surface_colour(&volume, Vec3::new(HALF, 7.3, -6.1));
+        assert_eq!((top, bottom, side), (expected(1.0), expected(-1.0), BONE));
+        // And a rack shows the paint itself.
+        assert_eq!(bake(&primed).flat_colour(1), BONE);
     }
 
     /// A plain paint is its colour at every vertex, an unpainted vertex is

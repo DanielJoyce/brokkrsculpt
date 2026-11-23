@@ -386,8 +386,8 @@ true of it too, and what it adds is this.
   with pegs and sockets that fit, for a model bigger than the bed or one
   that prints better in halves.
 - **Paints.** On the paint brush, *Mix paints* swaps filament slots for a
-  rack of paints, each with a wash that pools in the recesses and a
-  highlight that catches the edges. Put on *Loaded*, *Drybrush* or *Sponge*,
+  rack of paints, each with a wash that pools in the recesses, a
+  highlight that catches the edges, and an undercoat lit from above. Put on *Loaded*, *Drybrush* or *Sponge*,
   or with *Fill*, which stops at creases and edges. Each paint names the
   filament it prints in, so a painted model is also a multi-colour print.
   Everything the rack does is an undo step, removing a paint included.

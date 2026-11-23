@@ -329,6 +329,9 @@ pub enum PaintEdit {
     WashEdge(f32),
     HighlightAmount(f32),
     HighlightStart(f32),
+    /// How much of a zenithal undercoat shows through the base coat: lighter
+    /// from above, darker from below, 0..=1.
+    Zenith(f32),
 }
 
 /// One message with a payload, on [`SpaceMouseSetting`]'s pattern, so that
