@@ -86,12 +86,15 @@ pub(super) const ALONG_RANGE: std::ops::RangeInclusive<f32> = 0.5..=4.0;
 /// things.
 const DEFAULT_ALONG: f32 = 1.5;
 
+/// How tall a brush's picture is drawn on its button, in pixels.
+const SWATCH_HEIGHT: f32 = 24.0;
+
 /// How wide the palette at the pointer is, and roughly how tall its
 /// heading and each of its rows come out: only to keep it on the screen,
 /// so being a little out costs nothing.
 const POPUP_WIDTH: f32 = 330.0;
 const POPUP_HEAD: f32 = 44.0;
-const POPUP_ROW: f32 = 27.0;
+const POPUP_ROW: f32 = 25.0 + SWATCH_HEIGHT;
 const POPUP_GROUP: f32 = 18.0;
 
 /// The most steps taken along the pointer's ray to find the surface as it
@@ -1296,9 +1299,20 @@ impl Brokkr {
                 Place::Changed => format!("{} *", preset.name),
                 Place::Core | Place::Own => preset.name.clone(),
             };
-            button(text(name).size(theme::CAPTION_SIZE).width(Length::Fill).center())
+            // A picture of a stroke of it, made by the brush itself, over
+            // its name. See `app/swatch.rs`.
+            let picture = iced::widget::image(super::swatch::handle(preset))
                 .width(Length::Fill)
-                .padding(iced::Padding { top: 5.0, bottom: 5.0, left: 2.0, right: 2.0 })
+                .height(Length::Fixed(SWATCH_HEIGHT))
+                .content_fit(iced::ContentFit::Contain);
+            let face = column![
+                picture,
+                text(name).size(theme::CAPTION_SIZE).width(Length::Fill).center(),
+            ]
+            .spacing(2.0);
+            button(face)
+                .width(Length::Fill)
+                .padding(iced::Padding { top: 3.0, bottom: 3.0, left: 2.0, right: 2.0 })
                 .style(if lit == Some(index) {
                     theme::tool_button_active
                 } else {

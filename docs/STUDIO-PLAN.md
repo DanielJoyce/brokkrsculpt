@@ -24,7 +24,7 @@ was built and what was measured.
 | P Painting engine | **Usable**, 2026-11-23 (section 15): the storage, the view and the brush. Painted colour is on screen, in the project file and in every export that carries colour | The paint brush lays a colour: *Paint*, *Glaze* or *Erase*, put on *Loaded*, as a *Wash*, with a *Drybrush* or a *Sponge*, at any opacity, with a soft edge. *Pick from model* takes a colour back off it |
 | B A brush is its settings | **Done but for B5**, 2026-11-23 (section 16): files in the right directories, one generic brush, the palette, a picture across the tip, build-up on or off, lines or dabs. Brushes that stamp a shape (B5) are a later stage | BRUSHES: twenty-one that come with the application, upstream's six among them, and the user's own, a file each. *What it does* shows a brush as five amounts to change. *Profile*: five shapes and a flat middle. *Picture across the tip*, *Builds up* or *One layer*, and *Set down* as a line or every so many widths |
 | M Reading sizes | **Done**, 2026-11-23 (section 17) | A scale bar in the corner of the viewport that follows the zoom, and *Measure*: two clicks on the model, and the straight-line distance between them drawn and read out |
-| C Brushes to hand | **Done but for reading vector displacement files**, 2026-11-24 (section 18): the palette at the pointer, brush files, insert brushes, cables, the workbench, and thirty brushes on the palette, the ones that add among them | `b` brings every brush up under the pointer. *Import* takes brush files in. ADD: a ball, box, cylinder, cone or ring, or a copy of any body, set down by a drag; a cable laid along the model or hung between two points; each baked in or left a body of its own. WORKBENCH: the model is set aside and a ball, or a copy of the body in hand, takes its place to try a brush on |
+| C Brushes to hand | **Done but for reading vector displacement files**, 2026-11-24 (section 18): the palette at the pointer, brush files, insert brushes, cables, the workbench, and thirty brushes on the palette in three groups, the ones that add among them, each with a picture of its stroke on its button | `b` brings every brush up under the pointer. *Import* takes brush files in. ADD: a ball, box, cylinder, cone or ring, or a copy of any body, set down by a drag; a cable laid along the model or hung between two points; each baked in or left a body of its own. WORKBENCH: the model is set aside and a ball, or a copy of the body in hand, takes its place to try a brush on |
 | B Brushes as settings | **Begun**, 2026-11-23 (section 16): where the files go, and the generic brush in the engine. The palette and build-up follow | Settings, brushes and autosave each in the folder the operating system keeps for them |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
@@ -3220,6 +3220,7 @@ a ball that does not matter.
 | C4 | The workbench: a ball to try a brush on, apart from the document | **Built**, 2026-11-24 (below) |
 | C5 | Vector displacement maps, read from a file | Not planned yet: see below |
 | C6 | The brushes that add, on the palette and in a brush file | **Built**, 2026-11-24 (below) |
+| C7 | A picture of its stroke on each brush's button | **Built**, 2026-11-24 (below) |
 
 **What a vector displacement brush is here.** In a mesh sculptor a
 vector displacement map is how a brush stamps a shape with an overhang,
@@ -3489,6 +3490,83 @@ them), *Lines and stamps* (six) and *Add* (nine), and *Yours* over the
 user's own. Each group fills its rows of three, and a test holds that
 every brush is in one group, once.
 
-**Not done**: a brush has no picture on its button. A picture of each
-brush's stroke would say more than its name.
+The pictures that were not done here are stage C7, below.
+
+#### Built, 2026-11-24 (C7): a picture of its stroke on each brush
+
+`brokkr-app/src/app/swatch.rs`. Every button on the palette, on the panel
+and at the pointer, has a picture of a stroke of its brush over its name.
+
+**The picture is made by the brush.** Not drawn by hand and not a diagram
+of the settings: a small slab is made (72 by 28 voxels, a voxel a
+pixel), the brush is run along it by the engine that runs it on a model,
+and the slab is looked at from above with a light on it. So a brush a
+user makes and keeps has a picture the moment it is kept, a brush that is
+changed has a picture that changes, and a picture cannot say something
+the brush does not do. A stroke is an S across the slab; a stamp is
+pressed in its middle, or in a row; a shape is set down in its middle; a
+cable is laid along the S, or hung across the top.
+
+Three things in a picture are not as the brush is set, so that it can be
+read:
+
+* It is drawn harder than it is set, at a strength of no less than 0.5.
+  A stroke at upstream's 0.15 raises the surface half a voxel. The
+  picture is of the shape of the stroke and not of how tall it is.
+* Its size is the picture's, a little bigger or smaller for a brush that
+  says how big it is.
+* A brush with nothing to do on a flat slab is given something: one that
+  only smooths or levels is drawn on low ripples, and one that only
+  pinches or spreads on a ridge along the stroke's line.
+
+**Made once.** A picture is made the first time its brush is drawn, and
+kept by the brush's settings for as long as the application runs, so
+that two brushes that are the same brush under two names share one.
+Measured with `what_the_pictures_cost` (ignored, run by hand, the test
+profile, the build container's four cores): the thirty that come with
+the application take 285 ms between them, the slowest 54 ms. That is
+paid once, the first time the palette is drawn.
+
+**Seen on a screen and changed**: the ripples were first tall and close,
+and were all that could be seen, so that seven brushes had one picture
+of stripes; they are low and wide now, and a brush that works on what is
+there is given eight passes at it. Stamps in a row were too small to be
+made out as rivets, and are drawn bigger.
+
+**What the pictures found about upstream's Pinch.** A picture of Pinch
+on a ridge was written to show the ridge gathered, and its test failed,
+because that is not what the kernel does. It reads the field from nearer
+the brush's axis, so a ridge under the brush keeps its top and is
+BROADER, with steeper sides: measured on the slab, 7.7 voxels wide at
+half its height before and over 12 after. Turned round, which is the
+invert key and the brush here called Spread, it reads from further off
+and wears the ridge down to a quarter of its height. Upstream's one test
+of Pinch asks only that it move a point beside the stroke the other way
+from Smooth on a ball, which this does. So Pinch sharpens the SIDES of
+what is under it and does not narrow it, and Spread is nearer a brush
+that wears a feature away than one that opens it. The kernel is
+upstream's and is not changed. The pictures show what the two do, a test
+holds them to it as found, and **the two names are the maintainer's to
+decide**: whether to rename them, or to give Pinch a kernel that
+gathers.
+
+**Held by**: every brush that comes with the application has a picture
+of the right size with no hole in it, that is not the slab it was run
+along, and no two have the same picture; Band keeps more of its height
+half way out than Draw does, Crease is a groove, a row of rivets is
+separate rivets, Smooth takes the ripples out where it went, and Pinch
+and Spread do to a ridge what was measured; a picture is the same
+however often it is asked for, is made once, is shared by the same brush
+under another name, and is another picture for a brush that is changed;
+and a property: whatever a brush file says, the brush it makes has a
+picture, made without a panic.
+
+**Not done:**
+
+* The picture is from above and of one stroke. It does not show a
+  brush's lead (a lazy stroke) or what pressure does to it.
+* A stamp or a tip that uses the picture in hand is drawn with a dome,
+  because the picture in hand is the application's and not the brush's.
+* The first draw of the palette waits for all the pictures at once. They
+  could be made a few a frame.
 

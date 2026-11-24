@@ -409,7 +409,8 @@ true of it too, and what it adds is this.
   stops at creases and edges. Each paint names the filament it prints in,
   so a model painted this way is also a multi-colour print. Everything the
   rack does is an undo step, removing a paint included.
-- **A palette of brushes.** Thirty come with it: Draw, Clay, Inflate,
+- **A palette of brushes.** Each button shows a picture of a stroke of
+  its brush, made by the brush itself. Thirty come with it: Draw, Clay, Inflate,
   Pinch, Smooth and Flatten, and *Spread*, *Scrape*, *Fill*, *Polish*,
   *Crease*, *Bead*, *Band*, *Layer*, *Clay strips*, *Stitches* and more.
   Every one is the same brush with different settings, and *What it does*
@@ -465,7 +466,7 @@ true of it too, and what it adds is this.
 </p>
 
 <p align="center">
-  <img alt="The palette of brushes brought up in the middle of the viewport by the b key: thirty buttons in rows of three under the headings Sculpt, Lines and stamps, and Add, with Draw lit" src="docs/images/studio-palette-popup.png" width="760">
+  <img alt="The palette of brushes brought up in the middle of the viewport by the b key: thirty buttons in rows of three under the headings Sculpt, Lines and stamps, and Add, each with a small picture of its brush's stroke over its name, with Draw lit" src="docs/images/studio-palette-popup.png" width="760">
 </p>
 
 <p align="center">

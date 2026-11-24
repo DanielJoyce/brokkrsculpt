@@ -13,6 +13,7 @@ mod paints;
 mod panel;
 mod presets;
 mod studio;
+mod swatch;
 mod workbench;
 pub use workbench::Piece;
 
