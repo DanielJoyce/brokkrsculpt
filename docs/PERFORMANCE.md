@@ -125,4 +125,69 @@ What it says:
 
 ## What each change did
 
-Added to as the tickets are worked through.
+Added to as the tickets are worked through. Runs of the same code on this
+machine differ by up to about fifteen parts in a hundred (the edit row below
+moved by that much between two runs with no change to the edit), so a
+difference smaller than that is not a result.
+
+### The autosave, off the thread that draws (issue 49)
+
+The autosave was one call on the thread that draws. Upstream's own figure was
+1.55 GB/s: 100 ms for a 159 MB model and about 430 ms for a 671 MB one, every
+two minutes.
+
+It is now encoded a piece of about 4 MB between two frames and written by
+another thread (`app/autosave.rs`, `brokkr-core/src/project/pieces.rs`). A
+write in pieces is given up the moment the document is wanted, and begun again
+at the next pause.
+
+`what_an_autosave_costs`, a 327 MB document:
+
+| | on the thread that draws |
+|---|---|
+| The whole write in one call, as it was called | 193 ms in one frame |
+| In 83 pieces | 0.87 ms a frame, 2.45 ms at the worst, 72 ms in all |
+
+The one call above is of the new encoder, which copies a dense brick's bytes
+whole where the old one wrote them a value at a time. The old one was not
+timed here. *Save* and *Save as* are still one call, and are faster by
+whatever that is worth; they also read the file back to check it, which this
+did not change.
+
+### Pointer moves handled once a frame (issue 48)
+
+Moves are kept as they arrive and handled together before the next frame:
+every move's stamps, in order, then one remesh, one pick for the ring and one
+ring. Anything else that arrives first (a release, a key) handles them first,
+so nothing is reordered.
+
+`what_a_stroke_costs`, 4610 dense bricks, 3 mm brush, median milliseconds a
+frame, before and after:
+
+| | mesh | ring | whole frame | bricks meshed in the stroke |
+|---|---|---|---|---|
+| Two events a frame | 2.6 to 2.2 | 0.32 to 0.15 | 9.2 to 8.3 | 5932 and 5932 |
+| Eight events a frame | 7.6 to 2.7 | 1.15 to 0.17 | 29.1 to 20.1 | 5932 to 2653 |
+
+At two events a frame the ring is the only row that moved by more than the
+noise: most moves of that recording lay no stamp, so there is seldom a second
+remesh in a frame to save. At eight, the remesh is done once for what eight
+moves dirtied, and the bricks meshed over the stroke fall by more than half.
+
+The upload cap the ticket also asked for was not built. In the replay run in
+the application, a stroke's frames uploaded 8 bricks and 0.4 MB each in 0.2 to
+0.7 ms (on llvmpipe, where an upload is a copy). The frames that upload
+hundreds of megabytes are the ones after an open or a resample, which have
+just spent seconds meshing on the same thread. A cap would spread those and
+would have to keep the renderer's forget and reset ordering right across
+frames, for a hitch nobody has reported.
+
+### No walk of the whole document per pointer event (issue 47)
+
+After every remesh the document's totals and the active body's radius were
+taken again, and each is a walk of every brick. They are now taken when a
+stroke ends, and at once for anything that is not a stroke. The `after` row
+of the table went from 0.17 ms a frame on 4610 bricks to nothing. It grows
+with the document and not with the brush, so it was worth more than that
+figure on a larger model, which was not measured. The readout behind the Info
+toggle shows a stroke's brick counts when the stroke ends and not during it.

@@ -97,6 +97,9 @@ use crate::colour::{ColourBrick, ColourField};
 use crate::mask::{MaskBrick, MaskField};
 use crate::volume::Volume;
 
+mod pieces;
+pub use pieces::Pieces;
+
 /// Magic bytes. Long enough that a truncated or mistyped file is rejected
 /// immediately rather than part way through a brick.
 const MAGIC: &[u8; 8] = b"BROKKR\x00\x01";
@@ -943,12 +946,41 @@ fn read_view(input: &mut impl Read) -> Result<View> {
 /// call site while silently saving one body of many, which is a whole document
 /// lost with "saved" in the status line.
 pub fn write(out: &mut impl Write, doc: &Document, state: &ProjectState) -> Result<()> {
-    refuse_what_could_not_be_read_back(doc)?;
+    // A piece at a time, by the one encoder there is: `project/pieces.rs`.
+    let mut pieces = Pieces::begin(doc)?;
+    let mut piece = Vec::new();
+    loop {
+        piece.clear();
+        let done = pieces.next(&mut piece, doc, state, pieces::WHOLE_PIECE)?;
+        out.write_all(&piece)?;
+        if done {
+            break;
+        }
+    }
+    out.flush()?;
+    Ok(())
+}
 
+/// Everything before the first body's bricks: the versions, the lattice, the
+/// view and the table of nodes.
+///
+/// After it, one brick stream per body, in TABLE ORDER, with nothing between
+/// them. `Document::bodies` yields the rows in display order, which is table
+/// order, which is the order the reader consumes them in. At field version 2
+/// each body's mask stream follows its bricks immediately, so the two are one
+/// section per body rather than two sections over the document. That is what
+/// lets the reader take them in one forward pass, and it is why the mask
+/// could never have been a trailer. See `project/pieces.rs` for the streams.
+fn write_head(
+    out: &mut impl Write,
+    doc: &Document,
+    state: &ProjectState,
+    field: u16,
+) -> Result<()> {
     out.write_all(MAGIC)?;
     write_u16(out, CONTAINER_VERSION)?;
-    // The LOWEST encoding this document needs, not the newest this build knows.
-    let field = lowest_field_version(doc);
+    // The LOWEST encoding this document needs, not the newest this build knows:
+    // see `lowest_field_version`.
     write_u16(out, field)?;
 
     // The lattice. Written as the values themselves rather than as a hash, so a
@@ -966,26 +998,12 @@ pub fn write(out: &mut impl Write, doc: &Document, state: &ProjectState) -> Resu
     for node in doc.nodes() {
         write_node_record(out, node)?;
     }
+    Ok(())
+}
 
-    // One brick stream per body, in TABLE ORDER, with nothing between them.
-    // `Document::bodies` yields the rows in display order, which is table
-    // order, which is the order the reader consumes them in.
-    //
-    // At field version 2 each body's mask stream follows its bricks
-    // immediately, so the two are one section per body rather than two
-    // sections over the document. That is what lets the reader take them in
-    // one forward pass, and it is why the mask could never have been a
-    // trailer.
-    for (_, volume) in doc.bodies() {
-        write_bricks(out, volume)?;
-        if field >= FIELD_VERSION_WITH_MASK {
-            write_mask(out, volume.mask())?;
-        }
-        if field >= FIELD_VERSION_WITH_COLOUR {
-            write_colour(out, volume.colour())?;
-        }
-    }
-
+/// Everything after the last body's streams: the keys, and the paints where
+/// there are any.
+fn write_tail(out: &mut impl Write, doc: &Document, state: &ProjectState) -> Result<()> {
     // The key trailer, after the bricks rather than in the header. A version 1
     // file is exactly this file without it, which is what lets one still be
     // read: the brick counts say where the geometry ends, and there is simply
@@ -1013,8 +1031,6 @@ pub fn write(out: &mut impl Write, doc: &Document, state: &ProjectState) -> Resu
         write_u64(out, section.len() as u64)?;
         out.write_all(&section)?;
     }
-
-    out.flush()?;
     Ok(())
 }
 
@@ -1173,117 +1189,6 @@ pub fn name_that_fits(name: &str) -> &str {
         end -= 1;
     }
     &name[..end]
-}
-
-/// One body's brick stream: a count, then that many brick records.
-///
-/// **The count is taken from the pairs actually resolved, not from the
-/// coordinate list.** The two can differ, and at version 2 the damage was
-/// bounded because the trailer was last and short. Now the streams are
-/// consecutive: a body that writes fewer records than it declared makes the
-/// reader consume the NEXT body's coordinates as this body's bricks, and every
-/// remaining body in the file is misparsed into plausible-looking rubbish.
-fn write_bricks(out: &mut impl Write, volume: &Volume) -> Result<()> {
-    let mut coords: Vec<BrickCoord> = volume.brick_coords().collect();
-    coords.sort_unstable();
-    let pairs: Vec<(BrickCoord, &Brick)> = coords
-        .into_iter()
-        .filter_map(|coord| volume.brick(coord).map(|brick| (coord, brick)))
-        .collect();
-
-    write_u64(out, pairs.len() as u64)?;
-    for (coord, brick) in pairs {
-        for component in coord.0.to_array() {
-            out.write_all(&component.to_le_bytes())?;
-        }
-        match brick {
-            Brick::Uniform(value) => {
-                out.write_all(&[TAG_UNIFORM])?;
-                write_f32(out, *value)?;
-            }
-            Brick::Dense(values) => {
-                out.write_all(&[TAG_DENSE])?;
-                // One value at a time rather than a cast of the whole array:
-                // little endian has to be explicit, or a file written on one
-                // architecture is silently wrong on another.
-                for value in values.iter() {
-                    write_f32(out, *value)?;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-/// One body's mask stream: a flags byte, a count, then that many mask records.
-///
-/// Written at field version 2 and later for **every** body, masked or not, so
-/// that an unmasked body inside a masked document costs nine bytes and the
-/// reader's forward pass needs no per-body condition. A document with no mask
-/// anywhere costs nothing at all, because [`lowest_field_version`] then stamps
-/// 1 and this is never called.
-///
-/// Sorted by coordinate, for the reason [`write_bricks`] is: hash order breaks
-/// byte-identity nondeterministically, which passes locally and fails on CI.
-/// And the count comes from the pairs actually resolved, for the reason
-/// [`write_bricks`] gives -- a short stream here misparses the *next* body.
-fn write_mask(out: &mut impl Write, mask: &MaskField) -> Result<()> {
-    let mut flags = 0u8;
-    if mask.inverted() {
-        flags |= MASK_FLAG_INVERTED;
-    }
-    out.write_all(&[flags])?;
-
-    let mut coords: Vec<BrickCoord> = mask.brick_coords().collect();
-    coords.sort_unstable();
-    let pairs: Vec<(BrickCoord, &MaskBrick)> = coords
-        .into_iter()
-        .filter_map(|coord| mask.brick(coord).map(|brick| (coord, brick)))
-        .collect();
-
-    write_u64(out, pairs.len() as u64)?;
-    for (coord, brick) in pairs {
-        for component in coord.0.to_array() {
-            out.write_all(&component.to_le_bytes())?;
-        }
-        match brick {
-            MaskBrick::Uniform(value) => out.write_all(&[TAG_MASK_UNIFORM, *value])?,
-            MaskBrick::Dense(values) => {
-                // One byte per voxel, so unlike the field there is no
-                // endianness to be explicit about and the array goes out whole.
-                out.write_all(&[TAG_MASK_DENSE])?;
-                out.write_all(values.as_slice())?;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// One body's painted slots, sorted so the bytes are deterministic.
-///
-/// No flags byte, unlike the mask's: a slot index has no polarity, so there is
-/// nothing to resolve at read and nothing to reserve a bit for. Adding one
-/// "for symmetry" would be a byte in every file forever that no reader may
-/// ever interpret.
-fn write_colour(out: &mut impl Write, colour: &ColourField) -> Result<()> {
-    let mut coords: Vec<BrickCoord> = colour.bricks().keys().copied().collect();
-    coords.sort_unstable();
-
-    write_u64(out, coords.len() as u64)?;
-    for coord in coords {
-        let brick = &colour.bricks()[&coord];
-        for component in coord.0.to_array() {
-            out.write_all(&component.to_le_bytes())?;
-        }
-        match brick {
-            ColourBrick::Uniform(slot) => out.write_all(&[TAG_COLOUR_UNIFORM, *slot])?,
-            ColourBrick::Dense(slots) => {
-                out.write_all(&[TAG_COLOUR_DENSE])?;
-                out.write_all(slots.as_slice())?;
-            }
-        }
-    }
-    Ok(())
 }
 
 /// Read a sculpt.
