@@ -700,6 +700,71 @@ mod tests {
         assert!(stamps > 20 && meshed > 20, "{stamps} stamps and {meshed} bricks meshed");
     }
 
+    /// How many points of a grid through the ball two applications hold
+    /// different values at, and how many of those points are near a surface.
+    fn fields_differ(one: &Brokkr, other: &Brokkr) -> (usize, usize) {
+        let (one, other) = (one.doc.active_volume(), other.doc.active_volume());
+        let (mut differing, mut near) = (0, 0);
+        for index in 0..60 * 60 * 60 {
+            let cell = glam::IVec3::new(index % 60, index / 60 % 60, index / 3600);
+            let point = (cell.as_vec3() - 30.0) * 0.8;
+            let (a, b) = (one.sample_world(point), other.sample_world(point));
+            differing += usize::from(a.to_bits() != b.to_bits());
+            near += usize::from(a.abs() < 2.5);
+        }
+        (differing, near)
+    }
+
+    /// Moves that arrive between two frames are handled together: the field
+    /// is what one move a frame leaves, to the bit, with the same stamps, and
+    /// the bricks are meshed once for the lot.
+    #[test]
+    fn moves_between_two_frames_are_handled_together() {
+        let points = ring(96, 70.0);
+        let mut one_a_frame = app();
+        let slow = one_a_frame.replay_now(Recording::drag(&points, SIZE, 1));
+        let mut twelve_a_frame = app();
+        let fast = twelve_a_frame.replay_now(Recording::drag(&points, SIZE, 12));
+
+        let (differing, near) = fields_differ(&one_a_frame, &twelve_a_frame);
+        assert!(near > 1000, "the points compared miss the surface");
+        assert_eq!(differing, 0, "moves handled together left a different field");
+        let sum = |frames: &[Frame], of: fn(&Frame) -> u32| frames.iter().map(of).sum::<u32>();
+        assert_eq!(sum(&slow, |frame| frame.stamps), sum(&fast, |frame| frame.stamps));
+        assert_eq!(sum(&slow, |frame| frame.events), sum(&fast, |frame| frame.events));
+        let (slow_meshed, fast_meshed) =
+            (sum(&slow, |frame| frame.meshed), sum(&fast, |frame| frame.meshed));
+        assert!(
+            fast_meshed * 2 < slow_meshed,
+            "{fast_meshed} bricks meshed for twelve moves a frame, {slow_meshed} for one"
+        );
+        assert_eq!(
+            one_a_frame.history_stats.undo_entries, twelve_a_frame.history_stats.undo_entries,
+            "a stroke is one undo entry however its moves arrive"
+        );
+    }
+
+    /// Moves that are waiting for a frame come before whatever arrives
+    /// next: a release with no frame since the press ends the stroke those
+    /// moves drew, and does not lose them.
+    #[test]
+    fn a_release_handles_the_moves_before_it() {
+        let recording = Recording::drag(&ring(24, 60.0), SIZE, 1);
+        let mut with_frames = app();
+        let _ = with_frames.replay_now(recording.clone());
+
+        let mut without = app();
+        for step in &recording.steps {
+            if let Step::Pointer(pointed) = step {
+                drop(without.update(Message::Pointer((*pointed).into())));
+            }
+        }
+        assert!(without.moves.is_empty(), "moves were left waiting after the release");
+        let (differing, _) = fields_differ(&with_frames, &without);
+        assert_eq!(differing, 0, "a stroke with no frame in it lost its moves");
+        assert_eq!(without.history_stats.undo_entries, with_frames.history_stats.undo_entries);
+    }
+
     /// The camera and the brush of a recording are taken up before its press.
     #[test]
     fn a_replay_takes_up_the_camera_and_the_brush() {

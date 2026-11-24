@@ -1613,6 +1613,8 @@ mod tests {
 
     fn update(app: &mut Brokkr, message: Message) {
         drop(app.update(message));
+        // As if a frame followed: a move waits for one. See `pointer_in`.
+        app.handle_moves();
     }
 
     fn app() -> Brokkr {

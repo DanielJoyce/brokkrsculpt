@@ -3,6 +3,8 @@
 //! Application state, input handling and the widget tree.
 
 mod adding;
+// The crash net, written without stopping the drawing. See `app/autosave.rs`.
+mod autosave;
 pub use adding::Insert;
 // Vector displacement maps, for the brushes that add: `app/maps.rs`.
 mod maps;
@@ -259,6 +261,10 @@ const MAX_TILT: f32 = std::f32::consts::PI / 3.0;
 /// Frame intervals kept for the rate readout. At 60 fps this averages over
 /// about a second, which is long enough to be steady and short enough to react.
 const FRAME_HISTORY: usize = 60;
+
+/// How many pointer moves are kept for the next frame before they are handled
+/// without one. See [`Brokkr::pointer_in`].
+const MOST_MOVES_KEPT: usize = 64;
 
 /// How far the pointer may travel during a right press and still count as a
 /// click rather than an orbit.
@@ -622,6 +628,15 @@ pub struct Brokkr {
     /// four separate sites re-derived; with a document lattice there is exactly
     /// one correct value and `doc.voxel_size()` is it.
     doc_stats: VolumeStats,
+    /// Whether a stroke's remeshes have left `doc_stats` and `model_radius`
+    /// to be taken again when it ends. See [`Brokkr::remesh_dirty`].
+    measures_stale: bool,
+    /// Pointer moves that have come in since the last frame, to be handled
+    /// together on the next. See [`Brokkr::pointer_in`].
+    moves: Vec<PointerEvent>,
+    /// Set while all but the last of those moves are handled: the remesh,
+    /// the pick for the ring and the ring itself wait for the last.
+    batching: bool,
     history_stats: HistoryStats,
     /// What the last export or resample did, for the interface to show.
     status: String,
@@ -823,6 +838,8 @@ pub struct Brokkr {
     autosave_file: Option<std::path::PathBuf>,
     /// When the crash net was last written. See [`Brokkr::maybe_autosave`].
     last_autosave: Instant,
+    /// A crash net being written a piece a frame. See `app/autosave.rs`.
+    autosave: autosave::Autosave,
     /// When the pointer last did anything, so the autosave can wait for a pause.
     last_activity: Instant,
     /// A numeric field in the menu being typed into.
@@ -2123,6 +2140,9 @@ impl Brokkr {
             phases: phases::Phases::default(),
             replay: replay::Replay::default(),
             doc_stats: VolumeStats::default(),
+            measures_stale: false,
+            moves: Vec::new(),
+            batching: false,
             history_stats: HistoryStats::default(),
             status: String::new(),
             expanded: PanelSection::ALL.map(PanelSection::open_by_default),
@@ -2165,6 +2185,7 @@ impl Brokkr {
             recent: crate::recent::Recent::load(),
             autosave_file: Self::default_autosave_path(),
             last_autosave: Instant::now(),
+            autosave: autosave::Autosave::default(),
             last_activity: Instant::now(),
             menu_edit: None,
             // ON, which is what Thomas asked for, and the bench now supports
@@ -3439,11 +3460,50 @@ impl Brokkr {
     /// A pointer event, counted into the frame being timed. A stroke is
     /// noted on both sides of it, so that the press and the release are in a
     /// stroke's frames with the moves between them. See `app/phases.rs`.
+    ///
+    /// **A move waits for the frame.** A mouse reports five hundred or a
+    /// thousand times a second and a pen two hundred, and a frame is drawn
+    /// sixty times: several moves arrive between two frames, and one move of
+    /// the pointer has been seen to arrive as three events at the same place.
+    /// Each used to be a whole step of a stroke: its stamps, then a remesh,
+    /// then a second ray march for the ring, then the ring. Only the stamps
+    /// are owed to each move. So moves are kept as they come in, and handled
+    /// together by [`Brokkr::handle_moves`] before the next frame or before
+    /// anything else is acted on, whichever is first: every move's stamps in
+    /// order, and one remesh, one pick and one ring for the lot.
     fn pointer_in(&mut self, event: PointerEvent) {
         self.phases.count(|frame| frame.events += 1);
+        if matches!(event, PointerEvent::Moved { .. }) {
+            self.moves.push(event);
+            // Frames stop coming to a window nothing is shown of, and moves
+            // may not. They are not kept without limit.
+            if self.moves.len() >= MOST_MOVES_KEPT {
+                self.handle_moves();
+            }
+            return;
+        }
+        self.handle_moves();
         self.note_a_stroke();
         self.on_pointer(event);
         self.note_a_stroke();
+    }
+
+    /// Handle the moves kept since the last frame. See [`Brokkr::pointer_in`].
+    fn handle_moves(&mut self) {
+        if self.moves.is_empty() {
+            return;
+        }
+        let mut moves = std::mem::take(&mut self.moves);
+        self.note_a_stroke();
+        let last = moves.len() - 1;
+        for (index, event) in moves.drain(..).enumerate() {
+            self.batching = index < last;
+            self.on_pointer(event);
+        }
+        self.batching = false;
+        self.note_a_stroke();
+        // The allocation goes back for the next frame's moves.
+        self.moves = moves;
     }
 
     /// Say that a stroke is down in the frame being timed.
@@ -3463,11 +3523,19 @@ impl Brokkr {
     }
 
     fn remesh_dirty(&mut self) {
+        // One of several moves handled together: the bricks stay marked, and
+        // the last move's remesh takes them all. See `pointer_in`.
+        if self.batching {
+            return;
+        }
         self.doc.take_dirty(&mut self.dirty);
         self.perf.dirty_bricks = self.dirty.len();
         if self.dirty.is_empty() {
             return;
         }
+        // Bricks changed, by whatever road: a crash net part written is of a
+        // document that no longer is. See `app/autosave.rs`.
+        self.give_up_autosave();
 
         // **Every picture that is now out of date, marked in the one place that
         // already knows which bricks changed.** Undo, redo, delete, merge, add,
@@ -3527,7 +3595,29 @@ impl Brokkr {
         }
         self.perf.remesh_ms = started.elapsed().as_secs_f32() * 1000.0;
         self.phases.leave(timed);
+
+        // **What is measured of the whole document waits for the end of a
+        // stroke.** The totals and the radius below each walk every brick of
+        // the document, and this is reached on every step of a stroke: on
+        // 4610 dense bricks that was 0.17 ms a frame for two numbers nothing
+        // reads until the stroke is over (`docs/PERFORMANCE.md`). The readout
+        // behind the Info toggle shows a stroke's bricks when the stroke ends.
+        // `finish_stroke` is the other half.
+        if matches!(
+            self.drag.map(|drag| drag.kind),
+            Some(DragKind::Sculpt(_)) | Some(DragKind::Masking)
+        ) {
+            self.measures_stale = true;
+        } else {
+            self.measure_document();
+        }
+    }
+
+    /// Take the document's totals and the active body's radius again, after
+    /// its bricks changed.
+    fn measure_document(&mut self) {
         let timed = self.phases.enter(phases::Phase::After);
+        self.measures_stale = false;
         self.doc_stats = self.doc.totals();
 
         // Dynamic resizes the brush when the MODEL changed under it. Comparing
@@ -4859,6 +4949,11 @@ impl Brokkr {
     /// frame handler: the geometry is world space, so a camera moving under it
     /// needs no rebuild, and a raycast per frame would be waste.
     fn refresh_overlay(&mut self) {
+        // One of several moves handled together: the last one draws the
+        // ring. See `pointer_in`.
+        if self.batching {
+            return;
+        }
         let timed = self.phases.enter(phases::Phase::Overlay);
         self.build_overlay();
         self.phases.leave(timed);
@@ -5064,6 +5159,12 @@ impl Brokkr {
         if self.tool == Tool::Transform || self.tool == Tool::Cut {
             self.hover = None;
             self.hover_body = None;
+            return;
+        }
+        // One of several moves handled together: the ring is wanted where
+        // the last of them left the pointer, and that move finds it. See
+        // `pointer_in`.
+        if self.batching {
             return;
         }
         let owns_the_ring = self.tool == Tool::Mask
@@ -6524,6 +6625,10 @@ impl Brokkr {
             // event.
             self.thumbs.geometry_changed(body);
         }
+        // What a stroke's remeshes left unmeasured. See `remesh_dirty`.
+        if self.measures_stale {
+            self.measure_document();
+        }
     }
 
     /// Take the history's counters, and say out loud when an eviction has taken
@@ -6739,28 +6844,28 @@ impl Brokkr {
 
     /// How long between crash-net writes.
     ///
-    /// Two minutes is a compromise against the write itself: a large sculpt is
-    /// tens of megabytes and the write happens on the thread that draws, so
-    /// often enough to be worth having and rare enough that the hitch is not
-    /// something you sculpt against.
+    /// Two minutes was a compromise against the write itself, when the write
+    /// was on the thread that draws: often enough to be worth having and
+    /// rare enough that the hitch was not something you sculpted against.
+    /// The write is off that thread now (`app/autosave.rs`) and this could
+    /// be shorter. It has been left, because a write still has to find the
+    /// document holding still for as long as it takes.
     const AUTOSAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(120);
 
     /// How long the pointer must have been still before the crash net is
-    /// written.
+    /// begun.
     ///
-    /// The write happens on the thread that draws, and it is not small:
-    /// measured at **1.55 GB/s**, so a 159 MB model takes 100 ms and the 671 MB
-    /// autosave seen from a real scan session would take about 430 ms -- some
+    /// This was here to hide a hitch: the write was on the thread that
+    /// draws, measured at **1.55 GB/s**, so a 159 MB model took 100 ms and the
+    /// 671 MB autosave seen from a real scan session about 430 ms -- some
     /// twenty six dropped frames, every two minutes, in the middle of
-    /// sculpting. That is exactly the kind of thing that gets reported as "it
-    /// stutters sometimes" and is miserable to track down.
+    /// sculpting. Waiting for a pause put the hitch where it was not seen.
     ///
-    /// Waiting for a pause is the cheap fix, and it works because sculpting is
-    /// full of pauses: the hitch lands while the user is looking at the model
-    /// rather than dragging across it, where it is invisible. It does not make
-    /// the write faster, and if that ever matters the next step is encoding to
-    /// a buffer on this thread and doing the file write from a `Task`, the way
-    /// import already does.
+    /// There is no hitch to hide now: the encoding is a piece a frame and the
+    /// file is written by another thread. See `app/autosave.rs`. The pause is
+    /// kept for a different reason: a write in pieces is given up the moment
+    /// the document is wanted, so one begun while the hand is still moving is
+    /// work thrown away.
     const AUTOSAVE_IDLE_GAP: std::time::Duration = std::time::Duration::from_secs(3);
 
     /// Where the crash net lives.
@@ -6785,14 +6890,20 @@ impl Brokkr {
     /// protecting is a crash during active sculpting, and during active
     /// sculpting there are frames. Revisit if iced gains a timer here.
     fn maybe_autosave(&mut self) {
+        // One in flight goes on a piece, whatever else is so: the checks
+        // below are about beginning one. See `app/autosave.rs`.
+        if self.autosave.in_flight() {
+            self.advance_autosave();
+            return;
+        }
         // The crash net is of the document, and on the workbench what is
         // in the document's place is not it.
         if self.on_the_bench() {
             return;
         }
         if !self.unsaved
-            // Never mid-stroke: the write would land in the middle of a drag
-            // and read as a stutter in the brush.
+            // Never mid-stroke: the document has to hold still while it is
+            // written.
             || self.stroke.is_active()
             || self.drag.is_some()
             || self.last_autosave.elapsed() < Self::AUTOSAVE_INTERVAL
@@ -6801,69 +6912,13 @@ impl Brokkr {
         {
             return;
         }
-        let started = Instant::now();
-        self.write_autosave();
-        let taken = started.elapsed().as_secs_f64() * 1000.0;
-        if taken > 50.0 {
-            // Visible in the log rather than silent, so the next person to
-            // wonder where a hitch came from has the number in front of them.
-            log::warn!("the autosave took {taken:.0} ms on the draw thread");
-        }
-        self.last_autosave = Instant::now();
-    }
-
-    /// Write the crash net, reporting only to the log.
-    ///
-    /// Deliberately does NOT clear `unsaved` and does NOT touch
-    /// `project_path`: this is not a save, it is something to recover from, and
-    /// treating it as a save would suppress the very prompt that protects the
-    /// real file. It also never writes over the user's own file.
-    ///
-    /// Failures go to the log and nowhere else. `status` is the line the user
-    /// is reading for the action they asked for, and an autosave is not one.
-    fn write_autosave(&mut self) {
-        let Some(path) = self.autosave_file.clone() else {
-            return;
-        };
-        if let Some(parent) = path.parent()
-            && let Err(error) = std::fs::create_dir_all(parent)
-        {
-            log::warn!("could not create {}: {error}", parent.display());
-            return;
-        }
-
-        // Through a temporary and a rename, so a crash during the write cannot
-        // destroy the previous autosave -- which would be the one moment it was
-        // most needed.
-        let temporary = path.with_extension("brokkr.tmp");
-        let state = self.project_state();
-        // `File::create` fails with an `io::Error` and `project::write` with a
-        // `ProjectError`, so neither `?` nor `and_then` will chain them.
-        // Reporting is identical either way -- the log line and nothing else.
-        let write = match std::fs::File::create(&temporary) {
-            Ok(file) => {
-                let mut writer = std::io::BufWriter::new(file);
-                brokkr_core::project::write(&mut writer, &self.doc, &state)
-                    .map_err(|error| error.to_string())
-            }
-            Err(error) => Err(error.to_string()),
-        };
-        match write {
-            Ok(()) => match std::fs::rename(&temporary, &path) {
-                Ok(()) => log::info!("autosaved to {}", path.display()),
-                Err(error) => log::warn!("could not replace {}: {error}", path.display()),
-            },
-            Err(error) => {
-                log::warn!("could not autosave to {}: {error}", temporary.display());
-                std::fs::remove_file(&temporary).ok();
-            }
-        }
-    }
-
-    /// Throw the crash net away, once its work is safely somewhere else.
-    fn clear_autosave(&self) {
-        if let Some(path) = self.autosave_file.as_ref() {
-            std::fs::remove_file(path).ok();
+        if self.begin_autosave() {
+            self.advance_autosave();
+        } else {
+            // So that a write that cannot begin is not tried again on every
+            // frame after it. One that begins and is given up is another
+            // matter: it is tried again at the next pause.
+            self.last_autosave = Instant::now();
         }
     }
 
@@ -9666,6 +9721,20 @@ impl Brokkr {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         if self.renaming.is_some() && !keeps_the_rename_open(&message) {
             self.commit_rename();
+        }
+        // **A crash net being written in pieces is of the document as it
+        // was when the first piece was made.** Anything but the frame tick
+        // may be about to change it, so the write is given up before the
+        // message is acted on and begun again at the next pause. See
+        // `app/autosave.rs`.
+        if self.autosave.in_flight() && !matches!(message, Message::Frame) {
+            self.give_up_autosave();
+        }
+        // The pointer moves kept since the last frame come before whatever
+        // this is, the frame tick included: they happened first. See
+        // `pointer_in`.
+        if !matches!(message, Message::Pointer(PointerEvent::Moved { .. })) {
+            self.handle_moves();
         }
         // **The same pattern as the rename above, and it is here for a
         // stronger reason than tidiness.** While the gizmo is armed the
@@ -14959,9 +15028,14 @@ mod tests {
              lands as a visible hitch"
         );
 
-        // Once the pointer has been still long enough, it writes.
+        // Once the pointer has been still long enough, it writes: a piece a
+        // tick, on another thread. See `app/autosave.rs`.
         app.last_activity = Instant::now() - Duration::from_secs(60);
         app.maybe_autosave();
+        while app.autosave.in_flight() {
+            app.maybe_autosave();
+        }
+        app.autosave.settle();
         assert!(app.has_autosave(), "an overdue autosave never happened after a pause");
 
         std::fs::remove_dir_all(&directory).ok();
