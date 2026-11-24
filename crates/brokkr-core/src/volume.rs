@@ -34,6 +34,21 @@ mod settled;
 pub use settled::Settled;
 #[cfg(test)]
 pub(crate) use settled::without as without_settled;
+
+/// Whether a test has the shortcuts off on this thread: see
+/// [`settled::without`]. An edit that has a run of voxels to offer asks, and
+/// offers none, so that what a run writes has a voxel at a time to be
+/// compared with.
+#[cfg(test)]
+pub(crate) fn shortcuts_off() -> bool {
+    settled::off()
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+pub(crate) fn shortcuts_off() -> bool {
+    false
+}
 use settled::{Ball, Lines, Surroundings};
 
 /// Counters for the debug overlay and the memory budget.

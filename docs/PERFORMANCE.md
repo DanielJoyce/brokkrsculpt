@@ -109,8 +109,10 @@ RAYON_NUM_THREADS=1 valgrind --tool=callgrind target/release/examples/stroke_pro
 ```
 
 A ring of stamps round a ball of 4610 dense bricks with a remesh after each:
-the brush, its radius in voxels, and how many times round. It prints
-milliseconds a stamp for the edit and for the remesh. The benches say how long
+the brush, its radius in voxels, and how many times round. The brush is one
+of upstream's six or one of the studio's by the name the palette has it
+under (gather, wear, ridge, scrape, fill, polish, crease, bead, band). It
+prints milliseconds a stamp for the edit and for the remesh. The benches say how long
 a stamp takes and not where in it the time goes, and this is the smallest
 program that spends its time the way a stroke does, so that a profiler has
 something to look at. Everything in the core's section below was found with
@@ -460,17 +462,94 @@ at 48 voxels on one core, edit about 12.5 to 8.0 and 8.5. On four cores Draw
 at 48 is 2.8 where it has been 4.1 to 4.8, and Draw at 128 is 23.6 where it
 was 36.8, and 59.7 at the start.
 
+Not done then, and done since (the next section): any brush but Draw, and
+the compound brushes that most of the palette is made of.
+
+### Every brush, a run of voxels at a time (issue 52)
+
+The run that was Draw's is now one kernel for every brush on the field
+(`brush/runs.rs`): the studio's compound brush, with whatever amounts of its
+actions a brush has, and upstream's six, each of which is one action of it.
+`compound.rs` has held one action to the classic brush of that name bit for
+bit since it was written, so the classic brushes are handed the same kernel
+and no second one was written for them.
+
+Four voxels at a time: the weight under any profile, with a plateau or
+without; where a push, a pinch and a gather read from, and the read; the
+offset an inflate adds; the mean of the six neighbours a smooth blends
+toward, which away from the rim of the copy are six loads of four; the blend
+toward a plane, the side of it kept, and the mask let in after. A voxel on
+the brush's axis, which a pinch has nowhere to draw toward, is left out of
+the read as the closure leaves it out.
+
+Milliseconds a stamp of 48 voxels' radius, the edit alone, on one core:
+`stroke_profile <brush> 48 2`, single runs, before and after in one session.
+The studio's brushes are named as the palette names them.
+
+| | Before | After |
+|---|---|---|
+| Draw | 9.2 | 9.2 |
+| Inflate | 6.6 | 4.8 |
+| Smooth | 7.0 | 5.0 |
+| Pinch | 14.6 | 8.5 |
+| Flatten | 4.8 | 2.7 |
+| Clay | 6.2 | 3.3 |
+| Gather | 16.3 | 10.2 |
+| Wear down | 16.0 | 9.2 |
+| Ridge | 16.4 | 10.5 |
+| Scrape | 7.7 | 3.0 |
+| Fill | 6.9 | 3.1 |
+| Polish | 13.1 | 5.9 |
+| Crease | 16.3 | 8.5 |
+| Bead | 17.4 | 8.8 |
+| Band | 16.3 | 9.1 |
+
+Draw is where it was, which is what was hoped of it: the kernel that does
+everything costs it nothing over the one that did only Draw. By instructions,
+which do not move from run to run (`valgrind --tool=callgrind`, one round of
+48 stamps and their remeshes, the ball's making included, in thousands of
+millions): Inflate 5.57 to 4.21, Gather 7.36 to 5.56, Polish 9.37 to 4.71.
+
+**What a run writes is what the closure writes, to the bit**, as before, and
+now compared as bits and not as numbers: upstream's six under each falloff,
+both ways, at two voxel sizes; twelve studio brushes, among them every one
+of the palette's that is amounts of its own and two that are every action at
+once, under each shape of profile with a plateau and without; and 48 brushes
+of random amounts, profile, strength and voxel size. Each test also counts
+the voxels done by runs, so that a comparison of the closure with itself
+cannot pass for one.
+
+One thing is not held to the bit, because the language does not hold it:
+which of a nought and a minus nought `f32::min` and `f32::max` return.
+Levelling to one side takes the lesser or the greater of a voxel's value and
+its blend, and where those are noughts of opposite sign either may come
+back, from the closure as from the run. No test has met the case.
+
+Checked by breaking it: the six neighbours added in another order, the
+gather's projection along the stroke left out, the wrong side of a plane
+kept and a pinch read on the axis each fail a test. Multiplying an
+inflate's three factors in another order does not, and should not: one of
+them is one or minus one, and the product is the same bits either way.
+
+On a screen: five strokes on the starting ball with Crease, Bead, Inflate,
+Pinch and Polish, by the same pointer moves, once with the runs and once
+with a switch that offers none (made for the look and not kept). The two
+pictures of the window are the same in every pixel. That is the software
+renderer of a machine with no graphics card, which is enough to compare two
+fields by.
+
 Not done:
 
-- **Only Draw.** Pinch reads the same way and would take the same; Smooth
-  reads six neighbours and is a different run; the rest read nothing and
-  gain less.
-- **Only the classic brush.** The brush engine and the compound brushes,
-  which are what most of the palette is made of, are a voxel at a time.
+- **A brush that lays one layer a stroke** (Layer, Clay strips, Stitches) is
+  a loop of its own (`compound/layer.rs`), a voxel at a time.
+- **Not with a pattern, not with a picture across the tip**, and not where
+  the mask varies within a brick. Each is the closure as it was.
 - **Only x86-64.** Elsewhere no run is offered and the brush is as it was.
   The same four-at-a-time arithmetic exists on Apple silicon and was not
-  written.
-- **Not with a pattern**, and not where the mask varies within a brick.
+  written: this machine cannot run it.
+- **The brush engine** (`brush/engine.rs`) is a voxel at a time. Nothing in
+  the application stamps with it.
+- **On every core** the gain was not measured brush by brush.
 
 ## The renderer: looked at, and not built
 
@@ -503,8 +582,7 @@ that draws on its CPU. The replay is there to judge it with.
   compute shader would run here, on the CPU, and say nothing about a graphics
   card. The case for it is also weaker than it was: on one core a Draw stamp
   at 48 voxels takes a third less time and its remesh two fifths less, and
-  what is left in the stamp
-  is the brush's arithmetic a voxel at a time, which issue 52 would take
-  further on the CPU with the bit-for-bit tests still holding. A compute path
-  cannot keep those, and what it may differ by is still the maintainer's to
-  decide.
+  what was left in the stamp, the brush's arithmetic a voxel at a time, has
+  since been taken four voxels at a time on the CPU (issue 52) with the
+  bit-for-bit tests still holding. A compute path cannot keep those, and
+  what it may differ by is still the maintainer's to decide.

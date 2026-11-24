@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 4974c14507134d132a35b69e15f3afce2502bbc671cb744437aff48a34214f05 # shrinks to actions = Actions { push: -0.9991511, inflate: 0.0, pinch: 2.3461907, gather: 0.0, smooth: 0.0016068296, level: 0.0, plane: 0.0, side: Both }, shape = Smooth, plateau = 0.0, strength = 0.507989, adds = false, voxel_size = 1.0
+cc d810f9b7e70a55d58f6f0a7eb5753b4ef18b02b6fe38994006fd36305a4e330b # shrinks to actions = Actions { push: 0.0, inflate: 0.0, pinch: 0.0, gather: 1.0132395, smooth: 0.0, level: 0.0, plane: 0.0, side: Both }, shape = Smooth, plateau = 0.0, strength = 0.05, adds = false, voxel_size = 1.0
