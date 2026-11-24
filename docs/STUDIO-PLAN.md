@@ -24,7 +24,7 @@ was built and what was measured.
 | P Painting engine | **Usable**, 2026-11-23 (section 15): the storage, the view and the brush. Painted colour is on screen, in the project file and in every export that carries colour | The paint brush lays a colour: *Paint*, *Glaze* or *Erase*, put on *Loaded*, as a *Wash*, with a *Drybrush* or a *Sponge*, at any opacity, with a soft edge. *Pick from model* takes a colour back off it |
 | B A brush is its settings | **Done but for B5**, 2026-11-23 (section 16): files in the right directories, one generic brush, the palette, a picture across the tip, build-up on or off, lines or dabs. Brushes that stamp a shape (B5) are a later stage | BRUSHES: twenty-one that come with the application, upstream's six among them, and the user's own, a file each. *What it does* shows a brush as five amounts to change. *Profile*: five shapes and a flat middle. *Picture across the tip*, *Builds up* or *One layer*, and *Set down* as a line or every so many widths |
 | M Reading sizes | **Done**, 2026-11-23 (section 17) | A scale bar in the corner of the viewport that follows the zoom, and *Measure*: two clicks on the model, and the straight-line distance between them drawn and read out |
-| C Brushes to hand | **Done but for reading vector displacement files**, 2026-11-24 (section 18): the palette at the pointer, brush files, insert brushes, cables, the workbench, and thirty-three brushes on the palette in three groups, the ones that add among them, each with a picture of its stroke on its button, and a true pinch | `b` brings every brush up under the pointer. *Import* takes brush files in. ADD: a ball, box, cylinder, cone or ring, or a copy of any body, set down by a drag; a cable laid along the model or hung between two points; each baked in or left a body of its own. WORKBENCH: the model is set aside and a ball, or a copy of the body in hand, takes its place to try a brush on |
+| C Brushes to hand | **Done but for reading vector displacement files**, 2026-11-24 (section 18): the palette at the pointer, brush files, insert brushes, cables, the workbench, and thirty-three brushes on the palette in three groups, the ones that add among them, each with a picture of its stroke on its button, a true pinch, and a fillet of up to eight voxels where an insert meets the body | `b` brings every brush up under the pointer. *Import* takes brush files in. ADD: a ball, box, cylinder, cone or ring, or a copy of any body, set down by a drag; a cable laid along the model or hung between two points; each baked in or left a body of its own. WORKBENCH: the model is set aside and a ball, or a copy of the body in hand, takes its place to try a brush on |
 | B Brushes as settings | **Begun**, 2026-11-23 (section 16): where the files go, and the generic brush in the engine. The palette and build-up follow | Settings, brushes and autosave each in the folder the operating system keeps for them |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
@@ -3222,6 +3222,7 @@ a ball that does not matter.
 | C6 | The brushes that add, on the palette and in a brush file | **Built**, 2026-11-24 (below) |
 | C7 | A picture of its stroke on each brush's button | **Built**, 2026-11-24 (below) |
 | C8 | A true pinch and its opposite: the gather | **Built**, 2026-11-24 (below) |
+| C9 | A join as wide as is wanted: the fillet where an insert meets the body | **Built**, 2026-11-24 (below) |
 
 **What a vector displacement brush is here.** In a mesh sculptor a
 vector displacement map is how a brush stamps a shape with an overhang,
@@ -3294,7 +3295,8 @@ nothing, which is what a vector displacement brush is for.
 | Hung cable | Press at one end, drag to the other | A tube between the two points, sagging by a share of its span |
 
 **Baked in, or its own body.** Baked in, it is part of the body in hand
-from then on, joined softly (a fillet of up to two voxels) or plainly,
+from then on, joined softly (a fillet of up to two voxels then, and of
+up to eight since C9) or plainly,
 and the invert key takes the shape OUT of the body: a socket, a groove.
 As a body of its own it is shown on the body in hand while it is dragged,
 and when the button comes up that body is put back exactly as it was and
@@ -3637,4 +3639,110 @@ does something and is one undo.
 * Crease is still upstream's push and pinch, held to upstream's kernel.
   A crease made with a gather might be the better crease, and was not
   tried.
+
+#### Built, 2026-11-24 (C9): a join as wide as is wanted
+
+Asked for by the maintainer: *"insert brushes should support adding
+smoothing after insert to make things look a bit better."* Until now a
+soft join was a fillet of two voxels at most, and anything wider was a
+stroke of the Smooth brush by hand.
+
+**The Soft join slider goes to eight voxels**, and a fillet of three is
+what a brush that adds has until it is set otherwise (it was one). The
+shapes, a copy of a body, and both cables have it; a brush file's
+`join:` takes it. `brokkr-core/src/solid/wide.rs`.
+
+**Why it stopped at two, and what is different.** A soft join is a
+smooth minimum of two distances, the body's and the shape's. The body's
+field is a distance for three voxels either side of its surface and a
+clamp past that, and a smooth minimum read from a clamp rounds off
+something that is not there. So for a join wider than two voxels the
+body's distance is now WORKED OUT further than it is kept: from the
+voxels near the surface, which know where the surface is, a front moves
+out a voxel at a time, each voxel handing on the nearest point of the
+surface it has heard of. Only where the shape is near, only as far as
+the join can reach (three voxels and one and a quarter times its width,
+which is arithmetic from the smooth minimum's formula), and only
+band-deep on the side that cannot change. A copy of a body has the same
+trouble with its own distance, says so, and has it worked out the same
+way. The join itself is the same formula at any width, so there is no
+step where the narrow one ends and the wide one begins.
+
+**Tried first, and dropped: a blur.** The first build of this stage did
+what the request says in so many words, and smoothed after the insert:
+it blurred the field along the line where the two surfaces cross. A
+blur is even-handed. It fills a crease and wears down a corner alike,
+and an insert is all corners. Measured in the core's test fixture, a
+ball of radius 30 voxels with a knob of radius 10 on it, by where the
+surface was along the line that halves the crease:
+
+| Half-width of the blur, voxels | 0 | 1 | 2 | 3 | 4 | 6 | 8 |
+|---|---|---|---|---|---|---|---|
+| The crease filled by, voxels | 0.35 | 0.80 | 1.10 | 1.30 | 1.25 | 0.70 | -0.65 |
+
+At its best it filled the crease by a voxel, and at its widest the knob
+had melted and the crease was LOWER than the ball had been. A fillet
+adds in the crease and nowhere else, at any width: the same fixture,
+joined over eight voxels, is filled by between two and four (held by a
+test), with the top of the knob and the far side of the ball where they
+were to a fiftieth of a voxel.
+
+**What it costs**, measured in the development build the tests and the
+build container's screen run in, one run each, on the same fixture:
+
+| Joined | over 2 | over 3 | over 4 | over 6 | over 8 |
+|---|---|---|---|---|---|
+| A knob of radius 10 voxels | 1.4 ms | 12 ms | 13 ms | 23 ms | 34 ms |
+| A knob of radius 25 | 6 ms | 30 ms | 37 ms | 56 ms | 79 ms |
+| A hung cable of 24 runs, a run at a time | 2 ms | | 139 ms | | 429 ms |
+| The same cable, its runs together | 3 ms | | 29 ms | | 58 ms |
+
+Two things were built and thrown away on the way to those. Sweeping the
+whole box about the shape from each of its corners, which is how this
+kind of distance is usually worked out, took 83 ms for the small knob
+over three voxels, 333 ms over eight, and a second for the cable over
+four, on every move of the pointer: nearly all of such a box is far
+from one surface or the other. And a front that was let run along the
+body's surface to find the rest of it ran along all of it. The last row
+is why a shape still being dragged is now set down with all its pieces
+TOGETHER (`Join::set`, the `Together` solid): the smooth minimum of the
+body with the nearest of several solids is the nearest of its smooth
+minima with each, so it is the same join worked out once.
+
+**Seen on a screen**: three balls set down side by side with joins of
+nothing, two and six voxels, a box, a cable laid in a zigzag and a hung
+cable. The plain join's crease is a ragged line, the two-voxel one is
+clean, and the six-voxel one is a fillet that can be seen from across
+the model. The cable is webbed to the body along its length.
+
+**Held by**: in the core, a distance worked out is the distance to 0.15
+of a voxel on a ball as far as thirteen voxels from it; the wider the
+join the more of the crease is filled, and the top of the knob and the
+far side of the ball do not move; a wide join takes up where a narrow
+one leaves off; a shape taken out has its rim rounded and nothing
+added; set again it leaves no trace, and one undo takes the shape and
+its join; the runs of a cable joined widely meet without a rib; a body
+lent as a shape is joined as a shape is, and the body away from it does
+not swell (which a join read from a clamp does); solids set together
+are joined as they are one by one; and for any shape, size, lift, width
+and direction the field stays in its band, only gains (or, cutting,
+only loses), changes nothing further off than a join of that width
+reaches, and clears to the body as it was. In the application: a shape
+dragged out with the widest join fills more than with the old widest,
+leaves no trace of where it was dragged, and is one undo.
+
+**Not done:**
+
+* A join wider than something is thick reaches over the top of it: a
+  smooth minimum raises both surfaces wherever they are within its
+  width of each other, by up to a quarter of the width. A thin cable
+  joined widely is a little thicker for it, evenly along its length.
+  That is what this kind of join is, and a fillet that left the cable
+  alone would be a different formula.
+* The worked-out distance is thrown away after each shape. Over one
+  stroke the body it is measured from does not change, so it could be
+  kept and a drag would cost less on every move after the first.
+* A shape so big that the box about it is more than twelve million
+  voxels is joined over two voxels and no wider, silently.
+* Not timed in a release build.
 

@@ -38,7 +38,7 @@
 //! Scrape = brush:Clay, plane:-0.15, side:Cut
 //! Rivet row = brush:Draw, size:1, stamp:Rivet, along:1.5
 //! Stitches = brush:Draw, tip:Bar, buildup:off, dabs:1, size:1.5, strength:0.6
-//! Pipe = brush:Draw, add:Cable, join:1, lift:1, start:Flange, end:Flange
+//! Pipe = brush:Draw, add:Cable, join:3, lift:1, start:Flange, end:Flange
 //! ```
 //!
 //! `brush:` names the classic brush the settings start from, and the
@@ -83,7 +83,7 @@ use brokkr_core::brush::compound::{Actions, MOST_PLATEAU, Profile, Shape, Side};
 use brokkr_core::solid::{End, Form, MOST_BLEND};
 use contracts::debug_ensures;
 
-use super::adding::{Kind, LIFT_RANGE, SAG_RANGE, Setup};
+use super::adding::{DEFAULT_BLEND, Kind, LIFT_RANGE, SAG_RANGE, Setup};
 use super::studio::{ALONG_RANGE, HEIGHT_RANGE, LAZY_RANGE, SIZE_RANGE};
 use super::{MAX_STRENGTH, MIN_RADIUS_MM, MIN_STRENGTH};
 
@@ -626,7 +626,8 @@ pub(super) fn core() -> &'static [Preset] {
     static CORE: LazyLock<Vec<Preset>> = LazyLock::new(|| {
         let nothing = Actions::default();
         // One of a kind, held this far off the surface and joined softly.
-        let joined = |what: Kind, lift: f32| Setup { blend: 1.0, lift, ..Setup::plain(what) };
+        let joined =
+            |what: Kind, lift: f32| Setup { blend: DEFAULT_BLEND, lift, ..Setup::plain(what) };
         let stamp = |name: &str, picture: BuiltIn| Preset {
             stamp: Some((StampOf::BuiltIn(picture), DEFAULT_HEIGHT)),
             ..Preset::plain(name)

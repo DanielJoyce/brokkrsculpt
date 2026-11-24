@@ -36,8 +36,10 @@
 //! further ([`OUTSIDE`]). A smooth minimum reads both distances wherever
 //! they are within its width of each other, and where one of them is a
 //! clamp and not a distance it rounds off something that is not there. At
-//! no more than [`MOST_BLEND`] voxels that cannot reach the surface. A
-//! wider fillet is a pass of the Smooth brush afterwards.
+//! no more than two voxels that cannot reach the surface, and up to there
+//! the field's own distances are what is read. A wider join, up to
+//! [`MOST_BLEND`], works the body's distance out further than the field
+//! keeps it: `solid/wide.rs`, stage C9.
 
 use contracts::debug_requires;
 use glam::{IVec3, Mat3, Vec2, Vec3};
@@ -47,8 +49,10 @@ use crate::mask::PROTECTED;
 use crate::region::FieldRegion;
 use crate::volume::{BrickPreview, BrickVerdict, Volume};
 
+mod wide;
+
 /// The widest a soft join may be, in voxels. See the module documentation.
-pub const MOST_BLEND: f32 = 2.0;
+pub const MOST_BLEND: f32 = 8.0;
 
 /// Half the diagonal of a brick, in voxels: how far any voxel of a brick
 /// can be from its middle.
@@ -64,6 +68,15 @@ pub trait Solid: Sync {
 
     /// A box that holds all of it.
     fn bounds(&self) -> (Vec3, Vec3);
+
+    /// How far from its surface [`Solid::distance`] is sure to be the
+    /// distance and not an underestimate, in world units. A shape with a
+    /// formula is sure of it everywhere, which is what this says unless a
+    /// solid says otherwise. A join wider than this works the distance
+    /// out for itself (`solid/wide.rs`).
+    fn sure(&self) -> f32 {
+        f32::INFINITY
+    }
 }
 
 /// The shapes that come with the application, each a unit across from its
@@ -266,6 +279,12 @@ impl Solid for Lent<'_> {
         let reach = Vec3::splat(self.radius * self.scale);
         (self.centre - reach, self.centre + reach)
     }
+
+    /// As far as the source keeps its own field, less the half voxel a
+    /// sample between voxels can be out by.
+    fn sure(&self) -> f32 {
+        (OUTSIDE - 0.5) * self.source.voxel_size() * self.scale
+    }
 }
 
 /// One straight run of a cable: a tube from one point to another, round
@@ -316,10 +335,60 @@ impl Solid for Mirrored<'_> {
         self.of.distance(self.across(point))
     }
 
+    fn sure(&self) -> f32 {
+        self.of.sure()
+    }
+
     fn bounds(&self) -> (Vec3, Vec3) {
         let (low, high) = self.of.bounds();
         let (a, b) = (self.across(low), self.across(high));
         (a.min(b), a.max(b))
+    }
+}
+
+/// Several solids as one: the nearest of them. What a hung cable is,
+/// with its runs and its ends, to a join that works something out once
+/// for all of what it joins (`solid/wide.rs`).
+pub struct Together<'a> {
+    /// Each with the box that holds it.
+    parts: Vec<(&'a dyn Solid, (Vec3, Vec3))>,
+}
+
+impl<'a> Together<'a> {
+    pub fn of(parts: &[&'a dyn Solid]) -> Self {
+        Self {
+            parts: parts
+                .iter()
+                .map(|part| (*part, part.bounds()))
+                .filter(|(_, (low, high))| low.is_finite() && high.is_finite())
+                .collect(),
+        }
+    }
+}
+
+impl Solid for Together<'_> {
+    fn distance(&self, point: Vec3) -> f32 {
+        let mut least = f32::INFINITY;
+        for (part, (low, high)) in &self.parts {
+            // A part is no nearer than its box is, so one whose box is
+            // further than the nearest found so far is not asked.
+            let to_box = (*low - point).max(point - *high).max(Vec3::ZERO).length();
+            if to_box < least {
+                least = least.min(part.distance(point));
+            }
+        }
+        least
+    }
+
+    fn bounds(&self) -> (Vec3, Vec3) {
+        self.parts.iter().fold(
+            (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+            |(low, high), (_, (part_low, part_high))| (low.min(*part_low), high.max(*part_high)),
+        )
+    }
+
+    fn sure(&self) -> f32 {
+        self.parts.iter().map(|(part, _)| part.sure()).fold(f32::INFINITY, f32::min)
     }
 }
 
@@ -393,6 +462,18 @@ impl How {
     pub const ADD: How = How { cut: false, blend: 0.0 };
 }
 
+/// How wide a join is, in voxels: what it asks for, within what may be.
+fn width_of(how: How) -> f32 {
+    if how.blend.is_finite() { how.blend.clamp(0.0, MOST_BLEND) } else { 0.0 }
+}
+
+/// The width of a join that is wider than the field's own distances will
+/// do, or nothing for one that is not.
+fn wide_part(how: How) -> Option<f32> {
+    let width = width_of(how);
+    (width > wide::NARROW).then_some(width)
+}
+
 /// The nearer of two distances, with the corner where they meet eased
 /// over `width`. With no width it is the nearer of the two.
 fn nearer(a: f32, b: f32, width: f32) -> f32 {
@@ -447,10 +528,22 @@ impl Join {
 
     /// Put the body back as it was and join these to it: what a shape
     /// still being dragged out does on every move.
+    ///
+    /// The wide part of a wide join is worked out once for all of them
+    /// together and not once each: the same join, since the smooth
+    /// minimum of the body with the nearest of several solids is the
+    /// nearest of its smooth minima with each, and a hung cable of two
+    /// dozen runs is then one piece of work on every move of the pointer
+    /// and not two dozen.
     pub fn set(&mut self, volume: &mut Volume, solids: &[&dyn Solid], how: How) {
         self.clear(volume);
         for solid in solids {
-            self.add(volume, *solid, how);
+            self.add_narrow(volume, *solid, how);
+        }
+        if let Some(width) = wide_part(how)
+            && !solids.is_empty()
+        {
+            self.add_wide(volume, &Together::of(solids), how.cut, width);
         }
     }
 
@@ -459,8 +552,19 @@ impl Join {
     /// mask, by as much as the mask lets through.
     #[debug_requires(volume.is_recording(), "a solid is joined to the body as it was before the stroke, which is the open stroke's undo record")]
     pub fn add(&mut self, volume: &mut Volume, solid: &dyn Solid, how: How) {
+        self.add_narrow(volume, solid, how);
+        if let Some(width) = wide_part(how) {
+            self.add_wide(volume, solid, how.cut, width);
+        }
+    }
+
+    /// [`Join::add`] as far as the field's own distances will do it: the
+    /// whole of a join no wider than two voxels.
+    fn add_narrow(&mut self, volume: &mut Volume, solid: &dyn Solid, how: How) {
         let voxel_size = volume.voxel_size();
-        let blend = if how.blend.is_finite() { how.blend.clamp(0.0, MOST_BLEND) } else { 0.0 };
+        // From the field's own distances, as wide as they will do. The
+        // rest of a wider join is `add_wide`.
+        let blend = width_of(how).min(wide::NARROW);
         // Past this many voxels from the solid nothing changes: the band
         // the field is kept to, and the width of the join.
         let reach = OUTSIDE + blend;
@@ -692,9 +796,10 @@ mod tests {
         assert!(same_values(&gone, &ball()));
     }
 
-    /// The runs of a cable meet without a bulge, however soft the join:
-    /// along the top of two runs laid end to end on the ball it is one
-    /// height, at the joint as in the middle of a run.
+    /// The runs of a cable meet without a bulge, at the softest join the
+    /// field's own distances make: along the top of two runs laid end to
+    /// end on the ball it is one height, at the joint as in the middle of
+    /// a run. A wider join has the same test in `solid/wide.rs`.
     #[test]
     fn the_runs_of_a_cable_meet_without_a_bulge() {
         let at = |turn: f32| CENTRE + Vec3::new(turn.sin(), turn.cos(), 0.0) * (RADIUS + 2.0);
@@ -706,7 +811,7 @@ mod tests {
         let mut join = Join::new();
         volume.begin_stroke();
         for run in &runs {
-            join.add(&mut volume, run, How { cut: false, blend: MOST_BLEND });
+            join.add(&mut volume, run, How { cut: false, blend: wide::NARROW });
         }
         volume.end_stroke();
         let joint = surface(&volume, Vec3::Y);
