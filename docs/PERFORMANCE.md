@@ -416,6 +416,62 @@ Not done: a set-down was not profiled again after these, so what its 27 ms
 are now made of is not known; by the first profile's shares it should be the
 wide join's spreading of the distance. And the brush loop by rows (issue 52).
 
+### The Draw brush, a run of voxels at a time (issue 52, begun)
+
+With the mesher and the library's `floor` out of the way, about half of a
+Draw stroke's instructions were the brush's arithmetic, asked about one voxel
+at a time, and the trilinear read it ends in.
+
+An edit can now be offered a run of voxels along X (`VoxelEdit::run`,
+`Volume::edit_voxels_by_runs`): the voxels of a line that are all to be
+visited, under one freedom from the mask. The Draw brush takes them four at a
+time (`brush/runs.rs`), with the operations every x86-64 has: how far each is
+from the brush's middle, the falloff of that, where to read from, which cell
+that is and how far across it, and the seven blends of the cell's eight
+corners. Fetching the corners is still a voxel at a time, as four pairs of
+neighbours.
+
+**What a run writes is what the closure writes, to the bit.** Every operation
+is the closure's, in the closure's order, done to four numbers where the
+closure does it to one. Nothing is reordered and nothing is fused. With the
+brush's shortcuts off no run is offered, so the tests that run every brush
+both ways compare the two, and so do the tests that hold the brush engine's
+Draw to the classic one, since the engine is still a voxel at a time.
+
+What was tried on the way, by instructions of `stroke_profile draw 48` on one
+core, in thousands of millions:
+
+| | |
+|---|---|
+| Before | 7.08 |
+| The loop reshaped to offer runs, and nothing taking them | 7.18 |
+| The weight four at a time, the read as it was | 6.14 |
+| And the read's blends four at a time, the corners fetched through `cell` | 6.10 |
+| And the corners fetched as pairs | 5.22 |
+
+The fourth row is the one to notice: making the blends wide and then filling
+their eight inputs one number at a time through a function that returns an
+array cost as much as it saved. Reading each pair of neighbours as one and
+dealing the four voxels' pairs out is what made it pay.
+
+Milliseconds a stamp, `stroke_profile`, runs of the same session, since the
+machine was a tenth slower that day than when the table above was made: Draw
+at 48 voxels on one core, edit about 12.5 to 8.0 and 8.5. On four cores Draw
+at 48 is 2.8 where it has been 4.1 to 4.8, and Draw at 128 is 23.6 where it
+was 36.8, and 59.7 at the start.
+
+Not done:
+
+- **Only Draw.** Pinch reads the same way and would take the same; Smooth
+  reads six neighbours and is a different run; the rest read nothing and
+  gain less.
+- **Only the classic brush.** The brush engine and the compound brushes,
+  which are what most of the palette is made of, are a voxel at a time.
+- **Only x86-64.** Elsewhere no run is offered and the brush is as it was.
+  The same four-at-a-time arithmetic exists on Apple silicon and was not
+  written.
+- **Not with a pattern**, and not where the mask varies within a brick.
+
 ## The renderer: looked at, and not built
 
 Nothing below was changed, because nothing below can be judged on a machine
