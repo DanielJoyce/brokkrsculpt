@@ -24,7 +24,7 @@ was built and what was measured.
 | P Painting engine | **Usable**, 2026-11-23 (section 15): the storage, the view and the brush. Painted colour is on screen, in the project file and in every export that carries colour | The paint brush lays a colour: *Paint*, *Glaze* or *Erase*, put on *Loaded*, as a *Wash*, with a *Drybrush* or a *Sponge*, at any opacity, with a soft edge. *Pick from model* takes a colour back off it |
 | B A brush is its settings | **Done but for B5**, 2026-11-23 (section 16): files in the right directories, one generic brush, the palette, a picture across the tip, build-up on or off, lines or dabs. Brushes that stamp a shape (B5) are a later stage | BRUSHES: twenty-one that come with the application, upstream's six among them, and the user's own, a file each. *What it does* shows a brush as five amounts to change. *Profile*: five shapes and a flat middle. *Picture across the tip*, *Builds up* or *One layer*, and *Set down* as a line or every so many widths |
 | M Reading sizes | **Done**, 2026-11-23 (section 17) | A scale bar in the corner of the viewport that follows the zoom, and *Measure*: two clicks on the model, and the straight-line distance between them drawn and read out |
-| C Brushes to hand | **Done but for reading vector displacement files**, 2026-11-24 (section 18): the palette at the pointer, brush files, insert brushes, cables, the workbench, and thirty brushes on the palette in three groups, the ones that add among them, each with a picture of its stroke on its button | `b` brings every brush up under the pointer. *Import* takes brush files in. ADD: a ball, box, cylinder, cone or ring, or a copy of any body, set down by a drag; a cable laid along the model or hung between two points; each baked in or left a body of its own. WORKBENCH: the model is set aside and a ball, or a copy of the body in hand, takes its place to try a brush on |
+| C Brushes to hand | **Done but for reading vector displacement files**, 2026-11-24 (section 18): the palette at the pointer, brush files, insert brushes, cables, the workbench, and thirty-three brushes on the palette in three groups, the ones that add among them, each with a picture of its stroke on its button, and a true pinch | `b` brings every brush up under the pointer. *Import* takes brush files in. ADD: a ball, box, cylinder, cone or ring, or a copy of any body, set down by a drag; a cable laid along the model or hung between two points; each baked in or left a body of its own. WORKBENCH: the model is set aside and a ball, or a copy of the body in hand, takes its place to try a brush on |
 | B Brushes as settings | **Begun**, 2026-11-23 (section 16): where the files go, and the generic brush in the engine. The palette and build-up follow | Settings, brushes and autosave each in the folder the operating system keeps for them |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
@@ -3221,6 +3221,7 @@ a ball that does not matter.
 | C5 | Vector displacement maps, read from a file | Not planned yet: see below |
 | C6 | The brushes that add, on the palette and in a brush file | **Built**, 2026-11-24 (below) |
 | C7 | A picture of its stroke on each brush's button | **Built**, 2026-11-24 (below) |
+| C8 | A true pinch and its opposite: the gather | **Built**, 2026-11-24 (below) |
 
 **What a vector displacement brush is here.** In a mesh sculptor a
 vector displacement map is how a brush stamps a shape with an overhang,
@@ -3546,9 +3547,8 @@ from Smooth on a ball, which this does. So Pinch sharpens the SIDES of
 what is under it and does not narrow it, and Spread is nearer a brush
 that wears a feature away than one that opens it. The kernel is
 upstream's and is not changed. The pictures show what the two do, a test
-holds them to it as found, and **the two names are the maintainer's to
-decide**: whether to rename them, or to give Pinch a kernel that
-gathers.
+holds them to it as found. The maintainer's answer, the same day: *"Add
+true pinch and inverse."* That is stage C8, below.
 
 **Held by**: every brush that comes with the application has a picture
 of the right size with no hole in it, that is not the slab it was run
@@ -3569,4 +3569,72 @@ picture, made without a panic.
   because the picture in hand is the application's and not the brush's.
 * The first draw of the palette waits for all the pictures at once. They
   could be made a few a frame.
+
+#### Built, 2026-11-24 (C8): a true pinch and its opposite
+
+Asked for by the maintainer when the brush pictures showed what
+upstream's Pinch does to a ridge (C7): *"Add true pinch and inverse."*
+
+**A sixth action, the gather** (`Actions::gather`, in
+`brush/compound.rs`). It reads the field from further off the stroke's
+line by **a share of how far off the line the voxel is**, and that share
+is the whole of what makes it a pinch. Upstream's pinch reads from a
+fixed step away however near the axis the voxel is, so a voxel beside
+the axis reads from most of a voxel off, and the top of a ridge is
+smeared flat or lost. A step that is a share of the distance is nothing
+ON the line and grows away from it, which squeezes everything toward the
+line: a ridge is narrower, and its top, on the line, is where it was.
+Negative, it reads from nearer the line by the same share and the ridge
+is wider and as tall. The share is 0.2 at full strength and weight, no
+more than a half at any voxel so that a spread cannot read from across
+the line, and the step is no more than upstream's pinch's 0.85 of a
+voxel.
+
+It draws toward the stroke's LINE, where the stroke has a way it is
+going, and not toward the brush's axis as upstream's does: a stamp's
+pull along the stroke is not wanted, and with only the pull across it a
+stroke along a ridge leaves the ridge's length alone. The invert key
+turns a gather round when it is all the brush does, as it turns
+upstream's pinch round. A stroke that lays one layer (section 16) has it
+too.
+
+**Four brushes**, which makes thirty-three:
+
+| Brush | What it is |
+|---|---|
+| Gather | A true pinch: a ridge under the stroke is narrower and as tall |
+| Spread | The gather turned round: wider and as tall |
+| Wear down | Upstream's pinch turned round, by what it does. It was called Spread until the pictures showed what it did |
+| Ridge | A push of 0.6 and a gather: a ridge with an edge on it, as Crease is a groove with one |
+
+**Pinch is still upstream's Pinch**, with its key and its button, and its
+picture shows what it does. *What it does* has a slider for each: *Gather
+together or apart*, and *Pinch steeper sided or worn down*, which is the
+slider that used to say together or apart. A brush file's line has
+`gather:`.
+
+**The palette at the pointer is five across.** At three, thirty-three
+brushes were taller than a window of 600 pixels, which a test of exactly
+that caught.
+
+**Held by**: in the core, on a slab with a ridge drawn along it, a
+gather leaves the ridge under three quarters as wide and within a tenth
+as tall, a spread more than a fifth wider and within a tenth as tall,
+the invert key turns the one into the other, upstream's pinch on the
+same ridge leaves it broader, and a gather on flat ground moves nothing;
+the six classic brushes are still their kernels bit for bit, which adding
+an action could have disturbed and did not; the properties of the
+generic brush and of a layer now include a gather of any amount. In the
+application: the four brushes do in their pictures what the table says;
+a brush file round-trips a gather; and every brush on the palette still
+does something and is one undo.
+
+**Not done:**
+
+* A gather conserves a ridge's height and not its volume: narrower and
+  as tall is less material. A pinch that raised what it narrowed would
+  be a push as well, which Ridge is by hand.
+* Crease is still upstream's push and pinch, held to upstream's kernel.
+  A crease made with a gather might be the better crease, and was not
+  tried.
 

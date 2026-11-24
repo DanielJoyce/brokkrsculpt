@@ -13,7 +13,7 @@
 //!
 //! [`core`]. Draw, Clay, Inflate, Pinch, Smooth and Flatten are upstream's
 //! six, each as the settings it is, and the rest cost only their settings:
-//! a pinch turned round is Spread, a levelling brush that only cuts is
+//! a gather turned round is Spread, a levelling brush that only cuts is
 //! Scrape, a push and a pinch is Crease. They cannot be forgotten. One can
 //! be changed, by keeping a brush under its name, and the changed one then
 //! stands where it stood; forgetting that puts the first back.
@@ -162,9 +162,9 @@ pub(super) struct Preset {
     pub size_from_pressure: f32,
 }
 
-/// The six amounts a line of the file may give, in the order
+/// The amounts a line of the file may give, in the order
 /// [`Preset::amounts`] has them.
-const AMOUNTS: [&str; 6] = ["push", "inflate", "pinch", "smooth", "level", "plane"];
+const AMOUNTS: [&str; 7] = ["push", "inflate", "pinch", "smooth", "level", "plane", "gather"];
 
 impl Preset {
     /// The classic Draw brush, under `name`, at whatever size and strength
@@ -304,9 +304,17 @@ impl Preset {
             && self.size_from_pressure == now.size_from_pressure
     }
 
-    /// The six amounts, in the order of [`AMOUNTS`].
-    fn amounts(actions: &Actions) -> [f32; 6] {
-        [actions.push, actions.inflate, actions.pinch, actions.smooth, actions.level, actions.plane]
+    /// The amounts, in the order of [`AMOUNTS`].
+    fn amounts(actions: &Actions) -> [f32; 7] {
+        [
+            actions.push,
+            actions.inflate,
+            actions.pinch,
+            actions.smooth,
+            actions.level,
+            actions.plane,
+            actions.gather,
+        ]
     }
 
     /// What the brush is, apart from what it is called: two brushes with
@@ -402,7 +410,7 @@ impl Preset {
         // name one: its settings may come before the `add` that makes them
         // mean anything.
         let mut add = Adding::default();
-        let mut amounts: [Option<f32>; 6] = [None; 6];
+        let mut amounts: [Option<f32>; 7] = [None; 7];
         let mut side = None;
         let mut crease = false;
         for field in settings.split(',') {
@@ -425,7 +433,7 @@ impl Preset {
                         self.kind = kind;
                     }
                 }
-                "push" | "inflate" | "pinch" | "plane" => {
+                "push" | "inflate" | "pinch" | "plane" | "gather" => {
                     let index = AMOUNTS.iter().position(|amount| *amount == key);
                     if let (Some(index), Some(amount)) = (index, number(-1.0..=1.0)) {
                         amounts[index] = Some(amount);
@@ -536,7 +544,8 @@ impl Preset {
         if crease || side.is_some() || amounts.iter().any(Option::is_some) {
             let mut actions =
                 if crease { Actions::CREASE } else { Actions::of(self.kind).unwrap_or_default() };
-            let [push, inflate, pinch, smooth, level, plane] = amounts;
+            let [push, inflate, pinch, smooth, level, plane, gather] = amounts;
+            actions.gather = gather.unwrap_or(actions.gather);
             actions.push = push.unwrap_or(actions.push);
             actions.inflate = inflate.unwrap_or(actions.inflate);
             actions.pinch = pinch.unwrap_or(actions.pinch);
@@ -627,7 +636,18 @@ pub(super) fn core() -> &'static [Preset] {
             Preset::classic("Clay", BrushKind::Clay),
             Preset::classic("Inflate", BrushKind::Inflate),
             Preset::classic("Pinch", BrushKind::Pinch),
-            Preset::doing("Spread", Actions { pinch: -1.0, ..nothing }),
+            // A true pinch and its opposite: a ridge under the stroke is
+            // narrower, or wider, and as tall. `Actions::gather`.
+            Preset::doing("Gather", Actions::GATHER),
+            Preset::doing("Spread", Actions { gather: -1.0, ..nothing }),
+            // Upstream's pinch turned round, by what it does: it reads the
+            // field from further off the brush's axis, and what stands
+            // under the brush is worn away. It was called Spread here
+            // until the brush pictures showed what it did.
+            Preset::doing("Wear down", Actions { pinch: -1.0, ..nothing }),
+            // A push and a gather: a ridge with an edge on it, as Crease
+            // is a groove with one.
+            Preset::doing("Ridge", Actions { push: 0.6, gather: 1.0, ..nothing }),
             Preset::classic("Smooth", BrushKind::Smooth),
             Preset::classic("Flatten", BrushKind::Flatten),
             // Cuts down to a plane held a little under the surface and
@@ -731,13 +751,16 @@ pub(super) const GROUPS: [(&str, &[&str]); 3] = [
             "Clay",
             "Inflate",
             "Pinch",
+            "Gather",
             "Spread",
             "Smooth",
             "Flatten",
             "Scrape",
             "Fill",
             "Polish",
+            "Wear down",
             "Crease",
+            "Ridge",
             "Bead",
             "Band",
             "Layer",
@@ -1084,6 +1107,7 @@ mod tests {
                     push: 0.25,
                     inflate: -0.5,
                     pinch: 0.75,
+                    gather: -0.4,
                     smooth: 0.1,
                     level: 0.9,
                     plane: -0.3,
@@ -1192,7 +1216,10 @@ mod tests {
         };
         assert_eq!(does("Crease"), Actions::CREASE);
         assert_eq!(does("Fine crease"), Actions::CREASE);
-        assert_eq!(does("Spread").pinch, -1.0);
+        assert_eq!(does("Gather"), Actions::GATHER);
+        assert_eq!(does("Spread").gather, -1.0);
+        assert_eq!(does("Wear down").pinch, -1.0);
+        assert_eq!((does("Ridge").push, does("Ridge").gather), (0.6, 1.0));
         assert_eq!((does("Scrape").level, does("Scrape").side), (1.0, Side::Cut));
         assert_eq!((does("Fill").level, does("Fill").side), (1.0, Side::Fill));
     }
@@ -1685,11 +1712,12 @@ mod tests {
             let amount =
                 || prop_oneof![(-20_i32..=20).prop_map(|step| step as f32 * 0.05), -3.0_f32..3.0];
             let side = prop::sample::select(Side::ALL.to_vec());
-            (amount(), amount(), amount(), amount(), amount(), amount(), side).prop_map(
-                |(push, inflate, pinch, smooth, level, plane, side)| Actions {
+            (amount(), amount(), amount(), amount(), amount(), amount(), side, amount()).prop_map(
+                |(push, inflate, pinch, smooth, level, plane, side, gather)| Actions {
                     push,
                     inflate,
                     pinch,
+                    gather,
                     smooth,
                     level,
                     plane,

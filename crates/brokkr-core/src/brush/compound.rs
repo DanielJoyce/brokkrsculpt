@@ -67,6 +67,26 @@ use crate::volume::{BrickPreview, BrickVerdict, Volume};
 /// own number, under its own name: see [`super::engine::CREASE_DEPTH`].
 pub const CREASE_PUSH: f32 = -super::engine::CREASE_DEPTH;
 
+/// How far a gather reads from beyond where a voxel is, as a share of the
+/// voxel's distance from the stroke's line, at full strength and full
+/// weight.
+///
+/// **A share of the distance, and that is the whole of what makes it a
+/// pinch.** Upstream's pinch reads from a fixed step away, however near
+/// the axis the voxel is. A voxel beside the axis then reads from most of
+/// a voxel off, and the top of a ridge under the brush is either smeared
+/// flat (reading from nearer) or lost (reading from further). A step that
+/// is a share of the distance is nothing ON the line and grows away from
+/// it, which is a squeeze of everything toward the line: a ridge is
+/// narrower by that share at each stamp, and its top, on the line, is
+/// where it was.
+pub const GATHER: f32 = 0.2;
+
+/// The most a gather's share may be at one voxel, whatever the strength:
+/// less than all of the distance, so that a spread never reads from the
+/// other side of the line.
+const MOST_GATHER: f32 = 0.5;
+
 /// The most of the middle of a stroke that may be flat. Less than all of
 /// it, so that a brush always has a rim that tapers and never a wall.
 pub const MOST_PLATEAU: f32 = 0.95;
@@ -105,9 +125,17 @@ pub struct Actions {
     pub push: f32,
     /// Swell the surface along its own normals, -1..=1. Negative shrinks.
     pub inflate: f32,
-    /// Draw the surface toward the brush's axis, -1..=1. Negative spreads
-    /// it from the axis.
+    /// Upstream's pinch, -1..=1: read the field from nearer the brush's
+    /// axis by a fixed step, or with a negative amount from further off.
+    /// Named for what upstream calls it and not for what it does to a
+    /// ridge under the brush, which is to keep its top and make it
+    /// broader and steeper sided; negative, it wears the ridge away. See
+    /// [`Actions::gather`], which is the pinch a ridge is narrowed by.
     pub pinch: f32,
+    /// Gather the surface toward the stroke's line, -1..=1: a ridge under
+    /// the brush is narrower and as tall. Negative spreads it from the
+    /// line: wider, and as tall. See [`GATHER`].
+    pub gather: f32,
     /// Blend toward the mean of the neighbours, 0..=1.
     pub smooth: f32,
     /// Blend toward the plane, 0..=1.
@@ -146,6 +174,7 @@ impl Actions {
             push,
             inflate,
             pinch: number(self.pinch).clamp(-1.0, 1.0),
+            gather: number(self.gather).clamp(-1.0, 1.0),
             smooth: number(self.smooth).clamp(0.0, 1.0),
             level: number(self.level).clamp(0.0, 1.0),
             plane: number(self.plane).clamp(-1.0, 1.0),
@@ -159,6 +188,7 @@ impl Actions {
             && (-1.0..=1.0).contains(&self.inflate)
             && self.push.abs() + self.inflate.abs() <= 1.0
             && (-1.0..=1.0).contains(&self.pinch)
+            && (-1.0..=1.0).contains(&self.gather)
             && (0.0..=1.0).contains(&self.smooth)
             && (0.0..=1.0).contains(&self.level)
             && (-1.0..=1.0).contains(&self.plane)
@@ -169,6 +199,7 @@ impl Actions {
         self.push == 0.0
             && self.inflate == 0.0
             && self.pinch == 0.0
+            && self.gather == 0.0
             && self.smooth == 0.0
             && self.level == 0.0
     }
@@ -204,7 +235,7 @@ impl Actions {
             BrushKind::Draw
         } else if self.inflate != 0.0 {
             BrushKind::Inflate
-        } else if self.pinch != 0.0 {
+        } else if self.pinch != 0.0 || self.gather != 0.0 {
             BrushKind::Pinch
         } else if self.level == 0.0 {
             BrushKind::Smooth
@@ -221,6 +252,8 @@ impl Actions {
     pub const INFLATE: Actions = Actions { inflate: 1.0, ..Actions::NOTHING };
     /// What Pinch does.
     pub const PINCH: Actions = Actions { pinch: 1.0, ..Actions::NOTHING };
+    /// A true pinch: gather the surface toward the stroke's line.
+    pub const GATHER: Actions = Actions { gather: 1.0, ..Actions::NOTHING };
     /// What Smooth does.
     pub const SMOOTH: Actions = Actions { smooth: 1.0, ..Actions::NOTHING };
     /// What Flatten does: level to the plane under the brush.
@@ -235,6 +268,7 @@ impl Actions {
         push: 0.0,
         inflate: 0.0,
         pinch: 0.0,
+        gather: 0.0,
         smooth: 0.0,
         level: 0.0,
         plane: 0.0,
@@ -416,7 +450,7 @@ impl Compound {
     ) {
         let actions = self.actions;
         let has = (
-            actions.push != 0.0 || actions.pinch != 0.0,
+            actions.push != 0.0 || actions.pinch != 0.0 || actions.gather != 0.0,
             actions.inflate != 0.0,
             actions.smooth != 0.0,
             actions.level != 0.0,
@@ -497,6 +531,13 @@ impl Compound {
             && actions.level == 0.0;
         // Pinch turns into spread under the invert key only when it is all
         // the brush does. See the module documentation.
+        // Which way the stroke is going, laid into the surface: what a
+        // gather draws toward the line of. Nothing for a stamp that has
+        // not travelled.
+        let along = {
+            let lying = stamp.tangent - normal * stamp.tangent.dot(normal);
+            lying.try_normalize()
+        };
         let pinch_turn = match direction {
             BrushDirection::Subtract if pinch_alone => -1.0,
             _ => 1.0,
@@ -511,8 +552,9 @@ impl Compound {
 
         // Two boxes: the one written is the brush's own reach, the one read
         // is that grown by however far the warps read from.
-        let reach_voxels =
-            gain * (actions.push.abs() * displacement + actions.pinch.abs() * PINCH_PULL_VOXELS);
+        let reach_voxels = gain
+            * (actions.push.abs() * displacement
+                + (actions.pinch.abs() + actions.gather.abs()) * PINCH_PULL_VOXELS);
         let reach = reach_voxels * voxel_size;
         let extent = Vec3::splat(radius);
         let (lo, hi) = volume.voxel_bounds(centre - extent, centre + extent);
@@ -540,6 +582,7 @@ impl Compound {
         let level_alone = actions.push == 0.0
             && actions.inflate == 0.0
             && actions.pinch == 0.0
+            && actions.gather == 0.0
             && actions.smooth == 0.0;
         let inflating = match direction {
             // Which way the offset goes, with the amount's own sign.
@@ -651,6 +694,29 @@ impl Compound {
                             from += pull;
                             read = true;
                         }
+                    }
+                    if actions.gather != 0.0 {
+                        // How far the voxel is from the stroke's line,
+                        // along the surface: from the line where the
+                        // stroke has a way it is going, and from the
+                        // brush's axis where it has not yet.
+                        let from_centre = position - centre;
+                        let mut off = from_centre - normal * from_centre.dot(normal);
+                        if let Some(along) = along {
+                            off -= along * off.dot(along);
+                        }
+                        // Read from further off the line by a share of how
+                        // far off it the voxel is, which is what narrows
+                        // whatever is there and leaves what is ON the line
+                        // where it was: see `GATHER`. Spreading reads from
+                        // nearer the line by the same share, and a share
+                        // of less than all of it cannot cross the line.
+                        let share = (GATHER * weight * pinch_turn * actions.gather)
+                            .clamp(-MOST_GATHER, MOST_GATHER);
+                        let step = off * share;
+                        let most = PINCH_PULL_VOXELS * voxel_size;
+                        from += step.clamp_length_max(most);
+                        read = true;
                     }
                     if read {
                         held = region.sample(from / voxel_size);
@@ -1009,6 +1075,113 @@ mod tests {
         assert!(back.sample_voxel(at) > ball().sample_voxel(at), "a negative push did not cut");
     }
 
+    /// A slab with a ridge along it: the ground at z = 40, and a ridge
+    /// drawn along x through y = 48.
+    fn ridged() -> Volume {
+        let mut volume = Volume::new(1.0);
+        volume.edit_voxels(
+            glam::IVec3::new(0, 16, 20),
+            glam::IVec3::new(96, 80, 60),
+            |_, at, _| at.z - 40.0,
+        );
+        let draw = Compound {
+            actions: Actions::DRAW,
+            radius: 6.0,
+            strength: 0.6,
+            profile: Profile::default(),
+            pattern: Pattern::default(),
+        };
+        along_the_ridge(&mut volume, &draw, 3);
+        volume
+    }
+
+    /// A stroke along the ridge's line, `passes` times over.
+    fn along_the_ridge(volume: &mut Volume, compound: &Compound, passes: usize) {
+        let mut scratch = BrushScratch::new();
+        for _ in 0..passes {
+            for step in 0..40 {
+                let at = Vec3::new(18.0 + step as f32 * 1.5, 48.0, 40.0);
+                let stamp = Stamp::new(at, Vec3::Z, BrushDirection::Add).with_tangent(Vec3::X);
+                compound.apply(volume, &stamp, None, &mut scratch);
+            }
+        }
+    }
+
+    /// How tall the ridge is at the middle of its length, and how wide at
+    /// half that height, in voxels.
+    fn ridge(volume: &Volume) -> (f32, f32) {
+        let height = |y: f32| {
+            let mut z = 56.0;
+            while z > 30.0 && volume.sample_world(Vec3::new(48.0, y, z)) > 0.0 {
+                z -= 0.02;
+            }
+            z - 40.0
+        };
+        let top = height(48.0);
+        let wide = (0..240).filter(|step| height(36.0 + *step as f32 * 0.1) > top * 0.5).count();
+        (top, wide as f32 * 0.1)
+    }
+
+    /// A gather is a pinch: a ridge under the stroke is narrower and as
+    /// tall. Turned round it is wider and as tall. Upstream's pinch on the
+    /// same ridge makes it broader, which is why there is a gather.
+    #[test]
+    fn a_gather_narrows_a_ridge_and_keeps_its_top() {
+        let brush = |actions: Actions| Compound {
+            actions,
+            radius: 8.0,
+            strength: 0.6,
+            profile: Profile::default(),
+            pattern: Pattern::default(),
+        };
+        let after = |actions: Actions| {
+            let mut volume = ridged();
+            along_the_ridge(&mut volume, &brush(actions), 2);
+            ridge(&volume)
+        };
+        let (top, wide) = ridge(&ridged());
+        assert!(top > 2.0 && wide > 5.0, "the fixture's ridge is {top} tall and {wide} wide");
+
+        let (gathered_top, gathered) = after(Actions::GATHER);
+        assert!(gathered < wide * 0.75, "gathered, the ridge is {gathered} wide of {wide}");
+        assert!((gathered_top - top).abs() < top * 0.1, "and {gathered_top} tall of {top}");
+
+        let (spread_top, spread) = after(Actions { gather: -1.0, ..Actions::default() });
+        assert!(spread > wide * 1.2, "spread, the ridge is {spread} wide of {wide}");
+        assert!((spread_top - top).abs() < top * 0.1, "and {spread_top} tall of {top}");
+
+        // The invert key turns a gather that is all the brush does into a
+        // spread, as it turns upstream's pinch round.
+        let mut inverted = ridged();
+        let mut scratch = BrushScratch::new();
+        for _ in 0..2 {
+            for step in 0..40 {
+                let at = Vec3::new(18.0 + step as f32 * 1.5, 48.0, 40.0);
+                let stamp = Stamp::new(at, Vec3::Z, BrushDirection::Subtract).with_tangent(Vec3::X);
+                brush(Actions::GATHER).apply(&mut inverted, &stamp, None, &mut scratch);
+            }
+        }
+        assert!((ridge(&inverted).1 - spread).abs() < 0.3, "{} and {spread}", ridge(&inverted).1);
+
+        // Control: upstream's pinch on the same ridge is broader, which
+        // is what there is a gather for. (Its opposite wore the ridge of
+        // the brush pictures down to a quarter, `app/swatch.rs`, over
+        // more passes than this; here, on a ridge the stroke runs dead
+        // along, two passes leave its top, so that is not asked.)
+        let (_, pinched) = after(Actions::PINCH);
+        assert!(pinched > wide * 1.1, "upstream's pinch left the ridge {pinched} wide of {wide}");
+
+        // And a gather on flat ground, with nothing to gather, moves
+        // nothing: it only ever reads the field from beside where it is.
+        let mut flat = Volume::new(1.0);
+        flat.edit_voxels(glam::IVec3::new(0, 16, 20), glam::IVec3::new(96, 80, 60), |_, at, _| {
+            at.z - 40.0
+        });
+        let before = flat.sample_world(Vec3::new(48.0, 50.0, 40.3));
+        along_the_ridge(&mut flat, &brush(Actions::GATHER), 2);
+        assert!((flat.sample_world(Vec3::new(48.0, 50.0, 40.3)) - before).abs() < 1e-4);
+    }
+
     /// The six classic brushes are each their own family, and the two
     /// that are not brushes on the field have no actions.
     #[test]
@@ -1025,6 +1198,8 @@ mod tests {
         // And the ones that cost only their settings.
         assert_eq!(Actions::CREASE.family(), BrushKind::Draw);
         assert_eq!(Actions { pinch: -1.0, ..Actions::default() }.family(), BrushKind::Pinch);
+        assert_eq!(Actions::GATHER.family(), BrushKind::Pinch);
+        assert_eq!(Actions { gather: -1.0, ..Actions::default() }.family(), BrushKind::Pinch);
         // Every shape upstream has a curve for is that curve's shape.
         for shape in Shape::ALL {
             match shape.curve() {
@@ -1189,11 +1364,13 @@ mod tests {
         /// range, sometimes well out of it.
         fn loose() -> impl Strategy<Value = Actions> {
             let amount = || -3.0_f32..3.0;
-            (amount(), amount(), amount(), amount(), amount(), amount(), side()).prop_map(
-                |(push, inflate, pinch, smooth, level, plane, side)| Actions {
+            let gather = prop_oneof![Just(0.0_f32), -3.0_f32..3.0];
+            (amount(), amount(), amount(), amount(), amount(), amount(), side(), gather).prop_map(
+                |(push, inflate, pinch, smooth, level, plane, side, gather)| Actions {
                     push,
                     inflate,
                     pinch,
+                    gather,
                     smooth,
                     level,
                     plane,
@@ -1217,6 +1394,7 @@ mod tests {
                 let one_way = actions.push != 0.0
                     || actions.inflate != 0.0
                     || actions.pinch != 0.0
+                    || actions.gather != 0.0
                     || (actions.level != 0.0
                         && (actions.side != Side::Both || actions.plane != 0.0));
                 prop_assert_eq!(family.is_directional(), one_way);
