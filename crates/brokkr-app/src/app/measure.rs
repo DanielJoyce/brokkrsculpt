@@ -291,6 +291,17 @@ impl Brokkr {
         }
     }
 
+    /// Escape: put away a measurement that is being taken, and say whether
+    /// there was one. One that is finished stays on the screen.
+    pub(super) fn measure_escaped(&mut self) -> bool {
+        let taking = self.measure.armed;
+        if taking {
+            self.measure_changed(MeasureMessage::Armed(false));
+            self.status = "measure put away".to_string();
+        }
+        taking
+    }
+
     /// A press on the viewport while a measurement is being taken: whether
     /// the measurement took it, in which case it is not a stroke.
     ///

@@ -849,6 +849,10 @@ pub(crate) fn shortcut(character: &str, command: bool, shift: bool, alt: bool) -
         // gesture a latched toggle cannot do: look, and be back where you were
         // without a second press. The release is decoded in `key_event`
         // alongside the sizing keys -- this function only ever sees presses.
+        // The palette of brushes, at the pointer. ZBrush's own key for its
+        // brush palette, taken for the reason the others here were. See
+        // `app/studio.rs`.
+        "b" => Some(Message::Studio(crate::message::StudioMessage::PaletteToggled)),
         "h" => Some(Message::MaskPeekStarted),
         // Blender's and Nomad's own key for this, taken rather than invented.
         // It is the one keystroke that recovers ANY camera, however lost, and

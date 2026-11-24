@@ -9179,6 +9179,7 @@ impl Brokkr {
                 if self.menu.take().is_some()
                     || self.top_menu.take().is_some()
                     || self.cube_menu.take().is_some()
+                    || self.close_palette()
                 {
                     return;
                 }
@@ -10141,6 +10142,12 @@ impl Brokkr {
                 // container, so the innermost widget always wins.
                 if self.renaming.is_some() {
                     self.cancel_rename();
+                    return Task::none();
+                }
+                // The palette of brushes at the pointer, and a measurement
+                // being taken: Escape puts either away, which changes
+                // nothing. See `app/studio.rs` and `app/measure.rs`.
+                if self.close_palette() || self.measure_escaped() {
                     return Task::none();
                 }
                 // And one further down again: solo, BEFORE the armed cut.

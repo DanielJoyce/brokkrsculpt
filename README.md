@@ -419,7 +419,8 @@ true of it too, and what it adds is this.
   layer* however long you scrub, set it down as a line or in separate
   dabs, and *Keep* the brush under a name. A brush you keep is one small
   file in your data directory (`~/.local/share/brokkrsculpt/brushes` on
-  Linux), so a brush can be handed to somebody else.
+  Linux), so a brush can be handed to somebody else, and *Import* takes
+  one in. Press **b** for the palette under the pointer.
 - **Stamps and strokes.** A *Stamp* that presses one of six images or any
   picture into the surface with one drag, or lays a row of them along a
   stroke (rivets, stitches, scales), a *Lazy* stroke for long clean
