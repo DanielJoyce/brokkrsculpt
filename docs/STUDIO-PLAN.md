@@ -24,6 +24,7 @@ was built and what was measured.
 | P Painting engine | **Usable**, 2026-11-23 (section 15): the storage, the view and the brush. Painted colour is on screen, in the project file and in every export that carries colour | The paint brush lays a colour: *Paint*, *Glaze* or *Erase*, put on *Loaded*, as a *Wash*, with a *Drybrush* or a *Sponge*, at any opacity, with a soft edge. *Pick from model* takes a colour back off it |
 | B A brush is its settings | **Done but for B5**, 2026-11-23 (section 16): files in the right directories, one generic brush, the palette, a picture across the tip, build-up on or off, lines or dabs. Brushes that stamp a shape (B5) are a later stage | BRUSHES: twenty-one that come with the application, upstream's six among them, and the user's own, a file each. *What it does* shows a brush as five amounts to change. *Profile*: five shapes and a flat middle. *Picture across the tip*, *Builds up* or *One layer*, and *Set down* as a line or every so many widths |
 | M Reading sizes | **Done**, 2026-11-23 (section 17) | A scale bar in the corner of the viewport that follows the zoom, and *Measure*: two clicks on the model, and the straight-line distance between them drawn and read out |
+| C Brushes to hand | **Begun**, 2026-11-24 (section 18): the palette at the pointer and brush files. Insert brushes, the cable and the workbench are next | `b` brings every brush up under the pointer. *Import* takes brush files in |
 | B Brushes as settings | **Begun**, 2026-11-23 (section 16): where the files go, and the generic brush in the engine. The palette and build-up follow | Settings, brushes and autosave each in the folder the operating system keeps for them |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
@@ -3199,3 +3200,76 @@ drawing to the camera's own ray.
   when the model under it is sculpted or moved.
 * It is not saved with the document.
 * Escape does not put a measurement away; the button does.
+
+---
+
+## 18. Brushes to hand, and brushes that add (milestone C)
+
+Asked for by the maintainer on 2026-11-24, with the palette of section 16
+in front of them: how is the palette reached, is there a palette at the
+pointer, how are brushes loaded and managed, what of brushes that insert
+a mesh or lay a cable between two ends, kept as a body of their own or
+baked into the one in hand, and a place to design a brush and try it on
+a ball that does not matter.
+
+| Stage | What | State |
+|---|---|---|
+| C1 | The palette at the pointer, on `b`; brush files taken in and read again | **Built**, 2026-11-24 (below) |
+| C2 | Insert brushes: a shape set down on the surface by a drag, as a body of its own or baked into the one in hand | Next |
+| C3 | The cable: a tube laid along a stroke, with a choice of ends | |
+| C4 | The workbench: a ball to try a brush on, apart from the document | |
+| C5 | Vector displacement maps, read from a file | Not planned yet: see below |
+
+**What a vector displacement brush is here.** In a mesh sculptor a
+vector displacement map is how a brush stamps a shape with an overhang,
+an ear or a horn, which a height cannot say. This is a sculptor of
+distances and not of a mesh, and the thing itself, a shape with any
+overhang set into the surface and blended, is what an insert brush does
+(C2) with no map in between. Reading the map FILES other programs write
+is a separate thing and is not planned yet: they are 32-bit EXR, and the
+`image` crate's EXR reader is one of the dependencies this project
+turned down by name (`crates/brokkr-app/Cargo.toml`).
+
+**Materials.** There is no library of them. A document's paints are in
+its paint rack and saved with it (section 8), and the machine's
+filaments are a settings file. A paint rack that can be kept and taken
+into another document, as a brush can, is the same idea and is not
+built.
+
+#### Built, 2026-11-24 (C1): the palette at the pointer, and brush files
+
+**`b`** brings the palette up under the pointer: every brush, three to a
+row, a short move from where the hand is. ZBrush's key for the same
+thing. Choosing a brush takes it up and puts the palette away; so does
+`b` again, Escape, or a press anywhere else, which is then not a stroke.
+For a hand on a pen and not on a keyboard, *At the pointer* beside the
+BRUSHES heading does the same and brings it up in the middle of the view.
+Opened near an edge it is kept on the screen.
+
+**Import** takes brush files in: each brush of each file picked is kept
+as if it had been kept here, in a file of its own in the brushes
+directory, in place of one of the same name. **Read again** reads that
+directory again, for files put there by hand while the application was
+running. The panel says where the directory is.
+
+Escape also puts away a measurement that is being taken (section 17
+listed that as not done).
+
+**Seen on a screen and changed**: with the right-click menu up, the
+scale bar and the Measure button were not drawn, because they had been
+added to one arm of the view and not the others. They are under every
+arm now.
+
+**Held by**: `b` and `B` mean the palette; it comes up at the pointer,
+or in the middle of the view when the pointer is off it; a brush chosen
+there is the brush in hand; `b`, Escape and a press elsewhere put it
+away, and that press sculpts nothing; wherever it is asked for it is all
+on the screen; files taken in are brushes kept, a pack's among them, a
+file with no brush in it is said and is not fatal, and one too big to be
+a brush is refused before it is read.
+
+**Not done**: the key could not be pressed on the build container's
+screen, which passes no keys; the palette was seen there by its button
+and the key is held by a test of what the key means. *Read again* is
+not under test: it reads the directory of whoever runs the tests.
+

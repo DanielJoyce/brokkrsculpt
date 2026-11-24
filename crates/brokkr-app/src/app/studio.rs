@@ -60,7 +60,7 @@ use brokkr_core::brush::compound::{Actions, Compound, Layer, MOST_PLATEAU, Profi
 use brokkr_core::brush::stamp::{Placement, StampError, StampGesture};
 use brokkr_core::{Brush, BrushDirection, FalloffCurve, Stamp};
 use glam::{Vec2, Vec3};
-use iced::widget::{button, column, row, slider, text, text_input};
+use iced::widget::{button, column, container, row, slider, text, text_input};
 use iced::{Element, Length, Task};
 
 use super::Brokkr;
@@ -85,6 +85,13 @@ pub(super) const ALONG_RANGE: std::ops::RangeInclusive<f32> = 0.5..=4.0;
 /// a gap of half a stamp between them, which reads as a row of separate
 /// things.
 const DEFAULT_ALONG: f32 = 1.5;
+
+/// How wide the palette at the pointer is, and roughly how tall its
+/// heading and each of its rows come out: only to keep it on the screen,
+/// so being a little out costs nothing.
+const POPUP_WIDTH: f32 = 330.0;
+const POPUP_HEAD: f32 = 44.0;
+const POPUP_ROW: f32 = 27.0;
 
 /// The most steps taken along the pointer's ray to find the surface as it
 /// was before a stroke. See [`Brokkr::layer_aim`].
@@ -128,6 +135,9 @@ pub(super) struct StudioState {
     pub open: bool,
     /// The picture in hand is laid across the tip of the brush.
     pub tip_on: bool,
+    /// Where the palette is up at the pointer, in pixels of the viewport,
+    /// or nothing when it is put away.
+    pub popup: Option<Vec2>,
     /// Every stamp works on what the last one left, as a brush always
     /// has. Off, a stroke lays one layer.
     pub build_up: bool,
@@ -176,6 +186,7 @@ impl Default for StudioState {
             plateau: 0.0,
             open: false,
             tip_on: false,
+            popup: None,
             build_up: true,
             layer: Layer::new(),
             dabs: 0.0,
@@ -324,10 +335,14 @@ impl StudioState {
             StudioMessage::PresetNamed(name) => {
                 self.preset_name = name.chars().take(4 * super::presets::LONGEST_NAME).collect();
             }
-            // These change the classic brush too, which is not this
-            // struct's: `Brokkr::actions_changed` and
-            // `Brokkr::preset_changed` have them.
-            StudioMessage::ActionsChosen(_)
+            // These change the classic brush too, or want the pointer or
+            // a file, none of which is this struct's:
+            // `Brokkr::studio_changed` has them.
+            StudioMessage::PaletteToggled
+            | StudioMessage::BrushImportRequested
+            | StudioMessage::BrushImported(_)
+            | StudioMessage::BrushesReloaded
+            | StudioMessage::ActionsChosen(_)
             | StudioMessage::PresetChosen(_)
             | StudioMessage::PresetSaved
             | StudioMessage::PresetRemoved(_) => {}
@@ -364,6 +379,39 @@ async fn pick_stamp_image() -> Option<Result<LoadedStamp, String>> {
     Some(read_stamp_image(handle.path()))
 }
 
+/// Ask for brush files and read them: each one's name and text, or why it
+/// could not be read. `None` when the dialog is dismissed.
+async fn pick_brush_files() -> Option<Vec<Result<(String, String), String>>> {
+    let handles = rfd::AsyncFileDialog::new()
+        .set_title("Import brushes")
+        .add_filter("Brush", &["brush", "conf"])
+        .pick_files()
+        .await?;
+    Some(handles.iter().map(|handle| read_brush_file(handle.path())).collect())
+}
+
+/// A brush file's name and its text.
+pub(super) fn read_brush_file(path: &std::path::Path) -> Result<(String, String), String> {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "a file".to_string());
+    // A brush is a line of text. A file of megabytes is not a brush, and
+    // reading one because it was picked by mistake helps nobody.
+    let size = std::fs::metadata(path).map_err(|why| format!("{name}: {why}"))?.len();
+    if size > MOST_BRUSH_FILE {
+        return Err(format!("{name} is not a brush file: it is {size} bytes"));
+    }
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok((name, text)),
+        Err(why) => Err(format!("{name}: {why}")),
+    }
+}
+
+/// The biggest file read as a brush, in bytes. A pack of every brush there
+/// is room for is a few kilobytes.
+const MOST_BRUSH_FILE: u64 = 256 * 1024;
+
 /// Into a slider's range, with a NaN sent to the bottom of it.
 fn clamped(value: f32, range: std::ops::RangeInclusive<f32>) -> f32 {
     if value.is_nan() { *range.start() } else { value.clamp(*range.start(), *range.end()) }
@@ -376,9 +424,45 @@ impl Brokkr {
                 Message::Studio(StudioMessage::StampImageLoaded(loaded))
             });
         }
-        if let StudioMessage::ActionsChosen(actions) = message {
-            self.actions_changed(actions);
-            return Task::none();
+        match message {
+            StudioMessage::ActionsChosen(actions) => {
+                self.actions_changed(actions);
+                return Task::none();
+            }
+            // Up at the pointer, or in the middle of the view when the
+            // pointer has yet to be over it; down if it is up.
+            StudioMessage::PaletteToggled => {
+                // A pointer that is off the viewport is on the button that
+                // asked, over in the panel.
+                let size = self.viewport_size;
+                let over_the_view = self
+                    .cursor
+                    .filter(|at| (0.0..=size.x).contains(&at.x) && (0.0..=size.y).contains(&at.y));
+                self.studio.popup = match self.studio.popup {
+                    Some(_) => None,
+                    None => Some(over_the_view.unwrap_or(size / 2.0)),
+                };
+                return Task::none();
+            }
+            StudioMessage::BrushImportRequested => {
+                return Task::perform(pick_brush_files(), |read| {
+                    Message::Studio(StudioMessage::BrushImported(read))
+                });
+            }
+            StudioMessage::BrushImported(read) => {
+                self.brushes_imported(read);
+                return Task::none();
+            }
+            StudioMessage::BrushesReloaded => {
+                self.studio.presets = Presets::load();
+                self.status = format!(
+                    "brushes read again: {} of your own{}",
+                    self.studio.presets.list.len(),
+                    Presets::place().map(|place| format!(", from {place}")).unwrap_or_default()
+                );
+                return Task::none();
+            }
+            _ => {}
         }
         if matches!(
             message,
@@ -393,6 +477,51 @@ impl Brokkr {
             self.status = status;
         }
         Task::none()
+    }
+
+    /// Take in the brushes of the files that were picked: each is kept as
+    /// if it had been kept here, in a file of its own, in place of one of
+    /// the same name.
+    fn brushes_imported(&mut self, read: Option<Vec<Result<(String, String), String>>>) {
+        let Some(read) = read else {
+            return;
+        };
+        let (mut taken, mut refused): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+        for file in read {
+            let (name, text) = match file {
+                Ok(read) => read,
+                Err(why) => {
+                    refused.push(why);
+                    continue;
+                }
+            };
+            let brushes = Presets::parse(&text).list;
+            if brushes.is_empty() {
+                refused.push(format!("{name} holds no brush"));
+            }
+            for brush in brushes {
+                if !self.studio.presets.put(brush.clone()) {
+                    refused.push(format!("no room for {}", brush.name));
+                    continue;
+                }
+                if let Err(why) = Presets::write(&brush) {
+                    refused.push(why);
+                }
+                taken.push(brush.name);
+            }
+        }
+        self.status = match (taken.len(), refused.first()) {
+            (0, Some(why)) => format!("no brush imported: {why}"),
+            (0, None) => "no brush imported".to_string(),
+            (count, None) => format!("imported {count}: {}", taken.join(", ")),
+            (count, Some(why)) => format!("imported {count}: {}; but {why}", taken.join(", ")),
+        };
+    }
+
+    /// Put the palette at the pointer away, and say whether it was up: a
+    /// press or Escape that does so has done what it was for.
+    pub(super) fn close_palette(&mut self) -> bool {
+        self.studio.popup.take().is_some()
     }
 
     /// The brush's own strength, which with the mask tool up is not the
@@ -513,6 +642,9 @@ impl Brokkr {
                 self.studio.set(StudioMessage::LazyChanged(preset.lazy_px));
                 self.studio.set(StudioMessage::SizeFromPressureChanged(preset.size_from_pressure));
                 self.status = format!("brush: {}", preset.name);
+                // Choosing a brush is what the palette at the pointer was
+                // up for.
+                self.studio.popup = None;
             }
             StudioMessage::PresetSaved => {
                 let Some(name) = super::presets::named(&self.studio.preset_name) else {
@@ -1046,48 +1178,9 @@ impl Brokkr {
     /// first.
     pub(super) fn palette_panel(&self) -> Element<'_, Message> {
         let changed = |message: StudioMessage| Message::Studio(message);
-        // The palette: a button a brush, lit when the brush in hand is set
-        // up exactly as it says. The ones that come with the application
-        // three to a row, their names being short, and the user's own two
-        // to a row under them. One button forgets the lit one. A button to
-        // forget beside each was tried first, and seen on a screen it left
-        // the names 74 pixels to wrap in.
         let now = self.preset_now(String::new());
         let palette = self.studio.presets.palette();
         let lit = Self::lit(&palette, &now);
-        let came = super::presets::core().len();
-        let brush = |index: usize| {
-            let (preset, place) = palette[index];
-            // One kept under the name of one that came with the
-            // application is marked, so that it is not taken for it.
-            let name = match place {
-                Place::Changed => format!("{} *", preset.name),
-                Place::Core | Place::Own => preset.name.clone(),
-            };
-            button(text(name).size(theme::CAPTION_SIZE).width(Length::Fill).center())
-                .width(Length::Fill)
-                .padding(iced::Padding { top: 5.0, bottom: 5.0, left: 2.0, right: 2.0 })
-                .style(if lit == Some(index) {
-                    theme::tool_button_active
-                } else {
-                    theme::tool_button
-                })
-                .on_press(changed(StudioMessage::PresetChosen(index)))
-        };
-        let rows = |from: usize, to: usize, across: usize| {
-            let indices: Vec<usize> = (from..to).collect();
-            indices.chunks(across).fold(column![].spacing(theme::S1), |rows, held| {
-                let mut assembled = row![].spacing(theme::S1);
-                for index in held {
-                    assembled = assembled.push(brush(*index));
-                }
-                // A short last row keeps its buttons the width of the rest.
-                for _ in held.len()..across {
-                    assembled = assembled.push(iced::widget::Space::new().width(Length::Fill));
-                }
-                rows.push(assembled)
-            })
-        };
         let forgettable = lit.filter(|index| palette[*index].1 != Place::Core);
         let keep = row![
             text_input("name this brush", &self.studio.preset_name)
@@ -1113,14 +1206,124 @@ impl Brokkr {
             .on_press_maybe(forgettable.map(|index| changed(StudioMessage::PresetRemoved(index)))),
         ]
         .spacing(theme::S1);
-        column![
-            text("BRUSHES").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
-            rows(0, came, 3),
-            rows(came, palette.len(), 2),
-            keep,
+        // A brush is a file, and files come from elsewhere: take some in,
+        // or read the directory again after putting some there by hand.
+        let files = row![
+            button(text("Import\u{2026}").size(theme::CAPTION_SIZE).width(Length::Fill).center())
+                .width(Length::Fill)
+                .style(theme::tool_button)
+                .on_press(changed(StudioMessage::BrushImportRequested)),
+            button(text("Read again").size(theme::CAPTION_SIZE).width(Length::Fill).center())
+                .width(Length::Fill)
+                .style(theme::tool_button)
+                .on_press(changed(StudioMessage::BrushesReloaded)),
         ]
-        .spacing(theme::S1)
-        .into()
+        .spacing(theme::S1);
+        // The heading, and the palette at the pointer for a hand that is
+        // on a pen and not on the `b` key.
+        let heading = row![
+            text("BRUSHES").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE).width(Length::Fill),
+            button(text("At the pointer  b").size(theme::CAPTION_SIZE))
+                .padding(iced::Padding { top: 1.0, bottom: 1.0, left: theme::S2, right: theme::S2 })
+                .style(theme::tool_button)
+                .on_press(changed(StudioMessage::PaletteToggled)),
+        ]
+        .align_y(iced::Alignment::Center);
+        let mut panel = column![heading, self.brush_grid(2), keep, files,].spacing(theme::S1);
+        if let Some(place) = Presets::place() {
+            panel = panel.push(
+                text(format!("yours are kept in {place}"))
+                    .size(theme::CAPTION_SIZE)
+                    .color(theme::TEXT_MUTE),
+            );
+        }
+        panel.into()
+    }
+
+    /// The brushes there are, a button each, the one in hand lit: the ones
+    /// that come with the application three to a row, their names being
+    /// short, and the user's own `own_across` to a row under them.
+    ///
+    /// A button to forget beside each was tried first, and seen on a
+    /// screen it left the names 74 pixels to wrap in.
+    fn brush_grid(&self, own_across: usize) -> Element<'_, Message> {
+        let now = self.preset_now(String::new());
+        let palette = self.studio.presets.palette();
+        let lit = Self::lit(&palette, &now);
+        let came = super::presets::core().len();
+        let brush = |index: usize| {
+            let (preset, place) = palette[index];
+            // One kept under the name of one that came with the
+            // application is marked, so that it is not taken for it.
+            let name = match place {
+                Place::Changed => format!("{} *", preset.name),
+                Place::Core | Place::Own => preset.name.clone(),
+            };
+            button(text(name).size(theme::CAPTION_SIZE).width(Length::Fill).center())
+                .width(Length::Fill)
+                .padding(iced::Padding { top: 5.0, bottom: 5.0, left: 2.0, right: 2.0 })
+                .style(if lit == Some(index) {
+                    theme::tool_button_active
+                } else {
+                    theme::tool_button
+                })
+                .on_press(Message::Studio(StudioMessage::PresetChosen(index)))
+        };
+        let rows = |from: usize, to: usize, across: usize| {
+            let indices: Vec<usize> = (from..to).collect();
+            indices.chunks(across).fold(column![].spacing(theme::S1), |rows, held| {
+                let mut assembled = row![].spacing(theme::S1);
+                for index in held {
+                    assembled = assembled.push(brush(*index));
+                }
+                // A short last row keeps its buttons the width of the rest.
+                for _ in held.len()..across {
+                    assembled = assembled.push(iced::widget::Space::new().width(Length::Fill));
+                }
+                rows.push(assembled)
+            })
+        };
+        column![rows(0, came, 3), rows(came, palette.len(), own_across)].spacing(theme::S1).into()
+    }
+
+    /// How many rows the palette at the pointer has: three brushes to a
+    /// row, the ones that come with the application and then the user's.
+    fn popup_rows(&self) -> usize {
+        let came = super::presets::core().len();
+        let own = self.studio.presets.palette().len().saturating_sub(came);
+        came.div_ceil(3) + own.div_ceil(3)
+    }
+
+    /// Where the palette at the pointer goes, given where the pointer was:
+    /// its top left, so that it is under the pointer and on the screen.
+    pub(super) fn popup_corner(&self, at: Vec2) -> Vec2 {
+        let height = POPUP_HEAD + self.popup_rows() as f32 * POPUP_ROW;
+        Vec2::new(
+            (at.x - POPUP_WIDTH / 2.0).min(self.viewport_size.x - POPUP_WIDTH).max(0.0),
+            (at.y - height / 2.0).min(self.viewport_size.y - height).max(0.0),
+        )
+    }
+
+    /// The palette at the pointer: every brush, a short move from where
+    /// the hand already is. ZBrush's `b`. Choosing one puts it away, and
+    /// so does a press anywhere else, Escape, or `b` again.
+    pub(super) fn palette_popup(&self) -> Option<Element<'_, Message>> {
+        let corner = self.popup_corner(self.studio.popup?);
+        let card = column![
+            text("BRUSHES").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
+            self.brush_grid(3),
+        ]
+        .spacing(theme::S2);
+        Some(
+            container(
+                container(card)
+                    .padding(theme::S3)
+                    .width(Length::Fixed(POPUP_WIDTH))
+                    .style(theme::menu_card),
+            )
+            .padding(iced::Padding { left: corner.x, top: corner.y, ..iced::Padding::ZERO })
+            .into(),
+        )
     }
 
     /// Which picture is in hand, for the stamp to press or to lay across
@@ -2911,5 +3114,129 @@ mod tests {
         };
         assert!(same_field(&smoothed(true), &smoothed(false)), "the tip was on Smooth under shift");
         drop(app.studio_panel());
+    }
+
+    /// `b` brings the palette of brushes up at the pointer. Choosing a
+    /// brush there takes it up and puts the palette away; so does `b`
+    /// again, Escape, and a press anywhere else, which is then not a
+    /// stroke.
+    #[test]
+    fn the_palette_comes_to_the_pointer_and_goes_when_it_has_been_used() {
+        let toggle = Message::Studio(StudioMessage::PaletteToggled);
+        for key in ["b", "B"] {
+            let means = crate::viewport::shortcut(key, false, key == "B", false);
+            assert!(
+                matches!(means, Some(Message::Studio(StudioMessage::PaletteToggled))),
+                "{key} means {means:?}"
+            );
+        }
+
+        let mut app = app();
+        assert!(app.palette_popup().is_none());
+        // The pointer over the view: the palette is up where it is.
+        let at = iced::Vector::new(300.0, 200.0);
+        update(&mut app, Message::Pointer(PointerEvent::Moved { position: at, size: SIZE }));
+        update(&mut app, toggle.clone());
+        assert_eq!(app.studio.popup, Some(Vec2::new(300.0, 200.0)));
+        assert!(app.palette_popup().is_some());
+        drop(app.view());
+
+        // A brush chosen is the brush in hand, and the palette is away.
+        choose(&mut app, "Crease");
+        assert_eq!(app.studio.custom, Some(Actions::CREASE));
+        assert_eq!(app.studio.popup, None);
+
+        // Up and down again by its own key.
+        update(&mut app, toggle.clone());
+        update(&mut app, toggle.clone());
+        assert_eq!(app.studio.popup, None);
+
+        // Escape.
+        update(&mut app, toggle.clone());
+        update(&mut app, Message::MenuClosed);
+        assert_eq!(app.studio.popup, None);
+
+        // A press anywhere else puts it away and is not a stroke.
+        update(&mut app, toggle.clone());
+        press(&mut app);
+        release(&mut app);
+        assert_eq!(app.studio.popup, None);
+        assert!(same_field(&app, &self::app()), "the press that put the palette away sculpted");
+        // The next press is a stroke again.
+        stroke(&mut app);
+        assert!(!same_field(&app, &self::app()));
+
+        // With the pointer off the view, on the panel's own button for it,
+        // the palette comes up in the middle of the view.
+        let off = iced::Vector::new(SIZE.x + 120.0, 40.0);
+        update(&mut app, Message::Pointer(PointerEvent::Moved { position: off, size: SIZE }));
+        update(&mut app, toggle);
+        assert_eq!(app.studio.popup, Some(Vec2::new(SIZE.x / 2.0, SIZE.y / 2.0)));
+
+        // Wherever it is asked for, all of it is on the screen.
+        for at in
+            [Vec2::ZERO, Vec2::new(SIZE.x, SIZE.y), Vec2::new(SIZE.x, 0.0), Vec2::new(400.0, 300.0)]
+        {
+            let corner = app.popup_corner(at);
+            let height = POPUP_HEAD + app.popup_rows() as f32 * POPUP_ROW;
+            assert!(corner.x >= 0.0 && corner.x + POPUP_WIDTH <= SIZE.x, "{at}: {corner}");
+            assert!(corner.y >= 0.0 && corner.y + height <= SIZE.y, "{at}: {corner}");
+        }
+    }
+
+    /// Brush files taken in are brushes kept: every brush of every file,
+    /// a pack's among them, in place of one of the same name, with a file
+    /// that is no brush said and not fatal.
+    #[test]
+    fn brush_files_are_taken_in() {
+        let mut app = app();
+        let came = app.studio.presets.palette().len();
+        let read = vec![
+            Ok(("one.brush".to_string(), "Gouge = push:-1, size:2\n".to_string())),
+            Ok((
+                "pack.brush".to_string(),
+                "Knurl = tip:Star, dabs:1\nRidge = plateau:0.5\n".into(),
+            )),
+            Ok(("notes.brush".to_string(), "nothing to see\n".to_string())),
+            Err("gone.brush: no such file".to_string()),
+        ];
+        set(&mut app, StudioMessage::BrushImported(Some(read)));
+        assert_eq!(app.studio.presets.list.len(), 3);
+        assert_eq!(app.studio.presets.palette().len(), came + 3);
+        assert!(app.status.starts_with("imported 3: Gouge, Knurl, Ridge; but "), "{}", app.status);
+        choose(&mut app, "Gouge");
+        assert_eq!(app.studio.custom.map(|actions| actions.push), Some(-1.0));
+        assert_eq!(app.brush.radius, 2.0);
+        drop(app.palette_panel());
+
+        // The same name again is the same brush, changed, and not a second.
+        let again = vec![Ok(("one.brush".to_string(), "Gouge = push:-0.5\n".to_string()))];
+        set(&mut app, StudioMessage::BrushImported(Some(again)));
+        assert_eq!(app.studio.presets.list.len(), 3);
+        assert_eq!(app.status, "imported 1: Gouge");
+        choose(&mut app, "Gouge");
+        assert_eq!(app.studio.custom.map(|actions| actions.push), Some(-0.5));
+
+        // Nothing picked, and nothing in what was picked.
+        let status = app.status.clone();
+        set(&mut app, StudioMessage::BrushImported(None));
+        assert_eq!(app.status, status);
+        set(&mut app, StudioMessage::BrushImported(Some(vec![Err("x: unreadable".to_string())])));
+        assert_eq!(app.status, "no brush imported: x: unreadable");
+        set(&mut app, StudioMessage::BrushImported(Some(Vec::new())));
+        assert_eq!(app.status, "no brush imported");
+
+        // A file is read by its name and its text, and one too big to be
+        // a brush is refused before it is read.
+        let directory = std::env::temp_dir().join(format!("brokkr-import-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("scratch directory");
+        let good = directory.join("mine.brush");
+        std::fs::write(&good, "Mine = brush:Clay\n").expect("writing");
+        assert_eq!(read_brush_file(&good), Ok(("mine.brush".into(), "Mine = brush:Clay\n".into())));
+        let big = directory.join("big.brush");
+        std::fs::write(&big, vec![b'x'; MOST_BRUSH_FILE as usize + 1]).expect("writing");
+        assert!(read_brush_file(&big).is_err_and(|why| why.contains("not a brush file")));
+        assert!(read_brush_file(&directory.join("nowhere.brush")).is_err());
+        std::fs::remove_dir_all(&directory).ok();
     }
 }

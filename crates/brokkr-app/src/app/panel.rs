@@ -169,17 +169,21 @@ impl Brokkr {
             .height(Length::Fill)
             .style(theme::viewport_well);
 
+        // The scale bar and the measure, under the overlay's own buttons
+        // and whatever menu is up. See `app/measure.rs`.
+        let scene = stack![well, self.rulers(), self.measure_controls(), self.overlay()];
         let scene = match (self.menu, self.cube_menu) {
             // Mutually exclusive by construction -- opening either swallows the
             // press that would have opened the other -- but ordered anyway
             // rather than left to whichever `stack!` happened to draw last.
-            (Some(at), _) => stack![well, self.overlay(), self.tool_menu(at)],
-            (None, Some(cube)) => stack![well, self.overlay(), self.cube_menu_card(cube)],
-            // The scale bar and the measure, under the overlay's own
-            // buttons. See `app/measure.rs`.
-            (None, None) => {
-                stack![well, self.rulers(), self.measure_controls(), self.overlay()]
-            }
+            (Some(at), _) => scene.push(self.tool_menu(at)),
+            (None, Some(cube)) => scene.push(self.cube_menu_card(cube)),
+            // The palette of brushes at the pointer, over everything. See
+            // `app/studio.rs`.
+            (None, None) => match self.palette_popup() {
+                Some(palette) => scene.push(palette),
+                None => scene,
+            },
         };
 
         let body = column![

@@ -162,6 +162,17 @@ pub enum StudioMessage {
     /// Show what the brush in hand is made of, to change it, or put that
     /// away.
     SettingsShown(bool),
+    /// Bring the palette of brushes up at the pointer, or put it away if
+    /// it is up. The `b` key.
+    PaletteToggled,
+    /// Ask for brush files to take in.
+    BrushImportRequested,
+    /// The files that were picked, each read: its name and its text, or
+    /// why it could not be read. `None` when the dialog was dismissed.
+    BrushImported(Option<Vec<Result<(String, String), String>>>),
+    /// Read the brushes directory again: for brushes put there by hand
+    /// while the application was running.
+    BrushesReloaded,
     /// Lay the picture in hand across the tip of the brush, or take it
     /// off. The picture is the one the stamp presses: one of the six that
     /// come with the application, or any picture.
