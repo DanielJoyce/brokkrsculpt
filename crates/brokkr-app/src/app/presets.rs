@@ -926,12 +926,6 @@ impl Presets {
         Self::load_from(directory.as_deref(), earlier.as_deref(), !cfg!(test))
     }
 
-    /// Where a user's brushes are kept on this machine, to be shown: the
-    /// directory, as the platform writes it.
-    pub fn place() -> Option<String> {
-        crate::paths::data_file(DIRECTORY).map(|directory| directory.display().to_string())
-    }
-
     /// Split out so the tests can point it at a directory of their own.
     ///
     /// The directory's files when there is a directory. When there is

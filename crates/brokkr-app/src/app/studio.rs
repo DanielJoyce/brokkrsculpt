@@ -481,11 +481,8 @@ impl Brokkr {
                 // changed by hand too: `app/maps.rs`.
                 super::maps::forget_kept();
                 self.inserts.maps = super::maps::kept(super::maps::directory().as_deref());
-                self.status = format!(
-                    "brushes read again: {} of your own{}",
-                    self.studio.presets.list.len(),
-                    Presets::place().map(|place| format!(", from {place}")).unwrap_or_default()
-                );
+                self.status =
+                    format!("brushes read again: {} of your own", self.studio.presets.list.len());
                 return Task::none();
             }
             _ => {}
@@ -1259,10 +1256,13 @@ impl Brokkr {
         // A brush is added in one of two ways: the one in hand, as it is set
         // up now, kept under a name; or brush files taken in from elsewhere.
         // Both were two rows under the whole palette, and were not found.
+        //
+        // **Controls and no prose.** The first version of this block said
+        // above each row what the row was for, and under them where the
+        // brushes are kept on the disk. The maintainer had all of it out the
+        // day it went in: "Keep ui clean. If we need this info then let's
+        // add a help/doc ticket." Which is issue 69 of the fork.
         let add = column![
-            text("The brush in hand, as it is set up now, under a name:")
-                .size(theme::CAPTION_SIZE)
-                .color(theme::TEXT_MUTE),
             row![
                 text_input("name this brush", &self.studio.preset_name)
                     .on_input(move |name| changed(StudioMessage::PresetNamed(name)))
@@ -1280,7 +1280,6 @@ impl Brokkr {
                     .on_press(changed(StudioMessage::PresetSaved)),
             ]
             .spacing(theme::S1),
-            text("Or brushes from files:").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
             // A brush is a file, and files come from elsewhere: take some
             // in, or read the directory again after putting some there by
             // hand.
@@ -1338,13 +1337,6 @@ impl Brokkr {
         let mut panel = column![heading].spacing(theme::S1);
         if self.studio.adding {
             panel = panel.push(add);
-            if let Some(place) = Presets::place() {
-                panel = panel.push(
-                    text(format!("yours are kept in {place}"))
-                        .size(theme::CAPTION_SIZE)
-                        .color(theme::TEXT_MUTE),
-                );
-            }
         }
         panel = panel.push(self.brush_grid(3, 2));
         // Under the palette, what is done to the brush that is lit.
