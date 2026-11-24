@@ -549,6 +549,7 @@ impl Join {
                 hi,
                 0,
                 false,
+                crate::Settled::NONE,
                 |_| BrickVerdict::Whole,
                 |voxel, _, _, _| region.get(voxel),
             );
@@ -616,22 +617,30 @@ impl Join {
             let nearest = solid.distance(middle) / voxel_size - BRICK_HALF_DIAGONAL;
             if nearest >= reach { BrickVerdict::Skip } else { BrickVerdict::Whole }
         };
-        volume.edit_voxels_where(lo, hi, 0, true, decide, move |voxel, position, value, free| {
-            if free <= 0.0 {
-                return value;
-            }
-            let off = solid.distance(position) / voxel_size;
-            if off >= reach {
-                return value;
-            }
-            let before = region.get(voxel);
-            let joined = if how.cut {
-                taken_out(value, before, off, blend)
-            } else {
-                value.min(nearer(before, off, blend))
-            };
-            value + (joined.clamp(INSIDE, OUTSIDE) - value) * free
-        });
+        volume.edit_voxels_where(
+            lo,
+            hi,
+            0,
+            true,
+            crate::Settled::NONE,
+            decide,
+            move |voxel, position, value, free| {
+                if free <= 0.0 {
+                    return value;
+                }
+                let off = solid.distance(position) / voxel_size;
+                if off >= reach {
+                    return value;
+                }
+                let before = region.get(voxel);
+                let joined = if how.cut {
+                    taken_out(value, before, off, blend)
+                } else {
+                    value.min(nearer(before, off, blend))
+                };
+                value + (joined.clamp(INSIDE, OUTSIDE) - value) * free
+            },
+        );
         self.boxes.push((lo, hi));
     }
 }

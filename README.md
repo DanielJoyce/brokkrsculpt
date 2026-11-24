@@ -810,7 +810,7 @@ path is a working reference to check it against.
 
 AGPL-3.0-only. See [LICENSE](LICENSE).
 
-Every dependency is permissively licensed — 312 crates, all MIT, Apache-2.0,
+Every dependency is permissively licensed — 309 crates, all MIT, Apache-2.0,
 BSD, ISC, Zlib, Unlicense, CC0, CDLA-Permissive or Unicode-3.0. Exactly one
 names the GPL at all: `self_cell` is `Apache-2.0 OR GPL-2.0-only`, a choice,
 and it is taken under Apache-2.0. Nothing about the AGPL here is inherited.

@@ -169,7 +169,7 @@ pub struct ThumbnailAtlas {
     /// invisible to every headless test.** iced runs `prepare` for every
     /// primitive before `render` for any of them
     /// (`iced_wgpu-0.14.0/src/lib.rs:146-147`), so a thumbnail that wrote its
-    /// matrix into the one 144-byte buffer would leave the MAIN VIEWPORT
+    /// matrix into the one uniform buffer would leave the MAIN VIEWPORT
     /// drawing at the thumbnail's camera for that frame. A second buffer and a
     /// second bind group over the same layout, not a dynamic offset: the sculpt
     /// layout declares `has_dynamic_offset: false`, so an offset would be a

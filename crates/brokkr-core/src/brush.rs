@@ -1382,11 +1382,24 @@ impl Brush {
         // are actually going to be written.
         let radius_squared = self.radius * self.radius;
 
+        // What `decide` says of a brick that holds one value, said of a
+        // voxel: wherever everything this stamp can read holds one end of the
+        // band, and this brush leaves that end alone, the voxel is not
+        // visited. See `volume/settled.rs`.
+        let settled = match skipping {
+            Skipping::On => crate::Settled {
+                inside: self.leaves_constant_alone(INSIDE, direction),
+                outside: self.leaves_constant_alone(OUTSIDE, direction),
+            },
+            Skipping::Off => crate::Settled::NONE,
+        };
+
         volume.edit_voxels_where(
             lo,
             hi,
             read_voxels,
             true,
+            settled,
             decide,
             |voxel, position, value, free| {
                 let offset = position - centre;
@@ -2094,6 +2107,7 @@ impl MoveStroke {
                 anchor.hi,
                 0,
                 true,
+                crate::Settled::NONE,
                 decide,
                 |voxel, position, value, _| {
                     let free = if masked {
@@ -3298,6 +3312,58 @@ mod skipping_tests {
                 "{kind} {direction:?} recorded a different undo entry over a stroke"
             );
         }
+    }
+
+    /// The same over a stroke of stamps big enough to have bricks with
+    /// detail in them to settle voxels of (`volume/settled.rs`), which the
+    /// stroke above is too small for: a voxel settled for one stamp has to be
+    /// picked up again when a later stamp moves the surface towards it.
+    #[test]
+    fn a_stroke_of_big_overlapping_stamps_survives_the_settled_voxels() {
+        let mut settled_some = 0;
+        for (kind, direction) in every_brush() {
+            let brush = Brush { kind, radius: 22.0, strength: 0.8, ..Brush::default() };
+            let run = |skipping| {
+                let mut volume = Volume::new(1.0);
+                volume.seed_sphere(Vec3::splat(80.0), 60.0);
+                volume.take_dirty(&mut Vec::new());
+                volume.begin_stroke();
+                let mut scratch = BrushScratch::new();
+                let mut settled = 0;
+                for step in 0..10 {
+                    let angle = step as f32 / 40.0 * std::f32::consts::TAU;
+                    let at = Vec3::splat(80.0) + Vec3::new(angle.cos(), angle.sin(), 0.35) * 60.0;
+                    let normal = volume.gradient_world(at);
+                    brush.stamp(
+                        &mut volume,
+                        &stamp_at(at, normal, direction),
+                        &mut scratch,
+                        skipping,
+                    );
+                    settled += volume.last_plan().bricks_settled;
+                }
+                let mut dirty = Vec::new();
+                volume.take_dirty(&mut dirty);
+                dirty.sort_unstable();
+                (volume, dirty, settled)
+            };
+
+            let (mut skipped, skipped_dirty, settled) = run(Skipping::On);
+            let (mut whole, whole_dirty, none) = run(Skipping::Off);
+            assert_eq!(none, 0, "{kind} {direction:?}: the comparison settled voxels too");
+            assert_same_field(&skipped, &whole, &format!("{kind} {direction:?} over a big stroke"));
+            assert_eq!(
+                skipped.end_stroke().map(|edit| (edit.len(), edit.bytes())),
+                whole.end_stroke().map(|edit| (edit.len(), edit.bytes())),
+                "{kind} {direction:?} recorded a different undo entry over a big stroke"
+            );
+            assert_eq!(
+                skipped_dirty, whole_dirty,
+                "{kind} {direction:?} left different bricks to remesh"
+            );
+            settled_some += usize::from(settled > 0);
+        }
+        assert!(settled_some >= 6, "only {settled_some} of the runs settled any voxel");
     }
 
     #[test]

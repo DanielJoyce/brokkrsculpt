@@ -200,6 +200,7 @@ impl StampGesture {
                 twin.hi,
                 0,
                 false,
+                crate::Settled::NONE,
                 |_| BrickVerdict::Whole,
                 |voxel, _, _, _| locked.get(voxel),
             );
@@ -317,6 +318,7 @@ impl StampGesture {
                 twin.hi,
                 0,
                 true,
+                crate::Settled::NONE,
                 |_| BrickVerdict::Whole,
                 |voxel, position, _, free| {
                     let was = own.get(voxel);

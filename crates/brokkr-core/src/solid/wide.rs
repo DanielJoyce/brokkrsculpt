@@ -360,12 +360,20 @@ impl Join {
                 BrickVerdict::Whole
             }
         };
-        volume.edit_voxels_where(work_lo, work_hi, 0, true, decide, |voxel, _, value, free| {
-            let local = voxel - work_lo;
-            let wanted =
-                wanted[local.x as usize + local.y as usize * row + local.z as usize * plane];
-            if wanted.is_nan() { value } else { value + (wanted - value) * free }
-        });
+        volume.edit_voxels_where(
+            work_lo,
+            work_hi,
+            0,
+            true,
+            crate::Settled::NONE,
+            decide,
+            |voxel, _, value, free| {
+                let local = voxel - work_lo;
+                let wanted =
+                    wanted[local.x as usize + local.y as usize * row + local.z as usize * plane];
+                if wanted.is_nan() { value } else { value + (wanted - value) * free }
+            },
+        );
         self.boxes.push((work_lo, work_hi));
     }
 }

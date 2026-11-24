@@ -635,11 +635,19 @@ impl Compound {
 
         let radius_squared = radius * radius;
 
+        // What `decide` says of a brick that holds one value, said of a
+        // voxel. See `volume/settled.rs`.
+        let settled = crate::Settled {
+            inside: leaves_saturated_alone(INSIDE),
+            outside: leaves_saturated_alone(OUTSIDE),
+        };
+
         volume.edit_voxels_where(
             lo,
             hi,
             read_voxels,
             true,
+            settled,
             decide,
             move |voxel, position, value, free| {
                 let offset = position - centre;
@@ -998,6 +1006,59 @@ mod tests {
     }
 
     /// Every voxel the two volumes hold, and the most they differ by.
+    /// Leaving settled voxels alone changes nothing a compound brush
+    /// writes: each classic set of actions and two that are several at
+    /// once, both ways, at a radius where there are bricks with detail in
+    /// them to settle, against the same stamps with no voxel treated as
+    /// settled.
+    #[test]
+    fn settled_voxels_change_nothing_a_compound_brush_writes() {
+        let mut settled_some = 0;
+        let several = [
+            Actions { push: 0.6, pinch: 0.5, ..Actions::NOTHING },
+            Actions { smooth: 0.5, gather: 0.4, ..Actions::NOTHING },
+        ];
+        let all = FieldOp::CLASSIC.into_iter().map(classic).chain(several);
+        for (index, actions) in all.enumerate() {
+            for direction in [BrushDirection::Add, BrushDirection::Subtract] {
+                let compound = Compound {
+                    actions,
+                    radius: 40.0,
+                    strength: 0.6,
+                    profile: Profile::default(),
+                    pattern: Pattern::default(),
+                };
+                let what = format!("actions {index} {direction:?}");
+                let run = || {
+                    let mut volume = ball();
+                    volume.begin_stroke();
+                    let mut scratch = BrushScratch::new();
+                    let mut settled = 0;
+                    for stand_off in [0.0, -6.0, 6.0, 0.0] {
+                        let at = CENTRE + Vec3::X * (RADIUS + stand_off);
+                        let stamp = Stamp::new(at, Vec3::X, direction);
+                        compound.apply(&mut volume, &stamp, None, &mut scratch);
+                        settled += volume.last_plan().bricks_settled;
+                    }
+                    let undo = volume.end_stroke().map(|edit| (edit.len(), edit.bytes()));
+                    let mut dirty = Vec::new();
+                    volume.take_dirty(&mut dirty);
+                    dirty.sort_unstable();
+                    (volume, undo, dirty, settled)
+                };
+                let (with, with_undo, with_dirty, settled) = run();
+                let (without, without_undo, without_dirty, none) =
+                    crate::volume::without_settled(run);
+                assert_eq!(none, 0, "{what}: the comparison settled voxels too");
+                assert_same_field(&with, &without, &what);
+                assert_eq!(with_undo, without_undo, "{what}: the undo entry differs");
+                assert_eq!(with_dirty, without_dirty, "{what}: different bricks to remesh");
+                settled_some += usize::from(settled > 0);
+            }
+        }
+        assert!(settled_some >= 6, "only {settled_some} of the runs settled any voxel");
+    }
+
     fn furthest_apart(one: &Volume, other: &Volume) -> f32 {
         let mut most = 0.0_f32;
         for z in 10..90 {

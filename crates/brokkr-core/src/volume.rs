@@ -28,6 +28,14 @@ use crate::undo::StrokeEdit;
 /// per body against a fraction of it.
 pub(crate) const PARALLEL_MESH_THRESHOLD: usize = 4;
 
+// The voxels of a brick with detail in it that an edit cannot change. See
+// `volume/settled.rs`.
+mod settled;
+pub use settled::Settled;
+#[cfg(test)]
+pub(crate) use settled::without as without_settled;
+use settled::{Lines, Surroundings};
+
 /// Counters for the debug overlay and the memory budget.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct VolumeStats {
@@ -192,6 +200,11 @@ pub struct PlanStats {
     pub voxels_in_box: i64,
     /// Voxels the edit will actually visit.
     pub voxels_visited: i64,
+    /// Bricks with detail in them whose settled voxels were found and left
+    /// alone, one by one. Those voxels are still in `voxels_visited`: they
+    /// are found on the workers, where nothing is counted. See
+    /// `volume/settled.rs`.
+    pub bricks_settled: usize,
 }
 
 /// One brick an edit has decided to visit, and where inside it.
@@ -229,6 +242,15 @@ struct EditScratch {
     /// when every voxel of that brick holds `v`. Laid out with X fastest, from
     /// the grown box's minimum brick.
     fills: Vec<Option<f32>>,
+    /// The lowest brick of that grid and how many bricks it is each way.
+    grid_min: IVec3,
+    grid_size: IVec3,
+    /// For the edits that leave settled voxels alone: where in `line_store`
+    /// the lines of bits of each brick of that grid are, laid out as `fills`
+    /// is, and which bricks were asked for. See `volume/settled.rs`.
+    lines: Vec<u32>,
+    line_store: Vec<Lines>,
+    lines_wanted: Vec<BrickCoord>,
     /// Bricks the classifier kept.
     visits: Vec<Visit>,
     /// Bricks lifted out of the map by the parallel path.
@@ -317,6 +339,7 @@ impl Freedom<'_> {
 /// brick's mask through the `brick_index` the field write already computed, so
 /// a masked voxel costs one extra `u8` load and no address arithmetic.
 #[inline]
+#[allow(clippy::too_many_arguments)]
 fn write_voxels<F>(
     data: &mut [f32; BRICK_VOXELS],
     origin: IVec3,
@@ -324,6 +347,7 @@ fn write_voxels<F>(
     hi: IVec3,
     voxel_size: f32,
     freedom: Freedom<'_>,
+    settled: Option<&[u32; BRICK_DIM * BRICK_DIM]>,
     edit: &F,
 ) -> bool
 where
@@ -335,7 +359,21 @@ where
     let mut changed = false;
     for wz in lo.z..=hi.z {
         for wy in lo.y..=hi.y {
+            // The voxels of this line the edit cannot change, a bit each.
+            // See `volume/settled.rs`.
+            let rest = match settled {
+                Some(lines) => {
+                    lines[(wy - origin.y) as usize + (wz - origin.z) as usize * BRICK_DIM]
+                }
+                None => 0,
+            };
+            if rest == u32::MAX {
+                continue;
+            }
             for wx in lo.x..=hi.x {
+                if rest >> (wx - origin.x) & 1 != 0 {
+                    continue;
+                }
                 let voxel = IVec3::new(wx, wy, wz);
                 let index = brick_index(
                     (wx - origin.x) as usize,
@@ -1320,6 +1358,7 @@ impl Volume {
             v_max,
             0,
             false,
+            Settled::NONE,
             |_| BrickVerdict::Whole,
             |voxel, position, value, _free| edit(voxel, position, value),
         );
@@ -1360,12 +1399,14 @@ impl Volume {
     ///
     /// An edit that passes `false` sees a `free` of exactly 1.0 at every voxel
     /// and a [`BrickPreview::mask`] of `Some(`[`UNMASKED`]`)` at every brick.
+    #[allow(clippy::too_many_arguments)]
     pub fn edit_voxels_where(
         &mut self,
         v_min: IVec3,
         v_max: IVec3,
         reach: i32,
         use_mask: bool,
+        settled: Settled,
         decide: impl Fn(&BrickPreview) -> BrickVerdict,
         edit: impl Fn(IVec3, Vec3, f32, f32) -> f32 + Sync,
     ) {
@@ -1393,15 +1434,125 @@ impl Volume {
             .map(|visit| (visit.hi - visit.lo + IVec3::ONE).as_i64vec3().element_product())
             .sum();
 
-        if voxels >= PARALLEL_VOXEL_THRESHOLD {
-            self.edit_planned_across_cores(&scratch.visits, &mut scratch.taken, masking, &edit);
+        // The voxels of the visited bricks that the edit has said it cannot
+        // change, found before anything is written. See `volume/settled.rs`.
+        let parallel = voxels >= PARALLEL_VOXEL_THRESHOLD;
+        let settled =
+            self.make_lines(&mut scratch, reach, settled, voxels, parallel).then_some(settled);
+        let surroundings = settled.map(|claim| Surroundings {
+            fills: &scratch.fills,
+            lines: &scratch.lines,
+            store: &scratch.line_store,
+            grid_min: scratch.grid_min,
+            grid_size: scratch.grid_size,
+            reach,
+            claim,
+        });
+
+        if parallel {
+            self.edit_planned_across_cores(
+                &scratch.visits,
+                &mut scratch.taken,
+                masking,
+                surroundings.as_ref(),
+                &edit,
+            );
         } else {
-            self.edit_planned_on_one_core(&scratch.visits, masking, &edit);
+            self.edit_planned_on_one_core(&scratch.visits, masking, surroundings.as_ref(), &edit);
         }
 
+        // The bricks that changed were marked dirty as they were found, each
+        // with whichever neighbours' aprons read what it changed. It used to
+        // be the whole box, whatever of it had changed, and the box of a brush
+        // many bricks across is mostly bricks the surface is nowhere near:
+        // each was handed to the remesh to find that out.
         self.mask = mask;
         self.scratch = scratch;
-        self.mark_dirty_voxel_range(v_min, v_max);
+    }
+
+    /// Make the lines of bits the settled voxels are found from, for an edit
+    /// that claims some. Returns whether they were made: `false` leaves the
+    /// edit visiting every voxel, as it would with nothing claimed.
+    ///
+    /// Not for a small edit. The lines are a pass over every brick with
+    /// detail in it that the edit's bricks touch, and below about a brick's
+    /// worth of voxels to visit that pass costs more than the voxels it
+    /// spares. The line is drawn from `stroke_profile` (`docs/PERFORMANCE.md`).
+    fn make_lines(
+        &self,
+        scratch: &mut EditScratch,
+        reach: i32,
+        claim: Settled,
+        voxels: i64,
+        parallel: bool,
+    ) -> bool {
+        /// Voxels to visit below which the lines are not worth making.
+        const WORTH_IT: i64 = BRICK_VOXELS as i64;
+
+        if !claim.any() || voxels < WORTH_IT || !(0..=settled::MOST_REACH).contains(&reach) {
+            return false;
+        }
+        #[cfg(test)]
+        if settled::off() {
+            return false;
+        }
+        let EditScratch {
+            fills,
+            grid_min,
+            grid_size,
+            lines,
+            line_store,
+            lines_wanted,
+            visits,
+            plan,
+            ..
+        } = scratch;
+        let (grid_min, grid_size) = (*grid_min, *grid_size);
+        let at = |brick: IVec3| {
+            let local = brick - grid_min;
+            (local.x + local.y * grid_size.x + local.z * grid_size.x * grid_size.y) as usize
+        };
+
+        // Which bricks' lines are wanted: a visited brick with detail in it,
+        // and each of the 26 round it that has detail too.
+        lines.clear();
+        lines.resize(fills.len(), settled::NO_LINES);
+        lines_wanted.clear();
+        for visit in visits.iter() {
+            if fills[at(visit.coord.0)].is_some() {
+                continue;
+            }
+            plan.bricks_settled += 1;
+            for index in 0..27 {
+                let offset = IVec3::new(index % 3, index / 3 % 3, index / 9) - IVec3::ONE;
+                let brick = visit.coord.0 + offset;
+                let slot = at(brick);
+                if fills[slot].is_none() && lines[slot] == settled::NO_LINES {
+                    lines[slot] = lines_wanted.len() as u32;
+                    lines_wanted.push(BrickCoord(brick));
+                }
+            }
+        }
+        if lines_wanted.is_empty() {
+            return false;
+        }
+        // Kept from stamp to stamp, so that a stroke allocates these once.
+        if line_store.len() < lines_wanted.len() {
+            line_store.resize(lines_wanted.len(), Lines::EMPTY);
+        }
+        let read = |(lines, coord): (&mut Lines, &BrickCoord)| match self.bricks.get(coord) {
+            Some(Brick::Dense(data)) => lines.read(data),
+            // The planner saw detail here a moment ago and nothing has been
+            // written since. Were it not so, lines that claim nothing.
+            _ => *lines = Lines::EMPTY,
+        };
+        let store = &mut line_store[..lines_wanted.len()];
+        if parallel {
+            store.par_iter_mut().zip(lines_wanted.par_iter()).for_each(read);
+        } else {
+            store.iter_mut().zip(lines_wanted.iter()).for_each(read);
+        }
+        true
     }
 
     /// Work out which bricks of a box the edit will visit, and how much of
@@ -1436,6 +1587,8 @@ impl Volume {
         // below rather than assumed.
         let grid_min = b_min - IVec3::ONE;
         let grid_size = b_max - b_min + IVec3::splat(3);
+        scratch.grid_min = grid_min;
+        scratch.grid_size = grid_size;
 
         scratch.fills.clear();
         scratch.fills.reserve(grid_size.as_i64vec3().element_product().max(0) as usize);
@@ -1547,15 +1700,30 @@ impl Volume {
     /// put it back, and doing that thousands of times a stroke leaves enough
     /// deletion markers in the table to cost 20 percent. This path only ever
     /// looks a brick up.
-    fn edit_planned_on_one_core<F>(&mut self, visits: &[Visit], mask: Option<&MaskField>, edit: &F)
-    where
+    fn edit_planned_on_one_core<F>(
+        &mut self,
+        visits: &[Visit],
+        mask: Option<&MaskField>,
+        surroundings: Option<&Surroundings<'_>>,
+        edit: &F,
+    ) where
         F: Fn(IVec3, Vec3, f32, f32) -> f32 + Sync,
     {
         let voxel_size = self.voxel_size;
+        let mut lines = [0u32; BRICK_DIM * BRICK_DIM];
         for visit in visits {
             let coord = visit.coord;
             let origin = coord.origin();
             let freedom = Freedom::resolve(mask, coord);
+            // Only a brick with detail in it has voxels to settle: one that
+            // holds a single value has been narrowed already.
+            let settled = match (surroundings, self.bricks.get(&coord)) {
+                (Some(surroundings), Some(Brick::Dense(_))) => {
+                    surroundings.settled(coord.0, &mut lines);
+                    Some(&lines)
+                }
+                _ => None,
+            };
 
             // The prior contents have to be captured before the brick is
             // promoted to dense, because that is what destroys them.
@@ -1565,8 +1733,11 @@ impl Volume {
             let was_uniform = matches!(brick, Brick::Uniform(_));
             let data = brick.make_dense();
 
-            let changed = write_voxels(data, origin, visit.lo, visit.hi, voxel_size, freedom, edit);
-            if !changed {
+            let changed =
+                write_voxels(data, origin, visit.lo, visit.hi, voxel_size, freedom, settled, edit);
+            if changed {
+                self.mark_dirty_voxel_range(visit.lo, visit.hi);
+            } else {
                 self.undo_promotion(coord, existed, was_uniform, recorded_now);
             }
         }
@@ -1600,6 +1771,7 @@ impl Volume {
         visits: &[Visit],
         taken: &mut Vec<Taken>,
         mask: Option<&MaskField>,
+        surroundings: Option<&Surroundings<'_>>,
         edit: &F,
     ) where
         F: Fn(IVec3, Vec3, f32, f32) -> f32 + Sync,
@@ -1644,14 +1816,26 @@ impl Volume {
         taken.par_iter_mut().for_each(|entry| {
             let origin = entry.coord.origin();
             let freedom = Freedom::resolve(mask, entry.coord);
+            // Found here, on the worker, from what the planner left: only for
+            // a brick with detail in it. See `volume/settled.rs`.
+            let mut lines = [0u32; BRICK_DIM * BRICK_DIM];
+            let settled = match (surroundings, &entry.brick) {
+                (Some(surroundings), Brick::Dense(_)) => {
+                    surroundings.settled(entry.coord.0, &mut lines);
+                    Some(&lines)
+                }
+                _ => None,
+            };
             let data = entry.brick.make_dense();
             entry.changed =
-                write_voxels(data, origin, entry.lo, entry.hi, voxel_size, freedom, edit);
+                write_voxels(data, origin, entry.lo, entry.hi, voxel_size, freedom, settled, edit);
         });
 
         for entry in taken.drain(..) {
             self.bricks.insert(entry.coord, entry.brick);
-            if !entry.changed {
+            if entry.changed {
+                self.mark_dirty_voxel_range(entry.lo, entry.hi);
+            } else {
                 self.undo_promotion(
                     entry.coord,
                     entry.existed,
@@ -2645,8 +2829,7 @@ mod tests {
             &mut scratch,
         );
         let visits = std::mem::take(&mut scratch.visits);
-        one_core.edit_planned_on_one_core(&visits, mask, &edit);
-        one_core.mark_dirty_voxel_range(lo, hi);
+        one_core.edit_planned_on_one_core(&visits, mask, None, &edit);
 
         let mut many_cores = build();
         many_cores.plan_visits(
@@ -2659,8 +2842,7 @@ mod tests {
         );
         let visits = std::mem::take(&mut scratch.visits);
         let mut taken = Vec::new();
-        many_cores.edit_planned_across_cores(&visits, &mut taken, mask, &edit);
-        many_cores.mark_dirty_voxel_range(lo, hi);
+        many_cores.edit_planned_across_cores(&visits, &mut taken, mask, None, &edit);
 
         (one_core, many_cores)
     }

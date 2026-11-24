@@ -389,11 +389,19 @@ fn run<K: Kernel>(def: &BrushDef, volume: &mut Volume, stamp: &Stamp, scratch: &
 
     let radius_squared = radius * radius;
 
+    // What `decide` says of a brick that holds one value, said of a voxel.
+    // See `volume/settled.rs`.
+    let settled = crate::Settled {
+        inside: K::leaves_saturated_alone(INSIDE, direction),
+        outside: K::leaves_saturated_alone(OUTSIDE, direction),
+    };
+
     volume.edit_voxels_where(
         lo,
         hi,
         read_voxels,
         true,
+        settled,
         decide,
         move |voxel, position, value, free| {
             let offset = position - centre;
@@ -1004,6 +1012,46 @@ mod tests {
             }
         }
         out
+    }
+
+    /// Leaving settled voxels alone changes nothing a kernel writes: every
+    /// operator, both ways, at a radius where there are bricks with detail
+    /// in them to settle, against the same stamps with no voxel treated as
+    /// settled. The field, the undo entry and what is left to remesh.
+    #[test]
+    fn settled_voxels_change_nothing_a_kernel_writes() {
+        let mut settled_some = 0;
+        for op in FieldOp::CLASSIC.into_iter().chain([FieldOp::Crease]) {
+            for direction in [BrushDirection::Add, BrushDirection::Subtract] {
+                let def = BrushDef { op, radius: 40.0, strength: 0.6, tip: Tip::default() };
+                let what = format!("{op:?} {direction:?}");
+                let run = || {
+                    let mut volume = ball();
+                    volume.begin_stroke();
+                    let mut scratch = BrushScratch::new();
+                    let mut settled = 0;
+                    for stand_off in [0.0, -6.0, 6.0, 0.0] {
+                        let at = CENTRE + Vec3::X * (RADIUS + stand_off);
+                        def.apply(&mut volume, &Stamp::new(at, Vec3::X, direction), &mut scratch);
+                        settled += volume.last_plan().bricks_settled;
+                    }
+                    let undo = volume.end_stroke().map(|edit| (edit.len(), edit.bytes()));
+                    let mut dirty = Vec::new();
+                    volume.take_dirty(&mut dirty);
+                    dirty.sort_unstable();
+                    (volume, undo, dirty, settled)
+                };
+                let (with, with_undo, with_dirty, settled) = run();
+                let (without, without_undo, without_dirty, none) =
+                    crate::volume::without_settled(run);
+                assert_eq!(none, 0, "{what}: the comparison settled voxels too");
+                assert_same_field(&with, &without, &what);
+                assert_eq!(with_undo, without_undo, "{what}: the undo entry differs");
+                assert_eq!(with_dirty, without_dirty, "{what}: different bricks to remesh");
+                settled_some += usize::from(settled > 0);
+            }
+        }
+        assert!(settled_some >= 6, "only {settled_some} of the runs settled any voxel");
     }
 
     fn crease(radius: f32, strength: f32) -> BrushDef {
