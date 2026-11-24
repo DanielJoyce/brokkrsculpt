@@ -409,7 +409,7 @@ true of it too, and what it adds is this.
   stops at creases and edges. Each paint names the filament it prints in,
   so a model painted this way is also a multi-colour print. Everything the
   rack does is an undo step, removing a paint included.
-- **A palette of brushes.** Twenty-one come with it: Draw, Clay, Inflate,
+- **A palette of brushes.** Thirty come with it: Draw, Clay, Inflate,
   Pinch, Smooth and Flatten, and *Spread*, *Scrape*, *Fill*, *Polish*,
   *Crease*, *Bead*, *Band*, *Layer*, *Clay strips*, *Stitches* and more.
   Every one is the same brush with different settings, and *What it does*
@@ -427,6 +427,8 @@ true of it too, and what it adds is this.
   one between two points, with a collar, ball or flange at each end.
   Each is baked into the body in hand, or left as a body of its own.
   Baked in, ctrl takes the shape out: a socket, a groove.
+  They are brushes on the palette like the rest, and one you set up
+  yourself can be kept under a name.
 - **A workbench.** *Try on a ball* sets your model aside and gives you a
   ball that does not matter, or a copy of the body in hand, to try a
   brush on while you change its settings. *Back to the model* puts
@@ -460,6 +462,10 @@ true of it too, and what it adds is this.
 
 <p align="center">
   <img alt="A ball with a box, a cone and a ring set down on it, and a cable laid across it in a wave with a collar at one end and a flange at the other. Beside it the ADD block: Ball, Box, Cylinder, Cone, Ring, Cable, Hung cable, a copy of a body, Baked in or Its own body, Soft join, Held off the surface, and the two ends of a cable" src="docs/images/studio-adding.png" width="760">
+</p>
+
+<p align="center">
+  <img alt="The palette of brushes brought up in the middle of the viewport by the b key: thirty buttons in rows of three, from Draw to Hung cable, with Draw lit" src="docs/images/studio-palette-popup.png" width="760">
 </p>
 
 <p align="center">

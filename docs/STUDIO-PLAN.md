@@ -24,7 +24,7 @@ was built and what was measured.
 | P Painting engine | **Usable**, 2026-11-23 (section 15): the storage, the view and the brush. Painted colour is on screen, in the project file and in every export that carries colour | The paint brush lays a colour: *Paint*, *Glaze* or *Erase*, put on *Loaded*, as a *Wash*, with a *Drybrush* or a *Sponge*, at any opacity, with a soft edge. *Pick from model* takes a colour back off it |
 | B A brush is its settings | **Done but for B5**, 2026-11-23 (section 16): files in the right directories, one generic brush, the palette, a picture across the tip, build-up on or off, lines or dabs. Brushes that stamp a shape (B5) are a later stage | BRUSHES: twenty-one that come with the application, upstream's six among them, and the user's own, a file each. *What it does* shows a brush as five amounts to change. *Profile*: five shapes and a flat middle. *Picture across the tip*, *Builds up* or *One layer*, and *Set down* as a line or every so many widths |
 | M Reading sizes | **Done**, 2026-11-23 (section 17) | A scale bar in the corner of the viewport that follows the zoom, and *Measure*: two clicks on the model, and the straight-line distance between them drawn and read out |
-| C Brushes to hand | **Done but for reading vector displacement files**, 2026-11-24 (section 18): the palette at the pointer, brush files, insert brushes, cables and the workbench | `b` brings every brush up under the pointer. *Import* takes brush files in. ADD: a ball, box, cylinder, cone or ring, or a copy of any body, set down by a drag; a cable laid along the model or hung between two points; each baked in or left a body of its own. WORKBENCH: the model is set aside and a ball, or a copy of the body in hand, takes its place to try a brush on |
+| C Brushes to hand | **Done but for reading vector displacement files**, 2026-11-24 (section 18): the palette at the pointer, brush files, insert brushes, cables, the workbench, and thirty brushes on the palette, the ones that add among them | `b` brings every brush up under the pointer. *Import* takes brush files in. ADD: a ball, box, cylinder, cone or ring, or a copy of any body, set down by a drag; a cable laid along the model or hung between two points; each baked in or left a body of its own. WORKBENCH: the model is set aside and a ball, or a copy of the body in hand, takes its place to try a brush on |
 | B Brushes as settings | **Begun**, 2026-11-23 (section 16): where the files go, and the generic brush in the engine. The palette and build-up follow | Settings, brushes and autosave each in the folder the operating system keeps for them |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
@@ -3219,6 +3219,7 @@ a ball that does not matter.
 | C3 | The cable: a tube laid along a stroke or hung between two points, with a choice of ends | **Built**, 2026-11-24 (below) |
 | C4 | The workbench: a ball to try a brush on, apart from the document | **Built**, 2026-11-24 (below) |
 | C5 | Vector displacement maps, read from a file | Not planned yet: see below |
+| C6 | The brushes that add, on the palette and in a brush file | **Built**, 2026-11-24 (below) |
 
 **What a vector displacement brush is here.** In a mesh sculptor a
 vector displacement map is how a brush stamps a shape with an overhang,
@@ -3432,4 +3433,55 @@ view cube, and was shortened.
   is.
 * Brushes that add (C2, C3) are not yet brushes on the palette, so one
   cannot be made on the workbench and kept.
+
+#### Built, 2026-11-24 (C6): the brushes that add, on the palette
+
+Listed as not done under C2, C3 and C4, and done here: a brush that adds
+is a brush like the rest. Nine come with the application, which makes
+thirty: *Ball* (a dome, its middle on the surface), *Knob* (a ball
+nearly resting on it), *Box*, *Cylinder*, *Cone*, *Ring*, *Cable*,
+*Pipe* (a cable resting on the surface with a flange at each end) and
+*Hung cable*. They are on the palette at the pointer too, and the one in
+hand is lit.
+
+One set up by hand on the ADD block is kept under a name like any other
+brush, with *Keep*, and so can be made on the workbench and brought back.
+Its file line names what it adds and how:
+
+```
+Pipe = brush:Draw, add:Cable, join:1, lift:1, start:Flange, end:Flange
+Washing line = brush:Draw, add:Hung cable, as:body, lift:1, start:Ball, end:Collar, sag:0.4, size:1.25
+```
+
+`add` is the shape or the cable; `as:body` leaves it a body of its own;
+`join` is how soft the join is, in voxels; `lift` how far off the
+surface it is held; `start` and `end` a cable's ends; `sag` a hung
+cable's. A brush that adds is that and nothing else: its line's other
+settings, a tip or a lead, are dropped, and only its `size` is kept,
+which is a cable's thickness. The settings that mean nothing to its
+kind are held at nothing, so that two lines that are the same brush read
+as the same brush.
+
+**A copy of a body cannot be kept as a brush.** The body is a
+document's, and a brush file is not. Asked to, the application says so.
+It is still chosen from the ADD block.
+
+**Found by a test**: asked for a brush that is not on the palette, the
+application put away the adding brush in hand before finding there was
+nothing to take up in its place. It now looks first.
+
+**Held by**: the properties of a brush file (any brush settles, and
+comes back from its file the same brush) now cover a brush that adds, of
+every kind a file can name, with its numbers in and out of range; every
+kind and every end can be named in a file, in any order, and a line of
+settings with no `add` is no brush that adds; every brush on the
+palette, these nine among them, does something to the model when it is
+dragged across it and is one undo; taken up from the palette a brush
+that adds is set up as it says and is lit; one made by hand is kept and
+comes back as it was made, its thickness with it; and a copy of a body
+is refused.
+
+**Not done**: a brush that adds has no picture on its button either,
+and thirty names is a lot of names. The palette wants grouping, or
+pictures, before it grows further.
 
