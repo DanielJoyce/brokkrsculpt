@@ -796,6 +796,34 @@ mod tests {
         assert_eq!(app.brush.strength, 0.25);
     }
 
+    /// What setting a shape down by a drag costs, with a move to a frame and
+    /// with eight. Printed, not asserted.
+    ///
+    /// ```text
+    /// cargo test --release -p brokkr-app -- --ignored --nocapture what_setting_a_shape_down_costs
+    /// ```
+    #[test]
+    #[ignore = "a measurement, not a test"]
+    fn what_setting_a_shape_down_costs() {
+        use super::super::adding::Insert;
+        use crate::message::AddMessage;
+        let points: Vec<[f32; 2]> = (0..=48)
+            .map(|step| [SIZE[0] / 2.0 + step as f32 * 2.5, SIZE[1] / 2.0 + step as f32 * 0.5])
+            .collect();
+        for per_frame in [1, 8] {
+            let mut app = app();
+            drop(app.update(Message::Resample(super::super::VOXEL_SIZE_MM / 2.0)));
+            let ball = Insert::Shape(brokkr_core::solid::Form::Ball);
+            drop(app.update(Message::Add(AddMessage::Chosen(Some(ball)))));
+            drop(app.update(Message::Frame));
+            let frames = app.replay_now(Recording::drag(&points, SIZE, per_frame));
+            println!(
+                "\n== a ball set down by a drag of 48 moves, {per_frame} to a frame ==\n{}",
+                phases::table(&frames)
+            );
+        }
+    }
+
     /// What a stroke costs by phase, on a model of a size worth asking
     /// about. Printed, not asserted: run it before and after a change.
     ///

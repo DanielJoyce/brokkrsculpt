@@ -754,6 +754,13 @@ impl Brokkr {
         let Some((centre, normal)) = self.studio.press else {
             return;
         };
+        // One stamp is pressed again whole from the press and the pointer,
+        // so of several moves handled together only the last is worth it.
+        // See `add_to` in `app/adding.rs`, which says why at more length.
+        if self.batching {
+            return;
+        }
+        self.phases.count(|frame| frame.redone += 1);
         let (origin, ray) = self.ray_through(pixel);
         let facing = ray.dot(normal);
         if facing.abs() < 1.0e-3 {

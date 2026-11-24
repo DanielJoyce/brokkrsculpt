@@ -321,3 +321,74 @@ Not done in the core:
   inserts. The picks were half a part in a hundred of a stroke.
 - **The apron gather**, which is now the larger part of a small brush's
   remesh.
+
+### Studio gestures set down once a frame (issue 60)
+
+A shape, a body, a map, a hung cable and a single stamp are each set down
+whole from where the press was and where the pointer is now: every move put
+the last one back and joined again. With moves handled together (issue 48)
+only the last of a frame is worth that, and the others are now passed over.
+A cable laid along the model is made of every point the pointer passed and
+still takes every move, as does the Move brush, which re-anchors as it goes.
+
+The table a replay prints and the phase log now count how many times a
+gesture was set down again.
+
+`what_setting_a_shape_down_costs`: a ball dragged out over 48 moves, on the
+opening ball at half the voxel size, single runs.
+
+| | times set down | edit over the whole drag | a frame, median |
+|---|---|---|---|
+| A move to a frame | 48 | 2508 ms | 56 ms |
+| Eight moves to a frame | 6 | 383 ms | 71 ms |
+
+Before this the eight-to-a-frame drag set the ball down 48 times too, eight
+in each frame: by the first row's figures about 400 ms a frame, which was not
+measured as such.
+
+**What that table also says is that one set-down is 50 to 110 ms here**, at
+any rate of moves. That is the gesture itself: the body put back as it was,
+the shape joined, and the soft join's fillet, which is on by default at three
+voxels. It is the next thing to look at in the studio's own code, and it is
+not done.
+
+Not done: the gestures are timed whole, as part of `edit`, and not broken
+down into the before-state put back, the join and the wide join, which is
+what would say where those 50 to 110 ms go.
+
+## The renderer: looked at, and not built
+
+Nothing below was changed, because nothing below can be judged on a machine
+that draws on its CPU. The replay is there to judge it with.
+
+- **Redraw on change** (issue 50). The window redraws every frame because the
+  frame tick is also the application's clock: it is what polls the SpaceMouse
+  and the pen, advances a camera flight and the timeline, begins and advances
+  the autosave, and asks for thumbnails. iced's timer is not in the feature
+  set this is built with, which upstream's own comment on the autosave says.
+  Stopping the frames when nothing has changed needs each of those to wake the
+  application itself first. That is a piece of work in its own right, and
+  what it buys is power and heat on an idle window, not speed.
+- **Fewer draw calls** (issue 56). The pool draws a brick a call. Drawing many
+  in one needs either a device feature iced does not ask for, or runs of
+  bricks that are neighbours in the index buffer, with the padding between
+  them made harmless. Upstream measured 1.13 ms for 5435 bricks; the ticket's
+  9.5 ms at the pool's design size is that figure multiplied, not measured.
+- **Smaller vertices and 16-bit indices** (issue 57). Indices are made
+  absolute when a brick is uploaded, so one has to hold a position in the
+  whole pool and cannot be 16 bits until that is undone. Why they are absolute
+  is not written down in the pool; the comment that pointed at a reason now
+  says so.
+- **Overdraw** (issue 58). Back faces are drawn on purpose: the pipeline's
+  comment is that sculpting means looking into cavities and through openings
+  that are mid cut, and that culling belongs with a mesh that is reliably
+  closed. Left as it is.
+- **The stamp and the remesh as GPU compute** (issue 59). Not attempted. A
+  compute shader would run here, on the CPU, and say nothing about a graphics
+  card. The case for it is also weaker than it was: on one core a Draw stamp
+  at 48 voxels takes a third less time and its remesh two fifths less, and
+  what is left in the stamp
+  is the brush's arithmetic a voxel at a time, which issue 52 would take
+  further on the CPU with the bit-for-bit tests still holding. A compute path
+  cannot keep those, and what it may differ by is still the maintainer's to
+  decide.
