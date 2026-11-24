@@ -240,6 +240,18 @@ pub enum AddMessage {
     SagChanged(f32),
 }
 
+/// The workbench's controls. See `app/workbench.rs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkbenchMessage {
+    /// Set the document aside and put a piece to try a brush on in its
+    /// place.
+    Opened(crate::app::Piece),
+    /// Throw the piece away for a fresh one.
+    Fresh,
+    /// Put the document back.
+    Left,
+}
+
 /// The measure's controls. See `app/measure.rs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MeasureMessage {
@@ -1155,6 +1167,9 @@ pub enum Message {
     Form(FormMessage),
     /// One of the controls of the brushes that add. See `app/adding.rs`.
     Add(AddMessage),
+    /// The workbench: onto it, a fresh piece, or back. See
+    /// `app/workbench.rs`.
+    Workbench(WorkbenchMessage),
     /// The measure: begin one, or clear what was measured. View state: it
     /// changes no voxel and is not saved. See `app/measure.rs`.
     Measure(MeasureMessage),

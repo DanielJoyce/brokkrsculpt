@@ -24,7 +24,7 @@ was built and what was measured.
 | P Painting engine | **Usable**, 2026-11-23 (section 15): the storage, the view and the brush. Painted colour is on screen, in the project file and in every export that carries colour | The paint brush lays a colour: *Paint*, *Glaze* or *Erase*, put on *Loaded*, as a *Wash*, with a *Drybrush* or a *Sponge*, at any opacity, with a soft edge. *Pick from model* takes a colour back off it |
 | B A brush is its settings | **Done but for B5**, 2026-11-23 (section 16): files in the right directories, one generic brush, the palette, a picture across the tip, build-up on or off, lines or dabs. Brushes that stamp a shape (B5) are a later stage | BRUSHES: twenty-one that come with the application, upstream's six among them, and the user's own, a file each. *What it does* shows a brush as five amounts to change. *Profile*: five shapes and a flat middle. *Picture across the tip*, *Builds up* or *One layer*, and *Set down* as a line or every so many widths |
 | M Reading sizes | **Done**, 2026-11-23 (section 17) | A scale bar in the corner of the viewport that follows the zoom, and *Measure*: two clicks on the model, and the straight-line distance between them drawn and read out |
-| C Brushes to hand | **Under way**, 2026-11-24 (section 18): the palette at the pointer, brush files, insert brushes and cables. The workbench is next | `b` brings every brush up under the pointer. *Import* takes brush files in. ADD: a ball, box, cylinder, cone or ring, or a copy of any body, set down by a drag; a cable laid along the model or hung between two points; each baked in or left a body of its own |
+| C Brushes to hand | **Done but for reading vector displacement files**, 2026-11-24 (section 18): the palette at the pointer, brush files, insert brushes, cables and the workbench | `b` brings every brush up under the pointer. *Import* takes brush files in. ADD: a ball, box, cylinder, cone or ring, or a copy of any body, set down by a drag; a cable laid along the model or hung between two points; each baked in or left a body of its own. WORKBENCH: the model is set aside and a ball, or a copy of the body in hand, takes its place to try a brush on |
 | B Brushes as settings | **Begun**, 2026-11-23 (section 16): where the files go, and the generic brush in the engine. The palette and build-up follow | Settings, brushes and autosave each in the folder the operating system keeps for them |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
@@ -3217,7 +3217,7 @@ a ball that does not matter.
 | C1 | The palette at the pointer, on `b`; brush files taken in and read again | **Built**, 2026-11-24 (below) |
 | C2 | Insert brushes: a shape set down on the surface by a drag, as a body of its own or baked into the one in hand | **Built**, 2026-11-24 (below) |
 | C3 | The cable: a tube laid along a stroke or hung between two points, with a choice of ends | **Built**, 2026-11-24 (below) |
-| C4 | The workbench: a ball to try a brush on, apart from the document | Next |
+| C4 | The workbench: a ball to try a brush on, apart from the document | **Built**, 2026-11-24 (below) |
 | C5 | Vector displacement maps, read from a file | Not planned yet: see below |
 
 **What a vector displacement brush is here.** In a mesh sculptor a
@@ -3368,4 +3368,68 @@ the mirror adds on both sides; and one thing is in hand at a time.
   primitives store such bricks as one value: more memory than it needs,
   until it is next edited.
 * How long a stamp of these takes was not measured.
+
+#### Built, 2026-11-24 (C4): the workbench
+
+`brokkr-app/src/app/workbench.rs`. A WORKBENCH block on the panel:
+*Try on a ball*, or *On a copy of this*.
+
+A brush is made by changing its settings and seeing what a stroke of it
+does, and the only thing there was to stroke was the work. On the
+workbench the document is set aside, whole, and a piece that does not
+matter takes its place: a ball the size a new sculpt starts at, at the
+document's own voxel size so that a brush behaves on it as it will on the
+model; or a copy of the body in hand, for a brush being made for that
+body's kind of surface. Everything works there as it does anywhere: the
+palette, a brush's settings, *Keep*, undo. A line across the top of the
+viewport says that this is the workbench and that nothing on it is kept,
+with *A fresh piece* and *Back to the model* beside it.
+
+Leaving puts the document back exactly as it was, and the brush that was
+made comes back in hand.
+
+**The document is set aside, and not edited and undone.** Trying a brush
+on the model and undoing it is what a user does without this, and it
+costs them their redo and a place in an undo history that has an end. So
+the document, its undo history, where it is saved, whether it has unsaved
+work and the view of it are lifted out of the application, held, and put
+back on the way out. The test piece has an undo history of its own, which
+begins empty and is thrown away with it.
+
+**Nothing that is for keeping happens there.** Saving, exporting,
+opening, importing, a new sculpt and closing the window are about the
+document, and with a test piece standing in its place they would save the
+test piece under the document's name, or ask whether to discard work that
+is not the work. Each of them first leaves the workbench and then does
+what it does. The crash net is not written while the workbench is up.
+
+**Held by**, through messages and pointer events: from a document of two
+bodies with strokes, unsaved work, something to undo and a view of its
+own, the workbench holds one untouched ball with nothing to undo; strokes
+there change the piece, and undo there undoes them and no more; a fresh
+piece is fresh; back at the model its bodies are bit for bit as they
+were, with the same undo history, the same unsaved work and the same
+view, and the brush chosen on the bench is in hand at the strength it was
+given there; the document's own undo then undoes the document. A copy of
+the body in hand is that body, seen from where it was, and is tried on
+without being touched. And a save begun from the workbench finds the
+document, with its unsaved work, and not the piece.
+
+**Seen on a screen and changed**: the line across the top ran under the
+view cube, and was shortened.
+
+**Not done, and known:**
+
+* It is the ordinary panel on a piece that does not matter, and not a
+  designer with a picture of the brush's stroke as it is changed. That
+  picture (a profile curve, a sample stroke) is what would make it a
+  brush creator in full.
+* The piece is a ball or the body in hand. A test piece with a hollow, an
+  edge and a flat on it would show more of a brush than a ball does.
+* What the application remembers about rows by their number (which is
+  hidden, which is open in the list) is the document's, and is not set
+  aside with it: the piece has one row, numbered as the document's first
+  is.
+* Brushes that add (C2, C3) are not yet brushes on the palette, so one
+  cannot be made on the workbench and kept.
 
