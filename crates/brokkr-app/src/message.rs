@@ -209,6 +209,9 @@ pub enum StudioMessage {
     /// Take up a brush from the palette: every setting it holds, at once.
     /// The number is its place on the palette.
     PresetChosen(usize),
+    /// Open or close the block at the top of the palette that adds a brush:
+    /// a name for the one in hand, and brush files taken in.
+    AddToggled,
     /// The name being typed for a brush about to be kept.
     PresetNamed(String),
     /// Keep the brush as it is set up now under the name typed, in place

@@ -2916,7 +2916,11 @@ the slider being moved takes what it is given and the other gives way.
 upstream's setting.
 
 **Keep** writes the brush in hand under the name typed, size and strength
-and all. **Forget** takes away the one that is lit, if it is the user's.
+and all. It and *Import* are behind **+ Add a brush** at the top of the
+palette since 2026-11-24: they were two rows under all thirty-six brushes,
+and the maintainer, looking for a way to add one, did not find a button.
+**Forget** takes away the one that is lit, if it is the user's, and is a
+button under the palette only while such a brush is lit.
 A brush kept under the name of one that came with the application stands
 where that one stood, marked with a star, and its button reads *Restore*.
 
