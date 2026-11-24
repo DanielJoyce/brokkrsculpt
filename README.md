@@ -430,7 +430,8 @@ true of it too, and what it adds is this.
   stamp it wherever you like). Lay a *Cable* along the surface or hang
   one between two points, with a collar, ball or flange at each end.
   Each is baked into the body in hand, or left as a body of its own.
-  Baked in, ctrl takes the shape out: a socket, a groove.
+  Baked in, ctrl takes the shape out: a socket, a groove. *Soft join*
+  is the fillet where it meets the body, from none to eight voxels wide.
   They are brushes on the palette like the rest, and one you set up
   yourself can be kept under a name.
 - **A workbench.** *Try on a ball* sets your model aside and gives you a
@@ -466,6 +467,10 @@ true of it too, and what it adds is this.
 
 <p align="center">
   <img alt="A ball with a box, a cone and a ring set down on it, and a cable laid across it in a wave with a collar at one end and a flange at the other. Beside it the ADD block: Ball, Box, Cylinder, Cone, Ring, Cable, Hung cable, a copy of a body, Baked in or Its own body, Soft join, Held off the surface, and the two ends of a cable" src="docs/images/studio-adding.png" width="760">
+</p>
+
+<p align="center">
+  <img alt="Three balls set down on a larger one, side by side. The first is joined plainly and the crease round it is a ragged line. The second is joined over two voxels and the crease is clean. The third is joined over six and sits in a fillet that can be seen from across the model" src="docs/images/studio-soft-join.png" width="620">
 </p>
 
 <p align="center">

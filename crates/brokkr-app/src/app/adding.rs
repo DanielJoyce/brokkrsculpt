@@ -57,6 +57,11 @@ pub(super) const LIFT_RANGE: std::ops::RangeInclusive<f32> = -1.0..=1.0;
 /// ends.
 pub(super) const SAG_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
 
+/// How soft a join is until it is set, in voxels: a fillet that can be
+/// seen. Wider than the field's own distances will do, so it is worked
+/// out (`brokkr_core::solid`, stage C9 of the plan).
+pub(super) const DEFAULT_BLEND: f32 = 3.0;
+
 /// How many straight runs a hung cable is made of.
 const HUNG_RUNS: usize = 24;
 
@@ -217,7 +222,7 @@ impl Default for AddState {
         Self {
             what: None,
             separate: false,
-            blend: 1.0,
+            blend: DEFAULT_BLEND,
             lift: 0.5,
             start: End::Round,
             end: End::Round,
@@ -277,6 +282,51 @@ fn flips(symmetry: brokkr_core::Symmetry) -> Vec<Vec3> {
             Vec3::new(side(0), side(1), side(2))
         })
         .collect()
+}
+
+/// The pieces of a gesture, and their mirrors, as solids.
+fn with_solids<R>(
+    pieces: &[Piece],
+    source: Option<&(Volume, (Vec3, Vec3))>,
+    flips: &[Vec3],
+    then: impl FnOnce(&[&dyn Solid]) -> R,
+) -> R {
+    let lent: Vec<Lent<'_>> = pieces
+        .iter()
+        .filter_map(|piece| match (piece, source) {
+            (Piece::Lent(seat), Some((source, extent))) => Lent::on(
+                source,
+                *extent,
+                seat.centre,
+                seat.frame.z_axis,
+                seat.frame.y_axis,
+                seat.half,
+                0.0,
+            ),
+            _ => None,
+        })
+        .collect();
+    let mut solids: Vec<&dyn Solid> = Vec::new();
+    for piece in pieces {
+        match piece {
+            Piece::Placed(placed) => solids.push(placed),
+            Piece::Step(step) => solids.push(step),
+            Piece::Lent(_) => {}
+        }
+    }
+    solids.extend(lent.iter().map(|lent| lent as &dyn Solid));
+    let twins: Vec<Mirrored<'_>> = solids
+        .iter()
+        .flat_map(|solid| {
+            flips.iter().map(|flip| Mirrored {
+                of: *solid,
+                flip: *flip,
+                about: super::MIRROR_CENTRE,
+            })
+        })
+        .collect();
+    solids.extend(twins.iter().map(|twin| twin as &dyn Solid));
+    then(&solids)
 }
 
 impl Brokkr {
@@ -524,11 +574,16 @@ impl Brokkr {
 
     /// Put the body in hand back as it was at the press and set down what
     /// the gesture now holds: every move of a shape still being dragged.
+    ///
+    /// All of them together and not one at a time, so that a join wider
+    /// than the field's own distances is worked out once for the lot
+    /// (`brokkr_core::solid::Join::set`): a hung cable is two dozen runs.
     fn set_pieces(&mut self) {
-        self.inserts.join.clear(self.doc.active_volume_mut());
-        for piece in self.inserts.pieces.clone() {
-            self.add_piece(piece);
-        }
+        let how = self.inserts.how();
+        let flips = flips(self.symmetry);
+        let AddState { join, lent, pieces, .. } = &mut self.inserts;
+        let volume = self.doc.active_volume_mut();
+        with_solids(pieces, lent.as_ref(), &flips, |solids| join.set(volume, solids, how));
         self.remesh_dirty();
     }
 
@@ -575,45 +630,11 @@ impl Brokkr {
             self.status = "could not add a body: the document holds as many as it can".to_string();
             return;
         }
-        // The pieces, and their mirrors, as solids.
         let flips = flips(self.symmetry);
-        let lent: Vec<Lent<'_>> = pieces
-            .iter()
-            .filter_map(|piece| match (piece, &self.inserts.lent) {
-                (Piece::Lent(seat), Some((source, extent))) => Lent::on(
-                    source,
-                    *extent,
-                    seat.centre,
-                    seat.frame.z_axis,
-                    seat.frame.y_axis,
-                    seat.half,
-                    0.0,
-                ),
-                _ => None,
-            })
-            .collect();
-        let mut solids: Vec<&dyn Solid> = Vec::new();
-        for piece in &pieces {
-            match piece {
-                Piece::Placed(placed) => solids.push(placed),
-                Piece::Step(step) => solids.push(step),
-                Piece::Lent(_) => {}
-            }
-        }
-        solids.extend(lent.iter().map(|lent| lent as &dyn Solid));
-        let twins: Vec<Mirrored<'_>> = solids
-            .iter()
-            .flat_map(|solid| {
-                flips.iter().map(|flip| Mirrored {
-                    of: *solid,
-                    flip: *flip,
-                    about: super::MIRROR_CENTRE,
-                })
-            })
-            .collect();
-        solids.extend(twins.iter().map(|twin| twin as &dyn Solid));
-        let made = solid::body(self.doc.voxel_size(), &solids);
-        drop(solids);
+        let voxel_size = self.doc.voxel_size();
+        let made = with_solids(&pieces, self.inserts.lent.as_ref(), &flips, |solids| {
+            solid::body(voxel_size, solids)
+        });
         if made.world_bounds().is_none() {
             self.status = "nothing was set down: drag further".to_string();
             return;
@@ -719,7 +740,7 @@ impl Brokkr {
             .push(reading(if state.separate {
                 "Soft join  none: it is not joined".to_string()
             } else if state.blend > 0.0 {
-                format!("Soft join  {:.2} mm", state.blend * voxel_size)
+                format!("Soft join  a fillet of {:.2} mm", state.blend * voxel_size)
             } else {
                 "Soft join  none".to_string()
             }))
@@ -925,6 +946,73 @@ mod tests {
         press(&mut pressed, MIDDLE);
         release(&mut pressed);
         assert!(same_field(&pressed, &self::app()));
+    }
+
+    /// How many voxels of the body in hand are inside it.
+    fn solid_voxels(app: &Brokkr) -> usize {
+        let volume = app.doc.active_volume();
+        let (low, high) = volume.world_bounds().expect("a body");
+        let (lo, hi) = volume.voxel_bounds(low, high);
+        let mut count = 0;
+        for z in lo.z..=hi.z {
+            for y in lo.y..=hi.y {
+                for x in lo.x..=hi.x {
+                    if volume.sample_voxel(glam::IVec3::new(x, y, z)) < 0.0 {
+                        count += 1;
+                    }
+                }
+            }
+        }
+        count
+    }
+
+    /// The soft join goes wider than the field's own distances: a shape
+    /// set down with the widest fills more of the crease than one with
+    /// the widest there was before, a shape taken out leaves a rounder
+    /// rim, dragging it about leaves no trace of where it has been, and
+    /// one undo takes the shape and its join together.
+    #[test]
+    fn a_shape_is_joined_as_softly_as_is_asked() {
+        let with = |blend: f32, cut: bool| {
+            let mut app = app();
+            choose(&mut app, Insert::Shape(Form::Ball));
+            set(&mut app, AddMessage::BlendChanged(blend));
+            assert_eq!(app.inserts.blend, blend);
+            app.control = cut;
+            press(&mut app, MIDDLE);
+            for far in [30.0, 70.0, 40.0] {
+                move_to(&mut app, MIDDLE + Vec2::new(far, 0.0));
+            }
+            release(&mut app);
+            app.control = false;
+            app
+        };
+        let (plain, narrow, wide) = (with(0.0, false), with(2.0, false), with(MOST_BLEND, false));
+        let (plain_count, narrow_count, wide_count) =
+            (solid_voxels(&plain), solid_voxels(&narrow), solid_voxels(&wide));
+        assert!(
+            narrow_count > plain_count && wide_count > narrow_count + (narrow_count - plain_count),
+            "inside: {plain_count} joined plainly, {narrow_count} over 2, {wide_count} over {MOST_BLEND}"
+        );
+        // The same drag that went straight there.
+        let mut straight = app();
+        choose(&mut straight, Insert::Shape(Form::Ball));
+        set(&mut straight, AddMessage::BlendChanged(MOST_BLEND));
+        drag(&mut straight, MIDDLE, MIDDLE + Vec2::new(40.0, 0.0));
+        assert!(
+            same_field(&straight, &wide),
+            "a wide join left a trace of where the shape had been"
+        );
+
+        let mut undone = with(MOST_BLEND, false);
+        update(&mut undone, Message::Undo);
+        assert!(same_field(&undone, &app()), "a shape and its wide join were not one undo");
+
+        let (cut, cut_wide) = (with(0.0, true), with(MOST_BLEND, true));
+        assert!(
+            solid_voxels(&cut_wide) < solid_voxels(&cut),
+            "a socket with a wide join is no rounder at the rim"
+        );
     }
 
     /// As a body of its own: the body in hand is exactly as it was, the
