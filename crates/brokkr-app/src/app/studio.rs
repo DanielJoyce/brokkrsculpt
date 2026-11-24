@@ -92,7 +92,12 @@ const SWATCH_HEIGHT: f32 = 24.0;
 /// How wide the palette at the pointer is, and roughly how tall its
 /// heading and each of its rows come out: only to keep it on the screen,
 /// so being a little out costs nothing.
-const POPUP_WIDTH: f32 = 330.0;
+const POPUP_WIDTH: f32 = 450.0;
+
+/// How many brushes there are to a row of the palette at the pointer.
+/// Five, where the panel has room for three: at three, the brushes that
+/// come with the application were taller than a small window.
+const POPUP_ACROSS: usize = 5;
 const POPUP_HEAD: f32 = 44.0;
 const POPUP_ROW: f32 = 25.0 + SWATCH_HEIGHT;
 const POPUP_GROUP: f32 = 18.0;
@@ -1145,7 +1150,15 @@ impl Brokkr {
                 },
             ),
             amount(
-                format!("Pinch  {}", either(actions.pinch, "together", "apart")),
+                format!("Gather  {}", either(actions.gather, "together", "apart")),
+                -1.0..=1.0,
+                actions.gather,
+                |actions, gather| Actions { gather, ..actions },
+            ),
+            // Upstream's pinch, by what it does to what is under the
+            // brush and not by its name: see `Actions::pinch`.
+            amount(
+                format!("Pinch  {}", either(actions.pinch, "steeper sided", "worn down")),
                 -1.0..=1.0,
                 actions.pinch,
                 |actions, pinch| Actions { pinch, ..actions },
@@ -1269,7 +1282,7 @@ impl Brokkr {
                 .on_press(changed(StudioMessage::PaletteToggled)),
         ]
         .align_y(iced::Alignment::Center);
-        let mut panel = column![heading, self.brush_grid(2), keep, files,].spacing(theme::S1);
+        let mut panel = column![heading, self.brush_grid(3, 2), keep, files,].spacing(theme::S1);
         if let Some(place) = Presets::place() {
             panel = panel.push(
                 text(format!("yours are kept in {place}"))
@@ -1281,12 +1294,12 @@ impl Brokkr {
     }
 
     /// The brushes there are, a button each, the one in hand lit: the ones
-    /// that come with the application three to a row, their names being
-    /// short, and the user's own `own_across` to a row under them.
+    /// that come with the application `across` to a row under a heading
+    /// for each group, and the user's own `own_across` to a row under them.
     ///
     /// A button to forget beside each was tried first, and seen on a
     /// screen it left the names 74 pixels to wrap in.
-    fn brush_grid(&self, own_across: usize) -> Element<'_, Message> {
+    fn brush_grid(&self, across: usize, own_across: usize) -> Element<'_, Message> {
         let now = self.preset_now(String::new());
         let palette = self.studio.presets.palette();
         let lit = Self::lit(&palette, &now);
@@ -1340,7 +1353,7 @@ impl Brokkr {
         // each kind of work, and then the user's own.
         let mut grid = column![].spacing(theme::S1);
         for (group, places) in super::presets::groups() {
-            grid = grid.push(heading(group)).push(rows(places.start, places.end, 3));
+            grid = grid.push(heading(group)).push(rows(places.start, places.end, across));
         }
         if palette.len() > came {
             grid = grid.push(heading("Yours")).push(rows(came, palette.len(), own_across));
@@ -1348,12 +1361,15 @@ impl Brokkr {
         grid.into()
     }
 
-    /// How many rows the palette at the pointer has: three brushes to a
-    /// row, the ones that come with the application and then the user's.
+    /// How many rows the palette at the pointer has: each group of the
+    /// brushes that come with the application in rows of its own, and
+    /// then the user's.
     fn popup_rows(&self) -> usize {
         let came = super::presets::core().len();
         let own = self.studio.presets.palette().len().saturating_sub(came);
-        came.div_ceil(3) + own.div_ceil(3)
+        let grouped: usize =
+            super::presets::groups().map(|(_, places)| places.len().div_ceil(POPUP_ACROSS)).sum();
+        grouped + own.div_ceil(POPUP_ACROSS)
     }
 
     /// Roughly how tall the palette at the pointer comes out: its heading,
@@ -1382,7 +1398,7 @@ impl Brokkr {
         let corner = self.popup_corner(self.studio.popup?);
         let card = column![
             text("BRUSHES").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
-            self.brush_grid(3),
+            self.brush_grid(POPUP_ACROSS, POPUP_ACROSS),
         ]
         .spacing(theme::S2);
         Some(
@@ -3264,17 +3280,14 @@ mod tests {
         let came = app.studio.presets.palette().len();
         let read = vec![
             Ok(("one.brush".to_string(), "Gouge = push:-1, size:2\n".to_string())),
-            Ok((
-                "pack.brush".to_string(),
-                "Knurl = tip:Star, dabs:1\nRidge = plateau:0.5\n".into(),
-            )),
+            Ok(("pack.brush".to_string(), "Knurl = tip:Star, dabs:1\nStep = plateau:0.5\n".into())),
             Ok(("notes.brush".to_string(), "nothing to see\n".to_string())),
             Err("gone.brush: no such file".to_string()),
         ];
         set(&mut app, StudioMessage::BrushImported(Some(read)));
         assert_eq!(app.studio.presets.list.len(), 3);
         assert_eq!(app.studio.presets.palette().len(), came + 3);
-        assert!(app.status.starts_with("imported 3: Gouge, Knurl, Ridge; but "), "{}", app.status);
+        assert!(app.status.starts_with("imported 3: Gouge, Knurl, Step; but "), "{}", app.status);
         choose(&mut app, "Gouge");
         assert_eq!(app.studio.custom.map(|actions| actions.push), Some(-1.0));
         assert_eq!(app.brush.radius, 2.0);

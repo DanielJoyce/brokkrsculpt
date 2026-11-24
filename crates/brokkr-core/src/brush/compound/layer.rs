@@ -435,7 +435,8 @@ impl Compound {
         };
 
         let pull = PINCH_PULL_VOXELS * LAYER_STAMPS;
-        let reach_voxels = gain * (actions.push.abs() * depth + actions.pinch.abs() * pull);
+        let reach_voxels = gain
+            * (actions.push.abs() * depth + (actions.pinch.abs() + actions.gather.abs()) * pull);
         let reach = reach_voxels * voxel_size;
         let within = radius * REACH;
         let extent = Vec3::splat(within);
@@ -469,6 +470,7 @@ impl Compound {
         let level_alone = actions.push == 0.0
             && actions.inflate == 0.0
             && actions.pinch == 0.0
+            && actions.gather == 0.0
             && actions.smooth == 0.0;
         let inflating = match direction {
             BrushDirection::Add => actions.inflate,
@@ -568,7 +570,7 @@ impl Compound {
                 most.store(weight.to_bits(), RELAXED);
                 let mut held = region.get(voxel);
 
-                if actions.push != 0.0 || actions.pinch != 0.0 {
+                if actions.push != 0.0 || actions.pinch != 0.0 || actions.gather != 0.0 {
                     let mut from = position;
                     if actions.push != 0.0 {
                         from -= normal
@@ -586,6 +588,16 @@ impl Compound {
                                 .min(off_axis * MOST_PULL);
                             from += to_axis * (far * pinch_turn * actions.pinch.signum());
                         }
+                    }
+                    if actions.gather != 0.0 {
+                        // From further off the line by a share of how far
+                        // off it the voxel is: `super::GATHER`. A layer's
+                        // foot is on the stroke's line already, so `across`
+                        // is the way off it.
+                        let share =
+                            (super::GATHER * LAYER_STAMPS * weight * pinch_turn * actions.gather)
+                                .clamp(-super::MOST_GATHER, super::MOST_GATHER);
+                        from += (across * share).clamp_length_max(pull * voxel_size);
                     }
                     held = region.sample(from / voxel_size);
                 }
@@ -979,9 +991,9 @@ mod tests {
         fn actions() -> impl Strategy<Value = Actions> {
             let amount = || -1.5_f32..1.5;
             let side = prop::sample::select(Side::ALL.to_vec());
-            (amount(), amount(), amount(), amount(), amount(), amount(), side).prop_map(
-                |(push, inflate, pinch, smooth, level, plane, side)| {
-                    Actions { push, inflate, pinch, smooth, level, plane, side }.legal()
+            (amount(), amount(), amount(), amount(), amount(), amount(), side, amount()).prop_map(
+                |(push, inflate, pinch, smooth, level, plane, side, gather)| {
+                    Actions { push, inflate, pinch, gather, smooth, level, plane, side }.legal()
                 },
             )
         }

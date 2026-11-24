@@ -195,7 +195,10 @@ fn ground_for(actions: &Actions) -> Ground {
         || (actions.level > 0.0 && actions.plane > 0.0);
     if builds {
         Ground::Flat
-    } else if actions.pinch != 0.0 && actions.smooth == 0.0 && actions.level == 0.0 {
+    } else if (actions.pinch != 0.0 || actions.gather != 0.0)
+        && actions.smooth == 0.0
+        && actions.level == 0.0
+    {
         Ground::Ridged
     } else {
         Ground::Rippled
@@ -509,35 +512,45 @@ mod tests {
             rough(&after, mid_y),
             rough(&before, mid_y)
         );
-        // Pinch and Spread are drawn on a ridge, and the picture shows
-        // what upstream's pinch does to one, which is not what its name
-        // says. It reads the field from nearer the brush's axis, so a
-        // ridge under the brush keeps its top and is BROADER, with
-        // steeper sides: measured here, 7.7 voxels wide at half its
-        // height before and over 12 after. Turned round, which is Spread,
-        // it reads from further off and the ridge is worn down to a
-        // quarter of its height. Held as found, so that a change to
-        // either shows.
-        assert_eq!(ground_for(&does(&named("Pinch"))), Ground::Ridged);
-        assert_eq!(ground_for(&does(&named("Spread"))), Ground::Ridged);
+        // The brushes that work on a ridge are drawn on one, and each
+        // picture shows what its brush does to it. Gather is a pinch: the
+        // ridge is narrower and as tall. Spread is wider and as tall.
+        // Upstream's Pinch reads the field from nearer the brush's axis
+        // by a fixed step, so the ridge keeps its top and is BROADER,
+        // with steeper sides (measured here when it was the only pinch
+        // there was: 7.7 voxels wide at half its height before and over
+        // 12 after), and turned round, which is Wear down, it reads from
+        // further off and the ridge is worn to a quarter of its height.
+        // Held as found, so that a change to any of them shows.
+        for name in ["Pinch", "Gather", "Spread", "Wear down"] {
+            assert_eq!(ground_for(&does(&named(name))), Ground::Ridged, "{name}");
+        }
         let wide = |volume: &Volume| {
             let top = height(volume, mid_x, mid_y);
             let across = (0..120).map(|step| mid_y - 6.0 + step as f32 * 0.1);
             across.filter(|y| height(volume, mid_x, *y) > top * 0.5).count() as f32 * 0.1
         };
-        let (ridge, pinched, spread) =
-            (slab(Ground::Ridged), stroked(&named("Pinch")), stroked(&named("Spread")));
         let top = |volume: &Volume| height(volume, mid_x, mid_y);
+        let ridge = slab(Ground::Ridged);
         assert!(top(&ridge) > 2.5, "the fixture's ridge is {} voxels tall", top(&ridge));
+        let after = |name: &str| {
+            let volume = stroked(&named(name));
+            (wide(&volume), top(&volume))
+        };
+        let (was_wide, was_tall) = (wide(&ridge), top(&ridge));
+        let (gathered, gathered_top) = after("Gather");
+        assert!(gathered < was_wide * 0.8, "Gather left the ridge {gathered} wide of {was_wide}");
+        assert!(gathered_top > was_tall * 0.85, "and {gathered_top} tall of {was_tall}");
+        let (spread, spread_top) = after("Spread");
+        assert!(spread > was_wide * 1.15, "Spread left the ridge {spread} wide of {was_wide}");
+        assert!(spread_top > was_tall * 0.85, "and {spread_top} tall of {was_tall}");
+        let (pinched, pinched_top) = after("Pinch");
         assert!(
-            wide(&pinched) > wide(&ridge) * 1.2 && top(&pinched) > top(&ridge) * 0.85,
-            "Pinch left a ridge {} wide and {} tall of one {} wide and {} tall",
-            wide(&pinched),
-            top(&pinched),
-            wide(&ridge),
-            top(&ridge)
+            pinched > was_wide * 1.2 && pinched_top > was_tall * 0.85,
+            "Pinch left a ridge {pinched} wide and {pinched_top} tall of one {was_wide} and {was_tall}"
         );
-        assert!(top(&spread) < top(&ridge) * 0.5, "Spread left the ridge {} tall", top(&spread));
+        let (_, worn_top) = after("Wear down");
+        assert!(worn_top < was_tall * 0.5, "Wear down left the ridge {worn_top} tall");
         // And Draw and Clay are drawn on the flat, where they have
         // something to show.
         assert_eq!(ground_for(&Actions::DRAW), Ground::Flat);

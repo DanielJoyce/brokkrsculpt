@@ -410,11 +410,14 @@ true of it too, and what it adds is this.
   so a model painted this way is also a multi-colour print. Everything the
   rack does is an undo step, removing a paint included.
 - **A palette of brushes.** Each button shows a picture of a stroke of
-  its brush, made by the brush itself. Thirty come with it: Draw, Clay, Inflate,
-  Pinch, Smooth and Flatten, and *Spread*, *Scrape*, *Fill*, *Polish*,
-  *Crease*, *Bead*, *Band*, *Layer*, *Clay strips*, *Stitches* and more.
-  Every one is the same brush with different settings, and *What it does*
-  shows them: how much it pushes, inflates, pinches, smooths and levels.
+  its brush, made by the brush itself. Thirty-three come with it: Draw,
+  Clay, Inflate, Pinch, Smooth and Flatten, and *Gather*, *Spread*,
+  *Scrape*, *Fill*, *Polish*, *Crease*, *Ridge*, *Bead*, *Band*, *Layer*,
+  *Clay strips*, *Stitches* and more. *Gather* is a true pinch: a ridge
+  under the stroke comes out narrower and as tall, and *Spread* is its
+  opposite. Every one is the same brush with different settings, and
+  *What it does* shows them: how much it pushes, inflates, pinches,
+  gathers, smooths and levels.
   Change them, choose the *Profile* of the stroke (five shapes, and a flat
   middle), lay a *Picture across the tip*, have it *Build up* or lay *One
   layer* however long you scrub, set it down as a line or in separate
@@ -466,7 +469,7 @@ true of it too, and what it adds is this.
 </p>
 
 <p align="center">
-  <img alt="The palette of brushes brought up in the middle of the viewport by the b key: thirty buttons in rows of three under the headings Sculpt, Lines and stamps, and Add, each with a small picture of its brush's stroke over its name, with Draw lit" src="docs/images/studio-palette-popup.png" width="760">
+  <img alt="The palette of brushes brought up in the middle of the viewport by the b key: thirty-three buttons in rows of five under the headings Sculpt, Lines and stamps, and Add, each with a small picture of its brush's stroke over its name, with Draw lit" src="docs/images/studio-palette-popup.png" width="760">
 </p>
 
 <p align="center">
