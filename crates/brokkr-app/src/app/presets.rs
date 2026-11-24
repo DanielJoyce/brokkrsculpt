@@ -309,6 +309,13 @@ impl Preset {
         [actions.push, actions.inflate, actions.pinch, actions.smooth, actions.level, actions.plane]
     }
 
+    /// What the brush is, apart from what it is called: two brushes with
+    /// the same key are the same brush under two names. Its picture is
+    /// kept by this (`app/swatch.rs`).
+    pub fn key(&self) -> String {
+        self.settings()
+    }
+
     /// The settings half of a line of the file.
     fn settings(&self) -> String {
         let mut fields = vec![format!("brush:{}", self.kind.label())];
