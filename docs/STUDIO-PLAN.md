@@ -2919,6 +2919,10 @@ upstream's setting.
 and all. It and *Import* are behind **+ Add a brush** at the top of the
 palette since 2026-11-24: they were two rows under all thirty-six brushes,
 and the maintainer, looking for a way to add one, did not find a button.
+The block says nothing but its controls: a line above each row saying what
+it was for, and a line under them saying where the files are kept, were
+taken out the same day at the maintainer's word (*"Keep ui clean"*), and
+what they said is to go in a help page (issue 69).
 **Forget** takes away the one that is lit, if it is the user's, and is a
 button under the palette only while such a brush is lit.
 A brush kept under the name of one that came with the application stands

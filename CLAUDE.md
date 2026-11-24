@@ -78,6 +78,15 @@ when the build machine could not measure it (it has no graphics card).
 
 ## House style
 
+- **The interface is controls, not prose.** Said by the maintainer on
+  2026-11-24, of a block that explained its own rows and said where its
+  files are kept: *"Remove the extra text telling me where brushes or
+  stored or anything like that in the UI. Keep ui clean. If we need this
+  info then let's add a help/doc ticket."* No captions that explain a
+  control, no paths, no "this is kept in". A label, a placeholder and a
+  status line after an action are what a panel says. What a user may
+  need to know beyond that goes in the documents, with a ticket.
+
 - No em-dashes in prose, comments, documents or commit messages.
 - An `SPDX-License-Identifier: AGPL-3.0-only` header on every new source
   file.
