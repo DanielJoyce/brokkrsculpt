@@ -637,10 +637,9 @@ impl Compound {
 
         // What `decide` says of a brick that holds one value, said of a
         // voxel. See `volume/settled.rs`.
-        let settled = crate::Settled {
-            inside: leaves_saturated_alone(INSIDE),
-            outside: leaves_saturated_alone(OUTSIDE),
-        };
+        let settled =
+            crate::Settled::ends(leaves_saturated_alone(INSIDE), leaves_saturated_alone(OUTSIDE))
+                .inside_ball(centre, radius);
 
         volume.edit_voxels_where(
             lo,

@@ -391,10 +391,11 @@ fn run<K: Kernel>(def: &BrushDef, volume: &mut Volume, stamp: &Stamp, scratch: &
 
     // What `decide` says of a brick that holds one value, said of a voxel.
     // See `volume/settled.rs`.
-    let settled = crate::Settled {
-        inside: K::leaves_saturated_alone(INSIDE, direction),
-        outside: K::leaves_saturated_alone(OUTSIDE, direction),
-    };
+    let settled = crate::Settled::ends(
+        K::leaves_saturated_alone(INSIDE, direction),
+        K::leaves_saturated_alone(OUTSIDE, direction),
+    )
+    .inside_ball(centre, radius);
 
     volume.edit_voxels_where(
         lo,

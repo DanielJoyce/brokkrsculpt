@@ -252,13 +252,17 @@ impl Join {
         let starts: FxHashSet<IVec3> = (lo.z..=hi.z)
             .into_par_iter()
             .flat_map_iter(|z| {
+                // A line of the copy at a time: all but a few voxels of the
+                // box are off the body's surface, and asking the region for
+                // each by its coordinate was a seventh of a shape's
+                // set-down to find that out (`docs/PERFORMANCE.md`).
                 let mut found = Vec::new();
                 for y in lo.y..=hi.y {
-                    for x in lo.x..=hi.x {
-                        let voxel = IVec3::new(x, y, z);
-                        if region.get(voxel).abs() > SEED {
+                    for (step, value) in region.row(lo.x, hi.x, y, z).iter().enumerate() {
+                        if value.abs() > SEED {
                             continue;
                         }
+                        let voxel = IVec3::new(lo.x + step as i32, y, z);
                         let off = solid.distance(voxel.as_vec3() * voxel_size) / voxel_size;
                         if off.abs() <= near_enough {
                             found.push(voxel);
@@ -294,9 +298,11 @@ impl Join {
         let count = size.element_product() as usize;
 
         let mut raw = vec![0.0_f32; count];
-        raw.par_iter_mut()
-            .enumerate()
-            .for_each(|(index, value)| *value = region.get(voxel_at(index)));
+        raw.par_chunks_mut(row).enumerate().for_each(|(line, values)| {
+            let y = work_lo.y + (line % size.y as usize) as i32;
+            let z = work_lo.z + (line / size.y as usize) as i32;
+            values.copy_from_slice(region.row(work_lo.x, work_hi.x, y, z));
+        });
         // A voxel the join adds to holds more than the least there is,
         // so it is in the band or outside the body, and one it takes
         // from is in the band or inside: the other side is spread into

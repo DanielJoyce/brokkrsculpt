@@ -79,6 +79,26 @@ impl FieldRegion {
     /// A read outside it is answered by [`FieldRegion::get`]'s clamp rather
     /// than from the copy, so a caller reasoning about what a sample can have
     /// come from needs to know where that edge is rather than assume it.
+    /// The values of one line of the region along X, from `from_x` to `to_x`
+    /// inclusive, all of which must be inside it. For a pass over a box of
+    /// the region that would otherwise ask [`FieldRegion::get`], with its
+    /// clamp and its arithmetic, of every voxel.
+    #[inline]
+    pub(crate) fn row(&self, from_x: i32, to_x: i32, y: i32, z: i32) -> &[f32] {
+        let local = IVec3::new(from_x, y, z) - self.lo;
+        debug_assert!(
+            local.cmpge(IVec3::ZERO).all()
+                && y - self.lo.y < self.size.y
+                && z - self.lo.z < self.size.z
+                && to_x <= self.hi.x
+                && from_x <= to_x,
+            "a row outside the region"
+        );
+        let start =
+            (local.x + local.y * self.size.x + local.z * self.size.x * self.size.y) as usize;
+        &self.values[start..start + (to_x - from_x + 1) as usize]
+    }
+
     pub(crate) fn bounds(&self) -> (IVec3, IVec3) {
         (self.lo, self.hi)
     }

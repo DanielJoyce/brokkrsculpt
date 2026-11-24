@@ -1387,10 +1387,13 @@ impl Brush {
         // band, and this brush leaves that end alone, the voxel is not
         // visited. See `volume/settled.rs`.
         let settled = match skipping {
-            Skipping::On => crate::Settled {
-                inside: self.leaves_constant_alone(INSIDE, direction),
-                outside: self.leaves_constant_alone(OUTSIDE, direction),
-            },
+            // And outside the brush's ball nothing changes, which the edit
+            // below begins by asking of every voxel it is given.
+            Skipping::On => crate::Settled::ends(
+                self.leaves_constant_alone(INSIDE, direction),
+                self.leaves_constant_alone(OUTSIDE, direction),
+            )
+            .inside_ball(centre, self.radius),
             Skipping::Off => crate::Settled::NONE,
         };
 

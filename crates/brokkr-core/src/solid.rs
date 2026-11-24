@@ -44,7 +44,7 @@
 use contracts::debug_requires;
 use glam::{IVec3, Mat3, Vec2, Vec3};
 
-use crate::brick::{BRICK_DIM, INSIDE, OUTSIDE};
+use crate::brick::{BRICK_DIM, BrickCoord, INSIDE, OUTSIDE};
 use crate::mask::PROTECTED;
 use crate::region::FieldRegion;
 use crate::volume::{BrickPreview, BrickVerdict, Volume};
@@ -60,6 +60,17 @@ pub const MOST_BLEND: f32 = 8.0;
 /// Half the diagonal of a brick, in voxels: how far any voxel of a brick
 /// can be from its middle.
 const BRICK_HALF_DIAGONAL: f32 = BRICK_DIM as f32 * 0.866_025_4;
+
+/// How many voxels a side the blocks are that a solid is asked of before it
+/// is asked of each voxel (`Join::add_narrow`), and how many of them a brick
+/// is across.
+const BLOCK: usize = 4;
+const BLOCKS: usize = BRICK_DIM / BLOCK;
+/// The most a steady solid's distance can differ, in voxels, between the
+/// middle of a block and any voxel of it: the furthest voxel's centre is a
+/// voxel and a half off along each axis, and the distance changes by at most
+/// [`STEEPEST`] for each voxel moved.
+const BLOCK_REACH: f32 = 1.5 * 1.732_050_8 * STEEPEST;
 
 /// A shape that knows how far a point is from it.
 pub trait Solid: Sync {
@@ -80,7 +91,24 @@ pub trait Solid: Sync {
     fn sure(&self) -> f32 {
         f32::INFINITY
     }
+
+    /// Whether [`Solid::distance`] changes by no more than about the
+    /// distance moved: by less than [`STEEPEST`] times it, between any two
+    /// points. A shape with a formula does, and so does a body's own field
+    /// read between its voxels. [`Join`] then asks it of the middle of a
+    /// small block of voxels and passes over the block when the answer puts
+    /// all of it out of reach, where otherwise it asks of every voxel. A
+    /// solid that does not say so is asked of every voxel.
+    fn steady(&self) -> bool {
+        false
+    }
 }
+
+/// The most a [`Solid::steady`] solid's distance may change by for a
+/// distance moved of one. One for a true distance. A field read between its
+/// voxels can change by one along each axis at once, which along a diagonal
+/// is the square root of three, and this is a little over that.
+pub const STEEPEST: f32 = 1.75;
 
 /// The shapes that come with the application, each a unit across from its
 /// middle: it fits a box from -1 to 1, with its axis, where it has one,
@@ -206,6 +234,10 @@ impl Solid for Placed {
         self.form.distance_deep(local, self.deep) * self.half
     }
 
+    fn steady(&self) -> bool {
+        true
+    }
+
     fn bounds(&self) -> (Vec3, Vec3) {
         // Whichever way it is turned, it is inside the ball round its box.
         let reach = Vec3::splat(self.half * 1.733);
@@ -278,6 +310,10 @@ impl Solid for Lent<'_> {
         self.source.sample_world(local) * self.source.voxel_size() * self.scale
     }
 
+    fn steady(&self) -> bool {
+        true
+    }
+
     fn bounds(&self) -> (Vec3, Vec3) {
         let reach = Vec3::splat(self.radius * self.scale);
         (self.centre - reach, self.centre + reach)
@@ -300,6 +336,10 @@ pub struct Step {
 }
 
 impl Solid for Step {
+    fn steady(&self) -> bool {
+        true
+    }
+
     fn distance(&self, point: Vec3) -> f32 {
         let run = self.to - self.from;
         let length = run.length_squared();
@@ -336,6 +376,10 @@ impl Mirrored<'_> {
 impl Solid for Mirrored<'_> {
     fn distance(&self, point: Vec3) -> f32 {
         self.of.distance(self.across(point))
+    }
+
+    fn steady(&self) -> bool {
+        self.of.steady()
     }
 
     fn sure(&self) -> f32 {
@@ -541,18 +585,11 @@ impl Join {
     /// has joined anything to it.
     #[debug_requires(volume.is_recording() || self.boxes.is_empty(), "what a body was before a stroke is the open stroke's record")]
     pub fn clear(&mut self, volume: &mut Volume) {
+        // From the stroke's record, a brick at a time: see
+        // `Volume::restore_before`. It was a copy of each box as it was and
+        // then every voxel of the box compared with the copy.
         for (lo, hi) in std::mem::take(&mut self.boxes) {
-            volume.snapshot_before(lo, hi, &mut self.region);
-            let region = &self.region;
-            volume.edit_voxels_where(
-                lo,
-                hi,
-                0,
-                false,
-                crate::Settled::NONE,
-                |_| BrickVerdict::Whole,
-                |voxel, _, _, _| region.get(voxel),
-            );
+            volume.restore_before(lo, hi);
         }
     }
 
@@ -617,30 +654,60 @@ impl Join {
             let nearest = solid.distance(middle) / voxel_size - BRICK_HALF_DIAGONAL;
             if nearest >= reach { BrickVerdict::Skip } else { BrickVerdict::Whole }
         };
-        volume.edit_voxels_where(
-            lo,
-            hi,
-            0,
-            true,
-            crate::Settled::NONE,
-            decide,
-            move |voxel, position, value, free| {
-                if free <= 0.0 {
-                    return value;
+        // **The solid is asked of a block of voxels before it is asked of
+        // each.** `decide` above passes over a brick whose middle is far
+        // enough from the solid that none of it is in reach. That leaves the
+        // bricks near the solid, and in those the same is true of most of
+        // their voxels: the reach is a few voxels and a brick is thirty-two.
+        // So each brick is taken as 512 blocks of four voxels a side, and a
+        // block whose middle puts all of it out of reach is passed over
+        // whole. A profile of a ball being dragged out had the solid asked of
+        // every voxel at a quarter of the gesture (`docs/PERFORMANCE.md`).
+        //
+        // Passing over a voxel is right exactly when the edit below would
+        // have returned at `off >= reach`, and that is what a block's middle
+        // promises of a solid that is `steady`. One that is not is asked of
+        // every voxel, as before.
+        let leave = |coord: BrickCoord, lines: &mut [u32; BRICK_DIM * BRICK_DIM]| {
+            let origin = coord.origin().as_vec3();
+            for index in 0..BLOCKS * BLOCKS * BLOCKS {
+                let block = [index % BLOCKS, index / BLOCKS % BLOCKS, index / (BLOCKS * BLOCKS)];
+                let middle = origin
+                    + Vec3::new(block[0] as f32, block[1] as f32, block[2] as f32) * BLOCK as f32
+                    + Vec3::splat(BLOCK as f32 * 0.5 - 0.5);
+                let nearest = solid.distance(middle * voxel_size) / voxel_size - BLOCK_REACH;
+                if nearest < reach {
+                    continue;
                 }
-                let off = solid.distance(position) / voxel_size;
-                if off >= reach {
-                    return value;
+                let bits = ((1u32 << BLOCK) - 1) << (block[0] * BLOCK);
+                for z in block[2] * BLOCK..(block[2] + 1) * BLOCK {
+                    for y in block[1] * BLOCK..(block[1] + 1) * BLOCK {
+                        lines[y + z * BRICK_DIM] |= bits;
+                    }
                 }
-                let before = region.get(voxel);
-                let joined = if how.cut {
-                    taken_out(value, before, off, blend)
-                } else {
-                    value.min(nearer(before, off, blend))
-                };
-                value + (joined.clamp(INSIDE, OUTSIDE) - value) * free
-            },
-        );
+            }
+        };
+        let edit = move |voxel: IVec3, position: Vec3, value: f32, free: f32| {
+            if free <= 0.0 {
+                return value;
+            }
+            let off = solid.distance(position) / voxel_size;
+            if off >= reach {
+                return value;
+            }
+            let before = region.get(voxel);
+            let joined = if how.cut {
+                taken_out(value, before, off, blend)
+            } else {
+                value.min(nearer(before, off, blend))
+            };
+            value + (joined.clamp(INSIDE, OUTSIDE) - value) * free
+        };
+        if solid.steady() {
+            volume.edit_voxels_leaving(lo, hi, true, decide, leave, edit);
+        } else {
+            volume.edit_voxels_where(lo, hi, 0, true, crate::Settled::NONE, decide, edit);
+        }
         self.boxes.push((lo, hi));
     }
 }
@@ -706,6 +773,68 @@ mod tests {
     fn knob(half: f32) -> Placed {
         Placed::on(Form::Ball, CENTRE + Vec3::Y * RADIUS, Vec3::Y, Vec3::X, half, 0.0)
             .expect("a knob")
+    }
+
+    /// Joining with the solid asked of a block of voxels before it is asked
+    /// of each leaves the field that asking it of every voxel leaves, to the
+    /// bit, and the same undo: every form at sizes from a few voxels to more
+    /// than a brick, turned any way, added and cut, soft and hard, with a
+    /// run of cable, a body lent at three sizes, and each in a mirror.
+    #[test]
+    fn asking_a_block_first_leaves_what_asking_every_voxel_leaves() {
+        use crate::testing::Noise;
+        let mut random = Noise::seeded(11);
+        let unit = |random: &mut Noise| random.below(2001) as f32 / 1000.0 - 1.0;
+        let lender = body(
+            1.0,
+            &[&Placed::on(Form::Box, CENTRE, Vec3::Y, Vec3::X, 9.0, 0.0).expect("a box")],
+        );
+        let extent = lender.surface_bounds().expect("a body with a surface");
+
+        let mut differing = 0;
+        for round in 0..40 {
+            let towards =
+                Vec3::new(unit(&mut random), unit(&mut random), unit(&mut random)).normalize();
+            let toward = Vec3::new(unit(&mut random), unit(&mut random), unit(&mut random));
+            let at = CENTRE + towards * (RADIUS + unit(&mut random) * 6.0);
+            let half = [3.0, 7.0, 14.0, 26.0, 40.0][round % 5] + unit(&mut random);
+            let lift = unit(&mut random) * 0.4;
+            let how = How { cut: round % 3 == 1, blend: [0.0, 1.0, 2.0, 3.5][round % 4] };
+
+            let placed = Placed::on(Form::ALL[round % 5], at, towards, toward, half, lift);
+            let step = Step { from: at, to: at + toward * half, radius: 1.0 + half * 0.2 };
+            let lent = Lent::on(&lender, extent, at, towards, toward, half, lift);
+            let mut solids: Vec<&dyn Solid> = vec![&step];
+            if let Some(placed) = &placed {
+                solids.push(placed);
+            }
+            if let Some(lent) = &lent {
+                solids.push(lent);
+            }
+            let mirrored = Mirrored {
+                of: solids[round % solids.len()],
+                flip: Vec3::new(-1.0, 1.0, 1.0),
+                about: CENTRE,
+            };
+            solids.push(&mirrored);
+
+            for solid in solids {
+                assert!(solid.steady(), "the fixture is of solids that say they are steady");
+                let run = || {
+                    let mut volume = ball();
+                    volume.begin_stroke();
+                    Join::new().add(&mut volume, solid, how);
+                    let undo = volume.end_stroke().map(|edit| (edit.len(), edit.bytes()));
+                    (volume, undo)
+                };
+                let (blocks, blocks_undo) = run();
+                let (voxels, voxels_undo) = crate::volume::without_settled(run);
+                crate::testing::assert_same_field(&blocks, &voxels, &format!("round {round}"));
+                assert_eq!(blocks_undo, voxels_undo, "round {round}: the undo entry differs");
+                differing += usize::from(!same_values(&blocks, &ball()));
+            }
+        }
+        assert!(differing > 60, "only {differing} of the joins changed the ball at all");
     }
 
     /// Each form is solid in its middle, is where it says it is, and
