@@ -79,3 +79,20 @@ pub fn assert_same_field(a: &Volume, b: &Volume, what: &str) {
         }
     }
 }
+
+/// Assert two volumes hold the same field to the bit, which
+/// [`assert_same_field`] does not quite: it takes a nought and a minus
+/// nought for the same number, and they are not the same bits.
+pub fn assert_same_bits(a: &Volume, b: &Volume, what: &str) {
+    assert_same_field(a, b, what);
+    for coord in a.brick_coords() {
+        let same = match (a.brick(coord), b.brick(coord)) {
+            (Some(Brick::Uniform(x)), Some(Brick::Uniform(y))) => x.to_bits() == y.to_bits(),
+            (Some(Brick::Dense(x)), Some(Brick::Dense(y))) => {
+                x.iter().zip(y.iter()).all(|(x, y)| x.to_bits() == y.to_bits())
+            }
+            _ => false,
+        };
+        assert!(same, "{what}: brick {coord:?} differs in the sign of a nought");
+    }
+}

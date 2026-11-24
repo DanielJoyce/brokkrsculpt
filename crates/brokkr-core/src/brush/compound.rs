@@ -85,7 +85,7 @@ pub const GATHER: f32 = 0.2;
 /// The most a gather's share may be at one voxel, whatever the strength:
 /// less than all of the distance, so that a spread never reads from the
 /// other side of the line.
-const MOST_GATHER: f32 = 0.5;
+pub(super) const MOST_GATHER: f32 = 0.5;
 
 /// The most of the middle of a stroke that may be flat. Less than all of
 /// it, so that a brush always has a rim that tapers and never a wall.
@@ -359,7 +359,7 @@ impl Profile {
     /// This profile made ready for a stamp: the plateau brought into its
     /// range and the division it implies done, once and not at every voxel.
     #[inline]
-    fn slope(self) -> Slope {
+    pub(super) fn slope(self) -> Slope {
         let plateau =
             if self.plateau.is_finite() { self.plateau.clamp(0.0, MOST_PLATEAU) } else { 0.0 };
         Slope { shape: self.shape, plateau, steepness: 1.0 / (1.0 - plateau) }
@@ -370,11 +370,11 @@ impl Profile {
 /// voxel in its box, and asked the plain way (bring the plateau into range,
 /// divide, choose) it was a third of what a stamp cost: measured.
 #[derive(Debug, Clone, Copy)]
-struct Slope {
-    shape: Shape,
-    plateau: f32,
+pub(super) struct Slope {
+    pub(super) shape: Shape,
+    pub(super) plateau: f32,
     /// One over what is left of the radius past the plateau.
-    steepness: f32,
+    pub(super) steepness: f32,
 }
 
 impl Slope {
@@ -641,126 +641,150 @@ impl Compound {
             crate::Settled::ends(leaves_saturated_alone(INSIDE), leaves_saturated_alone(OUTSIDE))
                 .inside_ball(centre, radius);
 
-        volume.edit_voxels_where(
+        // The same arithmetic a run of voxels at a time, where the brush
+        // can be done that way: with no pattern and no picture across its
+        // tip. See `brush/runs.rs`.
+        let run = (!TIPPED && pattern.is_off() && !crate::volume::shortcuts_off()).then_some(
+            super::runs::Kernel {
+                centre,
+                radius_squared,
+                inverse_radius,
+                slope,
+                gain,
+                displacement,
+                direction,
+                normal,
+                actions,
+                pinch_turn,
+                along,
+                plane_point,
+                region,
+            },
+        );
+
+        volume.edit_voxels_by_runs(
             lo,
             hi,
             read_voxels,
             true,
             settled,
             decide,
-            move |voxel, position, value, free| {
-                let offset = position - centre;
-                if offset.length_squared() >= radius_squared {
-                    return value;
-                }
-                let distance = offset.length() * inverse_radius;
-                let shaped = slope.weight(distance) * gain;
-                if shaped <= 0.0 {
-                    return value;
-                }
-                // The tip's factors. Each stays in 0..=1, so the product
-                // does.
-                let mut patterned = shaped * pattern.weight(position);
-                if TIPPED && let Some(image) = tip {
-                    patterned *= frame.height(image, offset, inverse_radius);
-                }
-                if patterned <= 0.0 || free <= 0.0 {
-                    return value;
-                }
-                let weight = patterned * free;
-                let mut held = value;
-
-                // The reads from somewhere else, as one read. Each amount
-                // is multiplied in last: by one, that is exact.
-                if WARPS {
-                    let mut from = position;
-                    let mut read = false;
-                    if actions.push != 0.0 {
-                        let shift = normal
-                            * (weight
-                                * displacement
-                                * voxel_size
-                                * direction.outward_sign()
-                                * actions.push);
-                        from -= shift;
-                        read = true;
+            super::runs::Edit {
+                run,
+                voxel: move |voxel: glam::IVec3, position: Vec3, value: f32, free: f32| {
+                    let offset = position - centre;
+                    if offset.length_squared() >= radius_squared {
+                        return value;
                     }
-                    if actions.pinch != 0.0 {
-                        let to_centre = centre - position;
-                        // Along the surface only, or pinch quietly doubles
-                        // as inflate.
-                        let lateral = to_centre - normal * to_centre.dot(normal);
-                        // On the axis there is nowhere to be drawn toward.
-                        if let Some(to_axis) = lateral.try_normalize() {
-                            let pull = to_axis
+                    let distance = offset.length() * inverse_radius;
+                    let shaped = slope.weight(distance) * gain;
+                    if shaped <= 0.0 {
+                        return value;
+                    }
+                    // The tip's factors. Each stays in 0..=1, so the product
+                    // does.
+                    let mut patterned = shaped * pattern.weight(position);
+                    if TIPPED && let Some(image) = tip {
+                        patterned *= frame.height(image, offset, inverse_radius);
+                    }
+                    if patterned <= 0.0 || free <= 0.0 {
+                        return value;
+                    }
+                    let weight = patterned * free;
+                    let mut held = value;
+
+                    // The reads from somewhere else, as one read. Each amount
+                    // is multiplied in last: by one, that is exact.
+                    if WARPS {
+                        let mut from = position;
+                        let mut read = false;
+                        if actions.push != 0.0 {
+                            let shift = normal
                                 * (weight
-                                    * PINCH_PULL_VOXELS
+                                    * displacement
                                     * voxel_size
-                                    * pinch_turn
-                                    * actions.pinch);
-                            from += pull;
+                                    * direction.outward_sign()
+                                    * actions.push);
+                            from -= shift;
                             read = true;
                         }
-                    }
-                    if actions.gather != 0.0 {
-                        // How far the voxel is from the stroke's line,
-                        // along the surface: from the line where the
-                        // stroke has a way it is going, and from the
-                        // brush's axis where it has not yet.
-                        let from_centre = position - centre;
-                        let mut off = from_centre - normal * from_centre.dot(normal);
-                        if let Some(along) = along {
-                            off -= along * off.dot(along);
+                        if actions.pinch != 0.0 {
+                            let to_centre = centre - position;
+                            // Along the surface only, or pinch quietly doubles
+                            // as inflate.
+                            let lateral = to_centre - normal * to_centre.dot(normal);
+                            // On the axis there is nowhere to be drawn toward.
+                            if let Some(to_axis) = lateral.try_normalize() {
+                                let pull = to_axis
+                                    * (weight
+                                        * PINCH_PULL_VOXELS
+                                        * voxel_size
+                                        * pinch_turn
+                                        * actions.pinch);
+                                from += pull;
+                                read = true;
+                            }
                         }
-                        // Read from further off the line by a share of how
-                        // far off it the voxel is, which is what narrows
-                        // whatever is there and leaves what is ON the line
-                        // where it was: see `GATHER`. Spreading reads from
-                        // nearer the line by the same share, and a share
-                        // of less than all of it cannot cross the line.
-                        let share = (GATHER * weight * pinch_turn * actions.gather)
-                            .clamp(-MOST_GATHER, MOST_GATHER);
-                        let step = off * share;
-                        let most = PINCH_PULL_VOXELS * voxel_size;
-                        from += step.clamp_length_max(most);
-                        read = true;
+                        if actions.gather != 0.0 {
+                            // How far the voxel is from the stroke's line,
+                            // along the surface: from the line where the
+                            // stroke has a way it is going, and from the
+                            // brush's axis where it has not yet.
+                            let from_centre = position - centre;
+                            let mut off = from_centre - normal * from_centre.dot(normal);
+                            if let Some(along) = along {
+                                off -= along * off.dot(along);
+                            }
+                            // Read from further off the line by a share of how
+                            // far off it the voxel is, which is what narrows
+                            // whatever is there and leaves what is ON the line
+                            // where it was: see `GATHER`. Spreading reads from
+                            // nearer the line by the same share, and a share
+                            // of less than all of it cannot cross the line.
+                            let share = (GATHER * weight * pinch_turn * actions.gather)
+                                .clamp(-MOST_GATHER, MOST_GATHER);
+                            let step = off * share;
+                            let most = PINCH_PULL_VOXELS * voxel_size;
+                            from += step.clamp_length_max(most);
+                            read = true;
+                        }
+                        if read {
+                            held = region.sample(from / voxel_size);
+                        }
                     }
-                    if read {
-                        held = region.sample(from / voxel_size);
+
+                    // The offset of the level set.
+                    if INFLATES {
+                        held += direction.field_sign() * weight * displacement * actions.inflate;
                     }
-                }
 
-                // The offset of the level set.
-                if INFLATES {
-                    held += direction.field_sign() * weight * displacement * actions.inflate;
-                }
+                    // Toward the mean of the neighbours.
+                    if SMOOTHS {
+                        let average = region.neighbour_average(voxel);
+                        held += (average - held) * (weight * actions.smooth);
+                    }
 
-                // Toward the mean of the neighbours.
-                if SMOOTHS {
-                    let average = region.neighbour_average(voxel);
-                    held += (average - held) * (weight * actions.smooth);
-                }
-
-                // Toward the plane. The mask is let in after the blend and
-                // not folded into its weight, as Flatten and Clay have it:
-                // see `admit`.
-                if LEVELS {
-                    let plane = (position - plane_point).dot(normal) / voxel_size;
-                    let blended = held + (plane - held) * (patterned * actions.level);
-                    // Only the half of the blend that moves material the
-                    // way this side of the brush moves it.
-                    let adds = match direction {
-                        BrushDirection::Add => true,
-                        BrushDirection::Subtract => false,
-                    };
-                    let kept = match (actions.side, adds) {
-                        (Side::Both, _) => blended,
-                        (Side::Fill, true) | (Side::Cut, false) => blended.min(held),
-                        (Side::Fill, false) | (Side::Cut, true) => blended.max(held),
-                    };
-                    held = admit(held, kept.clamp(INSIDE, OUTSIDE), free);
-                }
-                held
+                    // Toward the plane. The mask is let in after the blend and
+                    // not folded into its weight, as Flatten and Clay have it:
+                    // see `admit`.
+                    if LEVELS {
+                        let plane = (position - plane_point).dot(normal) / voxel_size;
+                        let blended = held + (plane - held) * (patterned * actions.level);
+                        // Only the half of the blend that moves material the
+                        // way this side of the brush moves it.
+                        let adds = match direction {
+                            BrushDirection::Add => true,
+                            BrushDirection::Subtract => false,
+                        };
+                        let kept = match (actions.side, adds) {
+                            (Side::Both, _) => blended,
+                            (Side::Fill, true) | (Side::Cut, false) => blended.min(held),
+                            (Side::Fill, false) | (Side::Cut, true) => blended.max(held),
+                        };
+                        held = admit(held, kept.clamp(INSIDE, OUTSIDE), free);
+                    }
+                    held
+                },
             },
         );
     }
@@ -1056,6 +1080,138 @@ mod tests {
             }
         }
         assert!(settled_some >= 6, "only {settled_some} of the runs settled any voxel");
+    }
+
+    /// A ball that is not on the lattice, at a voxel size, with a brick
+    /// under a mask that lets half through and one beside it under a mask
+    /// that lets nothing through.
+    fn off_the_lattice(voxel_size: f32) -> (Volume, Vec3, f32) {
+        use crate::brick::{BRICK_DIM, BrickCoord};
+        let middle = Vec3::new(41.3, 39.9, 44.6) * voxel_size;
+        let ball = 31.7 * voxel_size;
+        let mut volume = Volume::new(voxel_size);
+        volume.seed_sphere(middle, ball);
+        let side = BRICK_DIM as i32;
+        for (brick, level) in [(glam::IVec3::new(2, 1, 1), 128u8), (glam::IVec3::new(2, 2, 1), 255)]
+        {
+            let origin = BrickCoord(brick).origin();
+            for index in 0..side * side * side {
+                let cell =
+                    glam::IVec3::new(index % side, index / side % side, index / (side * side));
+                volume.mask_mut().write(origin + cell, level);
+            }
+        }
+        volume.mask_mut().collapse();
+        volume.take_dirty(&mut Vec::new());
+        (volume, middle, ball)
+    }
+
+    /// A stroke of nine overlapping stamps round that ball with a brush,
+    /// the first of them with no way it is going yet, by runs of voxels and
+    /// then a voxel at a time, and the two held to each other to the bit.
+    /// Returns how many voxels were done by runs.
+    fn by_runs_and_by_voxels(compound: &Compound, direction: BrushDirection, what: &str) -> usize {
+        let voxel_size = compound.radius / 19.4;
+        let run = || {
+            let (mut volume, middle, ball) = off_the_lattice(voxel_size);
+            volume.begin_stroke();
+            let mut scratch = BrushScratch::new();
+            for step in 0..9 {
+                let angle = step as f32 * 0.21;
+                let towards = Vec3::new(angle.cos(), angle.sin(), 0.3).normalize();
+                let stamp = Stamp::new(middle + towards * ball, towards, direction);
+                let stamp = match step {
+                    0 => stamp,
+                    _ => stamp.with_tangent(towards.cross(Vec3::Z).normalize_or(Vec3::Y)),
+                };
+                compound.apply(&mut volume, &stamp, None, &mut scratch);
+            }
+            let undo = volume.end_stroke().map(|edit| (edit.len(), edit.bytes()));
+            (volume, undo)
+        };
+        let before = crate::brush::runs::DONE_BY_RUNS.get();
+        let (by_runs, runs_undo) = run();
+        let taken = crate::brush::runs::DONE_BY_RUNS.get() - before;
+        let (by_voxels, voxels_undo) = crate::volume::without_settled(run);
+        assert_eq!(
+            crate::brush::runs::DONE_BY_RUNS.get() - before,
+            taken,
+            "{what}: the comparison took runs too"
+        );
+        crate::testing::assert_same_bits(&by_runs, &by_voxels, what);
+        assert_eq!(runs_undo, voxels_undo, "{what}: the undo entry differs");
+        taken
+    }
+
+    /// A brush a run of voxels at a time (`brush/runs.rs`) is that brush a
+    /// voxel at a time, to the bit: the brushes of the palette that are
+    /// amounts of their own and a few that are every action at once, each
+    /// shape of profile with a plateau and without, both ways, at a voxel
+    /// size that is a power of two and at one that is not.
+    #[test]
+    fn a_brush_by_runs_is_that_brush() {
+        let nothing = Actions::NOTHING;
+        let brushes = [
+            Actions::GATHER,
+            Actions { gather: -1.0, ..nothing },
+            Actions { pinch: -1.0, ..nothing },
+            Actions { push: 0.6, gather: 1.0, ..nothing },
+            Actions { level: 1.0, plane: -0.15, side: Side::Cut, ..nothing },
+            Actions { level: 1.0, side: Side::Fill, ..nothing },
+            Actions { smooth: 0.5, level: 0.5, ..nothing },
+            Actions::CREASE,
+            Actions::DRAW,
+            Actions::PINCH,
+            Actions {
+                push: 0.6,
+                inflate: -0.4,
+                pinch: 0.5,
+                gather: 0.6,
+                smooth: 0.3,
+                level: 0.2,
+                plane: 0.1,
+                side: Side::Fill,
+            },
+            Actions {
+                push: -0.3,
+                inflate: 0.7,
+                pinch: -0.6,
+                gather: -0.9,
+                smooth: 0.7,
+                level: 0.6,
+                plane: -0.2,
+                side: Side::Cut,
+            },
+        ];
+        for (index, actions) in brushes.into_iter().enumerate() {
+            for half in 0..2 {
+                let direction = match (index + half) % 2 {
+                    0 => BrushDirection::Add,
+                    _ => BrushDirection::Subtract,
+                };
+                let shape = Shape::ALL[(index + half * 2) % Shape::ALL.len()];
+                let plateau = [0.0, 0.6, 0.25][(index + half) % 3];
+                let (voxel_size, strength) = [(1.0f32, 0.9f32), (0.3, 0.35)][half];
+                let compound = Compound {
+                    actions,
+                    radius: 19.4 * voxel_size,
+                    strength,
+                    profile: Profile { shape, plateau },
+                    pattern: Pattern::default(),
+                };
+                let what = format!(
+                    "brush {index} {direction:?} {shape:?} with a plateau of {plateau} at voxel \
+                     {voxel_size}"
+                );
+                let taken = by_runs_and_by_voxels(&compound, direction, &what);
+                // The stamps are small enough to be made on this thread,
+                // which is where the count is kept.
+                #[cfg(target_arch = "x86_64")]
+                assert!(taken > 0, "{what}: no voxel was done by a run");
+                #[cfg(not(target_arch = "x86_64"))]
+                let _ = taken;
+            }
+        }
     }
 
     fn furthest_apart(one: &Volume, other: &Volume) -> f32 {
@@ -1441,6 +1597,37 @@ mod tests {
 
         fn shape() -> impl Strategy<Value = Shape> {
             prop::sample::select(Shape::ALL.to_vec())
+        }
+
+        proptest! {
+            // Each case is two strokes on a ball: fewer of them.
+            #![proptest_config(ProptestConfig::with_cases(48))]
+
+            /// Whatever the brush is made of and whatever its profile, a
+            /// run of voxels at a time it is what it is a voxel at a time,
+            /// to the bit.
+            #[test]
+            fn any_brush_by_runs_is_that_brush(
+                actions in loose(),
+                shape in shape(),
+                plateau in prop_oneof![Just(0.0_f32), 0.0_f32..0.95],
+                strength in 0.05_f32..1.0,
+                adds in any::<bool>(),
+                voxel_size in prop_oneof![Just(1.0_f32), Just(0.0625_f32), 0.1_f32..2.0],
+            ) {
+                let actions = actions.legal();
+                prop_assume!(!actions.is_nothing());
+                let compound = Compound {
+                    actions,
+                    radius: 19.4 * voxel_size,
+                    strength,
+                    profile: Profile { shape, plateau },
+                    pattern: Pattern::default(),
+                };
+                let direction =
+                    if adds { BrushDirection::Add } else { BrushDirection::Subtract };
+                let _ = by_runs_and_by_voxels(&compound, direction, "a brush of any amounts");
+            }
         }
 
         proptest! {

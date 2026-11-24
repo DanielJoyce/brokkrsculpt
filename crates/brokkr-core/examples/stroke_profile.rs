@@ -13,20 +13,46 @@
 //! callgrind_annotate callgrind.out.* | head -60
 //! ```
 //!
-//! Arguments: the brush (draw, inflate, smooth, pinch, flatten, clay), its
-//! radius in voxels, and how many times round. With no profiler it prints
-//! milliseconds a stamp and a remesh, on every core and on one.
+//! Arguments: the brush, its radius in voxels, and how many times round.
+//! The brush is one of upstream's six (draw, inflate, smooth, pinch,
+//! flatten, clay) or one of the studio's, which are amounts of several
+//! actions at once and a profile (gather, wear, ridge, scrape, fill, polish,
+//! crease, bead, band). With no profiler it prints milliseconds a stamp and
+//! a remesh, on every core and on one.
 
 use std::time::Instant;
 
+use brokkr_core::brush::compound::{Actions, Compound, Profile, Shape, Side};
 use brokkr_core::{
     BrickMesh, Brush, BrushDirection, BrushKind, BrushScratch, FalloffCurve, Pattern, Stamp, Volume,
 };
 use glam::Vec3;
 
+/// A studio brush by the name the palette has it under: its amounts and
+/// its profile, as `app/presets.rs` has them.
+fn studio(name: &str) -> Option<(Actions, Profile)> {
+    let nothing = Actions::default();
+    let smooth = Profile::of(FalloffCurve::Smooth);
+    let draw = Actions::of(BrushKind::Draw)?;
+    Some(match name {
+        "gather" => (Actions::GATHER, smooth),
+        "wear" => (Actions { pinch: -1.0, ..nothing }, smooth),
+        "ridge" => (Actions { push: 0.6, gather: 1.0, ..nothing }, smooth),
+        "scrape" => (Actions { level: 1.0, plane: -0.15, side: Side::Cut, ..nothing }, smooth),
+        "fill" => (Actions { level: 1.0, side: Side::Fill, ..nothing }, smooth),
+        "polish" => (Actions { smooth: 0.5, level: 0.5, ..nothing }, smooth),
+        "crease" => (Actions::CREASE, smooth),
+        "bead" => (draw, Profile { shape: Shape::Round, plateau: 0.0 }),
+        "band" => (draw, Profile { shape: Shape::Smooth, plateau: 0.6 }),
+        _ => return None,
+    })
+}
+
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
-    let kind = match arguments.first().map(String::as_str).unwrap_or("draw") {
+    let name = arguments.first().map(String::as_str).unwrap_or("draw");
+    let studio = studio(name);
+    let kind = match name {
         "inflate" => BrushKind::Inflate,
         "smooth" => BrushKind::Smooth,
         "pinch" => BrushKind::Pinch,
@@ -51,6 +77,13 @@ fn main() {
         falloff: FalloffCurve::Smooth,
         pattern: Pattern::default(),
     };
+    let compound = studio.map(|(actions, profile)| Compound {
+        actions,
+        radius: brush.radius,
+        strength: brush.strength,
+        profile,
+        pattern: Pattern::default(),
+    });
     let mut scratch = BrushScratch::new();
     let mut meshes: Vec<BrickMesh> = Vec::new();
     let stamps = 48;
@@ -63,7 +96,10 @@ fn main() {
         let stamp = Stamp::new(normal * ball, normal, BrushDirection::Add);
 
         let began = Instant::now();
-        brush.apply(&mut volume, &stamp, &mut scratch);
+        match &compound {
+            Some(compound) => compound.apply(&mut volume, &stamp, None, &mut scratch),
+            None => brush.apply(&mut volume, &stamp, &mut scratch),
+        }
         edit += began.elapsed().as_secs_f64();
 
         volume.take_dirty(&mut dirty);
@@ -79,7 +115,7 @@ fn main() {
 
     let count = (stamps * rounds) as f64;
     println!(
-        "{kind}, radius {radius_voxels} voxels, {} stamps: edit {:.3} ms a stamp, remesh {:.3} ms \
+        "{name}, radius {radius_voxels} voxels, {} stamps: edit {:.3} ms a stamp, remesh {:.3} ms \
          a stamp ({:.1} bricks, {:.1} us a brick)",
         stamps * rounds,
         edit * 1000.0 / count,

@@ -72,7 +72,7 @@ use crate::volume::{BrickPreview, BrickVerdict, Volume};
 pub mod alpha;
 pub mod compound;
 pub mod engine;
-// The Draw brush, a run of voxels at a time. See `brush/runs.rs`.
+// A brush's arithmetic, a run of voxels at a time. See `brush/runs.rs`.
 mod runs;
 pub mod stamp;
 
@@ -1399,20 +1399,29 @@ impl Brush {
             Skipping::Off => crate::Settled::NONE,
         };
 
-        // The Draw brush is offered runs of voxels, where it can take them:
-        // with no pattern, and with the shortcuts on, so that with them off
-        // every voxel still goes through the closure below and the two can
-        // be compared. See `brush/runs.rs`.
-        let draw = (kind == BrushKind::Draw && skipping == Skipping::On && pattern.is_off())
-            .then_some(runs::Draw {
+        // Every brush here is offered runs of voxels, where it can take
+        // them: with no pattern, and with the shortcuts on, so that with
+        // them off every voxel still goes through the closure below and the
+        // two can be compared. The run is the studio's kernel doing the one
+        // action this brush is, which `compound.rs` holds to the closure
+        // below bit for bit. See `brush/runs.rs`.
+        let run = compound::Actions::of(kind)
+            .filter(|_| skipping == Skipping::On && pattern.is_off())
+            .map(|actions| runs::Kernel {
                 centre,
                 radius_squared,
                 inverse_radius,
-                falloff,
+                slope: compound::Profile::of(falloff).slope(),
                 gain,
                 displacement,
                 direction,
-                stroke_normal,
+                normal: stroke_normal,
+                actions,
+                // Upstream's Pinch spreads under the invert key.
+                pinch_turn: direction.outward_sign(),
+                // Only a gather asks which way the stroke is going.
+                along: None,
+                plane_point,
                 region,
             });
 
@@ -1424,7 +1433,7 @@ impl Brush {
             settled,
             decide,
             runs::Edit {
-                draw,
+                run,
                 voxel: |voxel: IVec3, position: Vec3, value: f32, free: f32| {
                     let offset = position - centre;
                     if offset.length_squared() >= radius_squared {
@@ -3392,71 +3401,98 @@ mod skipping_tests {
         assert!(settled_some >= 6, "only {settled_some} of the runs settled any voxel");
     }
 
-    /// The Draw brush a run of voxels at a time (`brush/runs.rs`) is the
-    /// Draw brush a voxel at a time, to the bit: each falloff, both ways, at
-    /// a voxel size that is a power of two and at one that is not, on a ball
-    /// that is not on the lattice, with a brick under a mask that lets half
-    /// through and one under a mask that lets nothing through, over a stroke
-    /// of stamps that overlap. With the shortcuts off no run is offered, and
-    /// that is what it is compared with.
+    /// A brush a run of voxels at a time (`brush/runs.rs`) is that brush a
+    /// voxel at a time, to the bit: each of upstream's six, each falloff,
+    /// both ways, at a voxel size that is a power of two and at one that is
+    /// not, on a ball that is not on the lattice, with a brick under a mask
+    /// that lets half through and one under a mask that lets nothing
+    /// through, over a stroke of stamps that overlap. With the shortcuts off
+    /// no run is offered, and that is what it is compared with.
     #[test]
-    fn the_draw_brush_by_runs_is_the_draw_brush() {
-        for falloff in FalloffCurve::ALL {
-            for direction in [BrushDirection::Add, BrushDirection::Subtract] {
-                for (voxel_size, strength) in [(1.0f32, 0.9f32), (0.3, 0.35)] {
-                    let middle = Vec3::new(41.3, 39.9, 44.6) * voxel_size;
-                    let ball = 31.7 * voxel_size;
-                    let brush = Brush {
-                        kind: BrushKind::Draw,
-                        radius: 19.4 * voxel_size,
-                        strength,
-                        falloff,
-                        ..Brush::default()
-                    };
-                    let run = |skipping| {
-                        let mut volume = Volume::new(voxel_size);
-                        volume.seed_sphere(middle, ball);
-                        // Half through over one brick the stroke crosses, and
-                        // nothing through over the one beside it.
-                        let side = BRICK_DIM as i32;
-                        for (brick, level) in
-                            [(IVec3::new(2, 1, 1), 128u8), (IVec3::new(2, 2, 1), 255)]
-                        {
-                            let origin = BrickCoord(brick).origin();
-                            for index in 0..side * side * side {
-                                let cell = IVec3::new(
-                                    index % side,
-                                    index / side % side,
-                                    index / (side * side),
-                                );
-                                volume.mask_mut().write(origin + cell, level);
-                            }
-                        }
-                        volume.mask_mut().collapse();
-                        volume.take_dirty(&mut Vec::new());
-                        volume.begin_stroke();
-                        let mut scratch = BrushScratch::new();
-                        for step in 0..9 {
-                            let angle = step as f32 * 0.21;
-                            let towards = Vec3::new(angle.cos(), angle.sin(), 0.3).normalize();
-                            let at = middle + towards * ball;
-                            brush.stamp(
-                                &mut volume,
-                                &stamp_at(at, towards, direction),
-                                &mut scratch,
-                                skipping,
+    fn every_brush_by_runs_is_that_brush() {
+        let kinds = [
+            BrushKind::Draw,
+            BrushKind::Inflate,
+            BrushKind::Smooth,
+            BrushKind::Pinch,
+            BrushKind::Flatten,
+            BrushKind::Clay,
+        ];
+        // Each brush with each falloff, and the way and the voxel size
+        // taking turns, so that every pair of them is met.
+        for (turn, (kind, falloff)) in kinds
+            .into_iter()
+            .flat_map(|kind| FalloffCurve::ALL.map(|curve| (kind, curve)))
+            .enumerate()
+        {
+            for half in 0..2 {
+                let direction = match (turn + half) % 2 {
+                    0 => BrushDirection::Add,
+                    _ => BrushDirection::Subtract,
+                };
+                let (voxel_size, strength) = [(1.0f32, 0.9f32), (0.3, 0.35)][half];
+                let middle = Vec3::new(41.3, 39.9, 44.6) * voxel_size;
+                let ball = 31.7 * voxel_size;
+                let brush = Brush {
+                    kind,
+                    radius: 19.4 * voxel_size,
+                    strength,
+                    falloff,
+                    ..Brush::default()
+                };
+                let run = |skipping| {
+                    let mut volume = Volume::new(voxel_size);
+                    volume.seed_sphere(middle, ball);
+                    // Half through over one brick the stroke crosses, and
+                    // nothing through over the one beside it.
+                    let side = BRICK_DIM as i32;
+                    for (brick, level) in [(IVec3::new(2, 1, 1), 128u8), (IVec3::new(2, 2, 1), 255)]
+                    {
+                        let origin = BrickCoord(brick).origin();
+                        for index in 0..side * side * side {
+                            let cell = IVec3::new(
+                                index % side,
+                                index / side % side,
+                                index / (side * side),
                             );
+                            volume.mask_mut().write(origin + cell, level);
                         }
-                        let undo = volume.end_stroke().map(|edit| (edit.len(), edit.bytes()));
-                        (volume, undo)
-                    };
-                    let what = format!("{falloff:?} {direction:?} at voxel {voxel_size}");
-                    let (by_runs, runs_undo) = run(Skipping::On);
-                    let (by_voxels, voxels_undo) = run(Skipping::Off);
-                    assert_same_field(&by_runs, &by_voxels, &what);
-                    assert_eq!(runs_undo, voxels_undo, "{what}: the undo entry differs");
-                    assert!(runs_undo.is_some(), "{what}: the stroke changed nothing");
-                }
+                    }
+                    volume.mask_mut().collapse();
+                    volume.take_dirty(&mut Vec::new());
+                    volume.begin_stroke();
+                    let mut scratch = BrushScratch::new();
+                    for step in 0..9 {
+                        let angle = step as f32 * 0.21;
+                        let towards = Vec3::new(angle.cos(), angle.sin(), 0.3).normalize();
+                        let at = middle + towards * ball;
+                        brush.stamp(
+                            &mut volume,
+                            &stamp_at(at, towards, direction),
+                            &mut scratch,
+                            skipping,
+                        );
+                    }
+                    let undo = volume.end_stroke().map(|edit| (edit.len(), edit.bytes()));
+                    (volume, undo)
+                };
+                let what = format!("{kind} {falloff:?} {direction:?} at voxel {voxel_size}");
+                let before = runs::DONE_BY_RUNS.get();
+                let (by_runs, runs_undo) = run(Skipping::On);
+                let taken = runs::DONE_BY_RUNS.get() - before;
+                let (by_voxels, voxels_undo) = run(Skipping::Off);
+                assert_eq!(
+                    runs::DONE_BY_RUNS.get() - before,
+                    taken,
+                    "{what}: the comparison took runs too"
+                );
+                crate::testing::assert_same_bits(&by_runs, &by_voxels, &what);
+                assert_eq!(runs_undo, voxels_undo, "{what}: the undo entry differs");
+                assert!(runs_undo.is_some(), "{what}: the stroke changed nothing");
+                // The stamps are small enough to be made on this thread,
+                // which is where the count is kept.
+                #[cfg(target_arch = "x86_64")]
+                assert!(taken > 0, "{what}: no voxel was done by a run");
             }
         }
     }
