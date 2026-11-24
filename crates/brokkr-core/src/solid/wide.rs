@@ -63,7 +63,7 @@ use glam::{IVec3, Vec3};
 use rayon::prelude::*;
 use rustc_hash::FxHashSet;
 
-use super::{Join, Solid, nearer};
+use super::{Join, Solid, nearer, taken_out};
 use crate::brick::{BrickCoord, INSIDE, OUTSIDE};
 use crate::mask::PROTECTED;
 use crate::region::FieldRegion;
@@ -335,7 +335,7 @@ impl Join {
             }
             let value = now.get(voxel);
             let joined = if cut {
-                value.max(-nearer(-before, off, width))
+                taken_out(value, before, off, width)
             } else {
                 value.min(nearer(before, off, width))
             }

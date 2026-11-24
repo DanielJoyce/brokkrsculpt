@@ -49,7 +49,7 @@ use brokkr_core::brush::alpha::{Alpha, BuiltIn};
 use brokkr_core::brush::compound::{Actions, Compound, Layer};
 use brokkr_core::brush::stamp::{Placement, StampGesture};
 use brokkr_core::region::FieldRegion;
-use brokkr_core::solid::{self, How, Join, Placed, Solid, Step};
+use brokkr_core::solid::{self, Draped, Heights, How, Join, Placed, Solid, Step};
 use brokkr_core::{BrushDirection, BrushScratch, Stamp, Symmetry, Volume};
 use glam::{IVec3, Vec3};
 use iced::widget::image::Handle;
@@ -208,6 +208,35 @@ fn ground_for(actions: &Actions) -> Ground {
 /// The slab after a stroke of the brush.
 fn stroked(preset: &Preset) -> Volume {
     let radius = radius_of(preset);
+    if let Some(Kind::Map(map)) = preset.add.map(|setup| setup.what) {
+        // A map, stamped in the middle of flat ground. One whose file is
+        // gone has the bare ground for its picture.
+        let mut volume = slab(Ground::Flat);
+        let Ok(relief) = super::maps::relief(map) else {
+            return volume;
+        };
+        let middle = Vec3::new(WIDTH as f32 * 0.5, HEIGHT as f32 * 0.5, 0.0);
+        let heights = Heights::flat();
+        let mut join = Join::new();
+        volume.begin_stroke();
+        // Bigger than the picture is high: the shape is in the middle
+        // of its square, and the rest of the square is ground that looks
+        // like the ground.
+        let stamp = Draped::on(
+            &relief,
+            &heights,
+            middle,
+            glam::Mat3::IDENTITY,
+            HEIGHT as f32 * 0.8,
+            1.0,
+            false,
+        );
+        if let Some(stamp) = stamp {
+            join.stamp(&mut volume, &stamp);
+        }
+        drop(volume.end_stroke());
+        return volume;
+    }
     if let Some(setup) = preset.add {
         let mut volume = slab(Ground::Flat);
         let mut join = Join::new();
@@ -239,7 +268,7 @@ fn stroked(preset: &Preset) -> Volume {
                     pieces.push(Box::new(placed));
                 }
             }
-            Kind::Laid | Kind::Body => {
+            Kind::Laid | Kind::Body | Kind::Map(_) => {
                 let points: Vec<Vec3> =
                     every(&line(), thick).into_iter().map(|(at, _)| lifted(at, thick)).collect();
                 cable(&points, &mut pieces);

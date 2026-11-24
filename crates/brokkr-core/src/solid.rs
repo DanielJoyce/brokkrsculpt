@@ -49,7 +49,10 @@ use crate::mask::PROTECTED;
 use crate::region::FieldRegion;
 use crate::volume::{BrickPreview, BrickVerdict, Volume};
 
+mod relief;
 mod wide;
+
+pub use relief::{BuiltInMap, Draped, Heights, MAX_MAP_SIZE, MapError, Relief, VectorMap};
 
 /// The widest a soft join may be, in voxels. See the module documentation.
 pub const MOST_BLEND: f32 = 8.0;
@@ -462,6 +465,32 @@ impl How {
     pub const ADD: How = How { cut: false, blend: 0.0 };
 }
 
+/// A voxel with a solid taken out of the body: `value` is what it holds
+/// now, `before` what it held before the stroke, `off` its distance from
+/// the solid, in voxels.
+///
+/// Taking a solid out is adding it to the outside, so the body as it was
+/// with the solid out of it is the further of `before` and `-off`, eased
+/// where the two meet. That used to be all of it, and what the voxel
+/// held was raised to that. In a stroke that only takes out that is
+/// right. In one that has also ADDED, it put back the body as it was
+/// wherever a solid taken out so much as came near, and what had been
+/// added there was gone: found by the first vector displacement stamp,
+/// which adds what is under its surface and takes out the air over it
+/// (`solid/relief.rs`), and stood nothing on the ball. So the solid
+/// itself is taken out of what the voxel holds NOW, and the body as it
+/// was is read only for the easing, where the easing takes more than
+/// the plain cut does. In a stroke that only takes out, this is what it
+/// was to the last bit.
+fn taken_out(value: f32, before: f32, off: f32, width: f32) -> f32 {
+    let plain = value.max(-off);
+    if width <= 0.0 {
+        return plain;
+    }
+    let eased = -nearer(-before, off, width);
+    if eased > before.max(-off) { plain.max(eased) } else { plain }
+}
+
 /// How wide a join is, in voxels: what it asks for, within what may be.
 fn width_of(how: How) -> f32 {
     if how.blend.is_finite() { how.blend.clamp(0.0, MOST_BLEND) } else { 0.0 }
@@ -597,9 +626,7 @@ impl Join {
             }
             let before = region.get(voxel);
             let joined = if how.cut {
-                // Taking a solid out is adding it to the outside.
-                let carved = -nearer(-before, off, blend);
-                value.max(carved)
+                taken_out(value, before, off, blend)
             } else {
                 value.min(nearer(before, off, blend))
             };

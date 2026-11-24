@@ -80,10 +80,11 @@ use std::sync::LazyLock;
 use brokkr_core::BrushKind;
 use brokkr_core::brush::alpha::BuiltIn;
 use brokkr_core::brush::compound::{Actions, MOST_PLATEAU, Profile, Shape, Side};
-use brokkr_core::solid::{End, Form, MOST_BLEND};
+use brokkr_core::solid::{BuiltInMap, End, Form, MOST_BLEND};
 use contracts::debug_ensures;
 
-use super::adding::{DEFAULT_BLEND, Kind, LIFT_RANGE, SAG_RANGE, Setup};
+use super::adding::{DEFAULT_BLEND, Kind, LIFT_RANGE, MAP, SAG_RANGE, Setup};
+use super::maps::MapOf;
 use super::studio::{ALONG_RANGE, HEIGHT_RANGE, LAZY_RANGE, SIZE_RANGE};
 use super::{MAX_STRENGTH, MIN_RADIUS_MM, MIN_STRENGTH};
 
@@ -358,6 +359,9 @@ impl Preset {
         }
         if let Some(setup) = self.add {
             fields.push(format!("add:{}", setup.what.label()));
+            if let Kind::Map(map) = setup.what {
+                fields.push(format!("map:{}", map.label()));
+            }
             if setup.separate {
                 fields.push(format!("as:{BODY}"));
             }
@@ -482,8 +486,14 @@ impl Preset {
                 "add" => {
                     if let Some(what) = Kind::kept().find(|kind| named(kind.label())) {
                         add.what = Some(what);
+                        add.mapped = false;
+                    } else if named(MAP) {
+                        add.mapped = true;
                     }
                 }
+                // Which map, for a brush that stamps one. Read whichever
+                // side of `add:Map` it is on.
+                "map" => add.map = MapOf::named(value).or(add.map),
                 "as" => add.separate = named(BODY) || (add.separate && !named("baked")),
                 "join" => add.blend = number(0.0..=MOST_BLEND).unwrap_or(add.blend),
                 "lift" => add.lift = number(LIFT_RANGE).unwrap_or(add.lift),
@@ -527,16 +537,23 @@ impl Preset {
         if let (Some((stamp, _)), Some(height)) = (self.stamp, height) {
             self.stamp = Some((stamp, height));
         }
+        // A brush that stamps a map and does not say which stamps nothing.
+        if add.mapped {
+            add.what = add.map.map(Kind::Map);
+        }
         if let Some(what) = add.what {
-            self.add = Some(Setup {
-                separate: add.separate,
-                blend: add.blend,
-                lift: add.lift,
-                start: add.start,
-                end: add.end,
-                sag: add.sag,
-                ..Setup::plain(what)
-            });
+            self.add = Some(
+                Setup {
+                    separate: add.separate,
+                    blend: add.blend,
+                    lift: add.lift,
+                    start: add.start,
+                    end: add.end,
+                    sag: add.sag,
+                    ..Setup::plain(what)
+                }
+                .settled(),
+            );
         }
         // The amounts, laid over what the brush the line names does. A
         // line that names one of the two that do nothing to the field and
@@ -580,6 +597,9 @@ const BODY: &str = "body";
 #[derive(Default)]
 struct Adding {
     what: Option<Kind>,
+    /// The line says `add:Map`, and which map if it has said.
+    mapped: bool,
+    map: Option<MapOf>,
     separate: bool,
     blend: f32,
     lift: f32,
@@ -719,6 +739,11 @@ pub(super) fn core() -> &'static [Preset] {
                 Setup { start: End::Flange, end: End::Flange, ..joined(Kind::Laid, 1.0) },
             ),
             Preset::adding("Hung cable", Setup { sag: 0.15, ..joined(Kind::Hung, 1.0) }),
+            // The vector displacement maps that come with it: each a
+            // shape that leans over itself, stamped by a drag.
+            Preset::adding("Stud", Setup::plain(Kind::Map(MapOf::BuiltIn(BuiltInMap::Stud)))),
+            Preset::adding("Horn", Setup::plain(Kind::Map(MapOf::BuiltIn(BuiltInMap::Horn)))),
+            Preset::adding("Shingle", Setup::plain(Kind::Map(MapOf::BuiltIn(BuiltInMap::Shingle)))),
         ];
         // In the order of their groups, which is the order of the palette.
         GROUPS
@@ -772,7 +797,23 @@ pub(super) const GROUPS: [(&str, &[&str]); 3] = [
         "Lines and stamps",
         &["Fine crease", "Long line", "Stitches", "Rivets", "Rivet row", "Scales"],
     ),
-    ("Add", &["Ball", "Knob", "Box", "Cylinder", "Cone", "Ring", "Cable", "Pipe", "Hung cable"]),
+    (
+        "Add",
+        &[
+            "Ball",
+            "Knob",
+            "Box",
+            "Cylinder",
+            "Cone",
+            "Ring",
+            "Cable",
+            "Pipe",
+            "Hung cable",
+            "Stud",
+            "Horn",
+            "Shingle",
+        ],
+    ),
 ];
 
 /// Each group's heading and the places on the palette its brushes have.
@@ -1274,6 +1315,22 @@ mod tests {
             let wanted = Setup { blend: 1.0, lift: 0.5, ..Setup::plain(kind) };
             assert_eq!(read(&line).add, Some(wanted), "{line}");
         }
+        // A brush that stamps a map names it, on either side of `add:`,
+        // and is not joined softly or held off the surface whatever the
+        // line says. One that names no map adds nothing.
+        let horn = Setup::plain(Kind::Map(MapOf::BuiltIn(BuiltInMap::Horn)));
+        assert_eq!(read("a = add:Map, map:horn, join:4, lift:0.5").add, Some(horn));
+        assert_eq!(read("a = map:Horn, add:map").add, Some(horn));
+        assert_eq!(read("a = add:Map").add, None);
+        assert_eq!(
+            read("a = add:Ball, map:Horn").add.map(|setup| setup.what),
+            Some(Kind::Shape(Form::Ball))
+        );
+        let ear = read("a = add:Map, map:My ear, as:body").add.expect("a brush that stamps");
+        assert!(ear.separate);
+        assert_eq!(ear.what, Kind::Map(MapOf::named("My ear").expect("a name")));
+        let kept = Preset::adding("Ear", ear);
+        assert_eq!(read(&kept.line()).add, Some(ear), "{}", kept.line());
         let pipe =
             read("a = add:Cable, start:Flange, end:collar, as:body, sag:0.5, size:2, lazy:9");
         let setup = pipe.add.expect("a brush that adds");

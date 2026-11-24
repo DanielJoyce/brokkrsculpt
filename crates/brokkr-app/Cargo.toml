@@ -81,6 +81,13 @@ ureq = { version = "~3.3", default-features = false, features = ["rustls"] }
 getrandom.workspace = true
 roxmltree.workspace = true
 wgpu.workspace = true
+# Vector displacement maps (app/maps.rs): the files other programs write
+# them in are OpenEXR, and nothing already here reads one. Taken directly
+# and with no default features. Measured against this lockfile: +7 crates
+# (exr, lebe, bit_field, zune-inflate, and multiversion with its macro
+# crate and target-features), where `image/exr` was turned down above as
+# part of `image/default` and its 72.
+exr = { version = "1.74.3", default-features = false }
 
 # Stylus pressure is read straight from the kernel's evdev interface. That sits
 # below the display server, so one code path covers X11, XWayland and Wayland,

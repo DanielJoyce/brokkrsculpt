@@ -7,7 +7,7 @@ satisfies their attribution requirements.
 
 **Nothing here imposes a copyleft obligation on BrokkrSculpt.** The project is
 AGPL-3.0-only by its own choice, not because a dependency forced it. Every one
-of the **305 crates** compiled into a Linux build is permissively licensed —
+of the **312 crates** compiled into a Linux build is permissively licensed —
 MIT, Apache-2.0, BSD-2/3-Clause, ISC, Zlib, Unlicense, CC0-1.0,
 CDLA-Permissive-2.0, or Unicode-3.0. There is no GPL, no LGPL, no MPL and no
 EUPL in the graph. That is worth stating plainly because it is unusual: it
@@ -25,22 +25,22 @@ From `cargo metadata`, filtered to `x86_64-unknown-linux-gnu`, walking the
 `dev-dependencies`**, which are used to test the software and are not
 distributed in a build of it. Re-run it whenever `Cargo.lock` changes.
 
-Counts by declared license expression, over those 305 crates:
+Counts by declared license expression, over those 312 crates:
 
 | Crates | Expression |
 | ---: | --- |
-| 136 | `MIT OR Apache-2.0` |
+| 140 | `MIT OR Apache-2.0` |
 | 77 | `MIT` |
 | 33 | `Apache-2.0 OR MIT` |
 | 10 | `Apache-2.0` |
 | 9 | `MIT/Apache-2.0` |
-| 7 | `MIT OR Apache-2.0 OR Zlib` |
+| 8 | `MIT OR Apache-2.0 OR Zlib` |
 | 5 | `Unlicense OR MIT` |
 | 4 | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` |
 | 3 | `Zlib OR Apache-2.0 OR MIT` |
 | 3 | `Zlib` |
 | 3 | `ISC` |
-| 3 | `BSD-3-Clause` |
+| 5 | `BSD-3-Clause` |
 | 2 | `Apache-2.0/MIT` |
 | 2 | `BSD-2-Clause OR Apache-2.0 OR MIT` |
 | 1 each | `BSD-2-Clause`, `Apache-2.0 AND ISC`, `Apache-2.0 AND MIT`, `Apache-2.0 OR ISC OR MIT`, `Apache-2.0 OR GPL-2.0-only`, `(MIT OR Apache-2.0) AND Unicode-3.0`, `CDLA-Permissive-2.0`, `CC0-1.0` |
@@ -77,6 +77,13 @@ to be worth naming:
   <https://github.com/pop-os/cosmic-text>. Text shaping, via iced.
 - **tiny-skia** and **tiny-skia-path** — BSD-3-Clause —
   <https://github.com/RazrFalcon/tiny-skia>. Vector rasterisation, via iced.
+- **exr** and **lebe** — BSD-3-Clause —
+  <https://github.com/johannesvollmer/exrs> and
+  <https://github.com/johannesvollmer/lebe>. Reading OpenEXR pictures, which
+  is the file a vector displacement map comes in. A direct choice, for the
+  brushes that stamp one; it brings `bit_field`, `zune-inflate` and
+  `multiversion` (with `multiversion-macros` and `target-features`), all
+  MIT OR Apache-2.0, the second also Zlib.
 - **bytemuck** — Zlib OR Apache-2.0 OR MIT —
   <https://github.com/Lokathor/bytemuck>. Taken under Apache-2.0. Getting Rust
   structs safely to the GPU as bytes.
