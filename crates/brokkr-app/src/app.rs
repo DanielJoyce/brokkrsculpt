@@ -2,6 +2,8 @@
 
 //! Application state, input handling and the widget tree.
 
+mod adding;
+pub use adding::Insert;
 mod fit_test;
 mod form;
 mod measure;
@@ -905,6 +907,8 @@ pub struct Brokkr {
     studio: studio::StudioState,
     /// The measurement being taken or last taken. See `app/measure.rs`.
     measure: measure::MeasureState,
+    /// The brushes that add a shape or a cable. See `app/adding.rs`.
+    inserts: adding::AddState,
     /// The form tools' settings. See `app/form.rs`.
     form: form::FormState,
     /// The overhang view: whether it is on, and how steep a lean the
@@ -2168,6 +2172,7 @@ impl Brokkr {
             flat_paint: false,
             studio: studio::StudioState::default(),
             measure: measure::MeasureState::default(),
+            inserts: adding::AddState::default(),
             form: form::FormState::default(),
             overhang: overhang::OverhangState::default(),
             painting: painting::PaintingState::default(),
@@ -5630,6 +5635,12 @@ impl Brokkr {
     }
 
     fn sculpt_to(&mut self, pixel: Vec2, direction: BrushDirection, start: bool) {
+        // A shape or a cable being added is a gesture of its own too. See
+        // `app/adding.rs`.
+        if self.inserting() {
+            self.add_to(pixel, direction, start);
+            return;
+        }
         // A stamp is a gesture of its own and not a stroke of any brush.
         // See `app/studio.rs`.
         if self.studio.stamping() {
@@ -9381,6 +9392,9 @@ impl Brokkr {
                     // and one gesture is one entry whichever of the two maps it
                     // wrote.
                     if matches!(drag.kind, DragKind::Sculpt(_) | DragKind::Masking) {
+                        // What a drag that adds does when the button comes
+                        // up: a cable's far end, or a body of its own.
+                        self.add_released();
                         self.finish_stroke();
                     }
                     // A right press that neither moved nor lingered was a click,
@@ -9652,6 +9666,7 @@ impl Brokkr {
                 self.swap_strength(|app| app.brush.kind = kind);
                 // A classic brush chosen is the classic brush wanted.
                 self.studio.put_away();
+                self.inserts.put_away();
             }
             Message::FalloffChanged(curve) => {
                 self.brush.falloff = curve;
@@ -10446,6 +10461,7 @@ impl Brokkr {
             Message::Studio(message) => return self.studio_changed(message),
             Message::Form(message) => self.form_changed(message),
             Message::Measure(message) => self.measure_changed(message),
+            Message::Add(message) => self.add_changed(message),
             // One of the sizes on offer, or the setting stays as it is.
             Message::TextureSizeChanged(size) => {
                 if paints::TEXTURE_SIZES.contains(&size) {

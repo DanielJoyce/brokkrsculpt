@@ -2353,8 +2353,10 @@ impl Brokkr {
         container(
             scrollable(column![
                 self.section(PanelSection::Bodies, || self.bodies_panel()),
-                // The palette of brushes. See `app/studio.rs`.
+                // The palette of brushes, and the brushes that add. See
+                // `app/studio.rs` and `app/adding.rs`.
                 self.palette_panel(),
+                self.adding_panel(),
                 text(match self.tool {
                     Tool::Mask => "MASK".to_string(),
                     _ => self.live_brush_name(),

@@ -220,6 +220,26 @@ pub enum StudioMessage {
     PresetRemoved(usize),
 }
 
+/// The controls of the brushes that add. See `app/adding.rs`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AddMessage {
+    /// Take up something to add (a shape, a body lent as one, a cable), or
+    /// with `None` go back to an ordinary brush.
+    Chosen(Option<crate::app::Insert>),
+    /// Leave what is added as a body of its own, or bake it into the body
+    /// in hand.
+    SeparateToggled(bool),
+    /// How soft the join to the body is, in voxels.
+    BlendChanged(f32),
+    /// How far off the surface it is held.
+    LiftChanged(f32),
+    /// What is at the start of a cable, and at its end.
+    StartChosen(brokkr_core::solid::End),
+    EndChosen(brokkr_core::solid::End),
+    /// How far a hung cable sags, as a share of its span.
+    SagChanged(f32),
+}
+
 /// The measure's controls. See `app/measure.rs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MeasureMessage {
@@ -1133,6 +1153,8 @@ pub enum Message {
     Studio(StudioMessage),
     /// One of the form tools' controls. See `app/form.rs`.
     Form(FormMessage),
+    /// One of the controls of the brushes that add. See `app/adding.rs`.
+    Add(AddMessage),
     /// The measure: begin one, or clear what was measured. View state: it
     /// changes no voxel and is not saved. See `app/measure.rs`.
     Measure(MeasureMessage),

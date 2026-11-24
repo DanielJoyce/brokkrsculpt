@@ -24,7 +24,7 @@ was built and what was measured.
 | P Painting engine | **Usable**, 2026-11-23 (section 15): the storage, the view and the brush. Painted colour is on screen, in the project file and in every export that carries colour | The paint brush lays a colour: *Paint*, *Glaze* or *Erase*, put on *Loaded*, as a *Wash*, with a *Drybrush* or a *Sponge*, at any opacity, with a soft edge. *Pick from model* takes a colour back off it |
 | B A brush is its settings | **Done but for B5**, 2026-11-23 (section 16): files in the right directories, one generic brush, the palette, a picture across the tip, build-up on or off, lines or dabs. Brushes that stamp a shape (B5) are a later stage | BRUSHES: twenty-one that come with the application, upstream's six among them, and the user's own, a file each. *What it does* shows a brush as five amounts to change. *Profile*: five shapes and a flat middle. *Picture across the tip*, *Builds up* or *One layer*, and *Set down* as a line or every so many widths |
 | M Reading sizes | **Done**, 2026-11-23 (section 17) | A scale bar in the corner of the viewport that follows the zoom, and *Measure*: two clicks on the model, and the straight-line distance between them drawn and read out |
-| C Brushes to hand | **Begun**, 2026-11-24 (section 18): the palette at the pointer and brush files. Insert brushes, the cable and the workbench are next | `b` brings every brush up under the pointer. *Import* takes brush files in |
+| C Brushes to hand | **Under way**, 2026-11-24 (section 18): the palette at the pointer, brush files, insert brushes and cables. The workbench is next | `b` brings every brush up under the pointer. *Import* takes brush files in. ADD: a ball, box, cylinder, cone or ring, or a copy of any body, set down by a drag; a cable laid along the model or hung between two points; each baked in or left a body of its own |
 | B Brushes as settings | **Begun**, 2026-11-23 (section 16): where the files go, and the generic brush in the engine. The palette and build-up follow | Settings, brushes and autosave each in the folder the operating system keeps for them |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
@@ -3215,9 +3215,9 @@ a ball that does not matter.
 | Stage | What | State |
 |---|---|---|
 | C1 | The palette at the pointer, on `b`; brush files taken in and read again | **Built**, 2026-11-24 (below) |
-| C2 | Insert brushes: a shape set down on the surface by a drag, as a body of its own or baked into the one in hand | Next |
-| C3 | The cable: a tube laid along a stroke, with a choice of ends | |
-| C4 | The workbench: a ball to try a brush on, apart from the document | |
+| C2 | Insert brushes: a shape set down on the surface by a drag, as a body of its own or baked into the one in hand | **Built**, 2026-11-24 (below) |
+| C3 | The cable: a tube laid along a stroke or hung between two points, with a choice of ends | **Built**, 2026-11-24 (below) |
+| C4 | The workbench: a ball to try a brush on, apart from the document | Next |
 | C5 | Vector displacement maps, read from a file | Not planned yet: see below |
 
 **What a vector displacement brush is here.** In a mesh sculptor a
@@ -3272,4 +3272,100 @@ a brush is refused before it is read.
 screen, which passes no keys; the palette was seen there by its button
 and the key is held by a test of what the key means. *Read again* is
 not under test: it reads the directory of whoever runs the tests.
+
+#### Built, 2026-11-24 (C2 and C3): brushes that add
+
+`brokkr-core/src/solid.rs` and `brokkr-app/src/app/adding.rs`. An ADD
+block on the panel, under the palette.
+
+A body here is a field of distances, so a shape that can say how far any
+point is from it is joined to a body by keeping, at each voxel, the
+nearer of the two surfaces. No weld and no seam, and an overhang costs
+nothing, which is what a vector displacement brush is for.
+
+| In hand | The gesture | What is set down |
+|---|---|---|
+| Ball, Box, Cylinder, Cone, Ring | Press where it goes, drag to size it and to turn it | The shape, its axis along the surface's normal |
+| A copy of a body | The same | Any body of the document, sized to the drag. An imported mesh is a body, so this is the insert-mesh brush |
+| Cable | Drag along the model | A tube as thick as the brush, following the surface under the pointer |
+| Hung cable | Press at one end, drag to the other | A tube between the two points, sagging by a share of its span |
+
+**Baked in, or its own body.** Baked in, it is part of the body in hand
+from then on, joined softly (a fillet of up to two voxels) or plainly,
+and the invert key takes the shape OUT of the body: a socket, a groove.
+As a body of its own it is shown on the body in hand while it is dragged,
+and when the button comes up that body is put back exactly as it was and
+the shape is a new body under it in the list, to be moved, turned, and
+merged or not. Either way it is one undo.
+
+**Held off the surface**: from sunk to its top, through half proud, to
+resting on it. **A cable's ends**: Round, Collar, Ball or Flange, chosen
+for each end. With the mirror on, everything is added on both sides, and
+as a body of its own both sides are the one body.
+
+**Four things found by a test or on a screen:**
+
+1. **The runs of a cable must not be filleted to each other.** A soft
+   join is a smooth minimum, and done for each run against the field as
+   it then stands, each run is rounded into the last and where two
+   overlap that is a bulge. Each piece is joined softly to the body **as
+   it was before the stroke** (the undo record read back, as the layer
+   brush of section 16 does) and plainly to what the stroke has added.
+   The same means lets a shape being dragged out be set down again on
+   every move without the tries piling up.
+2. **A cable has to be aimed at the model as it was.** The pointer's ray
+   lands on the cable just laid, and a cable whose next point is on top
+   of its last climbs toward the eye: one drag across the ball filled the
+   view. Each point is found along the pointer's ray on the surface
+   before the stroke, as a layer's stamps are.
+3. **A shallow cylinder is not a cylinder squeezed.** The flange and the
+   collar were first made by squeezing the cylinder's frame, and a
+   distance that has been squeezed is six times too steep along a
+   flange's axis: the three voxels the field keeps were half a voxel and
+   the flange came out in steps. A cylinder has a depth of its own now,
+   and a property holds every form's distance to being one.
+4. **A body's box is not the box of its bricks.** A lent body sized and
+   centred by the box of its bricks came out the wrong size and off the
+   pointer by up to a brick. It is sized by the box of its surface, less
+   the band kept round it, found once when the body is chosen.
+
+**How soft a join can be.** Two voxels. The field is kept three voxels
+either side of the surface; a smooth minimum reads both distances
+wherever they are within its width of each other, and where one is a
+clamp and not a distance it rounds off something that is not there. A
+wider fillet is a pass of the Smooth brush afterwards.
+
+**Held by.** In the core: each form is a unit shape and its distance is a
+distance (a property, for a cylinder of any depth too); a placed form is
+inside the box it claims (a property); a solid joined is part of the
+body and only where it is, taken out is a hollow, under a mask is
+neither, and is one undo; a soft join eases the corner and moves nothing
+else; a shape set again leaves no trace of the one before; the runs of a
+cable meet without a bulge; a cable hangs as told; a body lent at twice
+the size is twice the size and round the point it was set on; and a
+property over any form, size, lift, join and direction: what is left is
+a field, joining only adds and cutting only takes, and nothing changes
+far from the solid. In the application, through pointer events: a shape
+is set down where the press was at the size of the drag, out and back in
+is the size it ended at, the invert key takes it out, one undo; as a
+body of its own the body in hand is bit for bit as it was and one undo
+removes the new one; a body is lent to itself; a laid cable is on the
+model from end to end and nowhere further from it than its own
+thickness; a hung cable is at both ends and sags to where its sag says;
+the mirror adds on both sides; and one thing is in hand at a time.
+
+**Not done, and known:**
+
+* These are not on the palette or in a brush file yet: they are chosen
+  from the ADD block, and their settings are not kept between runs.
+* A hung cable hangs down in the model's own space, between two points
+  of one body. Between two bodies it can only start and end on the one
+  in hand.
+* A cable is round. A strap or a braid is a profile and a pattern more.
+* A lent body is a copy taken when it is chosen: change the body and it
+  has to be chosen again.
+* A body of its own is built dense where it is solid through, where the
+  primitives store such bricks as one value: more memory than it needs,
+  until it is next edited.
+* How long a stamp of these takes was not measured.
 

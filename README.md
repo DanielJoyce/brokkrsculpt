@@ -421,6 +421,12 @@ true of it too, and what it adds is this.
   file in your data directory (`~/.local/share/brokkrsculpt/brushes` on
   Linux), so a brush can be handed to somebody else, and *Import* takes
   one in. Press **b** for the palette under the pointer.
+- **Brushes that add.** Set a ball, box, cylinder, cone or ring down on
+  the model with one drag, or a copy of any body (import a mesh, then
+  stamp it wherever you like). Lay a *Cable* along the surface or hang
+  one between two points, with a collar, ball or flange at each end.
+  Each is baked into the body in hand, or left as a body of its own.
+  Baked in, ctrl takes the shape out: a socket, a groove.
 - **Stamps and strokes.** A *Stamp* that presses one of six images or any
   picture into the surface with one drag, or lays a row of them along a
   stroke (rivets, stitches, scales), a *Lazy* stroke for long clean
@@ -446,6 +452,10 @@ true of it too, and what it adds is this.
 
 <p align="center">
   <img alt="A ball with five strokes across it, each from a different brush on the palette: a band with a flat top, a bead, a crease, a scraped flat and a row of rivets. Beside it the brush's own settings: radius and strength, the Profile row of five shapes and its flat middle, Picture across the tip, Builds up or One layer, Set down as a line, and What it does opened to show Crease as a push of 0.60 in and a pinch of 1.00 together" src="docs/images/studio-brush-palette.png" width="760">
+</p>
+
+<p align="center">
+  <img alt="A ball with a box, a cone and a ring set down on it, and a cable laid across it in a wave with a collar at one end and a flange at the other. Beside it the ADD block: Ball, Box, Cylinder, Cone, Ring, Cable, Hung cable, a copy of a body, Baked in or Its own body, Soft join, Held off the surface, and the two ends of a cable" src="docs/images/studio-adding.png" width="760">
 </p>
 
 <p align="center">
