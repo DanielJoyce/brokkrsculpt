@@ -99,6 +99,15 @@ impl FieldRegion {
         &self.values[start..start + (to_x - from_x + 1) as usize]
     }
 
+    /// The region laid bare: its lowest voxel, how many voxels it is each
+    /// way, and its values, X fastest. For a reader that works out where a
+    /// voxel's value is for itself, several voxels at a time, and has made
+    /// sure of its own that each is inside.
+    #[inline]
+    pub(crate) fn layout(&self) -> (IVec3, IVec3, &[f32]) {
+        (self.lo, self.size, &self.values)
+    }
+
     pub(crate) fn bounds(&self) -> (IVec3, IVec3) {
         (self.lo, self.hi)
     }
@@ -156,7 +165,7 @@ impl FieldRegion {
     /// expensive thing a large brush did. Measured at a 20 mm radius it was
     /// three and a half milliseconds of a four millisecond budget.
     #[inline]
-    fn cell(&self, b: IVec3) -> [f32; 8] {
+    pub(crate) fn cell(&self, b: IVec3) -> [f32; 8] {
         let local = b - self.lo;
         if local.cmpge(IVec3::ZERO).all() && (local + IVec3::ONE).cmplt(self.size).all() {
             let row = self.size.x as usize;

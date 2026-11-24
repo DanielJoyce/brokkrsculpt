@@ -191,6 +191,14 @@ impl Prepared {
         v_axis: Vec3::Y,
     };
 
+    /// Whether [`Prepared::weight`] is one everywhere: no pattern, or one of
+    /// no depth. The condition it begins with, for a caller that would do
+    /// without asking it of every voxel.
+    #[inline]
+    pub fn is_off(&self) -> bool {
+        matches!(self.kind, PatternKind::None) || self.depth <= 0.0
+    }
+
     /// The factor to multiply the brush weight by at a world position. Always
     /// in `0..=1`.
     #[inline]

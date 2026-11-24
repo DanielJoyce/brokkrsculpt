@@ -72,6 +72,8 @@ use crate::volume::{BrickPreview, BrickVerdict, Volume};
 pub mod alpha;
 pub mod compound;
 pub mod engine;
+// The Draw brush, a run of voxels at a time. See `brush/runs.rs`.
+mod runs;
 pub mod stamp;
 
 /// How far outside the surface the clay plane sits, as a fraction of radius.
@@ -1397,155 +1399,176 @@ impl Brush {
             Skipping::Off => crate::Settled::NONE,
         };
 
-        volume.edit_voxels_where(
+        // The Draw brush is offered runs of voxels, where it can take them:
+        // with no pattern, and with the shortcuts on, so that with them off
+        // every voxel still goes through the closure below and the two can
+        // be compared. See `brush/runs.rs`.
+        let draw = (kind == BrushKind::Draw && skipping == Skipping::On && pattern.is_off())
+            .then_some(runs::Draw {
+                centre,
+                radius_squared,
+                inverse_radius,
+                falloff,
+                gain,
+                displacement,
+                direction,
+                stroke_normal,
+                region,
+            });
+
+        volume.edit_voxels_by_runs(
             lo,
             hi,
             read_voxels,
             true,
             settled,
             decide,
-            |voxel, position, value, free| {
-                let offset = position - centre;
-                if offset.length_squared() >= radius_squared {
-                    return value;
-                }
-                let distance = offset.length() * inverse_radius;
-                let shaped = falloff.weight(distance) * gain;
-                if shaped <= 0.0 {
-                    return value;
-                }
-                // The pattern is one extra multiply, and the mask a second, and
-                // both are evaluated only for voxels the falloff has not already
-                // zeroed. Both stay in 0..=1, so the product does too and the
-                // blending brushes below keep a legal lerp factor -- which is what
-                // makes smooth, flatten and clay converge on their target instead
-                // of extrapolating away from it.
-                //
-                // **Kept apart from the mask, because two brushes cannot fold it
-                // in.** See the `Flatten` and `Clay` arms: their target is a
-                // plane distance that can be far outside the narrow band, and
-                // scaling the lerp factor by the mask does not scale the RESULT
-                // when both the masked and the unmasked blend overshoot the band
-                // and clamp to the same edge. Everything else here is either a
-                // displacement, where a factor on the weight is a factor on the
-                // move, or blends toward a target already in band.
-                let patterned = shaped * pattern.weight(position);
-                if patterned <= 0.0 || free <= 0.0 {
-                    return value;
-                }
-                let weight = patterned * free;
-
-                match kind {
-                    BrushKind::Inflate => value + field_sign * weight * displacement,
-
-                    BrushKind::Draw => {
-                        // Translate the field along the stroke normal, which slides
-                        // this patch of surface out from under the cursor.
-                        //
-                        // The tempting version, weighting an offset by how much the
-                        // local gradient faces the stroke, does not survive a
-                        // stroke: wherever the field is flat or saturated that
-                        // gradient is noise, and multiplying a displacement by it
-                        // turns the noise into geometry. A resample cannot
-                        // introduce detail that was not already there.
-                        let shift = stroke_normal
-                            * (weight * displacement * voxel_size * direction.outward_sign());
-                        region.sample((position - shift) / voxel_size)
+            runs::Edit {
+                draw,
+                voxel: |voxel: IVec3, position: Vec3, value: f32, free: f32| {
+                    let offset = position - centre;
+                    if offset.length_squared() >= radius_squared {
+                        return value;
                     }
-
-                    BrushKind::Smooth => {
-                        let average = region.neighbour_average(voxel);
-                        value + (average - value) * weight
+                    let distance = offset.length() * inverse_radius;
+                    let shaped = falloff.weight(distance) * gain;
+                    if shaped <= 0.0 {
+                        return value;
                     }
-
-                    BrushKind::Pinch => {
-                        // Read the field from slightly closer to the brush axis,
-                        // which drags the surface sideways and squeezes whatever
-                        // ridge runs through the brush into a crease.
-                        //
-                        // The obvious alternative, an unsharp mask on the values,
-                        // looks the same for one stamp and then compounds: it is a
-                        // high pass filter with gain above 1, so across a stroke it
-                        // amplifies its own rounding error into a crust. Warping
-                        // the domain only ever resamples what is already there.
-                        let to_centre = centre - position;
-                        // Along the surface only. Pulling along the normal as well
-                        // would make pinch quietly double as inflate.
-                        let lateral = to_centre - stroke_normal * to_centre.dot(stroke_normal);
-                        let Some(direction_to_axis) = lateral.try_normalize() else {
-                            return value;
-                        };
-                        let spread = match direction {
-                            BrushDirection::Add => 1.0,
-                            BrushDirection::Subtract => -1.0,
-                        };
-                        let pull =
-                            direction_to_axis * (weight * PINCH_PULL_VOXELS * voxel_size * spread);
-                        region.sample((position + pull) / voxel_size)
-                    }
-
-                    // **The mask is applied to the RESULT, not to the lerp
-                    // factor, and this is the one brush family where that
-                    // distinction has teeth.**
+                    // The pattern is one extra multiply, and the mask a second, and
+                    // both are evaluated only for voxels the falloff has not already
+                    // zeroed. Both stay in 0..=1, so the product does too and the
+                    // blending brushes below keep a legal lerp factor -- which is what
+                    // makes smooth, flatten and clay converge on their target instead
+                    // of extrapolating away from it.
                     //
-                    // `plane` is the signed distance to the stroke's reference
-                    // plane in voxels and is unbounded -- a voxel at the rim of a
-                    // wide brush on a curved surface is tens of voxels from it.
-                    // Folding the mask into `weight` then means the masked blend
-                    // overshoots the narrow band just as the unmasked one does,
-                    // and `edit_voxels_where`'s clamp puts both on the same edge:
-                    // a half protected voxel was carved exactly as hard as an
-                    // unprotected one. Measured before this changed: 505 of
-                    // 15,536 moved Flatten voxels and 2,783 of 28,444 Clay voxels
-                    // took the full unmasked effect through half protection.
-                    //
-                    // So the unmasked result is computed first and clamped to
-                    // what the field can actually hold, and the mask then chooses
-                    // a point between the voxel's own value and that. Both ends
-                    // are in band, so the result is too.
-                    //
-                    // **Unmasked is bit-identical**, which is what made this
-                    // safe to change in a shipped brush: an unmasked edit resolves
-                    // `free` to exactly 1.0 through `Freedom::OPEN`, so `weight`
-                    // was already `patterned`, and the `free >= 1.0` arm returns
-                    // the clamped value the caller's own clamp produced anyway.
-                    BrushKind::Flatten => {
-                        let plane = (position - plane_point).dot(stroke_normal) / voxel_size;
-                        let target = (value + (plane - value) * patterned).clamp(INSIDE, OUTSIDE);
-                        admit(value, target, free)
+                    // **Kept apart from the mask, because two brushes cannot fold it
+                    // in.** See the `Flatten` and `Clay` arms: their target is a
+                    // plane distance that can be far outside the narrow band, and
+                    // scaling the lerp factor by the mask does not scale the RESULT
+                    // when both the masked and the unmasked blend overshoot the band
+                    // and clamp to the same edge. Everything else here is either a
+                    // displacement, where a factor on the weight is a factor on the
+                    // move, or blends toward a target already in band.
+                    let patterned = shaped * pattern.weight(position);
+                    if patterned <= 0.0 || free <= 0.0 {
+                        return value;
                     }
+                    let weight = patterned * free;
 
-                    BrushKind::Move => {
-                        // Unreachable: `apply` sends Move to `drag_once` before any
-                        // of this, because a gesture is not a stamp.
-                        value
-                    }
+                    match kind {
+                        BrushKind::Inflate => value + field_sign * weight * displacement,
 
-                    BrushKind::Paint => {
-                        // Unreachable: `stamp` returns before any of this, because
-                        // paint writes no field value. See `apply_paint`.
-                        value
-                    }
+                        BrushKind::Draw => {
+                            // Translate the field along the stroke normal, which slides
+                            // this patch of surface out from under the cursor.
+                            //
+                            // The tempting version, weighting an offset by how much the
+                            // local gradient faces the stroke, does not survive a
+                            // stroke: wherever the field is flat or saturated that
+                            // gradient is noise, and multiplying a displacement by it
+                            // turns the noise into geometry. A resample cannot
+                            // introduce detail that was not already there.
+                            let shift = stroke_normal
+                                * (weight * displacement * voxel_size * direction.outward_sign());
+                            region.sample((position - shift) / voxel_size)
+                        }
 
-                    // The same shape as `Flatten` above, and the same reason.
-                    BrushKind::Clay => {
-                        let plane = (position - plane_point).dot(stroke_normal) / voxel_size;
-                        let blended = value + (plane - value) * patterned;
-                        // Keep only the half of the operation that moves material
-                        // the way the user asked for. Without this, clay carves
-                        // away any bump standing above its plane.
+                        BrushKind::Smooth => {
+                            let average = region.neighbour_average(voxel);
+                            value + (average - value) * weight
+                        }
+
+                        BrushKind::Pinch => {
+                            // Read the field from slightly closer to the brush axis,
+                            // which drags the surface sideways and squeezes whatever
+                            // ridge runs through the brush into a crease.
+                            //
+                            // The obvious alternative, an unsharp mask on the values,
+                            // looks the same for one stamp and then compounds: it is a
+                            // high pass filter with gain above 1, so across a stroke it
+                            // amplifies its own rounding error into a crust. Warping
+                            // the domain only ever resamples what is already there.
+                            let to_centre = centre - position;
+                            // Along the surface only. Pulling along the normal as well
+                            // would make pinch quietly double as inflate.
+                            let lateral = to_centre - stroke_normal * to_centre.dot(stroke_normal);
+                            let Some(direction_to_axis) = lateral.try_normalize() else {
+                                return value;
+                            };
+                            let spread = match direction {
+                                BrushDirection::Add => 1.0,
+                                BrushDirection::Subtract => -1.0,
+                            };
+                            let pull = direction_to_axis
+                                * (weight * PINCH_PULL_VOXELS * voxel_size * spread);
+                            region.sample((position + pull) / voxel_size)
+                        }
+
+                        // **The mask is applied to the RESULT, not to the lerp
+                        // factor, and this is the one brush family where that
+                        // distinction has teeth.**
                         //
-                        // Applied to the UNMASKED blend, before the mask admits
-                        // a fraction of it. The other order would let the mask
-                        // pull a voxel back across `value` and turn the direction
-                        // guard into the thing it was guarding against.
-                        let kept = match direction {
-                            BrushDirection::Add => blended.min(value),
-                            BrushDirection::Subtract => blended.max(value),
-                        };
-                        admit(value, kept.clamp(INSIDE, OUTSIDE), free)
+                        // `plane` is the signed distance to the stroke's reference
+                        // plane in voxels and is unbounded -- a voxel at the rim of a
+                        // wide brush on a curved surface is tens of voxels from it.
+                        // Folding the mask into `weight` then means the masked blend
+                        // overshoots the narrow band just as the unmasked one does,
+                        // and `edit_voxels_where`'s clamp puts both on the same edge:
+                        // a half protected voxel was carved exactly as hard as an
+                        // unprotected one. Measured before this changed: 505 of
+                        // 15,536 moved Flatten voxels and 2,783 of 28,444 Clay voxels
+                        // took the full unmasked effect through half protection.
+                        //
+                        // So the unmasked result is computed first and clamped to
+                        // what the field can actually hold, and the mask then chooses
+                        // a point between the voxel's own value and that. Both ends
+                        // are in band, so the result is too.
+                        //
+                        // **Unmasked is bit-identical**, which is what made this
+                        // safe to change in a shipped brush: an unmasked edit resolves
+                        // `free` to exactly 1.0 through `Freedom::OPEN`, so `weight`
+                        // was already `patterned`, and the `free >= 1.0` arm returns
+                        // the clamped value the caller's own clamp produced anyway.
+                        BrushKind::Flatten => {
+                            let plane = (position - plane_point).dot(stroke_normal) / voxel_size;
+                            let target =
+                                (value + (plane - value) * patterned).clamp(INSIDE, OUTSIDE);
+                            admit(value, target, free)
+                        }
+
+                        BrushKind::Move => {
+                            // Unreachable: `apply` sends Move to `drag_once` before any
+                            // of this, because a gesture is not a stamp.
+                            value
+                        }
+
+                        BrushKind::Paint => {
+                            // Unreachable: `stamp` returns before any of this, because
+                            // paint writes no field value. See `apply_paint`.
+                            value
+                        }
+
+                        // The same shape as `Flatten` above, and the same reason.
+                        BrushKind::Clay => {
+                            let plane = (position - plane_point).dot(stroke_normal) / voxel_size;
+                            let blended = value + (plane - value) * patterned;
+                            // Keep only the half of the operation that moves material
+                            // the way the user asked for. Without this, clay carves
+                            // away any bump standing above its plane.
+                            //
+                            // Applied to the UNMASKED blend, before the mask admits
+                            // a fraction of it. The other order would let the mask
+                            // pull a voxel back across `value` and turn the direction
+                            // guard into the thing it was guarding against.
+                            let kept = match direction {
+                                BrushDirection::Add => blended.min(value),
+                                BrushDirection::Subtract => blended.max(value),
+                            };
+                            admit(value, kept.clamp(INSIDE, OUTSIDE), free)
+                        }
                     }
-                }
+                },
             },
         );
     }
@@ -3367,6 +3390,75 @@ mod skipping_tests {
             settled_some += usize::from(settled > 0);
         }
         assert!(settled_some >= 6, "only {settled_some} of the runs settled any voxel");
+    }
+
+    /// The Draw brush a run of voxels at a time (`brush/runs.rs`) is the
+    /// Draw brush a voxel at a time, to the bit: each falloff, both ways, at
+    /// a voxel size that is a power of two and at one that is not, on a ball
+    /// that is not on the lattice, with a brick under a mask that lets half
+    /// through and one under a mask that lets nothing through, over a stroke
+    /// of stamps that overlap. With the shortcuts off no run is offered, and
+    /// that is what it is compared with.
+    #[test]
+    fn the_draw_brush_by_runs_is_the_draw_brush() {
+        for falloff in FalloffCurve::ALL {
+            for direction in [BrushDirection::Add, BrushDirection::Subtract] {
+                for (voxel_size, strength) in [(1.0f32, 0.9f32), (0.3, 0.35)] {
+                    let middle = Vec3::new(41.3, 39.9, 44.6) * voxel_size;
+                    let ball = 31.7 * voxel_size;
+                    let brush = Brush {
+                        kind: BrushKind::Draw,
+                        radius: 19.4 * voxel_size,
+                        strength,
+                        falloff,
+                        ..Brush::default()
+                    };
+                    let run = |skipping| {
+                        let mut volume = Volume::new(voxel_size);
+                        volume.seed_sphere(middle, ball);
+                        // Half through over one brick the stroke crosses, and
+                        // nothing through over the one beside it.
+                        let side = BRICK_DIM as i32;
+                        for (brick, level) in
+                            [(IVec3::new(2, 1, 1), 128u8), (IVec3::new(2, 2, 1), 255)]
+                        {
+                            let origin = BrickCoord(brick).origin();
+                            for index in 0..side * side * side {
+                                let cell = IVec3::new(
+                                    index % side,
+                                    index / side % side,
+                                    index / (side * side),
+                                );
+                                volume.mask_mut().write(origin + cell, level);
+                            }
+                        }
+                        volume.mask_mut().collapse();
+                        volume.take_dirty(&mut Vec::new());
+                        volume.begin_stroke();
+                        let mut scratch = BrushScratch::new();
+                        for step in 0..9 {
+                            let angle = step as f32 * 0.21;
+                            let towards = Vec3::new(angle.cos(), angle.sin(), 0.3).normalize();
+                            let at = middle + towards * ball;
+                            brush.stamp(
+                                &mut volume,
+                                &stamp_at(at, towards, direction),
+                                &mut scratch,
+                                skipping,
+                            );
+                        }
+                        let undo = volume.end_stroke().map(|edit| (edit.len(), edit.bytes()));
+                        (volume, undo)
+                    };
+                    let what = format!("{falloff:?} {direction:?} at voxel {voxel_size}");
+                    let (by_runs, runs_undo) = run(Skipping::On);
+                    let (by_voxels, voxels_undo) = run(Skipping::Off);
+                    assert_same_field(&by_runs, &by_voxels, &what);
+                    assert_eq!(runs_undo, voxels_undo, "{what}: the undo entry differs");
+                    assert!(runs_undo.is_some(), "{what}: the stroke changed nothing");
+                }
+            }
+        }
     }
 
     #[test]

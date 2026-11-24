@@ -207,6 +207,51 @@ pub struct PlanStats {
     pub bricks_settled: usize,
 }
 
+/// What an edit does to a voxel, and where it can, to a run of them at once.
+///
+/// Every closure of the shape `edit_voxels_where` takes is one, a voxel at a
+/// time. An edit with more to offer says so through [`VoxelEdit::run`]: see
+/// [`Volume::edit_voxels_by_runs`].
+pub trait VoxelEdit: Sync {
+    /// The value a voxel is to hold, given what it holds: its coordinate, its
+    /// position in the world, its value, and how much of the edit the mask
+    /// lets through, in `0..=1`.
+    fn voxel(&self, voxel: IVec3, position: Vec3, value: f32, free: f32) -> f32;
+
+    /// Do the edit to a run of voxels along X, the first of them `first` and
+    /// their values `values`, all of them under the one `free`. Write what
+    /// changes and leave what does not, clamped to the band as a voxel at a
+    /// time is. Returns how many voxels from the first were dealt with,
+    /// which may be none or fewer than were offered, and whether any of them
+    /// changed. The rest are done a voxel at a time.
+    ///
+    /// What a run writes has to be what [`VoxelEdit::voxel`] would have
+    /// written, to the bit: the two are the same edit.
+    #[inline(always)]
+    fn run(
+        &self,
+        _first: IVec3,
+        _values: &mut [f32],
+        _voxel_size: f32,
+        _free: f32,
+    ) -> (usize, bool) {
+        (0, false)
+    }
+}
+
+impl<F> VoxelEdit for F
+where
+    F: Fn(IVec3, Vec3, f32, f32) -> f32 + Sync,
+{
+    #[inline(always)]
+    fn voxel(&self, voxel: IVec3, position: Vec3, value: f32, free: f32) -> f32 {
+        self(voxel, position, value, free)
+    }
+}
+
+/// The fewest voxels worth offering to [`VoxelEdit::run`].
+const SHORTEST_RUN: i32 = 4;
+
 /// What an edit says of itself: see [`Volume::edit_voxels_leaving`].
 type Leave<'a> = dyn Fn(BrickCoord, &mut [u32; BRICK_DIM * BRICK_DIM]) + Sync + 'a;
 
@@ -394,7 +439,7 @@ fn write_voxels<F>(
     edit: &F,
 ) -> bool
 where
-    F: Fn(IVec3, Vec3, f32, f32) -> f32 + Sync,
+    F: VoxelEdit,
 {
     // Hoisted, so an unmasked body -- and a body whose mask collapsed this
     // brick to a tile -- pays nothing per voxel at all.
@@ -420,27 +465,46 @@ where
                 Some(None) => continue,
                 Some(Some((from, to))) => (lo.x.max(from), hi.x.min(to)),
             };
-            for wx in from..=to {
-                if rest >> (wx - origin.x) & 1 != 0 {
+            let mut wx = from;
+            while wx <= to {
+                let across = wx - origin.x;
+                if rest >> across & 1 != 0 {
+                    wx += 1;
                     continue;
                 }
                 let voxel = IVec3::new(wx, wy, wz);
                 let index = brick_index(
-                    (wx - origin.x) as usize,
+                    across as usize,
                     (wy - origin.y) as usize,
                     (wz - origin.z) as usize,
                 );
+                // A run of voxels that are all to be visited, under one
+                // freedom, is offered to the edit whole. See `VoxelEdit`.
+                if let Some(free) = uniform {
+                    let open = (!(rest >> across)).trailing_ones() as i32;
+                    let run = open.min(to - wx + 1);
+                    if run >= SHORTEST_RUN {
+                        let values = &mut data[index..index + run as usize];
+                        let (done, did) = edit.run(voxel, values, voxel_size, free);
+                        changed |= did;
+                        if done > 0 {
+                            wx += done as i32;
+                            continue;
+                        }
+                    }
+                }
                 let free = match uniform {
                     Some(free) => free,
                     None => freedom.at(index),
                 };
                 let position = voxel.as_vec3() * voxel_size;
                 let old = data[index];
-                let new = edit(voxel, position, old, free).clamp(INSIDE, OUTSIDE);
+                let new = edit.voxel(voxel, position, old, free).clamp(INSIDE, OUTSIDE);
                 if new != old {
                     data[index] = new;
                     changed = true;
                 }
+                wx += 1;
             }
         }
     }
@@ -1526,6 +1590,27 @@ impl Volume {
         );
     }
 
+    /// [`Volume::edit_voxels_where`], for an edit that can do a run of voxels
+    /// at once: see [`VoxelEdit::run`]. Everything else is the same, and so
+    /// is what is written.
+    ///
+    /// Apart from its sibling because a closure's arguments can only be
+    /// worked out for it where a closure is what is asked for, and every
+    /// other edit in the crate is a closure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn edit_voxels_by_runs(
+        &mut self,
+        v_min: IVec3,
+        v_max: IVec3,
+        reach: i32,
+        use_mask: bool,
+        settled: Settled,
+        decide: impl Fn(&BrickPreview) -> BrickVerdict,
+        edit: impl VoxelEdit,
+    ) {
+        self.edit_voxels_skipping(v_min, v_max, reach, use_mask, settled, None, decide, edit);
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn edit_voxels_skipping(
         &mut self,
@@ -1536,7 +1621,7 @@ impl Volume {
         settled: Settled,
         given: Option<&Leave<'_>>,
         decide: impl Fn(&BrickPreview) -> BrickVerdict,
-        edit: impl Fn(IVec3, Vec3, f32, f32) -> f32 + Sync,
+        edit: impl VoxelEdit,
     ) {
         // What a test compares a skip against: the same edit, every voxel
         // visited.
@@ -1851,7 +1936,7 @@ impl Volume {
         ball: Option<&Ball>,
         edit: &F,
     ) where
-        F: Fn(IVec3, Vec3, f32, f32) -> f32 + Sync,
+        F: VoxelEdit,
     {
         let voxel_size = self.voxel_size;
         let mut lines = [0u32; BRICK_DIM * BRICK_DIM];
@@ -1913,7 +1998,7 @@ impl Volume {
         ball: Option<&Ball>,
         edit: &F,
     ) where
-        F: Fn(IVec3, Vec3, f32, f32) -> f32 + Sync,
+        F: VoxelEdit,
     {
         debug_assert!(
             visits.windows(2).all(|pair| {
