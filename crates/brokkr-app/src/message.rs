@@ -220,6 +220,16 @@ pub enum StudioMessage {
     PresetRemoved(usize),
 }
 
+/// The maps a brush that adds can stamp. See `app/maps.rs`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MapsMessage {
+    /// Ask for a map file to take in.
+    Requested,
+    /// The file was read and kept, or why not, or the dialog was
+    /// dismissed.
+    Taken(Option<Result<crate::app::MapName, String>>),
+}
+
 /// The controls of the brushes that add. See `app/adding.rs`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AddMessage {
@@ -1167,6 +1177,9 @@ pub enum Message {
     Form(FormMessage),
     /// One of the controls of the brushes that add. See `app/adding.rs`.
     Add(AddMessage),
+    /// A vector displacement map asked for, taken in, or the maps read
+    /// again. See `app/maps.rs`.
+    Maps(MapsMessage),
     /// The workbench: onto it, a fresh piece, or back. See
     /// `app/workbench.rs`.
     Workbench(WorkbenchMessage),

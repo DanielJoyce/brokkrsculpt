@@ -24,7 +24,7 @@ was built and what was measured.
 | P Painting engine | **Usable**, 2026-11-23 (section 15): the storage, the view and the brush. Painted colour is on screen, in the project file and in every export that carries colour | The paint brush lays a colour: *Paint*, *Glaze* or *Erase*, put on *Loaded*, as a *Wash*, with a *Drybrush* or a *Sponge*, at any opacity, with a soft edge. *Pick from model* takes a colour back off it |
 | B A brush is its settings | **Done but for B5**, 2026-11-23 (section 16): files in the right directories, one generic brush, the palette, a picture across the tip, build-up on or off, lines or dabs. Brushes that stamp a shape (B5) are a later stage | BRUSHES: twenty-one that come with the application, upstream's six among them, and the user's own, a file each. *What it does* shows a brush as five amounts to change. *Profile*: five shapes and a flat middle. *Picture across the tip*, *Builds up* or *One layer*, and *Set down* as a line or every so many widths |
 | M Reading sizes | **Done**, 2026-11-23 (section 17) | A scale bar in the corner of the viewport that follows the zoom, and *Measure*: two clicks on the model, and the straight-line distance between them drawn and read out |
-| C Brushes to hand | **Done but for reading vector displacement files**, 2026-11-24 (section 18): the palette at the pointer, brush files, insert brushes, cables, the workbench, and thirty-three brushes on the palette in three groups, the ones that add among them, each with a picture of its stroke on its button, a true pinch, and a fillet of up to eight voxels where an insert meets the body | `b` brings every brush up under the pointer. *Import* takes brush files in. ADD: a ball, box, cylinder, cone or ring, or a copy of any body, set down by a drag; a cable laid along the model or hung between two points; each baked in or left a body of its own. WORKBENCH: the model is set aside and a ball, or a copy of the body in hand, takes its place to try a brush on |
+| C Brushes to hand | **Done**, 2026-11-24 (section 18): the palette at the pointer, brush files, insert brushes, cables, the workbench, thirty-six brushes on the palette in three groups, the ones that add among them, each with a picture of its stroke on its button, a true pinch, a fillet of up to eight voxels where an insert meets the body, and vector displacement brushes, read from OpenEXR files | `b` brings every brush up under the pointer. *Import* takes brush files in. ADD: a ball, box, cylinder, cone or ring, or a copy of any body, set down by a drag; a cable laid along the model or hung between two points; each baked in or left a body of its own. WORKBENCH: the model is set aside and a ball, or a copy of the body in hand, takes its place to try a brush on |
 | B Brushes as settings | **Begun**, 2026-11-23 (section 16): where the files go, and the generic brush in the engine. The palette and build-up follow | Settings, brushes and autosave each in the folder the operating system keeps for them |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
@@ -3218,11 +3218,12 @@ a ball that does not matter.
 | C2 | Insert brushes: a shape set down on the surface by a drag, as a body of its own or baked into the one in hand | **Built**, 2026-11-24 (below) |
 | C3 | The cable: a tube laid along a stroke or hung between two points, with a choice of ends | **Built**, 2026-11-24 (below) |
 | C4 | The workbench: a ball to try a brush on, apart from the document | **Built**, 2026-11-24 (below) |
-| C5 | Vector displacement maps, read from a file | Not planned yet: see below |
+| C5 | Vector displacement maps, read from a file | **Built** as C10, 2026-11-24 (below) |
 | C6 | The brushes that add, on the palette and in a brush file | **Built**, 2026-11-24 (below) |
 | C7 | A picture of its stroke on each brush's button | **Built**, 2026-11-24 (below) |
 | C8 | A true pinch and its opposite: the gather | **Built**, 2026-11-24 (below) |
 | C9 | A join as wide as is wanted: the fillet where an insert meets the body | **Built**, 2026-11-24 (below) |
+| C10 | Vector displacement brushes: a map stamped, three that come with it, and OpenEXR files read | **Built**, 2026-11-24 (below) |
 
 **What a vector displacement brush is here.** In a mesh sculptor a
 vector displacement map is how a brush stamps a shape with an overhang,
@@ -3230,9 +3231,10 @@ an ear or a horn, which a height cannot say. This is a sculptor of
 distances and not of a mesh, and the thing itself, a shape with any
 overhang set into the surface and blended, is what an insert brush does
 (C2) with no map in between. Reading the map FILES other programs write
-is a separate thing and is not planned yet: they are 32-bit EXR, and the
-`image` crate's EXR reader is one of the dependencies this project
-turned down by name (`crates/brokkr-app/Cargo.toml`).
+was a separate thing and was not planned when this was written: they
+are 32-bit EXR, and the `image` crate's EXR reader is one of the
+dependencies this project turned down by name
+(`crates/brokkr-app/Cargo.toml`). It is built now: stage C10, below.
 
 **Materials.** There is no library of them. A document's paints are in
 its paint rack and saved with it (section 8), and the machine's
@@ -3745,4 +3747,127 @@ leaves no trace of where it was dragged, and is one undo.
 * A shape so big that the box about it is more than twelve million
   voxels is joined over two voxels and no wider, silently.
 * Not timed in a release build.
+
+#### Built, 2026-11-24 (C10): vector displacement brushes
+
+Asked for by the maintainer three times, the last: *"Vector displacement
+brushes would be good to."* `brokkr-core/src/solid/relief.rs` and
+`brokkr-app/src/app/maps.rs`.
+
+A stamp image is a height at each point of a square. A vector
+displacement map is three numbers at each point: the surface there goes
+across, up the square and out of it by so much, so it can lean over
+itself. A horn that curls, a stud with a neck, a scale with an undercut.
+
+**What a user has.** Three brushes on the palette, in Add, which makes
+thirty-six: *Stud*, *Horn* and *Shingle*, each worked out from a
+formula and each leaning over itself somewhere. In the ADD block, *A
+displacement map* lists them and the maps that have been taken in, and
+*Take in a map…* reads an OpenEXR file. The gesture is a shape's: press
+where it goes, drag to size and turn it. Ctrl or alt turns the map
+inside out, so that what it raises is dug. Baked in or a body of its
+own, mirrored by symmetry, one undo. A brush kept with a map in hand
+names it (`add:Map, map:<name>`), and a map taken in is copied into a
+`maps` directory beside `brushes`, so a brush and its map can both be
+handed to somebody else.
+
+**A map is made a shape, once.** There are no vertices here for a map
+to move. The surface the map describes is built as a grid of points,
+each moved by its displacement, closed underneath with a skirt and a
+floor, and handed to the voxeliser an imported model goes through. What
+comes back is a body: the map's shape standing on a flat plate. It is
+built at three sizes (32, 64 and 128 voxels across the square), and a
+stamp reads the finest that is no finer than itself, so that what it
+reads is a distance for as far as the model's own field is one.
+
+**Draped on the surface.** The plate is flat and a model is not. The
+surface under the stamp is measured first, on a grid of 24 cells across
+the square, and the shape is read at a point's height above THAT and
+not above the stamp's plane.
+
+**A difference, and not a shape.** A stamp adds to the body's own field
+the difference between the shape's field and the field of the flat
+plate alone, which is what the map DOES to a flat surface. Where the
+map does nothing that difference is nothing, and the body is left
+exactly as it was.
+
+**What was built first and dropped**, each found by a test or a screen:
+
+1. *The shape joined to the body as a solid, and the air over it taken
+   out as another.* The first stamp stood nothing on the ball: a join
+   that takes a solid out put back the body as it was wherever it came
+   near, which is right in a stroke that only takes out and erased what
+   this one had just added. That is fixed in the join whatever a stamp
+   does (`taken_out` in `solid.rs`), and is to the last bit what it was
+   for a stroke that only takes out.
+2. *The same, working.* Seen on a screen: every stamp left a faint
+   dotted outline of its square. Where the map does nothing the shape's
+   top and the body's surface are the same surface said twice, by two
+   fields that do not agree to the last fraction of a voxel.
+3. *The two solids held back from the surface by three quarters of a
+   voxel where they are level with it.* It hid the outline and thinned
+   every low part of every map, and a test of the rim still counted
+   voxels changed where the map does nothing.
+4. *The difference*, as built. Two more things the same test found on
+   the way: the plate's own side was within the band of the square's
+   edge, so the plate now goes six voxels past the square; and its
+   floor was near enough that two and a half voxels down the plate's
+   field was the distance to the floor, so the floor is deeper.
+
+**Reading the files.** OpenEXR, the first layer with red, green and
+blue: red across the square, green up it, blue out of it, in
+half-widths of the square, which is how Blender's vector displacement
+brushes are baked. A file of up to 512 megabytes, read at no more than
+512 pixels a side. The `exr` crate, taken directly with no default
+features: seven crates (measured against the lockfile), all permissive,
+recorded in `NOTICE.md`.
+
+**What it costs**, in the development build, one run each: making a map
+a shape at its three sizes, 210 to 230 ms, once for as long as the
+application runs; a stamp 64 voxels across on the core's fixture ball,
+12 to 18 ms.
+
+**Seen on a screen**: two studs, two horns (one turned by the drag), a
+shingle and a leaning dome read from an OpenEXR file written for the
+purpose, on the starting ball. Each overhangs as its map says, and no
+edge of a square can be found. `docs/images/studio-vector-displacement.png`.
+
+**Held by**: in the core, a map is read the way a picture is laid, with
+its first row the top of the square, and what is not a map is refused;
+each of the three that come with it has air with the shape over it and
+the plate under it; a stud stamped on a ball that curves away by more
+than ten voxels under its square stands as high as the map says, has
+air under its cap, and leaves every voxel past 0.93 of the way to the
+rim exactly as it was, to the bit; a map that digs, digs to the depth
+it says, and turned inside out raises by as much; cleared it leaves no
+trace. In the application: an OpenEXR file is read as it was written,
+one bigger than a map may be is read smaller, and what is not one is
+said; a map taken in is kept under a name a file can have and is there
+to be read again, and one that displaces nothing, or would hide one
+that comes with the application, is refused; a brush file names its map
+on either side of `add:`; and a map is stamped by a drag, is one undo,
+leaves no trace of where it was dragged, digs with the invert key, and
+as a body of its own leaves the body in hand as it was.
+
+**Not done:**
+
+* **Not tried on a map made by another program.** The maintainer asked
+  for public maps, ears and noses, to test with. What was found: packs
+  that are sold or need an account (Superhive, which was Blender
+  Market, BlendKit, CGTrader, Gumroad), and one open research set, GenVDM (CVPR 2025), whose
+  code repository says it carries `.exr` results and whose data is on
+  Hugging Face. The build container's network refused Hugging Face, and
+  attaching the repository to the session was refused by its permission
+  rules, so none was fetched. The reader is held by files written here.
+* Only the one convention of axes. ZBrush's maps can have their axes
+  flipped and swapped, and there is no control for that.
+* A stamp is not joined softly, and is not held off the surface: the
+  Soft join and the lift are not offered for it.
+* A map whose displacement is not nothing at its edge is read as
+  nothing over its outermost ring of pixels, as a stamp image is.
+* Where a stamp's square runs off the edge of the model there is no
+  surface to drape on, and the stamp there is as the search leaves it.
+* A map cannot be made here, from a sculpt on the workbench.
+* A map's shape is built when it is first taken up, which is a pause
+  of a fifth of a second.
 

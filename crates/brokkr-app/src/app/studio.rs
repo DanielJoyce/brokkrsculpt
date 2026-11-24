@@ -471,6 +471,10 @@ impl Brokkr {
             }
             StudioMessage::BrushesReloaded => {
                 self.studio.presets = Presets::load();
+                // And the maps beside them, whose files may have been
+                // changed by hand too: `app/maps.rs`.
+                super::maps::forget_kept();
+                self.inserts.maps = super::maps::kept(super::maps::directory().as_deref());
                 self.status = format!(
                     "brushes read again: {} of your own{}",
                     self.studio.presets.list.len(),

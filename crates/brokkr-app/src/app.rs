@@ -4,6 +4,9 @@
 
 mod adding;
 pub use adding::Insert;
+// Vector displacement maps, for the brushes that add: `app/maps.rs`.
+mod maps;
+pub use maps::MapName;
 mod fit_test;
 mod form;
 mod measure;
@@ -1892,6 +1895,8 @@ impl Brokkr {
         app.palette = crate::palette::Palette::load();
         // And the brush presets, for it a third time.
         app.studio.presets = presets::Presets::load();
+        // The maps that have been taken in: `app/maps.rs`.
+        app.inserts.maps = maps::kept(maps::directory().as_deref());
         // The screen is up, so its articles are wanted. The only other place
         // that raises it, `Message::WelcomeOpened`, asks for them too.
         let mut boot =
@@ -10480,6 +10485,8 @@ impl Brokkr {
             Message::Form(message) => self.form_changed(message),
             Message::Measure(message) => self.measure_changed(message),
             Message::Add(message) => self.add_changed(message),
+            // See `app/maps.rs`.
+            Message::Maps(message) => return self.maps_changed(message),
             Message::Workbench(message) => self.workbench_changed(message),
             // One of the sizes on offer, or the setting stays as it is.
             Message::TextureSizeChanged(size) => {

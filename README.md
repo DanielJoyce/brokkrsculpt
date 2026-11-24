@@ -410,7 +410,7 @@ true of it too, and what it adds is this.
   so a model painted this way is also a multi-colour print. Everything the
   rack does is an undo step, removing a paint included.
 - **A palette of brushes.** Each button shows a picture of a stroke of
-  its brush, made by the brush itself. Thirty-three come with it: Draw,
+  its brush, made by the brush itself. Thirty-six come with it: Draw,
   Clay, Inflate, Pinch, Smooth and Flatten, and *Gather*, *Spread*,
   *Scrape*, *Fill*, *Polish*, *Crease*, *Ridge*, *Bead*, *Band*, *Layer*,
   *Clay strips*, *Stitches* and more. *Gather* is a true pinch: a ridge
@@ -434,6 +434,14 @@ true of it too, and what it adds is this.
   is the fillet where it meets the body, from none to eight voxels wide.
   They are brushes on the palette like the rest, and one you set up
   yourself can be kept under a name.
+- **Vector displacement brushes.** A stamp that can lean over itself,
+  which a height cannot say: a horn that curls, a stud with a neck, a
+  scale with an undercut. Three come with it (*Stud*, *Horn*,
+  *Shingle*), and *Take in a map…* reads the OpenEXR files other
+  programs bake (red across, green up, blue out, as Blender's are).
+  Press where it goes and drag to size and turn it. It is draped on the
+  surface under it, raises and digs, and leaves the model exactly as it
+  was wherever the map does nothing. Ctrl turns it inside out.
 - **A workbench.** *Try on a ball* sets your model aside and gives you a
   ball that does not matter, or a copy of the body in hand, to try a
   brush on while you change its settings. *Back to the model* puts
@@ -474,7 +482,11 @@ true of it too, and what it adds is this.
 </p>
 
 <p align="center">
-  <img alt="The palette of brushes brought up in the middle of the viewport by the b key: thirty-three buttons in rows of five under the headings Sculpt, Lines and stamps, and Add, each with a small picture of its brush's stroke over its name, with Draw lit" src="docs/images/studio-palette-popup.png" width="760">
+  <img alt="A ball with six vector displacement stamps on it: two studs with caps wider than their stems, two horns that curl over to one side, a plate that leans over the surface behind it, and a leaning dome read from an OpenEXR file. No edge of any stamp's square can be seen" src="docs/images/studio-vector-displacement.png" width="520">
+</p>
+
+<p align="center">
+  <img alt="The palette of brushes brought up in the middle of the viewport by the b key: thirty-six buttons in rows of five under the headings Sculpt, Lines and stamps, and Add, each with a small picture of its brush's stroke over its name, with Draw lit" src="docs/images/studio-palette-popup.png" width="760">
 </p>
 
 <p align="center">
@@ -793,7 +805,7 @@ path is a working reference to check it against.
 
 AGPL-3.0-only. See [LICENSE](LICENSE).
 
-Every dependency is permissively licensed — 305 crates, all MIT, Apache-2.0,
+Every dependency is permissively licensed — 312 crates, all MIT, Apache-2.0,
 BSD, ISC, Zlib, Unlicense, CC0, CDLA-Permissive or Unicode-3.0. Exactly one
 names the GPL at all: `self_cell` is `Apache-2.0 OR GPL-2.0-only`, a choice,
 and it is taken under Apache-2.0. Nothing about the AGPL here is inherited.

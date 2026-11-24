@@ -38,7 +38,8 @@
 //! a line where a classic brush is chosen, which puts these away.
 
 use brokkr_core::solid::{
-    self, End, Form, How, Join, Lent, MOST_BLEND, Mirrored, Placed, Solid, Step,
+    self, BuiltInMap, Draped, End, Form, Heights, How, Join, Lent, MOST_BLEND, Mirrored, Placed,
+    Solid, Step,
 };
 use brokkr_core::{BrushDirection, Change, Entry, MirrorAxis, NodeId, Volume};
 use glam::{Vec2, Vec3};
@@ -46,7 +47,8 @@ use iced::widget::{button, column, row, slider, text};
 use iced::{Element, Length};
 
 use super::Brokkr;
-use crate::message::{AddMessage, Message};
+use super::maps::{self, MapName, MapOf};
+use crate::message::{AddMessage, MapsMessage, Message};
 use crate::theme;
 
 /// How far off the surface a shape's middle may be held, in halves of its
@@ -61,6 +63,9 @@ pub(super) const SAG_RANGE: std::ops::RangeInclusive<f32> = 0.0..=1.0;
 /// seen. Wider than the field's own distances will do, so it is worked
 /// out (`brokkr_core::solid`, stage C9 of the plan).
 pub(super) const DEFAULT_BLEND: f32 = 3.0;
+
+/// What a brush file's `add:` says for a vector displacement map.
+pub(super) const MAP: &str = "Map";
 
 /// How many straight runs a hung cable is made of.
 const HUNG_RUNS: usize = 24;
@@ -80,6 +85,8 @@ pub enum Insert {
     Laid,
     /// A cable hung between two points.
     Hung,
+    /// A vector displacement map, stamped: `app/maps.rs`.
+    Map(MapOf),
 }
 
 impl Insert {
@@ -98,6 +105,10 @@ pub(super) enum Kind {
     /// A copy of a body. The body is a document's, so a brush cannot keep
     /// which: this is only ever the brush in hand.
     Body,
+    /// A vector displacement map. A brush file names it apart, with
+    /// `map:`, so it is not among the kinds a line's `add:` can name
+    /// outright ([`Kind::kept`]).
+    Map(MapOf),
 }
 
 impl Kind {
@@ -112,6 +123,7 @@ impl Kind {
             Kind::Laid => "Cable",
             Kind::Hung => "Hung cable",
             Kind::Body => "Body",
+            Kind::Map(_) => MAP,
         }
     }
 
@@ -168,6 +180,13 @@ impl Setup {
         if self.what != Kind::Hung {
             self.sag = 0.0;
         }
+        // A map meets the surface where its own displacement comes to
+        // nothing, and is draped on it: no join to soften, nothing to
+        // hold it off by.
+        if matches!(self.what, Kind::Map(_)) {
+            self.blend = 0.0;
+            self.lift = 0.0;
+        }
         self
     }
 }
@@ -181,6 +200,8 @@ enum Piece {
     /// The body lent, set down here: its seat is a ball of the size and
     /// the frame it was set down with.
     Lent(Placed),
+    /// A map stamped here: its seat, the same way.
+    Map(Placed),
 }
 
 /// What the application remembers for the brushes that add.
@@ -202,6 +223,8 @@ pub(super) struct AddState {
     /// its surface. A copy, because the body it is set down on may be the
     /// very one it was lent from.
     lent: Option<(Volume, (Vec3, Vec3))>,
+    /// The maps that have been taken in, for the panel to list.
+    pub maps: Vec<MapName>,
     join: Join,
     /// Where the gesture in progress began: the point on the surface and
     /// the way the surface faces there.
@@ -228,6 +251,7 @@ impl Default for AddState {
             end: End::Round,
             sag: 0.15,
             lent: None,
+            maps: Vec::new(),
             join: Join::new(),
             press: None,
             last: None,
@@ -251,6 +275,7 @@ impl AddState {
             Insert::Body(_) => Kind::Body,
             Insert::Laid => Kind::Laid,
             Insert::Hung => Kind::Hung,
+            Insert::Map(map) => Kind::Map(map),
         };
         Some(
             Setup {
@@ -311,7 +336,7 @@ fn with_solids<R>(
         match piece {
             Piece::Placed(placed) => solids.push(placed),
             Piece::Step(step) => solids.push(step),
-            Piece::Lent(_) => {}
+            Piece::Lent(_) | Piece::Map(_) => {}
         }
     }
     solids.extend(lent.iter().map(|lent| lent as &dyn Solid));
@@ -338,6 +363,7 @@ impl Brokkr {
             Kind::Shape(form) => Insert::Shape(form),
             Kind::Laid => Insert::Laid,
             Kind::Hung => Insert::Hung,
+            Kind::Map(map) => Insert::Map(map),
             // Which body is not something a brush knows.
             Kind::Body => return,
         };
@@ -376,12 +402,20 @@ impl Brokkr {
                     };
                     state.lent = Some((source.duplicated(glam::IVec3::ZERO), extent));
                 }
+                // A map is made a shape the first time it is taken up,
+                // and one that cannot be is not taken up.
+                if let Insert::Map(map) = what
+                    && let Err(why) = maps::relief(map)
+                {
+                    self.status = why;
+                    return;
+                }
                 state.what = Some(what);
                 // One thing in hand at a time: the stamp and a brush's own
                 // amounts are put away, as they put each other away.
                 self.studio.put_away();
                 self.status = match what {
-                    Insert::Shape(_) | Insert::Body(_) => {
+                    Insert::Shape(_) | Insert::Body(_) | Insert::Map(_) => {
                         "press where it goes, drag to size and turn it".to_string()
                     }
                     Insert::Laid => "drag along the model to lay a cable".to_string(),
@@ -458,7 +492,7 @@ impl Brokkr {
             return;
         };
         match what {
-            Insert::Shape(_) | Insert::Body(_) => {
+            Insert::Shape(_) | Insert::Body(_) | Insert::Map(_) => {
                 // How far the pointer has gone from the press, in the plane
                 // of the surface there: as the stamp is sized.
                 let (origin, ray) = self.ray_through(pixel);
@@ -470,6 +504,12 @@ impl Brokkr {
                 let seat = match what {
                     Insert::Shape(form) => {
                         Placed::on(form, centre, normal, drag, drag.length(), self.inserts.lift)
+                    }
+                    // A map's square is in the plane of the surface at
+                    // the press, and what it is draped on is measured
+                    // from there.
+                    Insert::Map(_) => {
+                        Placed::on(Form::Ball, centre, normal, drag, drag.length(), 0.0)
                     }
                     _ => Placed::on(
                         Form::Ball,
@@ -484,10 +524,14 @@ impl Brokkr {
                 if let Some(seat) = seat {
                     self.inserts.pieces.push(match what {
                         Insert::Shape(_) => Piece::Placed(seat),
+                        Insert::Map(_) => Piece::Map(seat),
                         _ => Piece::Lent(seat),
                     });
                 }
-                self.set_pieces();
+                match what {
+                    Insert::Map(map) => self.set_map(map),
+                    _ => self.set_pieces(),
+                }
             }
             Insert::Hung => {
                 let (Some(from), Some(to)) = (self.inserts.last, self.cable_point(pixel)) else {
@@ -552,6 +596,8 @@ impl Brokkr {
         match piece {
             Piece::Placed(placed) => join(&placed),
             Piece::Step(step) => join(&step),
+            // Set down all at once, by `set_map`.
+            Piece::Map(_) => {}
             Piece::Lent(seat) => {
                 let Some((source, extent)) = &state.lent else {
                     return;
@@ -587,6 +633,105 @@ impl Brokkr {
         self.remesh_dirty();
     }
 
+    /// Where the maps a gesture holds are set down, and in each mirror
+    /// that symmetry asks for, each with the surface under it: the body
+    /// in hand **as it was before the stroke**, which is what a stamp is
+    /// draped on however often it is set down again. A seat in a mirror
+    /// has a frame with its axes the other way round, and is draped on
+    /// the surface that is THERE, which need not be the mirror of the
+    /// surface here.
+    fn drapes(&self, relief: &solid::Relief) -> Vec<(Vec3, glam::Mat3, f32, Heights)> {
+        let volume = self.doc.active_volume();
+        let about = super::MIRROR_CENTRE;
+        let mut sides = vec![Vec3::ONE];
+        sides.extend(flips(self.symmetry));
+        self.inserts
+            .pieces
+            .iter()
+            .filter_map(|piece| match piece {
+                Piece::Map(seat) => Some(*seat),
+                _ => None,
+            })
+            .flat_map(|seat| {
+                sides.iter().map(move |flip| {
+                    let centre = about + (seat.centre - about) * *flip;
+                    let frame = glam::Mat3::from_cols(
+                        seat.frame.x_axis * *flip,
+                        seat.frame.y_axis * *flip,
+                        seat.frame.z_axis * *flip,
+                    );
+                    (centre, frame, seat.half)
+                })
+            })
+            .map(|(centre, frame, half)| {
+                (centre, frame, half, Heights::under(volume, relief, centre, frame, half))
+            })
+            .collect()
+    }
+
+    /// Put the body in hand back as it was at the press and stamp the
+    /// map where the gesture now has it: its displacement of the
+    /// surface, up and down (`brokkr_core::solid`, `relief.rs`). With
+    /// the invert key held at the press, the map turned inside out.
+    fn set_map(&mut self, map: MapOf) {
+        let Ok(relief) = maps::relief(map) else {
+            return;
+        };
+        let drapes = self.drapes(&relief);
+        let voxel_size = self.doc.voxel_size();
+        let turned = self.inserts.cut;
+        let join = &mut self.inserts.join;
+        let volume = self.doc.active_volume_mut();
+        join.clear(volume);
+        for (centre, frame, half, heights) in &drapes {
+            if let Some(stamp) =
+                Draped::on(&relief, heights, *centre, *frame, *half, voxel_size, turned)
+            {
+                join.stamp(volume, &stamp);
+            }
+        }
+        self.remesh_dirty();
+    }
+
+    /// What a map stamped as a body of its own is: what is under its
+    /// displaced surface, draped as it was on the body in hand.
+    fn map_body(&self, map: MapOf) -> Option<Volume> {
+        let relief = maps::relief(map).ok()?;
+        let drapes = self.drapes(&relief);
+        let voxel_size = self.doc.voxel_size();
+        let stamps: Vec<Draped<'_>> = drapes
+            .iter()
+            .filter_map(|(centre, frame, half, heights)| {
+                Draped::on(&relief, heights, *centre, *frame, *half, voxel_size, self.inserts.cut)
+            })
+            .collect();
+        let solids: Vec<&dyn Solid> = stamps.iter().map(|stamp| stamp as &dyn Solid).collect();
+        Some(solid::body(voxel_size, &solids))
+    }
+
+    /// A map was asked for or taken in.
+    pub(super) fn maps_changed(&mut self, message: MapsMessage) -> iced::Task<Message> {
+        match message {
+            MapsMessage::Requested => {
+                return iced::Task::perform(maps::pick(), |taken| {
+                    Message::Maps(MapsMessage::Taken(taken))
+                });
+            }
+            MapsMessage::Taken(None) => {}
+            MapsMessage::Taken(Some(Err(why))) => {
+                self.status = format!("that file cannot be a brush's map: {why}");
+            }
+            MapsMessage::Taken(Some(Ok(name))) => {
+                if !self.inserts.maps.contains(&name) {
+                    self.inserts.maps.push(name);
+                    self.inserts.maps.sort_by_key(|name| name.as_str().to_lowercase());
+                }
+                self.add_changed(AddMessage::Chosen(Some(Insert::Map(MapOf::Named(name)))));
+            }
+        }
+        iced::Task::none()
+    }
+
     /// The button came up on a drag that adds. A laid cable gets its far
     /// end. Baked in, the stroke is then finished as any stroke is, by
     /// the caller. As a body of its own, the body in hand is put back as
@@ -620,6 +765,12 @@ impl Brokkr {
         self.inserts.join.clear(self.doc.active_volume_mut());
         drop(self.doc.active_volume_mut().end_stroke());
         self.remesh_dirty();
+        // A map's body is draped on the body in hand, so it is built
+        // while the gesture still holds where.
+        let stamped = match what {
+            Insert::Map(map) => self.map_body(map),
+            _ => None,
+        };
         let pieces = std::mem::take(&mut self.inserts.pieces);
         if pieces.is_empty() {
             return;
@@ -632,19 +783,22 @@ impl Brokkr {
         }
         let flips = flips(self.symmetry);
         let voxel_size = self.doc.voxel_size();
-        let made = with_solids(&pieces, self.inserts.lent.as_ref(), &flips, |solids| {
-            solid::body(voxel_size, solids)
+        let made = stamped.unwrap_or_else(|| {
+            with_solids(&pieces, self.inserts.lent.as_ref(), &flips, |solids| {
+                solid::body(voxel_size, solids)
+            })
         });
         if made.world_bounds().is_none() {
             self.status = "nothing was set down: drag further".to_string();
             return;
         }
         let name = match what {
-            Insert::Shape(form) => form.label(),
-            Insert::Body(_) => "Insert",
-            Insert::Laid | Insert::Hung => "Cable",
+            Insert::Shape(form) => form.label().to_string(),
+            Insert::Body(_) => "Insert".to_string(),
+            Insert::Laid | Insert::Hung => "Cable".to_string(),
+            Insert::Map(map) => map.label().to_string(),
         };
-        let name = brokkr_core::name_that_fits(name).to_string();
+        let name = brokkr_core::name_that_fits(&name).to_string();
         // Directly below the body it was set down on, at its depth.
         let active = self.doc.active();
         let (at, depth) = match (self.doc.index_of(active), self.doc.node(active)) {
@@ -671,6 +825,7 @@ impl Brokkr {
             }
             Insert::Laid => "CABLE".to_string(),
             Insert::Hung => "HUNG CABLE".to_string(),
+            Insert::Map(map) => format!("STAMP: {}", map.label().to_uppercase()),
         })
     }
 
@@ -721,6 +876,30 @@ impl Brokkr {
                 panel = panel.push(assembled);
             }
         }
+        // The maps: the ones that come with it, three to a row, then the
+        // ones taken in, two to a row, their names being a user's.
+        panel = panel.push(reading("A displacement map".to_string())).push(
+            BuiltInMap::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, kind| {
+                assembled.push(choice(kind.label().to_string(), Insert::Map(MapOf::BuiltIn(kind))))
+            }),
+        );
+        for pair in state.maps.chunks(2) {
+            let mut assembled = row![].spacing(theme::S1);
+            for name in pair {
+                assembled = assembled
+                    .push(choice(name.as_str().to_string(), Insert::Map(MapOf::Named(*name))));
+            }
+            if pair.len() < 2 {
+                assembled = assembled.push(iced::widget::Space::new().width(Length::Fill));
+            }
+            panel = panel.push(assembled);
+        }
+        panel = panel.push(
+            button(text("Take in a map…").size(theme::CAPTION_SIZE))
+                .width(Length::Fill)
+                .style(theme::tool_button)
+                .on_press(Message::Maps(MapsMessage::Requested)),
+        );
         let Some(what) = state.what else {
             return panel.into();
         };
@@ -735,8 +914,24 @@ impl Brokkr {
                 .on_press(changed(AddMessage::SeparateToggled(separate)))
         };
         let voxel_size = self.doc.voxel_size();
+        panel =
+            panel.push(row![way("Baked in", false), way("Its own body", true)].spacing(theme::S1));
+        // A map has no join to soften and nothing to be held off by: it
+        // meets the surface where its displacement comes to nothing.
+        if matches!(what, Insert::Map(_)) {
+            return panel
+                .push(
+                    text(if state.separate {
+                        "press where it goes, drag to size and turn it"
+                    } else {
+                        "press, drag to size and turn. ctrl or alt turns it inside out"
+                    })
+                    .size(theme::CAPTION_SIZE)
+                    .color(theme::TEXT_MUTE),
+                )
+                .into();
+        }
         panel = panel
-            .push(row![way("Baked in", false), way("Its own body", true)].spacing(theme::S1))
             .push(reading(if state.separate {
                 "Soft join  none: it is not joined".to_string()
             } else if state.blend > 0.0 {
@@ -946,6 +1141,73 @@ mod tests {
         press(&mut pressed, MIDDLE);
         release(&mut pressed);
         assert!(same_field(&pressed, &self::app()));
+    }
+
+    /// A vector displacement map is stamped by a drag, as a shape is set
+    /// down: it stands on the model where the press was, it is one undo,
+    /// dragging it about leaves no trace, the invert key turns it inside
+    /// out and digs what it raised, and as a body of its own the body in
+    /// hand is left as it was.
+    #[test]
+    fn a_map_is_stamped_by_a_drag() {
+        let (point, out) = on_the_ball(MIDDLE);
+        let horn = Insert::Map(MapOf::BuiltIn(BuiltInMap::Stud));
+        let mut app = app();
+        choose(&mut app, horn);
+        assert!(app.inserting());
+        // It is the brush of that name on the palette, and is called it.
+        assert_eq!(app.live_brush_name(), "STUD");
+        let before = solid_voxels(&app);
+        drag(&mut app, MIDDLE, MIDDLE + Vec2::new(60.0, 0.0));
+        let half = (on_the_ball(MIDDLE + Vec2::new(60.0, 0.0)).0 - point).length();
+        // The stud is 0.63 of the square's half-width high in its middle.
+        assert!(solid_at(&app, point + out * (half * 0.5)), "no stud stands at the press");
+        assert!(!solid_at(&app, point + out * (half * 0.8)), "what was stamped is too high");
+        assert!(solid_voxels(&app) > before);
+        assert!(app.history.can_undo());
+
+        let mut there_and_back = self::app();
+        choose(&mut there_and_back, horn);
+        press(&mut there_and_back, MIDDLE);
+        for far in [30.0, 90.0, 60.0] {
+            move_to(&mut there_and_back, MIDDLE + Vec2::new(far, 0.0));
+        }
+        release(&mut there_and_back);
+        assert!(same_field(&there_and_back, &app), "a stamp left a trace of where it was dragged");
+
+        update(&mut app, Message::Undo);
+        assert!(same_field(&app, &self::app()), "a stamp was not one undo");
+
+        // Turned inside out: a socket the shape of the stud.
+        app.control = true;
+        drag(&mut app, MIDDLE, MIDDLE + Vec2::new(60.0, 0.0));
+        app.control = false;
+        assert!(!solid_at(&app, point - out * (half * 0.4)), "nothing was dug");
+        assert!(solid_voxels(&app) < before);
+
+        // A body of its own.
+        let mut apart = self::app();
+        choose(&mut apart, horn);
+        set(&mut apart, AddMessage::SeparateToggled(true));
+        let bodies = apart.doc.body_count();
+        drag(&mut apart, MIDDLE, MIDDLE + Vec2::new(60.0, 0.0));
+        assert_eq!(apart.doc.body_count(), bodies + 1);
+        assert_eq!(apart.status, "Stud added as a body of its own");
+        update(&mut apart, Message::Undo);
+        assert!(same_field(&apart, &self::app()));
+
+        // A map that is not there is said, and is not taken up.
+        let mut missing = self::app();
+        let gone = MapOf::named("no such map anywhere").expect("a name");
+        choose(&mut missing, Insert::Map(gone));
+        assert!(!missing.inserting());
+        assert!(missing.status.contains("no such map anywhere"), "{}", missing.status);
+        // A map taken in is in hand, and one that could not be is said.
+        let name = MapName::new("Ear").expect("a name");
+        let _ = missing.maps_changed(MapsMessage::Taken(Some(Err("not a picture".to_string()))));
+        assert!(missing.status.contains("not a picture"));
+        let _ = missing.maps_changed(MapsMessage::Taken(Some(Ok(name))));
+        assert_eq!(missing.inserts.maps, vec![name]);
     }
 
     /// How many voxels of the body in hand are inside it.
