@@ -172,6 +172,12 @@ impl Brokkr {
         // The scale bar and the measure, under the overlay's own buttons
         // and whatever menu is up. See `app/measure.rs`.
         let scene = stack![well, self.rulers(), self.measure_controls(), self.overlay()];
+        // What says a piece off the workbench is not the model. See
+        // `app/workbench.rs`.
+        let scene = match self.workbench_banner() {
+            Some(banner) => scene.push(banner),
+            None => scene,
+        };
         let scene = match (self.menu, self.cube_menu) {
             // Mutually exclusive by construction -- opening either swallows the
             // press that would have opened the other -- but ordered anyway
@@ -2356,6 +2362,7 @@ impl Brokkr {
                 // The palette of brushes, and the brushes that add. See
                 // `app/studio.rs` and `app/adding.rs`.
                 self.palette_panel(),
+                self.workbench_panel(),
                 self.adding_panel(),
                 text(match self.tool {
                     Tool::Mask => "MASK".to_string(),

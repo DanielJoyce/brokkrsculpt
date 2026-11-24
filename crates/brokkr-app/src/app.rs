@@ -13,6 +13,8 @@ mod paints;
 mod panel;
 mod presets;
 mod studio;
+mod workbench;
+pub use workbench::Piece;
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -907,6 +909,9 @@ pub struct Brokkr {
     studio: studio::StudioState,
     /// The measurement being taken or last taken. See `app/measure.rs`.
     measure: measure::MeasureState,
+    /// The document, set aside while the workbench is up. See
+    /// `app/workbench.rs`.
+    bench: Option<Box<workbench::Bench>>,
     /// The brushes that add a shape or a cable. See `app/adding.rs`.
     inserts: adding::AddState,
     /// The form tools' settings. See `app/form.rs`.
@@ -2172,6 +2177,7 @@ impl Brokkr {
             flat_paint: false,
             studio: studio::StudioState::default(),
             measure: measure::MeasureState::default(),
+            bench: None,
             inserts: adding::AddState::default(),
             form: form::FormState::default(),
             overhang: overhang::OverhangState::default(),
@@ -6704,6 +6710,11 @@ impl Brokkr {
     /// protecting is a crash during active sculpting, and during active
     /// sculpting there are frames. Revisit if iced gains a timer here.
     fn maybe_autosave(&mut self) {
+        // The crash net is of the document, and on the workbench what is
+        // in the document's place is not it.
+        if self.on_the_bench() {
+            return;
+        }
         if !self.unsaved
             // Never mid-stroke: the write would land in the middle of a drag
             // and read as a stutter in the brush.
@@ -9590,6 +9601,12 @@ impl Brokkr {
         if self.welcome && dismisses_the_welcome(&message) {
             self.welcome = false;
         }
+        // Whatever is about the document as something to keep finds the
+        // document in its place and not a piece off the workbench. See
+        // `app/workbench.rs`.
+        if self.on_the_bench() && workbench::leaves_the_bench(&message) {
+            self.leave_workbench();
+        }
         if self.gizmo.is_some() && !keeps_the_gizmo_armed(&message) {
             self.disarm_gizmo(true);
         }
@@ -10462,6 +10479,7 @@ impl Brokkr {
             Message::Form(message) => self.form_changed(message),
             Message::Measure(message) => self.measure_changed(message),
             Message::Add(message) => self.add_changed(message),
+            Message::Workbench(message) => self.workbench_changed(message),
             // One of the sizes on offer, or the setting stays as it is.
             Message::TextureSizeChanged(size) => {
                 if paints::TEXTURE_SIZES.contains(&size) {

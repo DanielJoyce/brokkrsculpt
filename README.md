@@ -427,6 +427,10 @@ true of it too, and what it adds is this.
   one between two points, with a collar, ball or flange at each end.
   Each is baked into the body in hand, or left as a body of its own.
   Baked in, ctrl takes the shape out: a socket, a groove.
+- **A workbench.** *Try on a ball* sets your model aside and gives you a
+  ball that does not matter, or a copy of the body in hand, to try a
+  brush on while you change its settings. *Back to the model* puts
+  everything back exactly as it was, with the brush you made in hand.
 - **Stamps and strokes.** A *Stamp* that presses one of six images or any
   picture into the surface with one drag, or lays a row of them along a
   stroke (rivets, stitches, scales), a *Lazy* stroke for long clean
@@ -456,6 +460,10 @@ true of it too, and what it adds is this.
 
 <p align="center">
   <img alt="A ball with a box, a cone and a ring set down on it, and a cable laid across it in a wave with a collar at one end and a flange at the other. Beside it the ADD block: Ball, Box, Cylinder, Cone, Ring, Cable, Hung cable, a copy of a body, Baked in or Its own body, Soft join, Held off the surface, and the two ends of a cable" src="docs/images/studio-adding.png" width="760">
+</p>
+
+<p align="center">
+  <img alt="The workbench: a ball with trial strokes of the Crease brush on it, and across the top of the viewport a line reading WORKBENCH, a ball, nothing here is kept, with A fresh piece and Back to the model beside it" src="docs/images/studio-workbench.png" width="760">
 </p>
 
 <p align="center">
