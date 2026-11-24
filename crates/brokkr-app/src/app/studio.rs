@@ -92,6 +92,7 @@ const DEFAULT_ALONG: f32 = 1.5;
 const POPUP_WIDTH: f32 = 330.0;
 const POPUP_HEAD: f32 = 44.0;
 const POPUP_ROW: f32 = 27.0;
+const POPUP_GROUP: f32 = 18.0;
 
 /// The most steps taken along the pointer's ray to find the surface as it
 /// was before a stroke. See [`Brokkr::layer_aim`].
@@ -1319,7 +1320,18 @@ impl Brokkr {
                 rows.push(assembled)
             })
         };
-        column![rows(0, came, 3), rows(came, palette.len(), own_across)].spacing(theme::S1).into()
+        let heading =
+            |words: &'static str| text(words).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM);
+        // The ones that come with the application under a heading for
+        // each kind of work, and then the user's own.
+        let mut grid = column![].spacing(theme::S1);
+        for (group, places) in super::presets::groups() {
+            grid = grid.push(heading(group)).push(rows(places.start, places.end, 3));
+        }
+        if palette.len() > came {
+            grid = grid.push(heading("Yours")).push(rows(came, palette.len(), own_across));
+        }
+        grid.into()
     }
 
     /// How many rows the palette at the pointer has: three brushes to a
@@ -1330,10 +1342,19 @@ impl Brokkr {
         came.div_ceil(3) + own.div_ceil(3)
     }
 
+    /// Roughly how tall the palette at the pointer comes out: its heading,
+    /// its rows, and a heading for each group of them.
+    pub(super) fn popup_height(&self) -> f32 {
+        let came = super::presets::core().len();
+        let headings =
+            super::presets::GROUPS.len() + usize::from(self.studio.presets.palette().len() > came);
+        POPUP_HEAD + self.popup_rows() as f32 * POPUP_ROW + headings as f32 * POPUP_GROUP
+    }
+
     /// Where the palette at the pointer goes, given where the pointer was:
     /// its top left, so that it is under the pointer and on the screen.
     pub(super) fn popup_corner(&self, at: Vec2) -> Vec2 {
-        let height = POPUP_HEAD + self.popup_rows() as f32 * POPUP_ROW;
+        let height = self.popup_height();
         Vec2::new(
             (at.x - POPUP_WIDTH / 2.0).min(self.viewport_size.x - POPUP_WIDTH).max(0.0),
             (at.y - height / 2.0).min(self.viewport_size.y - height).max(0.0),
@@ -3214,7 +3235,7 @@ mod tests {
             [Vec2::ZERO, Vec2::new(SIZE.x, SIZE.y), Vec2::new(SIZE.x, 0.0), Vec2::new(400.0, 300.0)]
         {
             let corner = app.popup_corner(at);
-            let height = POPUP_HEAD + app.popup_rows() as f32 * POPUP_ROW;
+            let height = app.popup_height();
             assert!(corner.x >= 0.0 && corner.x + POPUP_WIDTH <= SIZE.x, "{at}: {corner}");
             assert!(corner.y >= 0.0 && corner.y + height <= SIZE.y, "{at}: {corner}");
         }

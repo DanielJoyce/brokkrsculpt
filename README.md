@@ -465,7 +465,7 @@ true of it too, and what it adds is this.
 </p>
 
 <p align="center">
-  <img alt="The palette of brushes brought up in the middle of the viewport by the b key: thirty buttons in rows of three, from Draw to Hung cable, with Draw lit" src="docs/images/studio-palette-popup.png" width="760">
+  <img alt="The palette of brushes brought up in the middle of the viewport by the b key: thirty buttons in rows of three under the headings Sculpt, Lines and stamps, and Add, with Draw lit" src="docs/images/studio-palette-popup.png" width="760">
 </p>
 
 <p align="center">

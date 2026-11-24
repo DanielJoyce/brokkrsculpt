@@ -3481,7 +3481,14 @@ that adds is set up as it says and is lit; one made by hand is kept and
 comes back as it was made, its thickness with it; and a copy of a body
 is refused.
 
-**Not done**: a brush that adds has no picture on its button either,
-and thirty names is a lot of names. The palette wants grouping, or
-pictures, before it grows further.
+**Grouped, the same day.** Thirty names in one block were a lot of
+names to read, so the palette, on the panel and at the pointer, has a
+heading for each kind of work: *Sculpt* (fifteen: upstream's six and the
+ones that are their settings changed, Layer and Clay strips among
+them), *Lines and stamps* (six) and *Add* (nine), and *Yours* over the
+user's own. Each group fills its rows of three, and a test holds that
+every brush is in one group, once.
+
+**Not done**: a brush has no picture on its button. A picture of each
+brush's stroke would say more than its name.
 
