@@ -483,7 +483,9 @@ pub struct MeshPool {
     staging: Vec<[u8; ATTRIBUTE_BYTES as usize]>,
     /// One brick's indices, made ABSOLUTE on their way to the GPU: each one has
     /// the brick's vertex block offset added, so `draw` passes a base vertex of
-    /// zero. See [`MeshPool::draw`] for why the base vertex is not used. Kept
+    /// zero. Why absolute and not a base vertex is not written down anywhere
+    /// in this file; what it costs is that an index has to hold a position in
+    /// the whole pool and so cannot be 16 bits (issue 57 of the fork). Kept
     /// for the reason `staging` is.
     index_staging: Vec<u32>,
 }
@@ -800,8 +802,9 @@ impl MeshPool {
 
     /// Record one indexed draw per visible brick.
     ///
-    /// Indices are brick local, so the slice's vertex offset goes in as the base
-    /// vertex. Bricks outside the frustum are skipped: at M2 scale a model is
+    /// Indices were made absolute when the brick was uploaded (see
+    /// `index_staging`), so every draw's base vertex is zero. Bricks outside
+    /// the frustum are skipped: at M2 scale a model is
     /// several thousand bricks and most of them are off screen at any moment, so
     /// not drawing those is the cheapest saving available.
     ///

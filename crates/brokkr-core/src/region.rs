@@ -180,9 +180,12 @@ impl FieldRegion {
     /// padding is for.
     #[inline]
     pub fn sample(&self, voxel: Vec3) -> f32 {
-        let base = voxel.floor();
-        let frac = voxel - base;
-        let [c000, c100, c010, c110, c001, c101, c011, c111] = self.cell(base.as_ivec3());
+        // `voxel.floor()` and its cast, without the call: see `floor_parts`.
+        let (x, base_x) = floor_parts(voxel.x);
+        let (y, base_y) = floor_parts(voxel.y);
+        let (z, base_z) = floor_parts(voxel.z);
+        let frac = voxel - Vec3::new(base_x, base_y, base_z);
+        let [c000, c100, c010, c110, c001, c101, c011, c111] = self.cell(IVec3::new(x, y, z));
         let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
 
         let x00 = lerp(c000, c100, frac.x);
@@ -194,9 +197,100 @@ impl FieldRegion {
     }
 }
 
+/// `value.floor()`, as the integer it casts to and as the float itself.
+///
+/// On x86-64 before SSE4.1, which is what a release is built for, `floor` is
+/// not an instruction: it is a call into the compiler's own arithmetic
+/// library, a loop of shifts and masks. A stroke of the Draw brush made three
+/// of those calls for every voxel it wrote, and a profile of one
+/// (`examples/stroke_profile.rs` under callgrind) had them at eleven parts in
+/// a hundred of everything the stroke did.
+///
+/// A cast to an integer is an instruction everywhere. It rounds toward nought
+/// where `floor` rounds down, so a negative number that was not whole is one
+/// too high and is put down one. What is returned is `floor`'s answer to the
+/// bit, the sign of a nought included, because the brushes that resample are
+/// held to each other bit for bit and a fraction of `-0.0` is not a fraction
+/// of `0.0`. Past what an `i32` holds, and for what is not a number, it is
+/// `floor` itself.
+#[inline(always)]
+fn floor_parts(value: f32) -> (i32, f32) {
+    // Asked this way round so that a NaN is not in range.
+    let in_range = value.abs() < 2_147_483_648.0;
+    if !in_range {
+        let floored = value.floor();
+        return (floored as i32, floored);
+    }
+    let truncated = value as i32;
+    let back = truncated as f32;
+    let (whole, floored) =
+        if back > value { (truncated - 1, back - 1.0) } else { (truncated, back) };
+    // `floor(-0.0)` is `-0.0`, and a cast there and back is `0.0`.
+    let floored = if floored == 0.0 { 0.0f32.copysign(value) } else { floored };
+    (whole, floored)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    /// Every case worth naming, and then any bits at all.
+    #[test]
+    fn floor_parts_is_floor_at_the_edges() {
+        for value in [
+            0.0f32,
+            -0.0,
+            0.5,
+            -0.5,
+            1.0,
+            -1.0,
+            2.5,
+            -2.5,
+            -3.0,
+            7.999_999,
+            -7.999_999,
+            f32::MIN_POSITIVE,
+            -f32::MIN_POSITIVE,
+            8_388_607.5,
+            -8_388_607.5,
+            16_777_216.0,
+            2_147_483_520.0,
+            -2_147_483_648.0,
+            2_147_483_648.0,
+            4.0e9,
+            -4.0e9,
+            f32::MAX,
+            f32::MIN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+        ] {
+            let (whole, floored) = floor_parts(value);
+            assert_eq!(floored.to_bits(), value.floor().to_bits(), "the float, for {value}");
+            assert_eq!(whole, value.floor() as i32, "the integer, for {value}");
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(20_000))]
+
+        #[test]
+        fn floor_parts_is_floor_for_any_bits(bits in any::<u32>()) {
+            let value = f32::from_bits(bits);
+            let (whole, floored) = floor_parts(value);
+            prop_assert_eq!(floored.to_bits(), value.floor().to_bits());
+            prop_assert_eq!(whole, value.floor() as i32);
+        }
+
+        /// And in the range a brush works in, where the bits above are thin.
+        #[test]
+        fn floor_parts_is_floor_near_nought(value in -5000.0f32..5000.0) {
+            let (whole, floored) = floor_parts(value);
+            prop_assert_eq!(floored.to_bits(), value.floor().to_bits());
+            prop_assert_eq!(whole, value.floor() as i32);
+        }
+    }
 
     /// Build a region holding a linear ramp along X, whose gradient is known.
     fn ramp() -> FieldRegion {

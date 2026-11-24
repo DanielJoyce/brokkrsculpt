@@ -100,6 +100,24 @@ fixture against budgets set on upstream's machine, and exits non-zero over
 budget, which on this machine it does. `cargo bench -p brokkr-gpu` times the
 sculpt pass on a generated ball.
 
+### A stroke for a profiler
+
+```bash
+cargo build --profile bench -p brokkr-core --example stroke_profile
+target/release/examples/stroke_profile draw 48 2
+RAYON_NUM_THREADS=1 valgrind --tool=callgrind target/release/examples/stroke_profile draw 48 1
+```
+
+A ring of stamps round a ball of 4610 dense bricks with a remesh after each:
+the brush, its radius in voxels, and how many times round. It prints
+milliseconds a stamp for the edit and for the remesh. The benches say how long
+a stamp takes and not where in it the time goes, and this is the smallest
+program that spends its time the way a stroke does, so that a profiler has
+something to look at. Everything in the core's section below was found with
+it under callgrind, which counts instructions and not time: a count is exact
+and repeatable where a time on this machine is not, and it says nothing of
+cache misses.
+
 ## Where a stroke's time goes, before any change
 
 `what_a_stroke_costs` at the commit that added it. 242 pointer events, two to a
@@ -191,3 +209,115 @@ of the table went from 0.17 ms a frame on 4610 bricks to nothing. It grows
 with the document and not with the brush, so it was worth more than that
 figure on a larger model, which was not measured. The readout behind the Info
 toggle shows a stroke's brick counts when the stroke ends and not during it.
+
+### The core: the mesher, the sample, and the voxels that cannot change
+
+One stage, found by profiling `stroke_profile draw 48` on one core. Before any
+of it the instructions of that stroke were, in parts of a hundred: the
+`fast-surface-nets` crate 22, the trilinear sample 21, a software `floor`
+called from it 7, the brush's own arithmetic 28. After, the stroke is 7.9
+thousand million instructions where it was 14.4.
+
+`stroke_profile`, milliseconds a stamp, before and after, radius in voxels.
+Runs of the same code differ by a tenth or more here; where two runs were
+made both are given.
+
+| | edit | remesh | bricks remeshed a stamp |
+|---|---|---|---|
+| Draw 48, four cores | 6.1 and 6.3 to 4.1 and 4.5 | 2.3 and 3.0 to 2.0 and 2.0 | 68.7 to 65.2 |
+| Pinch 48 | 7.3 to 4.0 | 3.0 to 1.7 | 68.7 to 65.7 |
+| Smooth 48 | 2.6 to 2.3 | 2.0 to 1.8 | 68.7 to 65.7 |
+| Inflate 48 | 2.2 to 2.1 | 3.0 to 1.8 | 68.7 to 66.7 |
+| Clay 48 | 1.9 to 2.1 | 2.9 to 1.8 | 68.7 to 66.1 |
+| Draw 128 | 59.7 to 39.8 | 13.3 to 7.9 | 735.8 to 392.6 |
+| Draw 12 | 0.47 to 0.47 | 1.02 to 1.04 | 6.3 and 6.3 |
+| Draw 48, one core | 19.8 to 13.1 | 6.9 to 4.2 | |
+| Smooth 48, one core | 7.9 to 6.2 | 6.9 to 3.7 | |
+| Draw 12, one core | 0.46 to 0.62 | 1.16 to 0.81 | |
+
+Inflate and Clay did not get faster to edit, and were not expected to: they
+read nothing but the voxel they write. The small brush did not either, in
+either direction by more than the noise (its one-core edit read 0.44 on
+another run): it is below the size the voxel skip is switched on at. What it
+pays for is the remesh, and of that the surface nets are now a small part and
+gathering each brick's apron is the larger.
+
+**The mesher** (`brokkr-core/src/mesh/nets.rs`). The crate read the eight
+corners of every one of a brick's 35,937 cells to find the thousand or two the
+surface is in. This finds them first: one pass makes a row of sign bits for
+each line of the apron (four samples at a time on x86-64), and the cells of a
+line with a sign change in them are four rows and a few shifts. What it makes
+is what the crate makes, bit for bit and in the same order, and tests hold it
+to the crate on balls, planes at any angle, noise, noughts of both signs, and
+aprons the surface only grazes. The crate is a dev-dependency now and three
+crates fewer are in a build.
+
+**The sample** (`brokkr-core/src/region.rs`). On x86-64 before SSE4.1, which
+is what a release is built for, `floor` is a call into the compiler's
+arithmetic library, and the trilinear read made three for every voxel. It is
+now a cast and a correction, with `floor`'s answer to the bit, the sign of a
+nought included, which twenty thousand random bit patterns and the edge cases
+are held to.
+
+**The voxels that cannot change** (`brokkr-core/src/volume/settled.rs`). A
+stamp has always skipped a brick that holds one value throughout, where the
+brush leaves that value alone. A brick the surface passes through holds the
+band, six voxels of thirty-two, and the same two values either side of it. So
+the claim is carried down to the voxel: one that holds an end of the band,
+with nothing else within the brush's reach of it, is not visited. Found with a
+bit a voxel and shifts, for a few thousand operations a brick. With the skip
+on and off, every classic brush, every operator of the brush engine and the
+compound brushes write the same field, the same undo entry and leave the same
+bricks to remesh.
+
+**Only what changed is remeshed** (issue 53). A stamp marked its whole box
+dirty. It marks the bricks a voxel changed in, each with the neighbours whose
+aprons read it. For a brush three bricks across that is 65 bricks where it was
+69, because nearly every brick of so small a box changes; at 128 voxels it is
+393 where it was 736.
+
+And through the application, `what_a_stroke_costs` on 4610 dense bricks,
+median milliseconds a frame: as it was before any of this work, after the
+frame's path was put right (the three sections above), and after this.
+
+| | at the start | after the frame's path | after the core |
+|---|---|---|---|
+| The ball it opens with, 3 mm brush | 1.2 | 1.1 | 0.9 |
+| 3 mm brush, two events a frame | 9.2 | 8.3 | 5.0 |
+| of which the edit | 6.0 | 5.6 | 3.3 |
+| of which the remesh | 2.6 | 2.2 | 1.4 |
+| 3 mm brush, eight events a frame | 29.1 | 20.1 | 12.5 |
+| 8 mm brush, on the frames that stamp (95th) | 59.5 | 48.9 | 30.1 |
+| Bricks meshed in the 8 mm stroke | 16681 | 16681 | 11105 |
+
+Tried and dropped:
+
+- **Not promoting a brick until a voxel changes** (issue 55). An edit begins
+  on each brick it visits by copying it for undo and, where it holds one
+  value, giving it 128 KB, and takes both back if nothing changed. Doing
+  neither until the first change was built two ways. The first asked in one
+  loop and wrote in another, and the brush's arithmetic, now called from three
+  places, was no longer built into any of them: a Draw stamp went from 18.9 to
+  28.8 ms on one core. The second was one loop and no better (29.4). And the
+  saving it was for was not there: the 128 KB fills that a profile of a small
+  brush showed at thirteen parts in a hundred were the fixture's ball being
+  made, not the stamps. Reverted.
+- **The newer instruction set** (issue 51). The ticket measured a tenth off
+  every stamp and a sixth off the brushes that resample from building for
+  x86-64-v3. Most of that was `floor` becoming an instruction. With the
+  software `floor` gone, the same comparison on `stroke_profile` is 12.7
+  against 13.1 ms for Draw on one core and 5.8 against 6.2 for Smooth, single
+  runs, inside the noise on four cores. Two downloads or a dispatch at run time
+  are not worth that, and neither was built.
+
+Not done in the core:
+
+- **The brush loop by rows** (issue 52). The brush's arithmetic is still
+  called a voxel at a time, and with the mesher and the `floor` gone it is
+  what is left: about half of a Draw stroke's instructions between it and the
+  sample. Rewriting every brush's closure to work a row at a time is the next
+  thing, and the bit-for-bit tests are what would hold it.
+- **A sampler that remembers its brick** (issue 54), for the picks and the
+  inserts. The picks were half a part in a hundred of a stroke.
+- **The apron gather**, which is now the larger part of a small brush's
+  remesh.

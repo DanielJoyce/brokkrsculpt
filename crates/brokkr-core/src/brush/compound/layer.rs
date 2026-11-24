@@ -527,6 +527,7 @@ impl Compound {
             hi,
             read_voxels,
             true,
+            crate::Settled::NONE,
             decide,
             move |voxel, position, value, free| {
                 // The foot of the voxel on the stroke's line: the nearest

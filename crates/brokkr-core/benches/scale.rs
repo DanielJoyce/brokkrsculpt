@@ -190,10 +190,10 @@ fn report_release_passes() {
     }
 
     println!(
-        "Read the redistance column first. It is serial where every other heavy pass in this\n\
-         crate is rayon-parallel, it runs NARROW_BAND + 1 outer iterations of eight Godunov\n\
-         sweeps over every dense brick, and it allocates a fresh 128 KB vector inside the outer\n\
-         loop. If it is seconds at the arm limit, then committing a deformation freezes the\n\
+        "Read the redistance column first. It runs NARROW_BAND + 1 outer iterations of eight\n\
+         Godunov sweeps over every dense brick, a colour of bricks at a time across the cores\n\
+         (it was serial when this was first written), and it still allocates a fresh 128 KB\n\
+         vector inside the outer loop. If it is seconds at the arm limit, then committing a deformation freezes the\n\
          window and the repair has to be made parallel before anything is built on top of it.\n\n\
          Read the resident column second. A warp that leaves more dense bricks than it found has\n\
          not grown the model -- it has failed to collapse bricks back to tiles, which costs\n\

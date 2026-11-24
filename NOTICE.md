@@ -7,7 +7,7 @@ satisfies their attribution requirements.
 
 **Nothing here imposes a copyleft obligation on BrokkrSculpt.** The project is
 AGPL-3.0-only by its own choice, not because a dependency forced it. Every one
-of the **312 crates** compiled into a Linux build is permissively licensed —
+of the **309 crates** compiled into a Linux build is permissively licensed —
 MIT, Apache-2.0, BSD-2/3-Clause, ISC, Zlib, Unlicense, CC0-1.0,
 CDLA-Permissive-2.0, or Unicode-3.0. There is no GPL, no LGPL, no MPL and no
 EUPL in the graph. That is worth stating plainly because it is unusual: it
@@ -25,11 +25,11 @@ From `cargo metadata`, filtered to `x86_64-unknown-linux-gnu`, walking the
 `dev-dependencies`**, which are used to test the software and are not
 distributed in a build of it. Re-run it whenever `Cargo.lock` changes.
 
-Counts by declared license expression, over those 312 crates:
+Counts by declared license expression, over those 309 crates:
 
 | Crates | Expression |
 | ---: | --- |
-| 140 | `MIT OR Apache-2.0` |
+| 137 | `MIT OR Apache-2.0` |
 | 77 | `MIT` |
 | 33 | `Apache-2.0 OR MIT` |
 | 10 | `Apache-2.0` |
@@ -93,8 +93,13 @@ to be worth naming:
 ### Engine
 
 - **fast-surface-nets** — MIT OR Apache-2.0 —
-  <https://github.com/bonsairobo/fast-surface-nets-rs>. The isosurface
-  extraction each brick's mesh comes out of.
+  <https://github.com/bonsairobo/fast-surface-nets-rs>. **No longer in a
+  build**, since 2026-11-24: it was the isosurface extraction each brick's
+  mesh came out of, and is now a `dev-dependency`, what this project's own
+  mesher (`brokkr-core/src/mesh/nets.rs`) is tested against bit for bit. Its
+  method and its arithmetic are what that mesher follows, which is why it is
+  still named here. It took `ndshape` and a second copy of `glam` out of the
+  build with it, which is where the count above went from 312 to 309.
 - **rayon** — MIT OR Apache-2.0 — <https://github.com/rayon-rs/rayon>. The
   parallel path in `edit_voxels`.
 - **rustc-hash** — Apache-2.0 OR MIT —

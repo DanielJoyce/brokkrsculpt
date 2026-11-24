@@ -182,17 +182,25 @@ impl Volume {
                 _ => BrickVerdict::Whole,
             }
         };
-        out.edit_voxels_where(lo, hi, reach, true, decide, |_, position, value, free| {
-            if free <= 0.0 {
-                return value;
-            }
-            match pull_back(position, free) {
-                Some(from) => self.sample_world(from),
-                // Solid or empty, by which side of the form it is on.
-                None if pyramid.relief(level, position) < 0.0 => INSIDE,
-                None => OUTSIDE,
-            }
-        });
+        out.edit_voxels_where(
+            lo,
+            hi,
+            reach,
+            true,
+            crate::Settled::NONE,
+            decide,
+            |_, position, value, free| {
+                if free <= 0.0 {
+                    return value;
+                }
+                match pull_back(position, free) {
+                    Some(from) => self.sample_world(from),
+                    // Solid or empty, by which side of the form it is on.
+                    None if pyramid.relief(level, position) < 0.0 => INSIDE,
+                    None => OUTSIDE,
+                }
+            },
+        );
 
         // Paint goes with the surface: every voxel that can now be painted
         // takes the paint of the voxel it was pulled back to.
@@ -316,28 +324,36 @@ impl Volume {
                 BrickVerdict::Whole
             }
         };
-        out.edit_voxels_where(lo, hi, 0, true, decide, |_, position, value, free| {
-            // Only where both fields are measuring and not saturated: at
-            // the edge of either band the difference is the clamp's, and
-            // scaling it would draw the band's edge onto the model.
-            if free <= 0.0 || value.abs() >= NARROW_BAND - 0.01 {
-                return value;
-            }
-            let relief = pyramid.relief(level, position);
-            if relief.abs() >= NARROW_BAND - 0.01 {
-                return value;
-            }
-            let mut form = relief * form_voxel;
-            if let Some((again, last)) = &again {
-                let twice = again.relief(*last, position);
-                if twice.abs() < NARROW_BAND - 0.01 {
-                    // What the smoothing took off this shape, put back.
-                    form += (relief - twice) * form_voxel;
+        out.edit_voxels_where(
+            lo,
+            hi,
+            0,
+            true,
+            crate::Settled::NONE,
+            decide,
+            |_, position, value, free| {
+                // Only where both fields are measuring and not saturated: at
+                // the edge of either band the difference is the clamp's, and
+                // scaling it would draw the band's edge onto the model.
+                if free <= 0.0 || value.abs() >= NARROW_BAND - 0.01 {
+                    return value;
                 }
-            }
-            let target = (form + gain * (value - form)).clamp(INSIDE, OUTSIDE);
-            value + (target - value) * free
-        });
+                let relief = pyramid.relief(level, position);
+                if relief.abs() >= NARROW_BAND - 0.01 {
+                    return value;
+                }
+                let mut form = relief * form_voxel;
+                if let Some((again, last)) = &again {
+                    let twice = again.relief(*last, position);
+                    if twice.abs() < NARROW_BAND - 0.01 {
+                        // What the smoothing took off this shape, put back.
+                        form += (relief - twice) * form_voxel;
+                    }
+                }
+                let target = (form + gain * (value - form)).clamp(INSIDE, OUTSIDE);
+                value + (target - value) * free
+            },
+        );
         out.mark_everything_dirty();
         Ok(out)
     }

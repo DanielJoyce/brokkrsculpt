@@ -3,25 +3,17 @@
 //! Surface nets meshing of a single brick from its apron buffer.
 
 use bytemuck::{Pod, Zeroable};
-use fast_surface_nets::ndshape::ConstShape3u32;
-use fast_surface_nets::{SurfaceNetsBuffer, surface_nets};
 use glam::{IVec3, Vec3};
 use rustc_hash::FxHashMap;
 
 use crate::apron::ApronBuffer;
-use crate::brick::{APRON_DIM, BrickCoord};
+use crate::brick::BrickCoord;
 
-/// Shape of the apron sample array as surface nets sees it.
-///
-/// The const generic arguments must stay equal to [`APRON_DIM`]. The assertion
-/// below fails the build if they ever drift apart.
-type ApronShape = ConstShape3u32<34, 34, 34>;
-
-const _: () = assert!(
-    APRON_DIM == 34,
-    "ApronShape is hard coded to 34 because const generics cannot take APRON_DIM directly. \
-     If BRICK_DIM changes, change ApronShape to match."
-);
+// Surface nets over one apron, visiting only the cells the surface is in.
+// It was the `fast-surface-nets` crate, which is now what this is tested
+// against. See `mesh/nets.rs`.
+mod nets;
+use nets::{NetsBuffer, surface_nets};
 
 /// One mesh vertex.
 ///
@@ -152,12 +144,12 @@ impl BrickMesh {
 /// allocator. Create it once per worker and pass it in every time.
 pub struct MeshScratch {
     pub(crate) apron: ApronBuffer,
-    pub(crate) surface_nets: SurfaceNetsBuffer,
+    pub(crate) surface_nets: NetsBuffer,
 }
 
 impl MeshScratch {
     pub fn new() -> Self {
-        Self { apron: ApronBuffer::new(), surface_nets: SurfaceNetsBuffer::default() }
+        Self { apron: ApronBuffer::new(), surface_nets: NetsBuffer::default() }
     }
 
     /// The apron gathered by the last meshing call, for inspection in tests.
@@ -189,18 +181,12 @@ pub(crate) fn mesh_apron(
     apron: &ApronBuffer,
     coord: BrickCoord,
     voxel_size: f32,
-    scratch: &mut SurfaceNetsBuffer,
+    scratch: &mut NetsBuffer,
     out: &mut BrickMesh,
 ) {
     out.clear();
 
-    surface_nets(
-        apron.samples().as_slice(),
-        &ApronShape {},
-        [0; 3],
-        [(APRON_DIM - 1) as u32; 3],
-        scratch,
-    );
+    surface_nets(apron.samples(), scratch);
 
     if scratch.indices.is_empty() {
         return;
@@ -348,7 +334,18 @@ fn midpoint(
 mod tests {
     use super::*;
     use crate::brick::apron_index;
-    use fast_surface_nets::ndshape::ConstShape;
+    use fast_surface_nets::ndshape::{ConstShape, ConstShape3u32};
+
+    /// The apron as the `fast-surface-nets` crate sees it. The mesher is this
+    /// codebase's own now (`mesh/nets.rs`), and is held to that crate's
+    /// output, so the two layouts still have to be the same one.
+    type ApronShape = ConstShape3u32<34, 34, 34>;
+
+    const _: () = assert!(
+        crate::brick::APRON_DIM == 34,
+        "ApronShape is hard coded to 34 because const generics cannot take APRON_DIM directly. \
+         If BRICK_DIM changes, change ApronShape to match."
+    );
 
     /// The apron gather writes with X fastest. If ndshape ever disagreed, every
     /// mesh would come out transposed and the seams would be subtly wrong, so

@@ -100,4 +100,4 @@ pub use undo::{
     Change, DEFAULT_HISTORY_BUDGET, DEFAULT_RECLAIM_BUDGET, Entry, History, HistoryStats,
     StrokeEdit, UndoOutcome,
 };
-pub use volume::{BrickPreview, BrickVerdict, PlanStats, Volume, VolumeStats};
+pub use volume::{BrickPreview, BrickVerdict, PlanStats, Settled, Volume, VolumeStats};

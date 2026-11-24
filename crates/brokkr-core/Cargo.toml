@@ -15,7 +15,6 @@ rust-version.workspace = true
 [dependencies]
 bytemuck.workspace = true
 contracts.workspace = true
-fast-surface-nets.workspace = true
 glam.workspace = true
 rayon.workspace = true
 roxmltree.workspace = true
@@ -23,6 +22,9 @@ rustc-hash.workspace = true
 yazi.workspace = true
 
 [dev-dependencies]
+# The mesher this crate's own is held to, bit for bit. It was the mesher, and
+# is no longer in a build: see `src/mesh/nets.rs`.
+fast-surface-nets.workspace = true
 glam.workspace = true
 proptest.workspace = true
 

@@ -892,9 +892,11 @@ fn cut_once_convex(
     volume.mesh_bricks(&dirty, &mut meshes[..dirty.len()]);
     let remesh = started.elapsed();
     // How much of that remesh produced nothing at all. A cut removes material,
-    // so many of the bricks it dirties end up with no surface in them -- and
-    // `mesh_brick` has no early out, so each of those still costs a 34-cubed
-    // apron gather and a full surface-nets pass to emit zero triangles.
+    // so many of the bricks it dirties end up with no surface in them.
+    // `mesh_brick` has two early outs for those now (a neighbourhood of one
+    // sign, and an apron of one sign once gathered), and the mesher visits
+    // only the cells the surface is in, so an empty brick costs at most its
+    // apron gather. This count is what those are saving.
     let empty = meshes[..dirty.len()].iter().filter(|mesh| mesh.is_empty()).count();
 
     CutMeasurement {

@@ -833,15 +833,23 @@ impl Join {
                 BrickVerdict::Whole
             }
         };
-        volume.edit_voxels_where(lo, hi, 0, true, decide, |voxel, position, value, free| {
-            if free <= 0.0 {
-                return value;
-            }
-            match stamp.displaced(position, region.get(voxel), value) {
-                Some(wanted) => value + (wanted.clamp(INSIDE, OUTSIDE) - value) * free,
-                None => value,
-            }
-        });
+        volume.edit_voxels_where(
+            lo,
+            hi,
+            0,
+            true,
+            crate::Settled::NONE,
+            decide,
+            |voxel, position, value, free| {
+                if free <= 0.0 {
+                    return value;
+                }
+                match stamp.displaced(position, region.get(voxel), value) {
+                    Some(wanted) => value + (wanted.clamp(INSIDE, OUTSIDE) - value) * free,
+                    None => value,
+                }
+            },
+        );
         self.boxes.push((lo, hi));
     }
 }

@@ -230,9 +230,12 @@ pub struct SculptRenderer {
     /// group that binds them.
     ///
     /// **A whole second buffer rather than a dynamic offset into one**, because
-    /// the layout declares `has_dynamic_offset: false` and a 144-byte struct
-    /// would have to be padded to the 256-byte minimum alignment to use one.
-    /// Two buffers of 144 bytes is the cheaper and the plainer answer; they are
+    /// the layout declares `has_dynamic_offset: false`, and to use an offset
+    /// the struct would have to be padded out to the device's minimum
+    /// alignment. This was written when the struct was 144 bytes. It is 4512
+    /// now, by the arithmetic of the assertion beside its definition (160,
+    /// sixteen palette slots of 16, and the paint block), and a second
+    /// buffer of that is still the plainer answer; they are
     /// written together in [`SculptRenderer::write_uniforms`] so they cannot
     /// drift apart. [`MeshPool::draw`] picks between them one body at a time --
     /// see [`MaskPolarity`].

@@ -2,7 +2,7 @@
 
 //! A picture of a brush: what a stroke of it does, on its button.
 //!
-//! `docs/STUDIO-PLAN.md` section 18, stage C7. Thirty names on thirty
+//! `docs/STUDIO-PLAN.md` section 18, stage C7. Thirty-six names on as many
 //! buttons say what a brush is called. What it DOES is a stroke, and a
 //! picture of one says more than a name: that Band is flat on top and Bead
 //! is round, that Scrape takes the tops off, that Stitches is bars a
