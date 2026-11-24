@@ -421,10 +421,12 @@ true of it too, and what it adds is this.
   Change them, choose the *Profile* of the stroke (five shapes, and a flat
   middle), lay a *Picture across the tip*, have it *Build up* or lay *One
   layer* however long you scrub, set it down as a line or in separate
-  dabs, and *Keep* the brush under a name. A brush you keep is one small
+  dabs. Then *+ Add a brush*, at the top of the palette, and *Keep* it
+  under a name. A brush you keep is one small
   file in your data directory (`~/.local/share/brokkrsculpt/brushes` on
-  Linux), so a brush can be handed to somebody else, and *Import* takes
-  one in. Press **b** for the palette under the pointer.
+  Linux), so a brush can be handed to somebody else, and *Import*, behind
+  the same button, takes one in. Press **b** for the palette under the
+  pointer.
 - **Brushes that add.** Set a ball, box, cylinder, cone or ring down on
   the model with one drag, or a copy of any body (import a mesh, then
   stamp it wherever you like). Lay a *Cable* along the surface or hang

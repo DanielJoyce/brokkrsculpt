@@ -185,6 +185,10 @@ pub(super) struct StudioState {
     /// See [`super::presets`].
     pub presets: Presets,
     pub preset_name: String,
+    /// Whether the block that adds a brush is open at the top of the
+    /// palette. It was two rows under the thirty-six brushes, where the
+    /// maintainer looked for a button and did not find one.
+    pub adding: bool,
 }
 
 impl Default for StudioState {
@@ -213,6 +217,7 @@ impl Default for StudioState {
             trail: None,
             presets: Presets::default(),
             preset_name: String::new(),
+            adding: false,
         }
     }
 }
@@ -344,6 +349,7 @@ impl StudioState {
             StudioMessage::PresetNamed(name) => {
                 self.preset_name = name.chars().take(4 * super::presets::LONGEST_NAME).collect();
             }
+            StudioMessage::AddToggled => self.adding = !self.adding,
             // These change the classic brush too, or want the pointer or
             // a file, none of which is this struct's:
             // `Brokkr::studio_changed` has them.
@@ -694,6 +700,9 @@ impl Brokkr {
                     return;
                 }
                 self.studio.preset_name.clear();
+                // It is on the palette: the block that added it has done
+                // what it was opened for.
+                self.studio.adding = false;
                 self.status = match Presets::write(&preset) {
                     Ok(()) => format!("brush kept: {name}"),
                     Err(why) => format!("brush kept until the application closes: {why}"),
@@ -1246,59 +1255,116 @@ impl Brokkr {
         let palette = self.studio.presets.palette();
         let lit = Self::lit(&palette, &now);
         let forgettable = lit.filter(|index| palette[*index].1 != Place::Core);
-        let keep = row![
-            text_input("name this brush", &self.studio.preset_name)
-                .on_input(move |name| changed(StudioMessage::PresetNamed(name)))
-                .on_submit(changed(StudioMessage::PresetSaved))
-                .padding(iced::Padding { top: 1.0, bottom: 1.0, left: theme::S1, right: theme::S1 })
-                .size(theme::TEXT_SIZE_SMALL)
-                .width(Length::Fill),
-            button(text("Keep").size(theme::CAPTION_SIZE))
-                .style(theme::tool_button)
-                .on_press(changed(StudioMessage::PresetSaved)),
-            // Pressable only with a brush of the user's lit: that is the
-            // one it means. With one that stands in for a brush that came
-            // with the application, forgetting it puts that one back.
-            button(
-                text(match forgettable.map(|index| palette[index].1) {
-                    Some(Place::Changed) => "Restore",
-                    _ => "Forget",
-                })
+        // **Adding a brush is at the top, behind a button that says so.**
+        // A brush is added in one of two ways: the one in hand, as it is set
+        // up now, kept under a name; or brush files taken in from elsewhere.
+        // Both were two rows under the whole palette, and were not found.
+        let add = column![
+            text("The brush in hand, as it is set up now, under a name:")
                 .size(theme::CAPTION_SIZE)
-            )
-            .style(theme::tool_button)
-            .on_press_maybe(forgettable.map(|index| changed(StudioMessage::PresetRemoved(index)))),
-        ]
-        .spacing(theme::S1);
-        // A brush is a file, and files come from elsewhere: take some in,
-        // or read the directory again after putting some there by hand.
-        let files = row![
-            button(text("Import\u{2026}").size(theme::CAPTION_SIZE).width(Length::Fill).center())
+                .color(theme::TEXT_MUTE),
+            row![
+                text_input("name this brush", &self.studio.preset_name)
+                    .on_input(move |name| changed(StudioMessage::PresetNamed(name)))
+                    .on_submit(changed(StudioMessage::PresetSaved))
+                    .padding(iced::Padding {
+                        top: 1.0,
+                        bottom: 1.0,
+                        left: theme::S1,
+                        right: theme::S1
+                    })
+                    .size(theme::TEXT_SIZE_SMALL)
+                    .width(Length::Fill),
+                button(text("Keep").size(theme::CAPTION_SIZE))
+                    .style(theme::tool_button)
+                    .on_press(changed(StudioMessage::PresetSaved)),
+            ]
+            .spacing(theme::S1),
+            text("Or brushes from files:").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
+            // A brush is a file, and files come from elsewhere: take some
+            // in, or read the directory again after putting some there by
+            // hand.
+            row![
+                button(
+                    text("Import\u{2026}").size(theme::CAPTION_SIZE).width(Length::Fill).center()
+                )
                 .width(Length::Fill)
                 .style(theme::tool_button)
                 .on_press(changed(StudioMessage::BrushImportRequested)),
-            button(text("Read again").size(theme::CAPTION_SIZE).width(Length::Fill).center())
-                .width(Length::Fill)
-                .style(theme::tool_button)
-                .on_press(changed(StudioMessage::BrushesReloaded)),
+                button(text("Read again").size(theme::CAPTION_SIZE).width(Length::Fill).center())
+                    .width(Length::Fill)
+                    .style(theme::tool_button)
+                    .on_press(changed(StudioMessage::BrushesReloaded)),
+            ]
+            .spacing(theme::S1),
         ]
         .spacing(theme::S1);
-        // The heading, and the palette at the pointer for a hand that is
-        // on a pen and not on the `b` key.
-        let heading = row![
-            text("BRUSHES").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE).width(Length::Fill),
-            button(text("At the pointer  b").size(theme::CAPTION_SIZE))
-                .padding(iced::Padding { top: 1.0, bottom: 1.0, left: theme::S2, right: theme::S2 })
+        // The heading: adding a brush, and the palette at the pointer for a
+        // hand that is on a pen and not on the `b` key.
+        // On a line of their own under the word: seen on a screen, the
+        // panel is too narrow for the word and both buttons on one.
+        let small = iced::Padding { top: 2.0, bottom: 2.0, left: theme::S1, right: theme::S1 };
+        let heading = column![
+            text("BRUSHES").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
+            row![
+                button(
+                    text(if self.studio.adding { "Done adding" } else { "+ Add a brush" })
+                        .size(theme::CAPTION_SIZE)
+                        .width(Length::Fill)
+                        .center()
+                )
+                .width(Length::Fill)
+                .padding(small)
+                .style(if self.studio.adding {
+                    theme::tool_button_active
+                } else {
+                    theme::tool_button
+                })
+                .on_press(changed(StudioMessage::AddToggled)),
+                button(
+                    text("At the pointer  b")
+                        .size(theme::CAPTION_SIZE)
+                        .width(Length::Fill)
+                        .center()
+                )
+                .width(Length::Fill)
+                .padding(small)
                 .style(theme::tool_button)
                 .on_press(changed(StudioMessage::PaletteToggled)),
+            ]
+            .spacing(theme::S1),
         ]
-        .align_y(iced::Alignment::Center);
-        let mut panel = column![heading, self.brush_grid(3, 2), keep, files,].spacing(theme::S1);
-        if let Some(place) = Presets::place() {
+        .spacing(theme::S1);
+        let mut panel = column![heading].spacing(theme::S1);
+        if self.studio.adding {
+            panel = panel.push(add);
+            if let Some(place) = Presets::place() {
+                panel = panel.push(
+                    text(format!("yours are kept in {place}"))
+                        .size(theme::CAPTION_SIZE)
+                        .color(theme::TEXT_MUTE),
+                );
+            }
+        }
+        panel = panel.push(self.brush_grid(3, 2));
+        // Under the palette, what is done to the brush that is lit.
+        // Pressable only with a brush of the user's lit: that is the one it
+        // means. With one that stands in for a brush that came with the
+        // application, forgetting it puts that one back.
+        if let Some(index) = forgettable {
             panel = panel.push(
-                text(format!("yours are kept in {place}"))
+                button(
+                    text(match palette[index].1 {
+                        Place::Changed => "Restore the one that came with it",
+                        _ => "Forget this brush",
+                    })
                     .size(theme::CAPTION_SIZE)
-                    .color(theme::TEXT_MUTE),
+                    .width(Length::Fill)
+                    .center(),
+                )
+                .width(Length::Fill)
+                .style(theme::tool_button)
+                .on_press(changed(StudioMessage::PresetRemoved(index))),
             );
         }
         panel.into()
@@ -1942,6 +2008,35 @@ mod tests {
         }
         release(&mut app);
         app
+    }
+
+    /// Adding a brush is a button at the top of the palette: it opens the
+    /// block with the name and the files, a brush kept closes it again with
+    /// the brush on the palette, and a brush with no name leaves it open
+    /// and says why.
+    #[test]
+    fn adding_a_brush_is_a_button_at_the_top_of_the_palette() {
+        let mut app = app();
+        assert!(!app.studio.adding, "the block is open before it is asked for");
+        set(&mut app, StudioMessage::AddToggled);
+        assert!(app.studio.adding);
+
+        set(&mut app, StudioMessage::PresetSaved);
+        assert!(app.studio.adding, "a brush with no name closed the block");
+        assert_eq!(app.status, "give the brush a name first");
+
+        let before = app.studio.presets.palette().len();
+        update(&mut app, Message::BrushRadiusChanged(2.5));
+        set(&mut app, StudioMessage::PresetNamed("My own".to_string()));
+        set(&mut app, StudioMessage::PresetSaved);
+        assert!(!app.studio.adding, "the block stayed open after the brush was kept");
+        assert_eq!(app.studio.presets.palette().len(), before + 1);
+        assert_eq!(app.live_brush_name(), "MY OWN");
+        // And the interface builds with the block open and with it shut.
+        set(&mut app, StudioMessage::AddToggled);
+        drop(app.palette_panel());
+        set(&mut app, StudioMessage::AddToggled);
+        drop(app.palette_panel());
     }
 
     /// The stamp through the whole application: a drag presses the image
