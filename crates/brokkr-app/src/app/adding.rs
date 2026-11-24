@@ -83,6 +83,90 @@ impl Insert {
     }
 }
 
+/// What a brush that adds is, apart from any document: what a brush on
+/// the palette, and a brush file, keep of one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Kind {
+    Shape(Form),
+    Laid,
+    Hung,
+    /// A copy of a body. The body is a document's, so a brush cannot keep
+    /// which: this is only ever the brush in hand.
+    Body,
+}
+
+impl Kind {
+    /// The kinds a brush file can name.
+    pub(super) fn kept() -> impl Iterator<Item = Kind> {
+        Form::ALL.into_iter().map(Kind::Shape).chain([Kind::Laid, Kind::Hung])
+    }
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Kind::Shape(form) => form.label(),
+            Kind::Laid => "Cable",
+            Kind::Hung => "Hung cable",
+            Kind::Body => "Body",
+        }
+    }
+
+    fn is_cable(self) -> bool {
+        matches!(self, Kind::Laid | Kind::Hung)
+    }
+}
+
+/// A brush that adds, as it is set up. See [`Kind`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct Setup {
+    pub what: Kind,
+    pub separate: bool,
+    pub blend: f32,
+    pub lift: f32,
+    pub start: End,
+    pub end: End,
+    pub sag: f32,
+}
+
+impl Setup {
+    /// One of `what`, baked in plainly with its middle on the surface.
+    pub(super) fn plain(what: Kind) -> Self {
+        Self {
+            what,
+            separate: false,
+            blend: 0.0,
+            lift: 0.0,
+            start: End::Round,
+            end: End::Round,
+            sag: 0.0,
+        }
+    }
+
+    /// This setup with every number in its range, and with the settings
+    /// that mean nothing to its kind at nothing: a shape has no ends, and
+    /// only a hung cable sags. Two setups that are the same brush are
+    /// then equal.
+    pub(super) fn settled(mut self) -> Self {
+        let number = |value: f32, range: &std::ops::RangeInclusive<f32>| {
+            if value.is_nan() {
+                0.0_f32.clamp(*range.start(), *range.end())
+            } else {
+                value.clamp(*range.start(), *range.end())
+            }
+        };
+        self.blend = number(self.blend, &(0.0..=MOST_BLEND));
+        self.lift = number(self.lift, &LIFT_RANGE);
+        self.sag = number(self.sag, &SAG_RANGE);
+        if !self.what.is_cable() {
+            self.start = End::Round;
+            self.end = End::Round;
+        }
+        if self.what != Kind::Hung {
+            self.sag = 0.0;
+        }
+        self
+    }
+}
+
 /// One piece of what a gesture has set down: kept so that the same pieces
 /// can be built as a body of their own when the button comes up.
 #[derive(Debug, Clone, Copy)]
@@ -155,6 +239,28 @@ impl AddState {
         self.lent = None;
     }
 
+    /// What is in hand to add, as a brush keeps it.
+    pub(super) fn setup(&self) -> Option<Setup> {
+        let what = match self.what? {
+            Insert::Shape(form) => Kind::Shape(form),
+            Insert::Body(_) => Kind::Body,
+            Insert::Laid => Kind::Laid,
+            Insert::Hung => Kind::Hung,
+        };
+        Some(
+            Setup {
+                what,
+                separate: self.separate,
+                blend: self.blend,
+                lift: self.lift,
+                start: self.start,
+                end: self.end,
+                sag: self.sag,
+            }
+            .settled(),
+        )
+    }
+
     fn how(&self) -> How {
         How { cut: self.cut && !self.separate, blend: self.blend }
     }
@@ -174,6 +280,28 @@ fn flips(symmetry: brokkr_core::Symmetry) -> Vec<Vec3> {
 }
 
 impl Brokkr {
+    /// Take up a brush that adds, as a brush on the palette has it set up.
+    /// The settings that mean nothing to its kind are left as they are in
+    /// hand, for the next kind that does use them.
+    pub(super) fn take_up(&mut self, setup: Setup) {
+        let what = match setup.what {
+            Kind::Shape(form) => Insert::Shape(form),
+            Kind::Laid => Insert::Laid,
+            Kind::Hung => Insert::Hung,
+            // Which body is not something a brush knows.
+            Kind::Body => return,
+        };
+        self.add_changed(AddMessage::Chosen(Some(what)));
+        let state = &mut self.inserts;
+        (state.separate, state.blend, state.lift) = (setup.separate, setup.blend, setup.lift);
+        if setup.what.is_cable() {
+            (state.start, state.end) = (setup.start, setup.end);
+        }
+        if setup.what == Kind::Hung {
+            state.sag = setup.sag;
+        }
+    }
+
     /// Whether a drag on the model adds something and is not a stroke.
     pub(super) fn inserting(&self) -> bool {
         self.inserts.what.is_some()
@@ -1008,5 +1136,81 @@ mod tests {
         set(&mut app, AddMessage::SagChanged(f32::NAN));
         let state = &app.inserts;
         assert_eq!((state.blend, state.lift, state.sag), (0.0, 0.0, 0.0));
+    }
+
+    /// The brushes that add are brushes on the palette: taken up from it
+    /// they are set up as it says, the one in hand is lit, one made on the
+    /// ADD block can be kept under a name and comes back, and a copy of a
+    /// body, which is a document's, cannot be kept.
+    #[test]
+    fn a_brush_that_adds_is_a_brush_on_the_palette() {
+        use crate::message::StudioMessage;
+        let mut app = app();
+        let on_the_palette = |app: &Brokkr, name: &str| {
+            let palette = app.studio.presets.palette();
+            palette
+                .iter()
+                .position(|(preset, _)| preset.name == name)
+                .unwrap_or_else(|| panic!("no brush called {name}"))
+        };
+        let take = |app: &mut Brokkr, name: &str| {
+            let index = on_the_palette(app, name);
+            update(app, Message::Studio(StudioMessage::PresetChosen(index)));
+        };
+        take(&mut app, "Pipe");
+        assert_eq!(app.inserts.what, Some(Insert::Laid));
+        let state = &app.inserts;
+        assert_eq!((state.start, state.end, state.lift), (End::Flange, End::Flange, 1.0));
+        assert_eq!(app.live_brush_name(), "PIPE");
+        assert_eq!(app.status, "brush: Pipe");
+        // A shape has no ends, and taking one up leaves the cable's ends
+        // as they were for the next cable.
+        take(&mut app, "Knob");
+        assert_eq!(app.inserts.what, Some(Insert::Shape(Form::Ball)));
+        assert_eq!((app.inserts.start, app.inserts.lift), (End::Flange, 0.8));
+        assert_eq!(app.live_brush_name(), "KNOB");
+        // An ordinary brush puts it away.
+        take(&mut app, "Clay");
+        assert!(!app.inserting());
+
+        // Chosen on the ADD block and set up by hand: none of the
+        // palette's until it is one of them.
+        choose(&mut app, Insert::Shape(Form::Ball));
+        set(&mut app, AddMessage::LiftChanged(0.35));
+        assert_eq!(app.live_brush_name(), "INSERT: BALL");
+        set(&mut app, AddMessage::LiftChanged(0.0));
+        assert_eq!(app.live_brush_name(), "BALL");
+
+        // Made by hand and kept: it comes back as it was made.
+        choose(&mut app, Insert::Hung);
+        set(&mut app, AddMessage::SagChanged(0.4));
+        set(&mut app, AddMessage::SeparateToggled(true));
+        set(&mut app, AddMessage::StartChosen(End::Ball));
+        set(&mut app, AddMessage::EndChosen(End::Collar));
+        update(&mut app, Message::BrushRadiusChanged(1.25));
+        update(&mut app, Message::Studio(StudioMessage::PresetNamed("Washing line".to_string())));
+        update(&mut app, Message::Studio(StudioMessage::PresetSaved));
+        assert_eq!(app.status, "brush kept: Washing line");
+        take(&mut app, "Draw");
+        update(&mut app, Message::BrushRadiusChanged(4.0));
+        take(&mut app, "Washing line");
+        let state = &app.inserts;
+        assert_eq!(state.what, Some(Insert::Hung));
+        assert_eq!((state.sag, state.separate), (0.4, true));
+        assert_eq!((state.start, state.end), (End::Ball, End::Collar));
+        assert_eq!(app.brush.radius, 1.25, "the cable's thickness was not kept");
+        assert_eq!(app.live_brush_name(), "WASHING LINE");
+        drop(app.adding_panel());
+        drop(app.palette_panel());
+
+        // A copy of a body is this document's, and no brush can say which.
+        let body = app.doc.active();
+        choose(&mut app, Insert::Body(body));
+        let kept = app.studio.presets.list.len();
+        update(&mut app, Message::Studio(StudioMessage::PresetNamed("My body".to_string())));
+        update(&mut app, Message::Studio(StudioMessage::PresetSaved));
+        assert!(app.status.starts_with("a copy of a body cannot be kept"), "{}", app.status);
+        assert_eq!(app.studio.presets.list.len(), kept);
+        assert_eq!(app.live_brush_name(), "INSERT: BODY 1");
     }
 }

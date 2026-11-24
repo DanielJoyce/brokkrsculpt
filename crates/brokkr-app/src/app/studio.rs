@@ -424,14 +424,11 @@ impl Brokkr {
                 Message::Studio(StudioMessage::StampImageLoaded(loaded))
             });
         }
-        // A brush taken up, its amounts changed, or the stamp: whatever
-        // was in hand to add is put away. See `app/adding.rs`.
-        if matches!(
-            message,
-            StudioMessage::PresetChosen(_)
-                | StudioMessage::ActionsChosen(_)
-                | StudioMessage::StampToggled(true)
-        ) {
+        // A brush's amounts changed, or the stamp taken up: whatever was
+        // in hand to add is put away. See `app/adding.rs`. (A brush taken
+        // up from the palette does the same, once it is known to be
+        // there: `Brokkr::preset_changed`.)
+        if matches!(message, StudioMessage::ActionsChosen(_) | StudioMessage::StampToggled(true)) {
             self.inserts.put_away();
         }
         match message {
@@ -577,6 +574,7 @@ impl Brokkr {
             tip: self.studio.tip_on.then_some(picture),
             build_up: self.studio.build_up,
             dabs: self.studio.dabs,
+            add: self.inserts.setup(),
             lazy_px: self.studio.lazy_px,
             size_from_pressure: self.studio.size_from_pressure,
         }
@@ -610,6 +608,11 @@ impl Brokkr {
                 else {
                     return;
                 };
+                // Whatever was in hand to add is put away. Here and not
+                // before the brush was found: asked for a brush that is
+                // not there, the one in hand stays in hand, which a test
+                // of exactly that caught.
+                self.inserts.put_away();
                 // The brush and its strength as `BrushKindChanged` and
                 // `BrushStrengthChanged` set them: the strength goes to the
                 // brush's own slot, so that with the mask tool up it waits
@@ -651,6 +654,11 @@ impl Brokkr {
                 self.studio.set(StudioMessage::StampAlongChanged(preset.along));
                 self.studio.set(StudioMessage::LazyChanged(preset.lazy_px));
                 self.studio.set(StudioMessage::SizeFromPressureChanged(preset.size_from_pressure));
+                // A brush that adds is taken up last, over the plain brush
+                // the rest of it is. See `app/adding.rs`.
+                if let Some(setup) = preset.add {
+                    self.take_up(setup);
+                }
                 self.status = format!("brush: {}", preset.name);
                 // Choosing a brush is what the palette at the pointer was
                 // up for.
@@ -662,6 +670,12 @@ impl Brokkr {
                     return;
                 };
                 let preset = self.preset_now(name.clone());
+                if preset.add.is_some_and(|setup| setup.what == super::adding::Kind::Body) {
+                    self.status = "a copy of a body cannot be kept as a brush: the body is this \
+                                   document's"
+                        .to_string();
+                    return;
+                }
                 if !self.studio.presets.put(preset.clone()) {
                     self.status = "no room for another brush: forget one first".to_string();
                     return;
@@ -943,13 +957,15 @@ impl Brokkr {
     /// classic brush it goes by, marked as changed when it is not that
     /// brush either.
     pub(super) fn live_brush_name(&self) -> String {
-        if let Some(adding) = self.adding_name() {
-            return adding;
-        }
         let now = self.preset_now(String::new());
         let palette = self.studio.presets.palette();
         if let Some(index) = Self::lit(&palette, &now) {
             return palette[index].0.name.to_uppercase();
+        }
+        // Something to add that is none of the palette's: a copy of a
+        // body, or a shape with settings of its own.
+        if let Some(adding) = self.adding_name() {
+            return adding;
         }
         if self.studio.stamping() {
             return "STAMP".to_string();

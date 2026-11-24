@@ -38,6 +38,7 @@
 //! Scrape = brush:Clay, plane:-0.15, side:Cut
 //! Rivet row = brush:Draw, size:1, stamp:Rivet, along:1.5
 //! Stitches = brush:Draw, tip:Bar, buildup:off, dabs:1, size:1.5, strength:0.6
+//! Pipe = brush:Draw, add:Cable, join:1, lift:1, start:Flange, end:Flange
 //! ```
 //!
 //! `brush:` names the classic brush the settings start from, and the
@@ -79,8 +80,10 @@ use std::sync::LazyLock;
 use brokkr_core::BrushKind;
 use brokkr_core::brush::alpha::BuiltIn;
 use brokkr_core::brush::compound::{Actions, MOST_PLATEAU, Profile, Shape, Side};
+use brokkr_core::solid::{End, Form, MOST_BLEND};
 use contracts::debug_ensures;
 
+use super::adding::{Kind, LIFT_RANGE, SAG_RANGE, Setup};
 use super::studio::{ALONG_RANGE, HEIGHT_RANGE, LAZY_RANGE, SIZE_RANGE};
 use super::{MAX_STRENGTH, MIN_RADIUS_MM, MIN_STRENGTH};
 
@@ -151,6 +154,10 @@ pub(super) struct Preset {
     /// widths, or nothing for a line. Nothing for the stamp, which has
     /// `along`.
     pub dabs: f32,
+    /// A brush that adds (a shape, a cable) and does not move the surface
+    /// that is there: `app/adding.rs`. With one of these the brush is
+    /// nothing else: no amounts, no stamp, no tip, no lead.
+    pub add: Option<Setup>,
     pub lazy_px: f32,
     pub size_from_pressure: f32,
 }
@@ -175,9 +182,15 @@ impl Preset {
             tip: None,
             build_up: true,
             dabs: 0.0,
+            add: None,
             lazy_px: 0.0,
             size_from_pressure: 0.0,
         }
+    }
+
+    /// A brush that adds, under `name`.
+    fn adding(name: &str, setup: Setup) -> Self {
+        Self { add: Some(setup), ..Self::plain(name) }.settled()
     }
 
     /// The classic brush of `kind`, under `name`.
@@ -194,6 +207,15 @@ impl Preset {
     /// true. See [`Preset::is_settled`].
     #[debug_ensures(ret.is_settled(), "what is settled is settled")]
     pub fn settled(mut self) -> Self {
+        if let Some(setup) = self.add {
+            // A brush that adds is that and nothing else. Its size is the
+            // thickness of a cable, and stays.
+            return Self {
+                add: Some(setup.settled()),
+                size_mm: self.size_mm,
+                ..Self::plain(&self.name)
+            };
+        }
         if self.stamp.is_some() {
             self.custom = None;
             self.tip = None;
@@ -234,7 +256,8 @@ impl Preset {
     /// * a stamp has no amounts of its own, and only a stamp is in a row;
     /// * only a brush on the field has a picture across its tip, lays one
     ///   layer, or is set down in dabs, and dabs are a width apart or so;
-    /// * the plateau is within what a profile can have.
+    /// * the plateau is within what a profile can have;
+    /// * a brush that adds is nothing else, and its setup is settled.
     ///
     /// Two presets that are the same brush are then equal, which is what
     /// the palette lights its buttons by.
@@ -250,7 +273,16 @@ impl Preset {
             self.stamp.is_none() && (self.custom.is_some() || Actions::of(self.kind).is_some());
         let tip = on_the_field || (self.tip.is_none() && self.build_up && self.dabs == 0.0);
         let dabs = self.dabs == 0.0 || ALONG_RANGE.contains(&self.dabs);
-        amounts && stamp && tip && dabs && (0.0..=MOST_PLATEAU).contains(&self.profile.plateau)
+        let adds = self.add.is_none_or(|setup| {
+            setup == setup.settled()
+                && *self == Self { add: self.add, size_mm: self.size_mm, ..Self::plain(&self.name) }
+        });
+        amounts
+            && stamp
+            && tip
+            && dabs
+            && adds
+            && (0.0..=MOST_PLATEAU).contains(&self.profile.plateau)
     }
 
     /// Whether the brush in hand, as the preset `now`, is this brush: the
@@ -267,6 +299,7 @@ impl Preset {
             && self.tip == now.tip
             && self.build_up == now.build_up
             && self.dabs == now.dabs
+            && self.add == now.add
             && self.lazy_px == now.lazy_px
             && self.size_from_pressure == now.size_from_pressure
     }
@@ -308,6 +341,27 @@ impl Preset {
         if let Some(tip) = self.tip {
             fields.push(format!("tip:{}", pictured(tip)));
         }
+        if let Some(setup) = self.add {
+            fields.push(format!("add:{}", setup.what.label()));
+            if setup.separate {
+                fields.push(format!("as:{BODY}"));
+            }
+            if setup.blend > 0.0 {
+                fields.push(format!("join:{}", setup.blend));
+            }
+            if setup.lift != 0.0 {
+                fields.push(format!("lift:{}", setup.lift));
+            }
+            if setup.start != End::Round {
+                fields.push(format!("start:{}", setup.start.label()));
+            }
+            if setup.end != End::Round {
+                fields.push(format!("end:{}", setup.end.label()));
+            }
+            if setup.sag > 0.0 {
+                fields.push(format!("sag:{}", setup.sag));
+            }
+        }
         if !self.build_up {
             fields.push(format!("buildup:{OFF}"));
         }
@@ -337,6 +391,10 @@ impl Preset {
         // before the brush it is an amount of, on a line somebody wrote by
         // hand: both are kept until the whole line has been read.
         let mut height = None;
+        // What a brush that adds is set up as, if the line turns out to
+        // name one: its settings may come before the `add` that makes them
+        // mean anything.
+        let mut add = Adding::default();
         let mut amounts: [Option<f32>; 6] = [None; 6];
         let mut side = None;
         let mut crease = false;
@@ -406,6 +464,20 @@ impl Preset {
                         None => {}
                     }
                 }
+                "add" => {
+                    if let Some(what) = Kind::kept().find(|kind| named(kind.label())) {
+                        add.what = Some(what);
+                    }
+                }
+                "as" => add.separate = named(BODY) || (add.separate && !named("baked")),
+                "join" => add.blend = number(0.0..=MOST_BLEND).unwrap_or(add.blend),
+                "lift" => add.lift = number(LIFT_RANGE).unwrap_or(add.lift),
+                "sag" => add.sag = number(SAG_RANGE).unwrap_or(add.sag),
+                "start" | "end" => {
+                    if let Some(end) = End::ALL.into_iter().find(|end| named(end.label())) {
+                        if key == "start" { add.start = end } else { add.end = end }
+                    }
+                }
                 "buildup" => {
                     if named(OFF) {
                         self.build_up = false;
@@ -440,6 +512,17 @@ impl Preset {
         if let (Some((stamp, _)), Some(height)) = (self.stamp, height) {
             self.stamp = Some((stamp, height));
         }
+        if let Some(what) = add.what {
+            self.add = Some(Setup {
+                separate: add.separate,
+                blend: add.blend,
+                lift: add.lift,
+                start: add.start,
+                end: add.end,
+                sag: add.sag,
+                ..Setup::plain(what)
+            });
+        }
         // The amounts, laid over what the brush the line names does. A
         // line that names one of the two that do nothing to the field and
         // then gives amounts is a brush of those amounts.
@@ -470,6 +553,23 @@ impl Preset {
 pub(super) fn held(actions: Actions) -> (BrushKind, Option<Actions>) {
     let preset = Preset::doing("", actions);
     (preset.kind, preset.custom)
+}
+
+/// How a preset's line says what is added is a body of its own:
+/// `as:body`.
+const BODY: &str = "body";
+
+/// The settings of a brush that adds, as a line gives them, before it is
+/// known whether the line names one.
+#[derive(Default)]
+struct Adding {
+    what: Option<Kind>,
+    separate: bool,
+    blend: f32,
+    lift: f32,
+    start: End,
+    end: End,
+    sag: f32,
 }
 
 /// How a preset's line says a brush lays one layer: `buildup:off`.
@@ -509,6 +609,8 @@ pub(super) fn named(name: &str) -> Option<String> {
 pub(super) fn core() -> &'static [Preset] {
     static CORE: LazyLock<Vec<Preset>> = LazyLock::new(|| {
         let nothing = Actions::default();
+        // One of a kind, held this far off the surface and joined softly.
+        let joined = |what: Kind, lift: f32| Setup { blend: 1.0, lift, ..Setup::plain(what) };
         let stamp = |name: &str, picture: BuiltIn| Preset {
             stamp: Some((StampOf::BuiltIn(picture), DEFAULT_HEIGHT)),
             ..Preset::plain(name)
@@ -575,6 +677,20 @@ pub(super) fn core() -> &'static [Preset] {
                 strength: Some(0.6),
                 ..Preset::plain("Stitches")
             },
+            // The brushes that add (`app/adding.rs`): a shape set down by
+            // a drag, a cable laid or hung. Each joined softly.
+            Preset::adding("Ball", joined(Kind::Shape(Form::Ball), 0.0)),
+            Preset::adding("Knob", joined(Kind::Shape(Form::Ball), 0.8)),
+            Preset::adding("Box", joined(Kind::Shape(Form::Box), 0.5)),
+            Preset::adding("Cylinder", joined(Kind::Shape(Form::Cylinder), 0.5)),
+            Preset::adding("Cone", joined(Kind::Shape(Form::Cone), 1.0)),
+            Preset::adding("Ring", joined(Kind::Shape(Form::Torus), 0.3)),
+            Preset::adding("Cable", joined(Kind::Laid, 0.5)),
+            Preset::adding(
+                "Pipe",
+                Setup { start: End::Flange, end: End::Flange, ..joined(Kind::Laid, 1.0) },
+            ),
+            Preset::adding("Hung cable", Setup { sag: 0.15, ..joined(Kind::Hung, 1.0) }),
         ]
     });
     &CORE
@@ -874,6 +990,7 @@ mod tests {
             tip: None,
             build_up: true,
             dabs: 0.0,
+            add: None,
             lazy_px: 17.5,
             size_from_pressure: 0.4,
         }
@@ -917,6 +1034,22 @@ mod tests {
             made("Nothing at all", nothing),
             Preset::plain("Plain"),
             Preset { tip: Some(StampOf::InHand), ..Preset::plain("My own tip") },
+            Preset::adding(
+                "Conduit",
+                Setup {
+                    separate: true,
+                    blend: 1.5,
+                    lift: -0.25,
+                    start: End::Collar,
+                    end: End::Ball,
+                    sag: 0.4,
+                    ..Setup::plain(Kind::Hung)
+                },
+            ),
+            Preset {
+                size_mm: Some(2.5),
+                ..Preset::adding("Post", Setup::plain(Kind::Shape(Form::Cone)))
+            },
             Preset { kind: BrushKind::Paint, stamp: None, along: 0.0, ..full("Paint") },
             Preset { kind: BrushKind::Move, stamp: None, along: 0.0, ..full("Move") },
             Preset {
@@ -1029,6 +1162,26 @@ mod tests {
         assert_eq!((stamp.build_up, stamp.dabs), (true, 0.0));
         assert_eq!(read("a = dabs:0.1").dabs, *ALONG_RANGE.start());
         assert_eq!(read("a = dabs:99").dabs, *ALONG_RANGE.end());
+        // A brush that adds: every kind a file can name, its settings in
+        // any order, and nothing of an ordinary brush left on the line.
+        for kind in Kind::kept() {
+            let line = format!("a = lift:0.5, add:{}, join:1", kind.label().to_uppercase());
+            let wanted = Setup { blend: 1.0, lift: 0.5, ..Setup::plain(kind) };
+            assert_eq!(read(&line).add, Some(wanted), "{line}");
+        }
+        let pipe =
+            read("a = add:Cable, start:Flange, end:collar, as:body, sag:0.5, size:2, lazy:9");
+        let setup = pipe.add.expect("a brush that adds");
+        assert_eq!((setup.start, setup.end, setup.separate), (End::Flange, End::Collar, true));
+        assert_eq!(setup.sag, 0.0, "a cable that is laid does not sag");
+        assert_eq!((pipe.size_mm, pipe.lazy_px), (Some(2.0), 0.0));
+        assert_eq!(
+            read("a = add:Ball, start:Flange").add,
+            Some(Setup::plain(Kind::Shape(Form::Ball)))
+        );
+        // Which body is a document's, and not a file's to say.
+        assert_eq!(read("a = add:Body").add, None);
+        assert_eq!(read("a = join:1, lift:1").add, None, "settings alone made a brush that adds");
         // As the five the application used to start with were written.
         let crease = read("a = brush:Draw, size:1.5, strength:0.3, studio:Crease, lazy:12");
         assert_eq!(crease.custom, Some(Actions::CREASE));
@@ -1477,6 +1630,22 @@ mod tests {
         }
 
         prop_compose! {
+            /// A brush that adds, as a file could give it: any kind a
+            /// file can name, its numbers in and out of range.
+            fn setup()(
+                what in prop::sample::select(Kind::kept().collect::<Vec<_>>()),
+                separate in any::<bool>(),
+                blend in -1.0_f32..4.0,
+                lift in -2.0_f32..2.0,
+                start in prop::sample::select(End::ALL.to_vec()),
+                end in prop::sample::select(End::ALL.to_vec()),
+                sag in -0.5_f32..1.5,
+            ) -> Setup {
+                Setup { what, separate, blend, lift, start, end, sag }
+            }
+        }
+
+        prop_compose! {
             /// A brush as the panel could have it in hand, or a file give
             /// it, before it is settled.
             fn preset()(
@@ -1489,6 +1658,7 @@ mod tests {
                 stamp in stamp(),
                 tip in stamp(),
                 build_up in any::<bool>(),
+                add in prop::option::weighted(0.3, setup()),
                 dabs in prop_oneof![Just(0.0_f32), -1.0_f32..=6.0],
                 along in prop_oneof![Just(0.0_f32), 0.5_f32..=4.0],
                 lazy_px in prop_oneof![Just(0.0_f32), 0.0_f32..=80.0],
@@ -1506,6 +1676,7 @@ mod tests {
                     tip: tip.map(|(picture, _)| picture),
                     build_up,
                     dabs,
+                    add,
                     lazy_px,
                     size_from_pressure,
                 }
