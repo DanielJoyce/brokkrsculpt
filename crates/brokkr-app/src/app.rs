@@ -14,7 +14,11 @@ mod overhang;
 mod painting;
 mod paints;
 mod panel;
+// Where a frame's time goes. See `app/phases.rs`.
+mod phases;
 mod presets;
+// A stroke kept in a file and played back. See `app/replay.rs`.
+mod replay;
 mod studio;
 mod swatch;
 mod workbench;
@@ -606,6 +610,10 @@ pub struct Brokkr {
     /// Alt, which inverts the brush the same way control does.
     alt: bool,
     perf: Perf,
+    /// Where a frame's time goes, phase by phase. See `app/phases.rs`.
+    phases: phases::Phases,
+    /// A stroke being recorded or played back. See `app/replay.rs`.
+    replay: replay::Replay,
     /// What the whole document costs, summed over every body, refreshed on
     /// remesh.
     ///
@@ -1897,6 +1905,9 @@ impl Brokkr {
         app.studio.presets = presets::Presets::load();
         // The maps that have been taken in: `app/maps.rs`.
         app.inserts.maps = maps::kept(maps::directory().as_deref());
+        // A recording or a replay asked for by the environment, after the
+        // welcome flag it overrides: `app/replay.rs`.
+        app.replay_from_environment();
         // The screen is up, so its articles are wanted. The only other place
         // that raises it, `Message::WelcomeOpened`, asks for them too.
         let mut boot =
@@ -2109,6 +2120,8 @@ impl Brokkr {
             control: false,
             alt: false,
             perf: Perf::default(),
+            phases: phases::Phases::default(),
+            replay: replay::Replay::default(),
             doc_stats: VolumeStats::default(),
             history_stats: HistoryStats::default(),
             status: String::new(),
@@ -3423,6 +3436,32 @@ impl Brokkr {
         self.status = "rebuilt the view — the pool is packed again".to_string();
     }
 
+    /// A pointer event, counted into the frame being timed. A stroke is
+    /// noted on both sides of it, so that the press and the release are in a
+    /// stroke's frames with the moves between them. See `app/phases.rs`.
+    fn pointer_in(&mut self, event: PointerEvent) {
+        self.phases.count(|frame| frame.events += 1);
+        self.note_a_stroke();
+        self.on_pointer(event);
+        self.note_a_stroke();
+    }
+
+    /// Say that a stroke is down in the frame being timed.
+    fn note_a_stroke(&self) {
+        if matches!(
+            self.drag.map(|drag| drag.kind),
+            Some(DragKind::Sculpt(_)) | Some(DragKind::Masking)
+        ) {
+            self.phases.count(|frame| frame.stroke = true);
+        }
+    }
+
+    /// Count the stamps just laid into the frame being timed.
+    fn count_stamps(&self) {
+        let stamps = self.perf.stamps as u32;
+        self.phases.count(|frame| frame.stamps += stamps);
+    }
+
     fn remesh_dirty(&mut self) {
         self.doc.take_dirty(&mut self.dirty);
         self.perf.dirty_bricks = self.dirty.len();
@@ -3466,7 +3505,9 @@ impl Brokkr {
         }
 
         let started = Instant::now();
+        let timed = self.phases.enter(phases::Phase::Remesh);
         let count = self.dirty.len();
+        self.phases.count(|frame| frame.meshed += count as u32);
         while self.mesh_buffers.len() < count {
             self.mesh_buffers.push(self.shared.take_mesh());
         }
@@ -3485,6 +3526,8 @@ impl Brokkr {
             self.shared.publish(*body, *coord, mesh);
         }
         self.perf.remesh_ms = started.elapsed().as_secs_f32() * 1000.0;
+        self.phases.leave(timed);
+        let timed = self.phases.enter(phases::Phase::After);
         self.doc_stats = self.doc.totals();
 
         // Dynamic resizes the brush when the MODEL changed under it. Comparing
@@ -3498,6 +3541,7 @@ impl Brokkr {
         if same_body {
             self.rescale_radius(previous);
         }
+        self.phases.leave(timed);
     }
 
     /// Re-measure the active body, for the camera, the mirror plane and the
@@ -4815,6 +4859,13 @@ impl Brokkr {
     /// frame handler: the geometry is world space, so a camera moving under it
     /// needs no rebuild, and a raycast per frame would be waste.
     fn refresh_overlay(&mut self) {
+        let timed = self.phases.enter(phases::Phase::Overlay);
+        self.build_overlay();
+        self.phases.leave(timed);
+    }
+
+    /// The overlay itself. [`Brokkr::refresh_overlay`] is this, timed.
+    fn build_overlay(&mut self) {
         // Moved out and back rather than borrowed in place: `build` also needs
         // the volume and the brush, which are fields of the same `self`. The
         // two buffers then rotate -- this frame's goes to the renderer and last
@@ -5037,7 +5088,10 @@ impl Brokkr {
     /// carved.
     fn pick(&self, pixel: Vec2) -> Option<(NodeId, brokkr_core::Hit)> {
         let (origin, ray) = self.ray_through(pixel);
-        self.doc.pick(origin, ray, self.camera.far(), &self.shown)
+        let timed = self.phases.enter(phases::Phase::Pick);
+        let hit = self.doc.pick(origin, ray, self.camera.far(), &self.shown);
+        self.phases.leave(timed);
+        hit
     }
 
     /// Whether the body edits land on is one of the ones being drawn.
@@ -5169,9 +5223,13 @@ impl Brokkr {
     /// the ring in one place and the stroke in another.
     fn surface_under(&self, pixel: Vec2) -> Option<Vec3> {
         let (origin, ray) = self.ray_through(pixel);
-        self.doc
+        let timed = self.phases.enter(phases::Phase::Pick);
+        let hit = self
+            .doc
             .pick_body(self.doc.active(), origin, ray, self.camera.far())
-            .map(|hit| hit.position)
+            .map(|hit| hit.position);
+        self.phases.leave(timed);
+        hit
     }
 
     /// Open the undo recorder on the body this stroke is about to write to, if
@@ -5380,6 +5438,7 @@ impl Brokkr {
         }
 
         self.perf.stamps = 1;
+        self.count_stamps();
         self.perf.pressure = pressure;
         self.perf.edit_ms = started.elapsed().as_secs_f32() * 1000.0;
         self.remesh_dirty();
@@ -5559,6 +5618,7 @@ impl Brokkr {
         }
 
         self.perf.stamps = self.stamp_centres.len();
+        self.count_stamps();
         self.perf.pressure = pressure;
         self.perf.edit_ms = started.elapsed().as_secs_f32() * 1000.0;
         self.remesh_dirty();
@@ -5641,6 +5701,7 @@ impl Brokkr {
         }
 
         self.perf.stamps = self.stamp_centres.len();
+        self.count_stamps();
         self.perf.pressure = pressure;
         self.perf.edit_ms = started.elapsed().as_secs_f32() * 1000.0;
         self.remesh_dirty();
@@ -5740,6 +5801,7 @@ impl Brokkr {
                 self.stamp_field(brush, &stamp);
             }
             self.perf.stamps = self.stamp_centres.len();
+            self.count_stamps();
         }
         self.perf.pressure = pressure;
         self.perf.edit_ms = started.elapsed().as_secs_f32() * 1000.0;
@@ -6433,6 +6495,13 @@ impl Brokkr {
     }
 
     fn finish_stroke(&mut self) {
+        let timed = self.phases.enter(phases::Phase::Finish);
+        self.end_the_stroke();
+        self.phases.leave(timed);
+    }
+
+    /// The end of a stroke itself. [`Brokkr::finish_stroke`] is this, timed.
+    fn end_the_stroke(&mut self) {
         self.stroke.end();
         // Releases the locked field. One gesture is one lock, so a new drag
         // starts from the surface as it now stands rather than re-warping the
@@ -9369,12 +9438,14 @@ impl Brokkr {
                     pivot: (kind == DragKind::Orbit).then_some(self.hover).flatten(),
                 });
 
+                let timed = self.phases.enter(phases::Phase::Edit);
                 if let DragKind::Sculpt(direction) = kind {
                     self.sculpt_to(position, direction, true);
                 }
                 if kind == DragKind::Masking {
                     self.mask_to(position, true);
                 }
+                self.phases.leave(timed);
                 self.refresh_hover(position);
                 self.refresh_overlay();
             }
@@ -9475,8 +9546,16 @@ impl Brokkr {
                         // on a surface that is about to move.
                         return;
                     }
-                    Some(DragKind::Sculpt(direction)) => self.sculpt_to(position, direction, false),
-                    Some(DragKind::Masking) => self.mask_to(position, false),
+                    Some(DragKind::Sculpt(direction)) => {
+                        let timed = self.phases.enter(phases::Phase::Edit);
+                        self.sculpt_to(position, direction, false);
+                        self.phases.leave(timed);
+                    }
+                    Some(DragKind::Masking) => {
+                        let timed = self.phases.enter(phases::Phase::Edit);
+                        self.mask_to(position, false);
+                        self.phases.leave(timed);
+                    }
                     Some(DragKind::Orbit) => {
                         // About the surface the press landed on, so turning to
                         // look at the other side of a detail keeps the detail
@@ -9646,7 +9725,12 @@ impl Brokkr {
     /// only caller and which is where the visibility pass lives.
     fn dispatch(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Pointer(event) => self.on_pointer(event),
+            Message::Pointer(event) => {
+                // Into a recording, and into the frame's count. See
+                // `app/replay.rs` and `app/phases.rs`.
+                self.record_pointer(event);
+                self.pointer_in(event);
+            }
             Message::Frame => {
                 let elapsed_ms = self.perf.record_frame();
                 // **The update took.** Cleared on the first drawn frame, which
@@ -9677,8 +9761,22 @@ impl Brokkr {
                 }
                 self.drive_from_spacemouse(elapsed_ms);
                 self.settle_an_orphaned_mask_grab();
+                let timed = self.phases.enter(phases::Phase::Save);
                 self.maybe_autosave();
+                self.phases.leave(timed);
                 self.request_a_thumbnail();
+                // The frame's timings are closed off, and a replay takes its
+                // next frame's worth. See `app/phases.rs` and `app/replay.rs`.
+                self.note_a_stroke();
+                let cost = self.shared.take_cost();
+                self.phases.add(phases::Phase::Upload, cost.prepare_ms);
+                self.phases.add(phases::Phase::Encode, cost.encode_ms);
+                self.phases.count(|frame| {
+                    frame.uploaded += cost.uploaded;
+                    frame.uploaded_bytes += cost.uploaded_bytes;
+                });
+                self.phases.end_frame();
+                return self.replay_frame();
             }
             Message::BrushKindChanged(kind) => {
                 // Remember what the outgoing brush was set to, and restore what

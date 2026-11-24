@@ -68,6 +68,14 @@ Then look at it on a screen. Several faults in the plan were found only
 that way. `docs/DRIVING-THE-APP.md` says how; in a container, Xvfb and
 `xdotool` move the pointer and the wheel but pass no keys.
 
+## Performance work
+
+Tracked in issue 62 of this fork and written up in
+[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md): the instruments, the machine
+the numbers are from, and a before and an after for each change. A change
+made for speed quotes both, from `what_a_stroke_costs` or a bench, and says
+when the build machine could not measure it (it has no graphics card).
+
 ## House style
 
 - No em-dashes in prose, comments, documents or commit messages.
@@ -76,6 +84,10 @@ that way. `docs/DRIVING-THE-APP.md` says how; in a container, Xvfb and
 - Add, do not modify (decision D6 of the plan): new behaviour goes in a
   module of its own, with the fewest lines that will do in upstream's
   files, and a comment at each of those lines saying where to look.
+  Set aside for performance work by the maintainer on 2026-11-24 (*"The
+  code is ours, so do what needs to be done"*): a change that makes
+  upstream's code faster is made in upstream's file. New features still
+  go in modules of their own.
 - A number is either measured, and says with what, or is arithmetic, and
   says so. Do not write "measured" for something worked out.
 - Commit messages are long and say what was tried and dropped, what a

@@ -160,6 +160,14 @@ fn drop_line<'a>(depth: u8) -> Element<'a, Message> {
 
 impl Brokkr {
     pub fn view(&self) -> Element<'_, Message> {
+        let timed = self.phases.enter(super::phases::Phase::View);
+        let built = self.build_view();
+        self.phases.leave(timed);
+        built
+    }
+
+    /// The interface itself. [`Brokkr::view`] is this, timed.
+    fn build_view(&self) -> Element<'_, Message> {
         let viewport = iced::widget::shader(Viewport::new(Arc::clone(&self.shared)))
             .width(Length::Fill)
             .height(Length::Fill);
@@ -1509,6 +1517,10 @@ impl Brokkr {
                 "{} triangles   {} drawn / {} culled / {} hidden bricks",
                 pool.triangles, pool.drawn, pool.culled, pool.hidden
             ),
+            // Where the last frame's time went and the worst of the last
+            // second, phase by phase. See `app/phases.rs`.
+            self.phase_line("last ", self.phases.last()),
+            self.phase_line("worst", self.phases.worst()),
             format!(
                 "brush {}   mirror {}   radius {:.2} mm",
                 self.effective_brush().kind,
@@ -1559,6 +1571,26 @@ impl Brokkr {
                 stacked.push(text(line).size(theme::TEXT_SIZE_SMALL).font(theme::MONO))
             })
             .into()
+    }
+
+    /// One line of the readout's phase timings.
+    fn phase_line(&self, label: &str, frame: super::phases::Frame) -> String {
+        use super::phases::Phase;
+        format!(
+            "{label} pick {:.2}  edit {:.2}  mesh {:.2}  after {:.2}  ring {:.2}  end {:.2}  \
+             view {:.2}  upload {:.2} ({} bricks, {} KB)  draw {:.2} ms",
+            frame.of(Phase::Pick),
+            frame.of(Phase::Edit),
+            frame.of(Phase::Remesh),
+            frame.of(Phase::After),
+            frame.of(Phase::Overlay),
+            frame.of(Phase::Finish),
+            frame.of(Phase::View),
+            frame.of(Phase::Upload),
+            frame.uploaded,
+            frame.uploaded_bytes / 1024,
+            frame.of(Phase::Encode),
+        )
     }
 
     /// What a face of the navigation cube should become, at the cursor.
