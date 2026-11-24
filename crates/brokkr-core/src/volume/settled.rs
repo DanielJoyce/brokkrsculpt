@@ -37,7 +37,7 @@
 //! run every brush with skipping on and off and compare the fields bit for
 //! bit hold this as they hold the brick-level skip.
 
-use glam::IVec3;
+use glam::{IVec3, Vec3};
 
 use crate::brick::{BRICK_DIM, BRICK_VOXELS, INSIDE, OUTSIDE};
 
@@ -56,14 +56,30 @@ const MOST_SPAN: usize = DIM + 2 * MOST_REACH as usize;
 /// For a brush this is `leaves_constant_alone` asked of [`INSIDE`] and of
 /// [`OUTSIDE`]. The default claims nothing, and an edit with nothing claimed
 /// visits every voxel of every brick it is given, as it always did.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Settled {
     pub inside: bool,
     pub outside: bool,
+    /// A ball the edit changes nothing outside of: its centre and its
+    /// radius, in world units. Every brush is one, and its edit begins by
+    /// asking whether the voxel is in it. Given the ball, the lines of a
+    /// brick are narrowed to it before the edit is asked anything, and a
+    /// line that misses it is not walked at all. See [`Ball`].
+    pub within: Option<(Vec3, f32)>,
 }
 
 impl Settled {
-    pub const NONE: Settled = Settled { inside: false, outside: false };
+    pub const NONE: Settled = Settled { inside: false, outside: false, within: None };
+
+    /// The two ends of the band, by whether each is left alone.
+    pub fn ends(inside: bool, outside: bool) -> Settled {
+        Settled { inside, outside, within: None }
+    }
+
+    /// The same, for an edit that changes nothing outside a ball.
+    pub fn inside_ball(self, centre: Vec3, radius: f32) -> Settled {
+        Settled { within: Some((centre, radius)), ..self }
+    }
 
     pub(super) fn any(self) -> bool {
         self.inside || self.outside
@@ -89,6 +105,54 @@ pub(crate) fn without<R>(run: impl FnOnce() -> R) -> R {
 #[cfg(test)]
 pub(super) fn off() -> bool {
     OFF.get()
+}
+
+/// The ball an edit works inside, in voxels, for narrowing a line of voxels
+/// to the part of it that can be in the ball.
+///
+/// **Wider than the ball by a voxel and a half, and worked out in `f64`.**
+/// The edit's own test is in `f32` and of a position that is itself a
+/// rounded product, and which side of the ball's skin a voxel falls is the
+/// edit's to say and not this's. So this only ever says "not within a voxel
+/// and a half of the ball", which no rounding of either reaches, and what it
+/// keeps the edit still tests for itself. A cube round a ball is nearly half
+/// outside it, and for the brushes that only read the voxel they write,
+/// turning those voxels away was a third of the work.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Ball {
+    centre: [f64; 3],
+    /// The square of the radius and the margin, in voxels.
+    reach_squared: f64,
+}
+
+impl Ball {
+    pub(super) fn new(centre: Vec3, radius: f32, voxel_size: f32) -> Ball {
+        let voxel = f64::from(voxel_size);
+        let reach = f64::from(radius) / voxel + 1.5;
+        Ball {
+            centre: [
+                f64::from(centre.x) / voxel,
+                f64::from(centre.y) / voxel,
+                f64::from(centre.z) / voxel,
+            ],
+            reach_squared: reach * reach,
+        }
+    }
+
+    /// The voxels of the line at `y` and `z` that may be in the ball, as
+    /// the first and the last of them along X, or `None` when none can be.
+    #[inline]
+    pub(super) fn span(&self, y: i32, z: i32) -> Option<(i32, i32)> {
+        let (dy, dz) = (f64::from(y) - self.centre[1], f64::from(z) - self.centre[2]);
+        let left = self.reach_squared - dy * dy - dz * dz;
+        if left < 0.0 {
+            return None;
+        }
+        let half = left.sqrt();
+        // A cast rounds toward nought, which for a negative number is up:
+        // one further out each way makes it a bound whatever the sign.
+        Some(((self.centre[0] - half) as i32 - 1, (self.centre[0] + half) as i32 + 1))
+    }
 }
 
 /// One brick as bits: for each of its lines, which voxels hold [`INSIDE`]
@@ -451,15 +515,15 @@ mod tests {
     #[test]
     fn either_side_of_the_band_is_settled_and_the_band_is_not() {
         let through = block(1, [0.0, 0.0, 1.0], 0.0, 0);
-        let both = Settled { inside: true, outside: true };
+        let both = Settled::ends(true, true);
         // Z from 32 to 63 is the middle brick and the surface is at 48. The
         // field is an end of the band from three voxels off, so the planes
         // that are neither are 46 to 50, and with a reach of 2 the unsettled
         // ones are 44 to 52: nine of the thirty-two. Inside is 32 to 43,
         // twelve planes, and outside 53 to 63, eleven.
         assert_eq!(check(&through, 2, both, true), 23 * 32 * 32);
-        assert_eq!(check(&through, 2, Settled { inside: true, outside: false }, true), 12 * 1024);
-        assert_eq!(check(&through, 2, Settled { inside: false, outside: true }, true), 11 * 1024);
+        assert_eq!(check(&through, 2, Settled::ends(true, false), true), 12 * 1024);
+        assert_eq!(check(&through, 2, Settled::ends(false, true), true), 11 * 1024);
         assert_eq!(check(&through, 2, Settled::NONE, true), 0);
         assert_eq!(check(&through, 0, both, true), (32 - 5) * 32 * 32);
     }
@@ -481,8 +545,50 @@ mod tests {
             as_fills in any::<bool>(),
         ) {
             let block = block(seed, [nx, ny, nz], offset, strays);
-            check(&block, reach, Settled { inside, outside }, as_fills);
+            check(&block, reach, Settled::ends(inside, outside), as_fills);
         }
+    }
+
+    /// The span of a line never leaves out a voxel the edit's own test would
+    /// let in: for balls of any size anywhere, at voxel sizes from the
+    /// finest to the coarsest there are, every voxel that passes the test a
+    /// brush makes, in the arithmetic a brush makes it in, is inside its
+    /// line's span.
+    #[test]
+    fn a_span_holds_every_voxel_the_edit_would_let_in() {
+        let mut random = Noise::seeded(5);
+        let mut kept = 0usize;
+        let mut walked = 0usize;
+        for _ in 0..400 {
+            let voxel_size = [0.03f32, 0.0625, 0.25, 0.3, 1.0, 2.0][random.below(6)];
+            let radius = (1 + random.below(40)) as f32 * voxel_size * 0.77;
+            let pick = |random: &mut Noise| (random.below(4001) as f32 - 2000.0) * 0.173;
+            let centre = Vec3::new(pick(&mut random), pick(&mut random), pick(&mut random));
+            let ball = Ball::new(centre, radius, voxel_size);
+            let radius_squared = radius * radius;
+            let middle = (centre / voxel_size).round().as_ivec3();
+            let around = (radius / voxel_size).ceil() as i32 + 3;
+            for z in middle.z - around..=middle.z + around {
+                for y in middle.y - around..=middle.y + around {
+                    let span = ball.span(y, z);
+                    for x in middle.x - around..=middle.x + around {
+                        // As `write_voxels` makes the position and a brush
+                        // tests it.
+                        let position = IVec3::new(x, y, z).as_vec3() * voxel_size;
+                        let inside = (position - centre).length_squared() < radius_squared;
+                        let in_span = span.is_some_and(|(from, to)| (from..=to).contains(&x));
+                        assert!(
+                            !inside || in_span,
+                            "voxel {x} {y} {z} is in the ball and out of its line's span \
+                             (voxel {voxel_size}, radius {radius}, centre {centre})"
+                        );
+                        kept += usize::from(in_span);
+                        walked += 1;
+                    }
+                }
+            }
+        }
+        assert!(kept * 10 < walked * 9, "the spans kept {kept} of {walked} voxels: nothing spared");
     }
 
     /// The furthest reach there is, which is where the three bricks' lines
@@ -490,7 +596,7 @@ mod tests {
     #[test]
     fn the_furthest_reach_is_right_too() {
         let tilted = block(9, [0.3, -0.2, 0.9], 4.0, 25);
-        let both = Settled { inside: true, outside: true };
+        let both = Settled::ends(true, true);
         for reach in [MOST_REACH - 1, MOST_REACH] {
             check(&tilted, reach, both, true);
         }

@@ -356,6 +356,66 @@ Not done: the gestures are timed whole, as part of `edit`, and not broken
 down into the before-state put back, the join and the wide join, which is
 what would say where those 50 to 110 ms go.
 
+### A shape's set-down, the apron, and the brush's ball
+
+The 50 to 110 ms of one set-down, profiled
+(`what_setting_a_shape_down_costs` under callgrind, on one core). Of the
+gesture's instructions: putting the body back as it was, a third; asking the
+shape how far it is from every voxel near it, a quarter; the soft join's wide
+part, a fifth; the remesh, an eighth.
+
+- **The body is put back by the brick** (`Volume::restore_before`). It was a
+  copy of the whole box as it was before the stroke and then every voxel of
+  the box compared with the copy. The stroke's own record holds each brick it
+  has changed, as it was, and only those: each is copied back.
+- **The shape is asked of a block before it is asked of each voxel**
+  (`Join::add_narrow`, `Volume::edit_voxels_leaving`). A brick near the shape
+  is taken as 512 blocks of four voxels a side, and a block whose middle puts
+  all of it out of the join's reach is passed over. Only for a solid that
+  says its distance is steady, which the shapes, a cable's runs and a lent
+  body are and a draped map is not.
+- **The wide join reads the body by the line** where it asked for each voxel
+  by its coordinate.
+
+A ball dragged out over 48 moves, one to a frame, on the opening ball at half
+the voxel size:
+
+| | edit over the drag | a set-down, median |
+|---|---|---|
+| Before | 2508 ms | 50.6 ms |
+| The body put back by the brick | 1809 ms | 36.2 ms |
+| And the shape asked of blocks, the wide join by lines | 1327 ms | 26.6 ms |
+
+Two more, in the stroke of every brush:
+
+- **The apron is gathered by strides** (`Volume::gather_apron`). An apron is
+  3468 lines from 27 bricks, most of them one sample long, and each line
+  worked out what kind of brick it came from and where it went. Both are now
+  settled once for each brick's part. It had as many instructions as the
+  surface nets it feeds.
+- **A line of voxels is narrowed to the brush's ball** before the brush is
+  asked anything (`Ball` in `volume/settled.rs`). Every brush begins by
+  asking whether the voxel is in its ball, and of the cube round a ball nearly
+  half is not. The narrowing is a voxel and a half wider than the ball and in
+  `f64`, so that which side of the ball's skin a voxel is on is still the
+  brush's to say.
+
+`stroke_profile` on one core, milliseconds a stamp, from the table above to
+now: Draw at 48 voxels, edit 13.1 to 11.3 and remesh 4.2 to 3.0; Smooth at 48,
+edit 6.2 to 5.5 and remesh 3.7 to 2.9; Draw at 12, remesh 0.81 to 0.60, edit
+as it was. On four cores the differences are inside the noise of single runs.
+
+Tests: 160 random joins (every form, a cable's run, a lent body, each in a
+mirror, added and cut, hard and soft) leave the same field and the same undo
+with blocks and with every voxel asked; a span never leaves out a voxel a
+brush's own test would let in, for 400 random balls at six voxel sizes; and
+the tests that run every brush with skipping on and off now hold the ball
+too.
+
+Not done: a set-down was not profiled again after these, so what its 27 ms
+are now made of is not known; by the first profile's shares it should be the
+wide join's spreading of the distance. And the brush loop by rows (issue 52).
+
 ## The renderer: looked at, and not built
 
 Nothing below was changed, because nothing below can be judged on a machine
