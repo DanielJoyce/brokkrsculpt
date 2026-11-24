@@ -564,6 +564,11 @@ trilinear interpolation, which is honest work rather than waste.
 a budget is blown, and the build fails with it. Measure on an idle machine: the
 fast-drag row sits close enough to its budget that a busy desktop decides it.
 
+On the studio branch there is more to measure with, and a record of what was
+measured: phase timings behind the Info toggle, a stroke that can be recorded
+and replayed for a table of what it cost (`BROKKR_RECORD`, `BROKKR_REPLAY`),
+and a stroke timed with no window. See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
+
 ### Brushes
 
 | brush | what it does to the field |

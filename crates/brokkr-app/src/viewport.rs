@@ -246,6 +246,28 @@ pub struct SharedFrame {
     /// waits several frames (see [`SharedFrame::apply`]) delays the next one
     /// rather than being overwritten by it.
     thumb: Mutex<Option<ThumbRequest>>,
+    /// What the render callbacks have cost since the application last asked.
+    /// See [`RenderCost`].
+    cost: Mutex<RenderCost>,
+}
+
+/// What the render callbacks cost on the CPU, added up until the application
+/// takes it on its frame tick. For the phase timings, `app/phases.rs`.
+///
+/// **The CPU's side only.** How long the graphics card then spends on the
+/// frame is not known here: iced makes the device with no optional features,
+/// so there is no timestamp query to ask. The interval between frames is the
+/// evidence for that.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct RenderCost {
+    /// Milliseconds in `prepare`: the uploads, and a thumbnail when one is
+    /// drawn.
+    pub prepare_ms: f32,
+    /// Milliseconds encoding the passes: the culling and the draw calls.
+    pub encode_ms: f32,
+    /// Bricks handed to the pool, and the bytes of their vertices and indices.
+    pub uploaded: u32,
+    pub uploaded_bytes: u64,
 }
 
 impl SharedFrame {
@@ -647,9 +669,14 @@ impl SharedFrame {
         let pool_was_quiet = drained.is_empty();
         if !drained.is_empty() {
             let mut spare = self.spare.lock().expect("shared frame poisoned");
+            let (mut uploaded, mut uploaded_bytes) = (0u32, 0u64);
             for upload in drained {
                 if !forgotten.contains(&upload.key.body) {
                     renderer.upload_brick(device, queue, upload.key, &upload.mesh);
+                    uploaded += 1;
+                    uploaded_bytes += (std::mem::size_of_val(upload.mesh.vertices.as_slice())
+                        + std::mem::size_of_val(upload.mesh.indices.as_slice()))
+                        as u64;
                 }
                 // Capped rather than kept: see MAX_SPARE_MESHES. Over the cap
                 // the buffer is dropped here and its allocation returned to the
@@ -658,6 +685,9 @@ impl SharedFrame {
                     spare.push(upload.mesh);
                 }
             }
+            let mut cost = self.cost.lock().expect("shared frame poisoned");
+            cost.uploaded += uploaded;
+            cost.uploaded_bytes += uploaded_bytes;
         }
 
         {
@@ -689,6 +719,12 @@ impl SharedFrame {
                 );
             }
         }
+    }
+
+    /// What the render callbacks cost since this was last asked, and start the
+    /// count again.
+    pub fn take_cost(&self) -> RenderCost {
+        std::mem::take(&mut *self.cost.lock().expect("shared frame poisoned"))
     }
 
     /// The pool counters as of the last frame, for the debug overlay.
@@ -1167,7 +1203,10 @@ impl shader::Primitive for SculptPrimitive {
         // there may be sixty-four of them; the viewport's runs exactly once a
         // frame, which is what makes "at most one body per frame" true of the
         // schedule as well as of the mailbox.
+        let began = std::time::Instant::now();
         shared.apply(&mut pipeline.renderer, device, queue);
+        shared.cost.lock().expect("shared frame poisoned").prepare_ms +=
+            began.elapsed().as_secs_f32() * 1000.0;
 
         *shared.stats.lock().expect("shared frame poisoned") = pipeline.renderer.stats();
         shared.set_adapter(pipeline.renderer.adapter_summary());
@@ -1197,9 +1236,10 @@ impl shader::Primitive for SculptPrimitive {
         target: &wgpu::TextureView,
         clip_bounds: &Rectangle<u32>,
     ) {
-        if !matches!(self, Self::Viewport { .. }) {
+        let Self::Viewport { shared } = self else {
             return;
-        }
+        };
+        let began = std::time::Instant::now();
 
         pipeline.renderer.render(
             encoder,
@@ -1239,6 +1279,8 @@ impl shader::Primitive for SculptPrimitive {
             },
         );
         pipeline.renderer.render_cube(encoder, target, PixelRect { x, y, width, height });
+        shared.cost.lock().expect("shared frame poisoned").encode_ms +=
+            began.elapsed().as_secs_f32() * 1000.0;
     }
 }
 

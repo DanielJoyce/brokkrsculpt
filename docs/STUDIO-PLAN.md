@@ -26,6 +26,7 @@ was built and what was measured.
 | M Reading sizes | **Done**, 2026-11-23 (section 17) | A scale bar in the corner of the viewport that follows the zoom, and *Measure*: two clicks on the model, and the straight-line distance between them drawn and read out |
 | C Brushes to hand | **Done**, 2026-11-24 (section 18): the palette at the pointer, brush files, insert brushes, cables, the workbench, thirty-six brushes on the palette in three groups, the ones that add among them, each with a picture of its stroke on its button, a true pinch, a fillet of up to eight voxels where an insert meets the body, and vector displacement brushes, read from OpenEXR files | `b` brings every brush up under the pointer. *Import* takes brush files in. ADD: a ball, box, cylinder, cone or ring, or a copy of any body, set down by a drag; a cable laid along the model or hung between two points; each baked in or left a body of its own. WORKBENCH: the model is set aside and a ball, or a copy of the body in hand, takes its place to try a brush on |
 | B Brushes as settings | **Begun**, 2026-11-23 (section 16): where the files go, and the generic brush in the engine. The palette and build-up follow | Settings, brushes and autosave each in the folder the operating system keeps for them |
+| Performance | **Begun**, 2026-11-24: the instruments. Not a milestone of this plan: its tickets, its measurements and what each change did are in [`PERFORMANCE.md`](PERFORMANCE.md) | Two lines of phase timings behind the Info toggle, and a stroke that can be recorded and replayed for a table of what it cost |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
 repository, or the README's measured tables) or explicitly labelled
@@ -191,6 +192,11 @@ second mesh to compare against.
 **D6. Add, do not modify.** This is a long-lived branch on a fork of a moving
 upstream. New code goes in new modules; `app.rs` (24,047 lines) receives
 dispatch hooks only; no upstream file is reformatted or refactored for taste.
+
+Set aside by the maintainer on 2026-11-24 for the performance work, which
+cannot be done from outside the loops it is about: *"The code is ours, so do
+what needs to be done."* It still holds for new features. See
+[`PERFORMANCE.md`](PERFORMANCE.md).
 
 **D7. Every gate upstream holds stays held.** `cargo fmt`, clippy with
 `-D warnings`, the full suite, and the budget benchmark that exits non-zero.
