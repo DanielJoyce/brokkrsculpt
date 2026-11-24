@@ -424,6 +424,16 @@ impl Brokkr {
                 Message::Studio(StudioMessage::StampImageLoaded(loaded))
             });
         }
+        // A brush taken up, its amounts changed, or the stamp: whatever
+        // was in hand to add is put away. See `app/adding.rs`.
+        if matches!(
+            message,
+            StudioMessage::PresetChosen(_)
+                | StudioMessage::ActionsChosen(_)
+                | StudioMessage::StampToggled(true)
+        ) {
+            self.inserts.put_away();
+        }
         match message {
             StudioMessage::ActionsChosen(actions) => {
                 self.actions_changed(actions);
@@ -877,24 +887,31 @@ impl Brokkr {
         if !self.lays_a_layer() {
             return landed;
         }
+        self.before_under(pixel, landed, self.brush.radius * 2.0).unwrap_or(landed)
+    }
+
+    /// Where the pointer's ray meets the surface as it was before the open
+    /// stroke, given where it lands on the surface as it is now: on along
+    /// the ray, or back along it, by no more than `furthest`. Nothing when
+    /// it does not meet it within that.
+    pub(super) fn before_under(&self, pixel: Vec2, landed: Vec3, furthest: f32) -> Option<Vec3> {
         let volume = self.doc.active_volume();
         let voxel_size = volume.voxel_size();
         let (_, ray) = self.ray_through(pixel);
-        let furthest = self.brush.radius * 2.0;
         let mut at = landed;
         // Steps of up to three voxels: enough of them for the furthest it
         // may go and for the last short ones of a ray that grazes.
         for _ in 0..AIM_STEPS {
             let off = volume.sample_world_before(at);
             if off.abs() < 0.01 {
-                return at;
+                return Some(at);
             }
             at += ray * (off * voxel_size);
             if at.distance(landed) >= furthest {
                 break;
             }
         }
-        landed
+        None
     }
 
     /// Which way the surface faces at a stamp's centre: as it is now, or
@@ -926,6 +943,9 @@ impl Brokkr {
     /// classic brush it goes by, marked as changed when it is not that
     /// brush either.
     pub(super) fn live_brush_name(&self) -> String {
+        if let Some(adding) = self.adding_name() {
+            return adding;
+        }
         let now = self.preset_now(String::new());
         let palette = self.studio.presets.palette();
         if let Some(index) = Self::lit(&palette, &now) {
