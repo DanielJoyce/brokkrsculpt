@@ -615,7 +615,7 @@ pub(super) fn core() -> &'static [Preset] {
             stamp: Some((StampOf::BuiltIn(picture), DEFAULT_HEIGHT)),
             ..Preset::plain(name)
         };
-        vec![
+        let made = vec![
             Preset::classic("Draw", BrushKind::Draw),
             Preset::classic("Clay", BrushKind::Clay),
             Preset::classic("Inflate", BrushKind::Inflate),
@@ -691,7 +691,18 @@ pub(super) fn core() -> &'static [Preset] {
                 Setup { start: End::Flange, end: End::Flange, ..joined(Kind::Laid, 1.0) },
             ),
             Preset::adding("Hung cable", Setup { sag: 0.15, ..joined(Kind::Hung, 1.0) }),
-        ]
+        ];
+        // In the order of their groups, which is the order of the palette.
+        GROUPS
+            .iter()
+            .flat_map(|(_, names)| names.iter())
+            .map(|name| {
+                let found = made.iter().find(|preset| preset.name == *name);
+                found
+                    .unwrap_or_else(|| panic!("no brush called {name} to put in its group"))
+                    .clone()
+            })
+            .collect()
     });
     &CORE
 }
@@ -700,6 +711,47 @@ pub(super) fn core() -> &'static [Preset] {
 /// brush: under half of how far proud Clay holds its own (0.35), so that
 /// a scraper takes a shaving where clay lays a strip.
 const SCRAPE_DEPTH: f32 = -0.15;
+
+/// The brushes that come with the application, by what they are for: a
+/// heading on the palette, and the names under it in the order they are
+/// shown. Thirty names in one block were a lot of names to read. Each
+/// group fills its rows of three.
+pub(super) const GROUPS: [(&str, &[&str]); 3] = [
+    (
+        "Sculpt",
+        &[
+            "Draw",
+            "Clay",
+            "Inflate",
+            "Pinch",
+            "Spread",
+            "Smooth",
+            "Flatten",
+            "Scrape",
+            "Fill",
+            "Polish",
+            "Crease",
+            "Bead",
+            "Band",
+            "Layer",
+            "Clay strips",
+        ],
+    ),
+    (
+        "Lines and stamps",
+        &["Fine crease", "Long line", "Stitches", "Rivets", "Rivet row", "Scales"],
+    ),
+    ("Add", &["Ball", "Knob", "Box", "Cylinder", "Cone", "Ring", "Cable", "Pipe", "Hung cable"]),
+];
+
+/// Each group's heading and the places on the palette its brushes have.
+pub(super) fn groups() -> impl Iterator<Item = (&'static str, std::ops::Range<usize>)> {
+    GROUPS.iter().scan(0, |from, (heading, names)| {
+        let places = *from..*from + names.len();
+        *from = places.end;
+        Some((*heading, places))
+    })
+}
 
 /// Where a brush on the palette came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1081,6 +1133,24 @@ mod tests {
     fn the_brushes_that_come_with_the_application_are_sound() {
         let came = core();
         assert_eq!(came.len() % 3, 0, "{} brushes do not fill rows of three", came.len());
+        // Every one of them is in a group, once, in the order of the
+        // groups, and each group fills its rows.
+        let grouped: Vec<&str> =
+            GROUPS.iter().flat_map(|(_, names)| names.iter().copied()).collect();
+        let names: Vec<&str> = came.iter().map(|preset| preset.name.as_str()).collect();
+        assert_eq!(names, grouped);
+        let mut covered = 0;
+        for (heading, places) in groups() {
+            assert_eq!(places.start, covered, "{heading} does not follow the group before it");
+            assert_eq!(places.len() % 3, 0, "{heading} does not fill its rows of three");
+            covered = places.end;
+        }
+        assert_eq!(covered, came.len());
+        // The brushes that add are the group called Add, and no others.
+        let (_, adds) = groups().last().expect("a last group");
+        for (index, preset) in came.iter().enumerate() {
+            assert_eq!(preset.add.is_some(), adds.contains(&index), "{}", preset.name);
+        }
         for (index, preset) in came.iter().enumerate() {
             assert!(preset.is_settled(), "{preset:?}");
             assert!(Actions::of(preset.kind).is_some(), "{} is not a field brush", preset.name);
