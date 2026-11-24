@@ -103,6 +103,9 @@ pub(super) struct Frame {
     pub events: u32,
     /// Stamps laid.
     pub stamps: u32,
+    /// Times a studio gesture that is set down whole (a shape, a body, a
+    /// map, a hung cable, one stamp) was set down again.
+    pub redone: u32,
     /// Bricks meshed.
     pub meshed: u32,
     /// Bricks the renderer took in, and their bytes.
@@ -291,7 +294,7 @@ fn heading() -> String {
         text.push(',');
         text.push_str(phase.label());
     }
-    text.push_str(",events,stamps,meshed,uploaded,uploaded_bytes");
+    text.push_str(",events,stamps,redone,meshed,uploaded,uploaded_bytes");
     text
 }
 
@@ -301,8 +304,13 @@ fn line(frame: &Frame) -> String {
         text.push_str(&format!(",{ms:.3}"));
     }
     text.push_str(&format!(
-        ",{},{},{},{},{}",
-        frame.events, frame.stamps, frame.meshed, frame.uploaded, frame.uploaded_bytes
+        ",{},{},{},{},{},{}",
+        frame.events,
+        frame.stamps,
+        frame.redone,
+        frame.meshed,
+        frame.uploaded,
+        frame.uploaded_bytes
     ));
     text
 }
@@ -339,9 +347,11 @@ pub(super) fn table(frames: &[Frame]) -> String {
     row("interval", counted.iter().map(|frame| frame.interval_ms).collect(), false);
     let sum = |of: fn(&Frame) -> u64| counted.iter().map(|frame| of(frame)).sum::<u64>();
     text.push_str(&format!(
-        "{} pointer events, {} stamps, {} bricks meshed, {} uploaded ({:.1} MB)\n",
+        "{} pointer events, {} stamps, {} gestures set down again, {} bricks meshed, {} \
+         uploaded ({:.1} MB)\n",
         sum(|frame| u64::from(frame.events)),
         sum(|frame| u64::from(frame.stamps)),
+        sum(|frame| u64::from(frame.redone)),
         sum(|frame| u64::from(frame.meshed)),
         sum(|frame| u64::from(frame.uploaded)),
         sum(|frame| frame.uploaded_bytes) as f64 / (1024.0 * 1024.0),

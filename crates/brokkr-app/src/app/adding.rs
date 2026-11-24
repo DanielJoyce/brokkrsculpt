@@ -491,6 +491,21 @@ impl Brokkr {
         let Some((centre, normal)) = self.inserts.press else {
             return;
         };
+        // **What is set down whole is set down once a frame.** A shape, a
+        // body, a map and a hung cable are each put back and joined again
+        // from where the press was and where the pointer is now, and nothing
+        // of where it was on the way. So of several moves handled together
+        // only the last is worth the work: with a mouse that reports eight
+        // times a frame the other seven were each a whole join, thrown away
+        // by the next. A cable laid along the model is the other kind, made
+        // of every point the pointer passed, and takes every move. See
+        // `Brokkr::pointer_in`.
+        if self.batching && !matches!(what, Insert::Laid) {
+            return;
+        }
+        if !matches!(what, Insert::Laid) {
+            self.phases.count(|frame| frame.redone += 1);
+        }
         match what {
             Insert::Shape(_) | Insert::Body(_) | Insert::Map(_) => {
                 // How far the pointer has gone from the press, in the plane
@@ -1093,6 +1108,62 @@ mod tests {
     /// Whether a point is inside the active body.
     fn solid_at(app: &Brokkr, point: Vec3) -> bool {
         app.doc.active_volume().sample_world(point) < 0.0
+    }
+
+    /// Moves that arrive between two frames set a shape down once, where
+    /// the last of them left the pointer, and it is the shape a move a frame
+    /// leaves, to the bit.
+    #[test]
+    fn moves_that_arrive_together_set_a_shape_down_once() {
+        let to = MIDDLE + Vec2::new(40.0, 12.0);
+        let moved = |step: usize| {
+            let at = MIDDLE.lerp(to, step as f32 / 12.0);
+            Message::Pointer(PointerEvent::Moved {
+                position: iced::Vector::new(at.x, at.y),
+                size: SIZE,
+            })
+        };
+
+        // A frame after every move: the helper handles each as it comes.
+        let mut one_a_frame = app();
+        choose(&mut one_a_frame, Insert::Shape(Form::Ball));
+        press(&mut one_a_frame, MIDDLE);
+        one_a_frame.phases.end_frame();
+        for step in 1..=12 {
+            update(&mut one_a_frame, moved(step));
+        }
+        assert_eq!(one_a_frame.phases.end_frame().redone, 12);
+        release(&mut one_a_frame);
+
+        // Every move, and then the frame.
+        let mut together = app();
+        choose(&mut together, Insert::Shape(Form::Ball));
+        press(&mut together, MIDDLE);
+        together.phases.end_frame();
+        for step in 1..=12 {
+            drop(together.update(moved(step)));
+        }
+        drop(together.update(Message::Frame));
+        let frame = together.phases.last();
+        assert_eq!((frame.events, frame.redone), (12, 1), "set down once for twelve moves");
+        release(&mut together);
+
+        let (one, other) = (one_a_frame.doc.active_volume(), together.doc.active_volume());
+        let (mut differing, mut near) = (0, 0);
+        for index in 0..60 * 60 * 60 {
+            let cell = glam::IVec3::new(index % 60, index / 60 % 60, index / 3600);
+            let point = (cell.as_vec3() - 30.0) * 0.8;
+            let (a, b) = (one.sample_world(point), other.sample_world(point));
+            differing += usize::from(a.to_bits() != b.to_bits());
+            near += usize::from(a.abs() < 2.5);
+        }
+        assert!(near > 1000, "the points compared miss the surface");
+        assert_eq!(differing, 0, "moves handled together set a different shape down");
+        assert!(solid_voxels(&together) > solid_voxels(&app()), "nothing was set down");
+        assert_eq!(
+            together.history_stats.undo_entries, one_a_frame.history_stats.undo_entries,
+            "one undo either way"
+        );
     }
 
     /// A shape is set down by a drag: where the press was, as big as the
