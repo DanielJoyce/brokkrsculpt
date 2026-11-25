@@ -1595,6 +1595,7 @@ mod apply_tests {
             colour: vec![0; 64],
             cavity: Vec::new(),
             paint: Vec::new(),
+            finish: Vec::new(),
         }
     }
 
@@ -1638,6 +1639,7 @@ mod apply_tests {
             colour: vec![0; 4],
             cavity: Vec::new(),
             paint: Vec::new(),
+            finish: Vec::new(),
         }
     }
 

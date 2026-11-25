@@ -96,6 +96,10 @@ pub enum Blend {
     /// Tints by how light what is under it is: full over light, nearly gone
     /// over dark; pools in creases and thins on edges.
     Contrast,
+    /// No colour at all: a finish, matte, satin or gloss, over what is
+    /// under it. Its paint's red is the finish's code
+    /// ([`crate::paint::Finish::code`]). Stage 6 of `docs/PAINT-RACK.md`.
+    Varnish,
 }
 
 impl std::fmt::Display for Blend {
@@ -105,8 +109,15 @@ impl std::fmt::Display for Blend {
 }
 
 impl Blend {
-    pub const ALL: [Blend; 6] =
-        [Blend::Normal, Blend::Multiply, Blend::Screen, Blend::Glaze, Blend::Wash, Blend::Contrast];
+    pub const ALL: [Blend; 7] = [
+        Blend::Normal,
+        Blend::Multiply,
+        Blend::Screen,
+        Blend::Glaze,
+        Blend::Wash,
+        Blend::Contrast,
+        Blend::Varnish,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -116,6 +127,7 @@ impl Blend {
             Blend::Glaze => "Glaze",
             Blend::Wash => "Wash",
             Blend::Contrast => "Contrast",
+            Blend::Varnish => "Varnish",
         }
     }
 
@@ -155,7 +167,9 @@ impl Blend {
             [f(colour[0], under[0]), f(colour[1], under[1]), f(colour[2], under[2])]
         };
         match self {
-            Blend::Normal => colour,
+            // A varnish lays no colour and never comes here: see
+            // `composite_voxel`.
+            Blend::Normal | Blend::Varnish => colour,
             Blend::Multiply | Blend::Wash => each(&|c, u| c * u),
             Blend::Screen => each(&|c, u| 1.0 - (1.0 - c) * (1.0 - u)),
             Blend::Glaze => {
@@ -229,6 +243,9 @@ pub struct Layers {
     next_id: LayerId,
     /// The stack put together. Empty while the stack is plain.
     composite: PaintField,
+    /// The finish of each voxel: the top shown varnish over it, as its red.
+    /// Empty while no varnish is shown.
+    finish: PaintField,
 }
 
 /// The paint of a whole stack, with what each layer is: what an undo entry
@@ -320,6 +337,17 @@ impl Layers {
         &self.composite
     }
 
+    /// The finish of each voxel, as put together: its red is the code of
+    /// the top shown varnish over it. Empty with no varnish shown.
+    pub(crate) fn finish(&self) -> &PaintField {
+        &self.finish
+    }
+
+    /// Whether a varnish is shown anywhere in the stack.
+    pub(crate) fn has_varnish(&self) -> bool {
+        self.metas.iter().any(|meta| meta.visible && meta.blend == Blend::Varnish)
+    }
+
     /// Make the implicit layer a real one, so it can be named and stacked.
     fn realise(&mut self) {
         if self.metas.is_empty() {
@@ -366,6 +394,7 @@ impl Layers {
         }
         self.active = if self.metas.is_empty() { 0 } else { active };
         self.composite = PaintField::default();
+        self.finish = PaintField::default();
         active_paint
     }
 
@@ -472,6 +501,7 @@ impl Layers {
             self.active = 0;
         }
         self.composite = PaintField::default();
+        self.finish = PaintField::default();
         TakenLayers { layers, active }
     }
 
@@ -521,6 +551,7 @@ impl Layers {
             self.active = 0;
         }
         self.composite = PaintField::default();
+        self.finish = PaintField::default();
         had
     }
 
@@ -542,6 +573,7 @@ impl Layers {
         self.active = self.metas.iter().position(|meta| meta.id == taken.active).unwrap_or(0);
         std::mem::swap(&mut self.fields[self.active], active_paint);
         self.composite = PaintField::default();
+        self.finish = PaintField::default();
     }
 
     /// Make another layer the active one.
@@ -649,6 +681,7 @@ impl Layers {
         let mut out = self.clone();
         out.recorders = vec![None; out.recorders.len()];
         out.composite = PaintField::default();
+        out.finish = PaintField::default();
         for (index, field) in out.fields.iter_mut().enumerate() {
             if index != self.active {
                 *field = f(field);
@@ -664,6 +697,7 @@ impl Layers {
         out.fields = vec![PaintField::default(); out.fields.len()];
         out.recorders = vec![None; out.recorders.len()];
         out.composite = PaintField::default();
+        out.finish = PaintField::default();
         out
     }
 
@@ -681,6 +715,7 @@ impl Layers {
             return;
         }
         let metas = self.metas();
+        self.put_the_finish_together(coord, active_paint, &metas);
         let layers: Vec<(&LayerMeta, &PaintBrick)> = metas
             .iter()
             .enumerate()
@@ -708,6 +743,42 @@ impl Layers {
             *slot = rgba;
         }
         self.composite.restore_brick(coord, any.then_some(out));
+    }
+
+    /// Put one brick of the finish together: the top shown varnish with
+    /// at least half a coat over each voxel.
+    fn put_the_finish_together(
+        &mut self,
+        coord: BrickCoord,
+        active_paint: &PaintField,
+        metas: &[LayerMeta],
+    ) {
+        let varnishes: Vec<&PaintBrick> = metas
+            .iter()
+            .enumerate()
+            .rev()
+            .filter(|(_, meta)| meta.visible && meta.blend == Blend::Varnish)
+            .filter_map(|(index, _)| {
+                let field = if index == self.active { active_paint } else { &self.fields[index] };
+                field.brick(coord)
+            })
+            .collect();
+        if varnishes.is_empty() {
+            self.finish.restore_brick(coord, None);
+            return;
+        }
+        let mut out = PaintBrick::dense_filled(BARE);
+        let data = out.make_dense();
+        let mut any = false;
+        for (voxel, slot) in data.iter_mut().enumerate() {
+            if let Some(rgba) =
+                varnishes.iter().map(|brick| brick.rgba_at(voxel)).find(|rgba| rgba[3] >= 128)
+            {
+                *slot = [rgba[0], 0, 0, 255];
+                any = true;
+            }
+        }
+        self.finish.restore_brick(coord, any.then_some(out));
     }
 
     /// Swap the layer at `index` with the volume's paint field and its
@@ -773,6 +844,7 @@ impl Layers {
     /// Forget the composite, so every brick is put together again.
     pub(crate) fn forget_composite(&mut self) {
         self.composite = PaintField::default();
+        self.finish = PaintField::default();
     }
 
     /// Every brick any layer has paint in.
@@ -795,6 +867,13 @@ impl Layers {
     pub(crate) fn merge_down(&mut self, index: usize, active_paint: &mut PaintField) {
         self.realise();
         if index == 0 || index >= self.metas.len() {
+            return;
+        }
+        // A varnish holds a finish and a paint a colour: the two do not
+        // merge into one layer.
+        if self.metas[index].blend == Blend::Varnish
+            || self.metas[index - 1].blend == Blend::Varnish
+        {
             return;
         }
         let below = index - 1;
@@ -838,12 +917,32 @@ impl Layers {
         let fields: Vec<&PaintField> =
             (0..metas.len()).map(|index| self.field(index, active_paint)).collect();
         let flat = merge_fields(&metas, &fields);
+        // Every varnish stays, over the paint put together: a finish is not
+        // a colour to merge.
+        let varnishes: Vec<(LayerMeta, PaintField)> = metas
+            .iter()
+            .zip(&fields)
+            .filter(|(meta, _)| meta.blend == Blend::Varnish)
+            .map(|(meta, field)| (meta.clone(), (*field).clone()))
+            .collect();
         *active_paint = flat;
         self.metas.clear();
         self.fields.clear();
         self.recorders.clear();
         self.active = 0;
+        if !varnishes.is_empty() {
+            self.metas.push(LayerMeta::plain(self.next_id, "Paint"));
+            self.next_id += 1;
+            self.fields.push(PaintField::default());
+            self.recorders.push(None);
+            for (meta, field) in varnishes {
+                self.metas.push(meta);
+                self.fields.push(field);
+                self.recorders.push(None);
+            }
+        }
         self.composite = PaintField::default();
+        self.finish = PaintField::default();
     }
 }
 
@@ -890,7 +989,8 @@ pub(crate) fn composite_voxel<'a>(
     let mut p = [0.0_f32; 3];
     let mut a = 0.0_f32;
     for (meta, rgba) in layers {
-        if rgba[3] == 0 {
+        // A varnish lays a finish and no colour.
+        if rgba[3] == 0 || meta.blend == Blend::Varnish {
             continue;
         }
         let k =

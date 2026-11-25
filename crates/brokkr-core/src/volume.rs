@@ -764,6 +764,20 @@ impl Volume {
         if self.layers.is_plain() { &self.paint } else { self.layers.composite() }
     }
 
+    /// The finish at a voxel, by [`crate::paint::Finish::code`], nought
+    /// where no varnish is shown over it.
+    pub fn finish_at(&self, voxel: IVec3) -> u8 {
+        if !self.layers.has_varnish() {
+            return 0;
+        }
+        self.layers.finish().at(voxel)[0]
+    }
+
+    /// Whether any varnish is shown on this body.
+    pub fn has_varnish(&self) -> bool {
+        self.layers.has_varnish()
+    }
+
     /// Put the composite together again in every dirty brick.
     ///
     /// Only where the stack is not one plain layer. A brick's crease is
@@ -1364,6 +1378,13 @@ impl Volume {
         // The stack put together, which for one plain layer is that layer.
         // See `paint/layers.rs`.
         self.display_paint().rgba_at_cells(coord, &out.cells, &mut out.paint);
+        // The finish a varnish laid, where one is shown. See
+        // `paint/layers.rs`.
+        if self.layers.has_varnish() && !self.layers.finish().is_empty() {
+            let mut finish = Vec::with_capacity(out.cells.len());
+            self.layers.finish().rgba_at_cells(coord, &out.cells, &mut finish);
+            out.finish.extend(finish.iter().map(|rgba| rgba[0]));
+        }
         debug_assert_eq!(
             out.mask.len(),
             out.vertices.len(),

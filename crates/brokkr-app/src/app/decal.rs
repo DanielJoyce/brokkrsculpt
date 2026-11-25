@@ -204,7 +204,7 @@ impl Brokkr {
                 .painting
                 .decal
                 .as_stamp
-                .then(|| self.painting.pigment(brokkr_core::BrushDirection::Add));
+                .then(|| self.pigment(brokkr_core::BrushDirection::Add));
             let dab = Dab {
                 at,
                 along,

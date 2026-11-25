@@ -35,6 +35,8 @@ pub(super) struct CoatsState {
     pub chop: Spongechop,
     /// The spongechop's contrast, kept while it is off.
     pub contrast: [u8; 3],
+    /// The finish a varnish coat lays, and a stroke on a Varnish layer.
+    pub varnish: brokkr_core::paint::Finish,
 }
 
 impl Default for CoatsState {
@@ -47,6 +49,7 @@ impl Default for CoatsState {
             middle: [128, 128, 124],
             chop: Spongechop::default(),
             contrast: [150, 24, 20],
+            varnish: brokkr_core::paint::Finish::Matte,
         }
     }
 }
@@ -58,6 +61,26 @@ impl CoatsState {
 }
 
 impl Brokkr {
+    /// What is on the brush, for a stroke in `direction`: on a Varnish
+    /// layer, the finish chosen, as its code, and not the colour in hand.
+    /// See `brokkr_core::paint::layers`.
+    pub(super) fn pigment(
+        &self,
+        direction: brokkr_core::BrushDirection,
+    ) -> brokkr_core::paint::stroke::Pigment {
+        let pigment = self.painting.pigment(direction);
+        let layers = self.doc.active_volume().layers();
+        let varnish = layers
+            .metas()
+            .get(layers.active())
+            .is_some_and(|meta| meta.blend == brokkr_core::paint::layers::Blend::Varnish);
+        if !varnish {
+            return pigment;
+        }
+        let code = self.painting.coats.varnish.code();
+        brokkr_core::paint::stroke::Pigment { colour: [code, 0, 0], opacity: 1.0, ..pigment }
+    }
+
     pub(super) fn coats_changed(&mut self, message: CoatsMessage) {
         let coats = &mut self.painting.coats;
         match message {
@@ -103,6 +126,11 @@ impl Brokkr {
             CoatsMessage::Zenithal => {
                 let zenithal = Zenithal { light: coats.light(), ..coats.zenithal };
                 self.apply_coat("zenithal", move |volume| volume.zenithal(&zenithal));
+            }
+            CoatsMessage::Varnish(finish) => coats.varnish = finish,
+            CoatsMessage::VarnishCoat => {
+                let finish = coats.varnish;
+                self.apply_coat("varnish", move |volume| volume.varnish_coat(finish));
             }
             CoatsMessage::Spongechop => {
                 // A new speckle each time it is pressed, so two spongechops
@@ -275,7 +303,24 @@ impl Brokkr {
         ]
         .spacing(theme::S2);
 
-        column![light, base, zenithal_block, chop_block].spacing(theme::S3).into()
+        let varnish = column![
+            row![label("Varnish").width(Length::Fill), apply(CoatsMessage::VarnishCoat)]
+                .spacing(theme::S2)
+                .align_y(Alignment::Center),
+            crate::ui::segmented(
+                [
+                    brokkr_core::paint::Finish::Matte,
+                    brokkr_core::paint::Finish::Satin,
+                    brokkr_core::paint::Finish::Gloss,
+                ]
+                .map(|finish| (finish, finish.label())),
+                coats.varnish,
+                |finish| Message::Coats(CoatsMessage::Varnish(finish)),
+            ),
+        ]
+        .spacing(theme::S2);
+
+        column![light, base, zenithal_block, chop_block, varnish].spacing(theme::S3).into()
     }
 }
 
@@ -350,6 +395,23 @@ mod tests {
         let top = seen(on_surface(middle, glam::Vec3::Y));
         let bottom = seen(on_surface(middle, -glam::Vec3::Y));
         assert!(top[0] > 200 && bottom[0] < 60, "top {top:?} and bottom {bottom:?}");
+    }
+
+    /// A varnish coat is a Varnish layer and one undo, and a stroke on a
+    /// Varnish layer lays the finish chosen and not the colour in hand.
+    #[test]
+    fn a_varnish_is_a_layer_and_strokes_on_it_lay_the_finish() {
+        use brokkr_core::paint::Finish;
+        let mut app = app();
+        coats(&mut app, CoatsMessage::Varnish(Finish::Gloss));
+        coats(&mut app, CoatsMessage::VarnishCoat);
+        assert_eq!(names(&app), ["Paint", "Varnish: Gloss"]);
+        let pigment = app.pigment(brokkr_core::BrushDirection::Add);
+        assert_eq!(pigment.colour, [Finish::Gloss.code(), 0, 0]);
+        update(&mut app, Message::Layers(crate::message::LayersMessage::Chosen(0)));
+        assert_eq!(app.pigment(brokkr_core::BrushDirection::Add).colour, app.painting.colour);
+        update(&mut app, Message::Undo);
+        assert_eq!(names(&app), ["Paint"]);
     }
 
     /// A coat's swatch takes the colour in hand; the light from the view

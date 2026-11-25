@@ -213,7 +213,7 @@ impl Brokkr {
             PaintTouch::Sponge => Catch::Specks(self.touch.sponge),
         };
         let lay = Lay {
-            pigment: self.painting.pigment(direction),
+            pigment: self.pigment(direction),
             catch,
             seed: coat.seed,
             origin: coat.origin,
@@ -239,7 +239,7 @@ impl Brokkr {
     /// fills each as the pointer reaches it. The drag is one undo entry.
     pub(super) fn pour_colour(&mut self, point: Vec3, direction: BrushDirection) {
         let lines = self.fill_lines(0);
-        let pigment = self.painting.pigment(direction);
+        let pigment = self.pigment(direction);
         let like = self.painting.fill_like;
         let filled = self.doc.active_volume_mut().fill_colour(point, pigment, like, lines);
         self.say_what_was_filled(filled);
@@ -276,7 +276,7 @@ impl Brokkr {
         if self.layer_refuses_paint() {
             return;
         }
-        let pigment = self.painting.pigment(BrushDirection::Add);
+        let pigment = self.pigment(BrushDirection::Add);
         self.arm_recorder();
         let volume = self.doc.active_volume_mut();
         let (lo, hi) = volume.voxel_bounds(low, high);

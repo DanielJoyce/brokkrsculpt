@@ -33,12 +33,12 @@
 //! handful of numbers and one kind of string in it, the bodies' names,
 //! which are escaped.
 //!
-//! # What it does not carry yet
+//! # Roughness and metal
 //!
-//! One picture a body, its base colour. A paint's finish (how matt or how
-//! metallic it is) is in the picture only as far as it changed the colour:
-//! every material here is the same matt non-metal. A roughness and metal
-//! picture is the next map to bake, and this is where it would be named.
+//! A body a varnish was laid on (stage 6 of `docs/PAINT-RACK.md`) has a
+//! second picture, its roughness and metal as glTF packs them, green and
+//! blue, and its material names it. A body with none is the same matt
+//! non-metal every material here was before.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -57,6 +57,8 @@ pub struct Body<'a> {
     pub mesh: &'a ExportMesh,
     pub unwrap: &'a Unwrap,
     pub png: &'a [u8],
+    /// Its roughness and metal picture, as a PNG, where a varnish was laid.
+    pub finish_png: Option<&'a [u8]>,
 }
 
 /// Millimetres to metres.
@@ -136,6 +138,10 @@ pub fn write(bodies: &[Body<'_>], out: &mut impl Write) -> io::Result<()> {
     // For each body: its vertex count, index count, and the least and most
     // of its positions, which the format requires be stated.
     let mut shapes: Vec<(usize, usize, Vec3, Vec3)> = Vec::new();
+    // For each body: its first view, and the views of its pictures, base
+    // colour and then roughness and metal if it has one.
+    let mut firsts: Vec<usize> = Vec::new();
+    let mut pictures: Vec<(usize, Option<usize>)> = Vec::new();
     let mut view = |bin: &mut Vec<u8>, bytes: &[u8], target: Option<u32>| {
         while !bin.len().is_multiple_of(4) {
             bin.push(0);
@@ -184,11 +190,21 @@ pub fn write(bodies: &[Body<'_>], out: &mut impl Write) -> io::Result<()> {
                 indices.extend_from_slice(&index.to_le_bytes());
             }
         }
+        let first = firsts.last().map_or(0, |was: &usize| {
+            let (_, finish) = pictures[firsts.len() - 1];
+            was + 5 + usize::from(finish.is_some())
+        });
+        firsts.push(first);
         view(&mut bin, &positions, Some(34962));
         view(&mut bin, &normals, Some(34962));
         view(&mut bin, &places, Some(34962));
         view(&mut bin, &indices, Some(34963));
         view(&mut bin, body.png, None);
+        let finish = body.finish_png.map(|png| {
+            view(&mut bin, png, None);
+            first + 5
+        });
+        pictures.push((first + 4, finish));
         shapes.push((count as usize, mesh.triangles.len() * 3, low, high));
     }
     while !bin.len().is_multiple_of(4) {
@@ -196,8 +212,32 @@ pub fn write(bodies: &[Body<'_>], out: &mut impl Write) -> io::Result<()> {
     }
 
     // The JSON. Five views a body, in the order they were made: positions,
-    // normals, places, indices, picture. Four accessors a body, for the
-    // first four.
+    // normals, places, indices, picture; and a sixth, the roughness and
+    // metal picture, for a body that has one. Four accessors a body, for
+    // the first four. An image and a texture for each picture, in order.
+    let mut images: Vec<usize> = Vec::new();
+    let mut materials: Vec<String> = Vec::new();
+    for (base, finish) in &pictures {
+        images.push(*base);
+        let colour = images.len() - 1;
+        materials.push(match finish {
+            Some(view) => {
+                images.push(*view);
+                format!(
+                    "{{\"pbrMetallicRoughness\":{{\"baseColorTexture\":{{\"index\":{colour}}},\
+                     \"metallicRoughnessTexture\":{{\"index\":{}}},\
+                     \"metallicFactor\":1,\"roughnessFactor\":1}}}}",
+                    images.len() - 1
+                )
+            }
+            // Not metal, and not shiny: a painted model, lit by whatever
+            // opens it.
+            None => format!(
+                "{{\"pbrMetallicRoughness\":{{\"baseColorTexture\":{{\"index\":{colour}}},\
+                 \"metallicFactor\":0,\"roughnessFactor\":0.9}}}}"
+            ),
+        });
+    }
     let list = |items: Vec<String>| items.join(",");
     let json = format!(
         concat!(
@@ -236,28 +276,16 @@ pub fn write(bodies: &[Body<'_>], out: &mut impl Write) -> io::Result<()> {
                 })
                 .collect()
         ),
-        // Not metal, and not shiny: a painted model, lit by whatever opens
-        // it.
-        materials = list(
-            (0..bodies.len())
-                .map(|index| {
-                    format!(
-                        "{{\"pbrMetallicRoughness\":{{\"baseColorTexture\":{{\"index\":{index}}},\
-                         \"metallicFactor\":0,\"roughnessFactor\":0.9}}}}"
-                    )
-                })
-                .collect()
-        ),
+        materials = list(materials),
         textures = list(
-            (0..bodies.len())
+            (0..images.len())
                 .map(|index| format!("{{\"sampler\":0,\"source\":{index}}}"))
                 .collect()
         ),
         images = list(
-            (0..bodies.len())
-                .map(|index| {
-                    format!("{{\"bufferView\":{},\"mimeType\":\"image/png\"}}", index * 5 + 4)
-                })
+            images
+                .iter()
+                .map(|view| format!("{{\"bufferView\":{view},\"mimeType\":\"image/png\"}}"))
                 .collect()
         ),
         accessors = list(
@@ -265,7 +293,7 @@ pub fn write(bodies: &[Body<'_>], out: &mut impl Write) -> io::Result<()> {
                 .iter()
                 .enumerate()
                 .flat_map(|(index, (vertices, corners, low, high))| {
-                    let view = index * 5;
+                    let view = firsts[index];
                     [
                         format!(
                             "{{\"bufferView\":{view},\"componentType\":5126,\"count\":{vertices},\
@@ -720,8 +748,20 @@ mod tests {
         let (first_unwrap, second_unwrap) = (first.unwrapped(spec), second.unwrapped(spec));
         let (first_png, second_png) = (b"picture".as_slice(), b"other".as_slice());
         let bodies = [
-            Body { name: "Head", mesh: &first, unwrap: &first_unwrap, png: first_png },
-            Body { name: "Left hand", mesh: &second, unwrap: &second_unwrap, png: second_png },
+            Body {
+                name: "Head",
+                mesh: &first,
+                unwrap: &first_unwrap,
+                png: first_png,
+                finish_png: None,
+            },
+            Body {
+                name: "Left hand",
+                mesh: &second,
+                unwrap: &second_unwrap,
+                png: second_png,
+                finish_png: None,
+            },
         ];
         let mut bytes = Vec::new();
         write(&bodies, &mut bytes).expect("writing to memory");
@@ -744,6 +784,53 @@ mod tests {
         assert_ne!(head.positions.len(), hand.positions.len());
     }
 
+    /// A body with a roughness and metal picture names it in its material
+    /// and carries its bytes, and the body after it, with none, still reads
+    /// back whole: its views are counted from where the first's ended.
+    #[test]
+    fn a_varnished_body_carries_its_roughness_and_metal_picture() {
+        let (first, second) = (ball(8.0), ball(5.0));
+        let spec = UnwrapSpec { size: 256, ..UnwrapSpec::default() };
+        let (first_unwrap, second_unwrap) = (first.unwrapped(spec), second.unwrapped(spec));
+        let bodies = [
+            Body {
+                name: "Varnished",
+                mesh: &first,
+                unwrap: &first_unwrap,
+                png: b"colour",
+                finish_png: Some(b"finish!"),
+            },
+            Body {
+                name: "Bare",
+                mesh: &second,
+                unwrap: &second_unwrap,
+                png: b"other",
+                finish_png: None,
+            },
+        ];
+        let mut bytes = Vec::new();
+        write(&bodies, &mut bytes).expect("writing to memory");
+        let glb = open(&bytes);
+        assert_eq!(glb.json.get("images").list().len(), 3);
+        assert_eq!(glb.json.get("bufferViews").list().len(), 11);
+        let material = &glb.json.get("materials").list()[0];
+        let pbr = material.get("pbrMetallicRoughness");
+        assert_eq!(pbr.get("metallicFactor").number(), 1.0);
+        let texture = &glb.json.get("textures").list()
+            [pbr.get("metallicRoughnessTexture").get("index").index()];
+        let image = &glb.json.get("images").list()[texture.get("source").index()];
+        let (picture, _) = glb.view(image.get("bufferView").index());
+        assert_eq!(picture, b"finish!");
+        assert!(
+            glb.json.get("materials").list()[1]
+                .get("pbrMetallicRoughness")
+                .find("metallicRoughnessTexture")
+                .is_none()
+        );
+        assert_reads_back(&glb.body(0), &first, &first_unwrap, b"colour");
+        assert_reads_back(&glb.body(1), &second, &second_unwrap, b"other");
+    }
+
     /// Millimetres in, metres out, and nothing turned: a ball 8 mm in
     /// radius is 0.008 across each way from its middle, and the vertex
     /// that was highest in Y still is.
@@ -757,8 +844,11 @@ mod tests {
         }
         let unwrap = mesh.unwrapped(UnwrapSpec { size: 256, ..UnwrapSpec::default() });
         let mut bytes = Vec::new();
-        write(&[Body { name: "Egg", mesh: &mesh, unwrap: &unwrap, png: b"png" }], &mut bytes)
-            .expect("writing to memory");
+        write(
+            &[Body { name: "Egg", mesh: &mesh, unwrap: &unwrap, png: b"png", finish_png: None }],
+            &mut bytes,
+        )
+        .expect("writing to memory");
         let read = open(&bytes).body(0);
         assert!((read.high.x - 0.008).abs() < 0.0005, "{}", read.high);
         assert!((read.high.y - 0.016).abs() < 0.0005, "{}", read.high);
@@ -779,8 +869,11 @@ mod tests {
             }
         }
         let mut bytes = Vec::new();
-        write(&[Body { name: "Ball", mesh: &mesh, unwrap: &unwrap, png: b"png" }], &mut bytes)
-            .expect("writing to memory");
+        write(
+            &[Body { name: "Ball", mesh: &mesh, unwrap: &unwrap, png: b"png", finish_png: None }],
+            &mut bytes,
+        )
+        .expect("writing to memory");
         let read = open(&bytes).body(0);
         assert_eq!(read.positions.len(), pairs.len());
         // Control: a ball has seams, so this is more than its vertices and
@@ -795,8 +888,11 @@ mod tests {
         let mesh = ExportMesh { normals: Vec::new(), ..ball(8.0) };
         let unwrap = mesh.unwrapped(UnwrapSpec { size: 256, ..UnwrapSpec::default() });
         let mut bytes = Vec::new();
-        write(&[Body { name: "Ball", mesh: &mesh, unwrap: &unwrap, png: b"png" }], &mut bytes)
-            .expect("writing to memory");
+        write(
+            &[Body { name: "Ball", mesh: &mesh, unwrap: &unwrap, png: b"png", finish_png: None }],
+            &mut bytes,
+        )
+        .expect("writing to memory");
         let read = open(&bytes).body(0);
         assert_reads_back(&read, &mesh, &unwrap, b"png");
         for (position, normal) in read.positions.iter().zip(&read.normals) {
@@ -816,8 +912,11 @@ mod tests {
         mesh.normals = vec![tilted; mesh.positions.len()];
         let unwrap = mesh.unwrapped(UnwrapSpec { size: 256, ..UnwrapSpec::default() });
         let mut bytes = Vec::new();
-        write(&[Body { name: "Ball", mesh: &mesh, unwrap: &unwrap, png: b"png" }], &mut bytes)
-            .expect("writing to memory");
+        write(
+            &[Body { name: "Ball", mesh: &mesh, unwrap: &unwrap, png: b"png", finish_png: None }],
+            &mut bytes,
+        )
+        .expect("writing to memory");
         let read = open(&bytes).body(0);
         assert!(read.normals.iter().all(|normal| *normal == tilted));
         assert!(!read.normals.is_empty());
@@ -830,8 +929,11 @@ mod tests {
         let unwrap = mesh.unwrapped(UnwrapSpec { size: 128, ..UnwrapSpec::default() });
         let name = "The \"left\" hand\\arm\n\ttab \u{1} and Brokkr's own: Brokkr \u{00e9}\u{4e16}";
         let mut bytes = Vec::new();
-        write(&[Body { name, mesh: &mesh, unwrap: &unwrap, png: b"png" }], &mut bytes)
-            .expect("writing to memory");
+        write(
+            &[Body { name, mesh: &mesh, unwrap: &unwrap, png: b"png", finish_png: None }],
+            &mut bytes,
+        )
+        .expect("writing to memory");
         let json = &bytes[20..20 + u32_at(&bytes, 12)];
         assert!(
             json.iter().all(|byte| *byte >= 0x20),
@@ -849,8 +951,14 @@ mod tests {
         let nothing = ExportMesh::default();
         let no_unwrap = nothing.unwrapped(spec);
         let bodies = [
-            Body { name: "Nothing", mesh: &nothing, unwrap: &no_unwrap, png: b"png" },
-            Body { name: "Ball", mesh: &mesh, unwrap: &unwrap, png: b"ball" },
+            Body {
+                name: "Nothing",
+                mesh: &nothing,
+                unwrap: &no_unwrap,
+                png: b"png",
+                finish_png: None,
+            },
+            Body { name: "Ball", mesh: &mesh, unwrap: &unwrap, png: b"ball", finish_png: None },
         ];
         let mut bytes = Vec::new();
         write(&bodies, &mut bytes).expect("writing to memory");
@@ -872,7 +980,8 @@ mod tests {
         let mut broken = mesh.clone();
         broken.positions[3].y = f32::NAN;
 
-        let good = Body { name: "Ball", mesh: &mesh, unwrap: &unwrap, png: b"png" };
+        let good =
+            Body { name: "Ball", mesh: &mesh, unwrap: &unwrap, png: b"png", finish_png: None };
         let refused: [(&str, Vec<Body<'_>>); 5] = [
             ("no bodies", Vec::new()),
             ("only an empty body", vec![Body { mesh: &nothing, unwrap: &no_unwrap, ..good }]),

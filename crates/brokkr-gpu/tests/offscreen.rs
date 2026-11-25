@@ -3340,3 +3340,55 @@ fn a_bodys_paint_is_drawn_over_what_is_under_it_by_its_coverage() {
     let total = (THUMBNAIL_SIZE * THUMBNAIL_SIZE) as usize;
     assert!(red * 8 > total, "only {red} of {total} thumbnail texels show the paint");
 }
+
+/// A varnish's finish is drawn: a gloss coat puts a brighter highlight on
+/// the body than bare clay has, and changes no shape; drawn flat, with no
+/// light to catch, it changes nothing. Stage 6 of `docs/PAINT-RACK.md`.
+#[test]
+fn a_gloss_varnish_is_drawn_with_a_highlight() {
+    use brokkr_core::paint::Finish;
+    use brokkr_core::paint::layers::Blend;
+
+    let Some(harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the varnish render test");
+        return;
+    };
+    let distance = MODEL_RADIUS * 3.0;
+    let mut renderer = SculptRenderer::new(&harness.device, &harness.queue, TARGET_FORMAT);
+    renderer.resize(&harness.device, WIDTH, HEIGHT);
+    renderer.write_uniforms(&harness.queue, &uniforms(distance));
+
+    let mut volume = Volume::new(VOXEL_SIZE);
+    volume.seed_sphere(Vec3::ZERO, MODEL_RADIUS);
+    upload_all(&mut renderer, &harness.device, &harness.queue, &mut volume);
+    let bare = harness.frame(&renderer);
+    renderer.write_uniforms(&harness.queue, &Uniforms { paint_shown: 2, ..uniforms(distance) });
+    let bare_flat = harness.frame(&renderer);
+    renderer.write_uniforms(&harness.queue, &uniforms(distance));
+
+    volume.add_layer("Varnish: Gloss", Blend::Varnish).expect("room");
+    let reach = (MODEL_RADIUS / VOXEL_SIZE) as i32 + 4;
+    let code = Finish::Gloss.code();
+    volume.edit_paint(IVec3::splat(-reach), IVec3::splat(reach), |_, _, _, _| [code, 0, 0, 255]);
+    let remeshed = upload_dirty(&mut renderer, &harness.device, &harness.queue, &mut volume);
+    assert!(remeshed > 0, "varnishing marked no brick for remesh");
+    let glossy = harness.frame(&renderer);
+    dump("varnish-gloss", &glossy);
+
+    assert_eq!(mask(&bare), mask(&glossy), "a varnish changed the shape drawn");
+    let brightest = |pixels: &[u8]| {
+        pixels.as_chunks::<4>().0.iter().map(|pixel| u32::from(pixel[1])).max().unwrap_or(0)
+    };
+    assert!(
+        brightest(&glossy) > brightest(&bare) + 20,
+        "the gloss's highlight is {} against the clay's {}",
+        brightest(&glossy),
+        brightest(&bare)
+    );
+
+    renderer.write_uniforms(&harness.queue, &Uniforms { paint_shown: 2, ..uniforms(distance) });
+    let glossy_flat = harness.frame(&renderer);
+    let moved =
+        bare_flat.iter().zip(&glossy_flat).filter(|(one, other)| one.abs_diff(**other) > 2).count();
+    assert_eq!(moved, 0, "drawn flat, a varnish changed {moved} channels");
+}

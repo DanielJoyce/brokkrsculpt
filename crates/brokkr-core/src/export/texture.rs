@@ -77,6 +77,33 @@ impl Unwrap {
         bake: &Bake<'_>,
         margin: u32,
     ) -> Texture {
+        self.baked_by(mesh, volume, margin, |point| bake.surface_colour(volume, point))
+    }
+
+    /// The finish a varnish laid, baked onto this unwrap as a glTF wants a
+    /// roughness and metal picture: green the roughness and blue the
+    /// metalness, red left full. Where no varnish is, the matte non-metal
+    /// every material here was before. Stage 6 of `docs/PAINT-RACK.md`.
+    pub fn finish_baked(&self, mesh: &ExportMesh, volume: &Volume, margin: u32) -> Texture {
+        let voxel_size = volume.voxel_size();
+        self.baked_by(mesh, volume, margin, |point| {
+            let code = volume.finish_at((point / voxel_size).round().as_ivec3());
+            let finish =
+                crate::paint::Finish::from_code(code).unwrap_or(crate::paint::Finish::Matte);
+            let (rough, metal) = finish.roughness_and_metal();
+            [255, (rough * 255.0).round() as u8, (metal * 255.0).round() as u8]
+        })
+    }
+
+    /// Bake whatever `colour` says of each point of the surface onto this
+    /// unwrap of `mesh`, a mesh of `volume`.
+    fn baked_by(
+        &self,
+        mesh: &ExportMesh,
+        volume: &Volume,
+        margin: u32,
+        colour: impl Fn(Vec3) -> [u8; 3] + Sync,
+    ) -> Texture {
         let size = self.size as usize;
         let voxel_size = volume.voxel_size();
 
@@ -126,8 +153,7 @@ impl Unwrap {
                         let on_triangle =
                             (solid[0] * clamped[0] + solid[1] * clamped[1] + solid[2] * clamped[2])
                                 / total;
-                        let colour = bake
-                            .surface_colour(volume, onto_surface(volume, on_triangle, voxel_size));
+                        let colour = colour(onto_surface(volume, on_triangle, voxel_size));
                         texels.push(((y * size + x) as u32, colour));
                     }
                 }

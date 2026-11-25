@@ -471,8 +471,7 @@ impl Brokkr {
         out: &mut impl std::io::Write,
     ) -> std::io::Result<()> {
         let textures = self.textures_for(bodies);
-        let mut pictures = Vec::with_capacity(bodies.len());
-        for (_, texture) in &textures {
+        let encoded = |texture: &brokkr_core::export::texture::Texture| {
             let mut png = Vec::new();
             image::write_buffer_with_format(
                 &mut std::io::Cursor::new(&mut png),
@@ -482,18 +481,36 @@ impl Brokkr {
                 image::ExtendedColorType::Rgba8,
                 image::ImageFormat::Png,
             )
-            .map_err(std::io::Error::other)?;
-            pictures.push(png);
+            .map_err(std::io::Error::other)
+            .map(|()| png)
+        };
+        let mut pictures = Vec::with_capacity(bodies.len());
+        for (_, texture) in &textures {
+            pictures.push(encoded(texture)?);
+        }
+        // A varnished body's roughness and metal, as a second picture. See
+        // `brokkr_core::export::glb`.
+        let margin = brokkr_core::export::unwrap::UnwrapSpec::default().margin;
+        let mut finishes = Vec::with_capacity(bodies.len());
+        for ((meta, mesh, _), (unwrap, _)) in bodies.iter().zip(&textures) {
+            finishes.push(match self.doc.volume(meta.id) {
+                Some(volume) if volume.has_varnish() => {
+                    Some(encoded(&unwrap.finish_baked(mesh, volume, margin))?)
+                }
+                _ => None,
+            });
         }
         let parts: Vec<brokkr_core::export::glb::Body<'_>> = bodies
             .iter()
             .zip(&textures)
             .zip(&pictures)
-            .map(|(((meta, mesh, _), (unwrap, _)), png)| brokkr_core::export::glb::Body {
+            .zip(&finishes)
+            .map(|((((meta, mesh, _), (unwrap, _)), png), finish)| brokkr_core::export::glb::Body {
                 name: meta.name.as_str(),
                 mesh,
                 unwrap,
                 png,
+                finish_png: finish.as_deref(),
             })
             .collect();
         brokkr_core::export::glb::write(&parts, out)
@@ -2380,6 +2397,49 @@ mod tests {
         assert!(picture.pixels().all(|pixel| pixel.0[3] == 255), "the picture is not opaque");
 
         std::fs::remove_dir_all(&directory).ok();
+    }
+
+    /// A body with a gloss varnish on it exports as a GLB whose material
+    /// names a roughness and metal picture, smooth where the varnish is.
+    /// Stage 6 of `docs/PAINT-RACK.md`.
+    #[test]
+    fn a_varnished_body_exports_its_roughness_in_the_glb() {
+        let directory = scratch("glb-varnish");
+        let path = directory.join("figure.glb");
+        let mut app = app();
+        update(&mut app, Message::TextureSizeChanged(512));
+        update(
+            &mut app,
+            Message::Coats(crate::message::CoatsMessage::Varnish(
+                brokkr_core::paint::Finish::Gloss,
+            )),
+        );
+        update(&mut app, Message::Coats(crate::message::CoatsMessage::VarnishCoat));
+        app.export(crate::message::ExportFormat::Glb, &path);
+        assert!(app.status.starts_with("exported"), "{}", app.status);
+
+        let bytes = std::fs::read(&path).expect("the GLB should be there");
+        let word =
+            |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().expect("four")) as usize;
+        let json_length = word(12);
+        let json: serde_json::Value =
+            serde_json::from_slice(&bytes[20..20 + json_length]).expect("the JSON chunk is JSON");
+        let bin = &bytes[20 + json_length + 8..];
+        let index = |value: &serde_json::Value| value.as_u64().expect("an index") as usize;
+        let primitive = &json["meshes"][0]["primitives"][0];
+        let material = &json["materials"][index(&primitive["material"])];
+        let texture = &material["pbrMetallicRoughness"]["metallicRoughnessTexture"]["index"];
+        let image = &json["images"][index(&json["textures"][index(texture)]["source"])];
+        let view = &json["bufferViews"][index(&image["bufferView"])];
+        let (offset, length) = (index(&view["byteOffset"]), index(&view["byteLength"]));
+        let picture = image::load_from_memory(&bin[offset..offset + length])
+            .expect("the picture inside is a picture")
+            .into_rgba8();
+        let (rough, _) = brokkr_core::paint::Finish::Gloss.roughness_and_metal();
+        let gloss = (rough * 255.0).round() as u8;
+        let smooth =
+            picture.pixels().filter(|pixel| pixel.0[1] == gloss && pixel.0[2] == 0).count();
+        assert!(smooth > 1000, "only {smooth} texels have the gloss's roughness");
     }
 
     /// A painted body exports as one GLB: one file, that a JSON parser

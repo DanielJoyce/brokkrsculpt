@@ -94,6 +94,11 @@ pub struct BrickMesh {
     /// for each vertex, read by cell for the reason the slot is. See
     /// [`crate::paint::field`]. A run of zeros for a body with no paint.
     pub paint: Vec<[u8; 4]>,
+    /// The finish at each vertex's own lattice cell, by
+    /// [`crate::paint::Finish::code`], nought for none: what a varnish
+    /// layer laid. Empty for a body with no varnish, which the pool writes
+    /// as noughts. See `paint/layers.rs`.
+    pub finish: Vec<u8>,
     /// How concave the surface is at each vertex, as [`crate::signals`]
     /// encodes it, one byte per vertex.
     ///
@@ -116,6 +121,7 @@ impl BrickMesh {
         self.mask.clear();
         self.colour.clear();
         self.paint.clear();
+        self.finish.clear();
         self.cavity.clear();
     }
 

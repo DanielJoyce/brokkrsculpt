@@ -4,8 +4,8 @@ A design, asked for by the maintainer on 2026-11-25. Built so far, each
 with an "as built" part where its design is: stage 1, layers (end of
 section 1); stage 2, the index and racks (end of section 3); stage 3,
 brush sizes and the airbrush (section 5); stage 4, the sponge and the
-one-click coats (end of section 7); and stage 5, stamps and decals (end
-of section 6). Varnish is not built yet. It covers:
+one-click coats (end of section 7); stage 5, stamps and decals (end of
+section 6); and stage 6, varnish (end of section 8). It covers:
 
 - a searchable index of real hobby paints, from the
   [miniature-paints](https://github.com/Arcturus5404/miniature-paints)
@@ -751,6 +751,54 @@ coated over the whole body in one click.
   the rest), so a render elsewhere shows the varnish.
 - Typical use, which the defaults follow: matte over everything, gloss on
   eyes, gems, wet things and blood.
+
+### Stage 6, as built (2026-11-25)
+
+**A varnish is a blend.** `Blend::Varnish`, the seventh, on any layer:
+it lays no colour (the composite passes over it), and its paint's red is
+a finish's code, `Finish::code`: 1 matte, 2 satin, 3 gloss, 4 metallic,
+nought none. The stack puts a second field together beside the colour,
+the finish: at each voxel, the top shown varnish with at least half a
+coat there. A merge down refuses a pair with a varnish in it; a flatten
+keeps every varnish as a layer over the paint put together. A reader
+from before this stage refuses a layers section with a varnish in it and
+opens the paint as it was seen.
+
+**Laid.** COATS has *Varnish*: Matte, Satin or Gloss, and Apply, a new
+layer "Varnish: Gloss" and so on over all of the body, one undo. On a
+Varnish layer the brush and every touch lay the finish chosen there,
+not the colour in hand, so a varnish is brushed on as paint is (gloss on
+eyes and gems, matte over the rest).
+
+**Drawn.** Each vertex carries the finish at its cell in byte 3 of the
+attribute buffer, which was spare. The shader adds a highlight from a
+light above and left of the camera, as tight and bright as the finish is
+smooth (`Finish::roughness_and_metal`: 0.9, 0.5, 0.15 and 0.35 rough;
+metallic is metal), and a metal's highlight in its own colour with less
+of it lit flat. Drawn flat, a varnish changes nothing.
+
+**Exported.** A GLB of a varnished body carries a second picture, its
+roughness and metal as glTF packs them (green and blue), named by its
+material as `metallicRoughnessTexture` with factors of one. A body with
+no varnish is the matte non-metal it was. The bake is the base colour's
+(`Unwrap::baked_by`), reading the finish at each texel's point.
+
+**Tested.** A varnish coat lays a finish and no colour, hidden it is no
+finish, and a flatten keeps it; a GLB with a roughness picture names it
+and its bytes come back, and a body after it with none still reads back
+whole; the application's GLB of a gloss-varnished ball has the gloss's
+roughness over its texels (read with serde_json and the image crate);
+the app's varnish coat is a layer and one undo, and a stroke on a
+Varnish layer lays the finish; rendered on llvmpipe, a gloss varnish
+puts a brighter highlight on the ball than the clay has, changes no
+shape, and drawn flat changes nothing. On the screen: the ball before
+and after a gloss coat.
+
+**Not done in this stage.** A paint's own finish where no varnish is
+(metallic for a metallic, glossy for a fresh decal); a slot paint's
+saved finish drawn; the OBJ+PNG export's roughness (its MTL has no map
+for it that every reader takes); a varnish hiding a decal's edge, which
+needs the decal's own gloss first.
 
 ## 9. Where it goes in the window
 

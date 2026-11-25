@@ -747,8 +747,11 @@ impl MeshPool {
                 .zip(mesh.colour.iter().chain(std::iter::repeat(&0)))
                 .zip(mesh.cavity.iter().chain(std::iter::repeat(&0)))
                 .zip(mesh.paint.iter().chain(std::iter::repeat(&[0; 4])))
-                .map(|(((mask, slot), cavity), paint)| {
-                    [*mask, *slot, *cavity, 0, paint[0], paint[1], paint[2], paint[3]]
+                .zip(mesh.finish.iter().chain(std::iter::repeat(&0)))
+                // Byte 3, which was spare, the finish a varnish laid. See
+                // `brokkr_core::paint::layers`.
+                .map(|((((mask, slot), cavity), paint), finish)| {
+                    [*mask, *slot, *cavity, *finish, paint[0], paint[1], paint[2], paint[3]]
                 }),
         );
 
@@ -1373,6 +1376,7 @@ mod tests {
             colour: vec![0; vertices],
             cavity: Vec::new(),
             paint: Vec::new(),
+            finish: Vec::new(),
         }
     }
 
