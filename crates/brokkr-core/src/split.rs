@@ -881,8 +881,12 @@ impl Document {
         // hands each half the other's paint under material it does not have.
         masked.adopt_paint(volume.colour());
         rest.adopt_paint(volume.colour());
-        masked.adopt_rgba(volume.paint());
-        rest.adopt_rgba(volume.paint());
+        // Every layer, each half keeping its own share of each.
+        let sources = volume.layer_fields();
+        masked.take_empty_layers_of(volume);
+        rest.take_empty_layers_of(volume);
+        masked.edit_each_layer(|half, index| half.adopt_rgba(sources[index]));
+        rest.edit_each_layer(|half, index| half.adopt_rgba(sources[index]));
         // Both halves are brand new to the renderer, and a volume built by
         // `insert_brick` has marked nothing.
         masked.mark_everything_dirty();
@@ -934,7 +938,9 @@ impl Document {
         }
         for output in &mut volumes {
             output.adopt_paint(volume.colour());
-            output.adopt_rgba(volume.paint());
+            let sources = volume.layer_fields();
+            output.take_empty_layers_of(volume);
+            output.edit_each_layer(|part, index| part.adopt_rgba(sources[index]));
             // Every output is brand new to the renderer, and a volume built by
             // `insert_brick` has marked nothing. Without this the bodies are
             // right in every headless assertion and invisible on screen, which

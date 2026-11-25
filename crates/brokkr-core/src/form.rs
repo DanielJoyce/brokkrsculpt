@@ -216,9 +216,14 @@ impl Volume {
             });
         }
         // And the paint proper, the same way.
-        *out.paint_mut() = crate::paint::field::PaintField::default();
-        if !self.paint().is_empty() {
-            let paint = self.paint();
+        // Every layer of it. See `paint/layers.rs`.
+        let sources = self.layer_fields();
+        out.take_empty_layers_of(self);
+        out.edit_each_layer(|out, index| {
+            let paint = sources[index];
+            if paint.is_empty() {
+                return;
+            }
             out.edit_paint(lo, hi, |_, position, _, protection| {
                 let free = 1.0 - f32::from(protection) / f32::from(PROTECTED);
                 match pull_back(position, free) {
@@ -226,7 +231,7 @@ impl Volume {
                     None => crate::paint::field::BARE,
                 }
             });
-        }
+        });
         out.mark_everything_dirty();
         Ok(out)
     }

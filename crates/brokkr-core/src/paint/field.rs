@@ -117,6 +117,15 @@ impl PaintBrick {
         }
     }
 
+    /// The paint of one voxel of the brick.
+    #[inline]
+    pub(crate) fn rgba_at(&self, index: usize) -> Rgba {
+        match self {
+            PaintBrick::Uniform(rgba) => *rgba,
+            PaintBrick::Dense(data) => data[index],
+        }
+    }
+
     pub(crate) fn is_collapsible(&self) -> Option<Rgba> {
         match self {
             PaintBrick::Uniform(rgba) => Some(*rgba),
@@ -771,8 +780,12 @@ impl Volume {
     pub(crate) fn union_paint_from(&mut self, other: &Volume) {
         let parts = self.paint_parts();
         let recorder = parts.recorder;
+        // The other body's stack, put together, into this one's active
+        // layer: two stacks of different layers do not line up, and what
+        // the other body looks like is what it should bring.
+        let flat = other.flattened_paint();
         let changed = parts.paint.union_from(
-            other.paint(),
+            &flat,
             |coord, index| other.has_material_at(coord.origin() + local_of(index)),
             |coord, prior| {
                 if let Some(recorder) = recorder.as_mut() {
@@ -792,16 +805,34 @@ impl Volume {
         "a paint for each voxel of the box"
     )]
     pub fn snapshot_paint(&self, lo: IVec3, hi: IVec3, region: &mut PaintRegion) {
+        snapshot_field(self.paint(), lo, hi, region);
+    }
+
+    /// [`Volume::snapshot_paint`] of the layer at `index` in the stack.
+    pub fn snapshot_layer_paint(
+        &self,
+        index: usize,
+        lo: IVec3,
+        hi: IVec3,
+        region: &mut PaintRegion,
+    ) {
+        snapshot_field(self.layer_fields()[index], lo, hi, region);
+    }
+}
+
+/// The paint of a box of voxels of one field, copied out.
+fn snapshot_field(field: &PaintField, lo: IVec3, hi: IVec3, region: &mut PaintRegion) {
+    {
         region.lo = lo;
         region.size = (hi - lo + IVec3::ONE).max(IVec3::ZERO);
         region.values.clear();
         region.values.resize(region.size.element_product().max(0) as usize, BARE);
-        if self.paint().is_empty() {
+        if field.is_empty() {
             return;
         }
         let size = region.size;
         for coord in bricks_between(BrickCoord::containing(lo).0, BrickCoord::containing(hi).0) {
-            let slab = self.paint().slab(coord);
+            let slab = field.slab(coord);
             if matches!(slab, PaintSlab::Uniform(BARE) | PaintSlab::Bare) {
                 continue;
             }

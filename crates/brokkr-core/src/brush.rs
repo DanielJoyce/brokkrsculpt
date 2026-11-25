@@ -1808,7 +1808,8 @@ struct Locked {
     painted: bool,
     /// And the paint proper ([`crate::paint::field`]) over the same box, on
     /// the same terms, with its own flag for the same saving.
-    rgba: crate::paint::field::PaintRegion,
+    /// A box a layer, bottom to top. See `paint/layers.rs`.
+    rgba: Vec<crate::paint::field::PaintRegion>,
     coloured: bool,
 }
 
@@ -2003,9 +2004,16 @@ impl MoveStroke {
             if locked.painted {
                 volume.snapshot_colour(read_lo, read_hi, &mut locked.colour);
             }
-            locked.coloured = !volume.paint().is_empty();
+            // Every layer, each from its own lock, since every layer goes
+            // with the material.
+            let layers = volume.layer_fields();
+            locked.coloured = layers.iter().any(|layer| !layer.is_empty());
+            locked.rgba.resize_with(layers.len(), Default::default);
+            locked.rgba.truncate(layers.len());
             if locked.coloured {
-                volume.snapshot_paint(read_lo, read_hi, &mut locked.rgba);
+                for index in 0..layers.len() {
+                    volume.snapshot_layer_paint(index, read_lo, read_hi, &mut locked.rgba[index]);
+                }
             }
         }
     }
@@ -2267,23 +2275,30 @@ impl MoveStroke {
             }
             // And the paint proper, the same way from its own lock.
             if locked.coloured {
-                let locked_rgba = &locked.rgba;
-                volume.edit_paint(anchor.lo, anchor.hi, |voxel, position, held, _| {
-                    let free = if masked {
-                        1.0 - (locked_mask.get(voxel) / PROTECTED as f32).clamp(0.0, 1.0)
-                    } else {
-                        1.0
-                    };
-                    if free <= 0.0 {
-                        return held;
-                    }
-                    let Some(displacement) =
-                        move_displacement(anchors, drag, position, inverse_radius, falloff, cap)
-                    else {
-                        return held;
-                    };
-                    let from = (position - displacement * free) / voxel_size;
-                    locked_rgba.get(from.round().as_ivec3())
+                volume.edit_each_layer(|volume, layer| {
+                    let locked_rgba = &locked.rgba[layer];
+                    volume.edit_paint(anchor.lo, anchor.hi, |voxel, position, held, _| {
+                        let free = if masked {
+                            1.0 - (locked_mask.get(voxel) / PROTECTED as f32).clamp(0.0, 1.0)
+                        } else {
+                            1.0
+                        };
+                        if free <= 0.0 {
+                            return held;
+                        }
+                        let Some(displacement) = move_displacement(
+                            anchors,
+                            drag,
+                            position,
+                            inverse_radius,
+                            falloff,
+                            cap,
+                        ) else {
+                            return held;
+                        };
+                        let from = (position - displacement * free) / voxel_size;
+                        locked_rgba.get(from.round().as_ivec3())
+                    });
                 });
             }
         }
@@ -4855,6 +4870,76 @@ mod move_tests {
             }
         }
         assert!(arrived > 0, "the drag moved no surface cell, so this proves nothing");
+    }
+
+    /// Every layer of paint travels with the material under a Move, not
+    /// only the active one: the same fixture, with red on one layer and
+    /// blue on the one over it, and the lower one active.
+    #[test]
+    fn every_layer_travels_with_the_material_under_a_move() {
+        const RED: crate::paint::field::Rgba = [200, 30, 20, 255];
+        const BLUE: crate::paint::field::Rgba = [20, 40, 210, 128];
+        let brush = Brush { kind: BrushKind::Move, radius: 9.0, strength: 0.8, ..Brush::default() };
+        let at = Vec3::new(24.0, 0.0, 0.0);
+        let mut volume = sphere_with_a_bump();
+        let lo = IVec3::new(12, -12, -12);
+        let hi = IVec3::new(40, 12, 12);
+        let paint_depth = 1.5;
+        let cells = || {
+            (lo.x..=hi.x).flat_map(|x| {
+                (lo.y..=hi.y).flat_map(move |y| (lo.z..=hi.z).map(move |z| IVec3::new(x, y, z)))
+            })
+        };
+        let near: Vec<IVec3> =
+            cells().filter(|cell| volume.sample_voxel(*cell).abs() < paint_depth).collect();
+        let unpainted_before: Vec<IVec3> =
+            cells().filter(|cell| volume.sample_voxel(*cell).abs() >= paint_depth).collect();
+        let near = &near;
+        let near_only = |rgba| {
+            move |cell: IVec3, _: Vec3, held, _: u8| if near.contains(&cell) { rgba } else { held }
+        };
+        volume.edit_paint(lo, hi, near_only(RED));
+        volume.add_layer("Over", crate::paint::layers::Blend::Normal).expect("room");
+        volume.edit_paint(lo, hi, near_only(BLUE));
+        volume.set_active_layer(0);
+
+        let mut stroke = MoveStroke::new();
+        volume.begin_stroke();
+        stroke.begin(&volume, &brush, at, Symmetry::OFF, Vec3::ZERO);
+        stroke.drag_to(&mut volume, at + Vec3::X * 8.0, 1.0);
+        stroke.end();
+        let edit = volume.end_stroke().expect("a stroke");
+
+        let mut arrived = 0;
+        for x in lo.x..=hi.x {
+            for y in -3..=3 {
+                for z in -3..=3 {
+                    let cell = IVec3::new(x, y, z);
+                    if volume.sample_voxel(cell).abs() >= 0.5 || !unpainted_before.contains(&cell) {
+                        continue;
+                    }
+                    arrived += 1;
+                    let layers: Vec<_> =
+                        volume.layer_fields().iter().map(|field| field.at(cell)).collect();
+                    assert_eq!(layers, vec![RED, BLUE], "{cell:?} arrived without its layers");
+                }
+            }
+        }
+        assert!(arrived > 0, "the drag moved no surface cell, so this proves nothing");
+
+        // And one undo takes both layers back.
+        volume.apply_edit(edit);
+        for cell in &unpainted_before {
+            if volume.sample_voxel(*cell).abs() < 0.5 {
+                let layers: Vec<_> =
+                    volume.layer_fields().iter().map(|field| field.at(*cell)).collect();
+                assert_eq!(
+                    layers,
+                    vec![crate::paint::field::BARE; 2],
+                    "undo left a layer's paint at {cell:?}"
+                );
+            }
+        }
     }
 
     /// Under a mask the paint moves as far as the material does and no

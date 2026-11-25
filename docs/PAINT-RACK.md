@@ -1,7 +1,8 @@
 # The paint rack, and painting a figure
 
-A design, asked for by the maintainer on 2026-11-25 and not yet built. It
-covers:
+A design, asked for by the maintainer on 2026-11-25. Stage 1, layers, is
+built ("Stage 1, as built" at the end of section 1); the rest is not yet.
+It covers:
 
 - a searchable index of real hobby paints, from the
   [miniature-paints](https://github.com/Arcturus5404/miniature-paints)
@@ -122,6 +123,97 @@ In Paint's settings tab, always open: the stack, top first, each with its
 eye, its name (double click to rename), its blend and opacity, and a lock.
 Drag to reorder. Under it: new layer, duplicate, delete, merge down,
 flatten. Pressing a layer makes it active.
+
+### Stage 1, as built (2026-11-25)
+
+**The stack.** `brokkr-core/src/paint/layers.rs`. The active layer is the
+volume's own paint field, so every tool, touch, stroke record and undo
+that wrote the paint before writes the active layer now, unchanged. The
+other layers sit beside it. A body with one plain layer (Normal, full
+opacity, shown) is exactly what a body was before: no composite, no
+extra bytes in the file, nothing extra in a frame. Sixteen layers a body.
+
+**The composite.** Put together in `Volume::drain_dirty`, brick by brick,
+in the bricks anything marked dirty, before they are meshed; the mesher
+reads it. Arithmetic, on the shader's own `surface * (1 - a) + p` (sRGB,
+as the field stores it): for each shown layer, bottom up, with `k` its
+coverage times its opacity times, for a Wash or a Contrast, how much it
+pools at that voxel, the colour under it is `CLAY * (1 - a) + p`, the
+layer's blend turns its colour and that into a target, and then
+`p = (1 - k) p + k target`, `a = a + k (1 - a)`. How much a voxel is a
+crease is the field's Laplacian there, clamped to -1..=1, and is read
+only where a shown layer's blend reads the shape. The clay is the
+exports' (150, 140, 130).
+
+**What carries every layer.** Move (each layer locked and dragged with
+the material, one undo for all of them), Bulk, a shift, a warp, a turn, a
+resample, a copy, a split (each half keeps its own share of each layer).
+A merge of two bodies takes the other body's stack, flattened, into this
+one's active layer: two stacks do not line up layer for layer.
+
+**Undo.** A stroke records the bricks of each layer it changed, by the
+layer's id. A change to the stack (add, duplicate, delete, move, merge,
+flatten, a name, blend, opacity, eye or lock) is one entry holding the
+whole stack before it. A drag of the opacity, or a name typed, is one
+entry however many messages it is, by a revision count the history
+keeps.
+
+**The file.** A section of its own, `BRKLAYR1`, after the paint's
+(`paint/layer_file.rs`), written only where a body has more than one
+plain layer. The paint section before it holds each body's paint as it
+is seen, so a reader from before layers opens a layered file looking as
+it did, as one layer. An older file opens as one layer, "Paint".
+
+**What reads which.** The renderer, the exports (PLY colours, the
+texture bake, the 3MF filament choice) and Pick from model read what is
+seen. A Fill runs by the likeness of the active layer's paint.
+
+**The panel.** LAYERS, at the top of Paint's Settings tab, with a
+heading that does not fold. The stack top first: an eye, the name (the
+active layer's is a field to type in; another's is a button that makes
+it active), its blend, and a lock. Under it: new, duplicate, up, down,
+merge down, flatten, delete, then the active layer's blend and opacity.
+A hidden or locked layer takes no paint, and the status line says so.
+
+**Tested.** Properties: whatever sequence of adds, duplicates, deletes,
+moves, merges, activations, opacities, paint and flattens, the stack
+stays a stack (one to sixteen layers, the active one in it, each id
+once) and putting back each state before a change in reverse gives back
+the first; a stack whose blends do not read the shape, flattened, is
+what was seen, and a layer moved up and back leaves it as it was; a
+normal layer at full coverage hides what is under it; a multiply or wash
+never lightens and a screen never darkens; a contrast is lighter over a
+lighter undercoat; a wash pools deeper in a crease. Worked fixtures: a
+stroke goes to the active layer and its undo comes off that layer only;
+a stroke on every layer undoes on every layer; what is seen is the stack
+put together, and hiding a layer shows what is under it; a shifted body
+and both halves of a split keep every layer; a change to the stack
+undoes and redoes through the history; a stack saves and opens, a file
+cut before the section opens as the seen paint, and a flattened document
+writes no section; a damaged section is refused at every length; Move
+carries both layers of a two-layer body and one undo takes both back.
+The application, by its messages: a coat goes on the active layer and
+each undoes; a locked or hidden layer takes no paint; an opacity drag
+and a typed name are one undo each; up, down, merge and flatten, and
+their undos; a mask holds paint off a layer. On the screen: a red base,
+a glazed blue layer over it, and the eye taking the blue off again.
+
+**Not done in this stage.**
+
+- Drag to reorder: Up and Down buttons instead.
+- Double click to rename: the active layer's name is a field instead.
+- Each row's own opacity: the active layer's is under the list.
+- How much a layer holds, on the panel; and the limit of sixteen as a
+  setting with the other limits of issue 74.
+- A merge down or a flatten keeps a Wash or a Contrast at no crease: the
+  pooling is lost, as merging a live effect in a painting program loses
+  it.
+- A merge of two bodies brings the other's stack flattened, not as
+  layers.
+- What the composite costs a frame is not measured: the build machine
+  has no graphics card. By arithmetic it is a pass over the 32,768 voxels
+  of each dirty brick for each shown layer with paint there.
+- Painting by filament slot is not on layers (open question 8).
 
 ## 2. The paint index
 

@@ -107,7 +107,7 @@ impl Bake<'_> {
     /// or a vertex of a thinned mesh is not at a voxel. Free for a body
     /// that has none.
     pub fn over(&self, volume: &Volume, position: Vec3, under: [u8; 3]) -> [u8; 3] {
-        let paint = volume.paint();
+        let paint = volume.display_paint();
         if paint.is_empty() {
             return under;
         }
@@ -144,7 +144,7 @@ impl Bake<'_> {
         // No slots at all is every vertex unassigned: with no paint on the
         // body either, there is nothing to work out.
         let slotted = mesh.slots.len() == mesh.positions.len();
-        if !slotted && volume.paint().is_empty() {
+        if !slotted && volume.display_paint().is_empty() {
             return vec![self.unpainted; mesh.positions.len()];
         }
         let voxel_size = volume.voxel_size();
@@ -211,7 +211,7 @@ impl Bake<'_> {
     /// another, and a blend across the edge of a patch would send a rim of
     /// it to whichever filament is nearest the colour between.
     pub fn printed_slots(&self, volume: &Volume, mesh: &ExportMesh) -> Vec<u8> {
-        let paint = volume.paint();
+        let paint = volume.display_paint();
         if paint.is_empty() {
             return self.filament_slots(mesh);
         }

@@ -164,7 +164,9 @@ pub struct StrokeEdit {
     bytes: usize,
 }
 
-type PriorPaints = Vec<(BrickCoord, Option<PaintBrick>)>;
+/// The prior paint of a set of bricks, each with the layer it is of. See
+/// [`crate::paint::layers`].
+type PriorPaints = Vec<(crate::paint::layers::LayerId, BrickCoord, Option<PaintBrick>)>;
 
 /// The prior contents of a set of field bricks, run length encoded. `None` is
 /// a brick that did not exist, which undo puts back by removing it again.
@@ -260,8 +262,8 @@ impl StrokeEdit {
     pub(crate) fn with_paints(mut self, paints: PriorPaints) -> Self {
         self.bytes += paints
             .iter()
-            .map(|(_, brick)| {
-                size_of::<(BrickCoord, Option<PaintBrick>)>()
+            .map(|(_, _, brick)| {
+                size_of::<(u32, BrickCoord, Option<PaintBrick>)>()
                     + brick.as_ref().map_or(0, PaintBrick::heap_bytes)
             })
             .sum::<usize>();
@@ -463,6 +465,13 @@ pub enum Change {
     /// for whoever reports on an undo, and that one is the least surprising
     /// answer.
     Paints { body: NodeId, paints: Box<PaintTable> },
+
+    /// A body's whole stack of paint layers before a change to the stack
+    /// itself: a layer added, deleted, moved, merged, flattened, or its
+    /// name, blend, opacity, eye or lock changed. A stroke on a layer is
+    /// [`Change::Bricks`]. The whole stack, as [`Change::WholeMask`] is the
+    /// whole mask; see `paint/layers.rs`.
+    Layers { body: NodeId, state: Box<crate::paint::layers::LayerState> },
 }
 
 impl Change {
@@ -503,6 +512,13 @@ impl Change {
             Change::Paints { body, paints } => {
                 let previous = doc.replace_paints(*paints);
                 Change::Paints { body, paints: Box::new(previous) }
+            }
+            Change::Layers { body, state } => {
+                let volume = doc
+                    .volume_mut(body)
+                    .expect("a layers change names a body that is still in the document");
+                let previous = volume.restore_layers(*state);
+                Change::Layers { body, state: Box::new(previous) }
             }
             Change::WholeVolume { body, volume } => {
                 // Always applicable, by the same invariant `Change::Bricks`
@@ -565,6 +581,7 @@ impl Change {
             Change::WholeMask { body, .. } => *body,
             Change::WholeVolume { body, .. } => *body,
             Change::Paints { body, .. } => *body,
+            Change::Layers { body, .. } => *body,
             Change::Outline { before, after } => {
                 before.iter().zip(after).find(|(was, now)| was != now).map_or_else(
                     || before.first().map_or(NodeId(0), |meta| meta.id),
@@ -586,6 +603,7 @@ impl Change {
                 before.iter().chain(after).map(NodeMeta::bytes).sum()
             }
             Change::Paints { paints, .. } => paints.bytes(),
+            Change::Layers { state, .. } => state.bytes(),
         }
     }
 
@@ -712,6 +730,7 @@ impl Entry {
                 Change::Bricks { body, .. } => *body,
                 Change::WholeMask { body, .. } => *body,
                 Change::WholeVolume { body, .. } => *body,
+                Change::Layers { body, .. } => *body,
                 Change::NodeAdded { id, .. } => *id,
                 // The paint rack is on the panel whatever any eye says, as
                 // the outline is. The renumbered voxels that ride with a
@@ -798,9 +817,20 @@ pub struct History {
     reclaim_bytes: usize,
     dropped: usize,
     dropped_bodies: usize,
+    /// One more at every push, undo and redo. See [`History::revision`].
+    revision: u64,
 }
 
 impl History {
+    /// A count of what has happened to the history: one more at every
+    /// push, undo and redo. A gesture that should be one entry however
+    /// many messages it is (a layer's opacity dragged, its name typed)
+    /// pushes once and goes on while this has not moved. See
+    /// `app/layers.rs`.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     /// The stroke budget is a parameter and the reclaim allowance is not,
     /// because the one number tests and callers vary is the first.
     pub fn new(budget_bytes: usize) -> Self {
@@ -817,6 +847,7 @@ impl History {
             reclaim_bytes: 0,
             dropped: 0,
             dropped_bodies: 0,
+            revision: 0,
         }
     }
 
@@ -832,6 +863,7 @@ impl History {
         self.bytes += entry.stroke_bytes;
         self.reclaim_bytes += entry.reclaim_bytes;
         self.undo.push_back(entry);
+        self.revision += 1;
         self.clear_redo();
         self.trim();
     }
@@ -940,6 +972,7 @@ impl History {
             return UndoOutcome::Refused(hidden);
         }
         let entry = self.undo.pop_back().expect("checked just above");
+        self.revision += 1;
         self.apply(entry, doc, |history, inverse| history.redo.push_back(inverse))
     }
 
@@ -957,6 +990,7 @@ impl History {
             return UndoOutcome::Refused(hidden);
         }
         let entry = self.redo.pop_back().expect("checked just above");
+        self.revision += 1;
         self.apply(entry, doc, |history, inverse| history.undo.push_back(inverse))
     }
 
@@ -998,6 +1032,7 @@ impl History {
         self.reclaim_bytes = 0;
         self.dropped = 0;
         self.dropped_bodies = 0;
+        self.revision += 1;
     }
 
     pub fn stats(&self) -> HistoryStats {

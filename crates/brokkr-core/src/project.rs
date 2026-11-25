@@ -1025,9 +1025,25 @@ fn write_tail(out: &mut impl Write, doc: &Document, state: &ProjectState) -> Res
 
     // The paint itself, only where a body has some, behind a tag of its
     // own, after the table's. See `paint/file.rs`.
-    let painted = doc.nodes().iter().filter_map(|node| node.volume()).map(Volume::paint);
+    // Each body's paint as it is seen, every layer put together, so that a
+    // reader from before layers opens it looking as it did.
+    let painted = doc.nodes().iter().filter_map(|node| node.volume()).map(Volume::display_paint);
     if let Some(section) = crate::paint::file::encode(painted) {
         out.write_all(crate::paint::file::TAG)?;
+        write_u64(out, section.len() as u64)?;
+        out.write_all(&section)?;
+    }
+
+    // The layers themselves, where a body has more than one plain one. See
+    // `paint/layer_file.rs`.
+    let stacks: Vec<_> = doc
+        .nodes()
+        .iter()
+        .filter_map(|node| node.volume())
+        .map(|volume| (!volume.layers().is_plain()).then(|| volume.layer_state()))
+        .collect();
+    if let Some(section) = crate::paint::layer_file::encode(&stacks) {
+        out.write_all(crate::paint::layer_file::TAG)?;
         write_u64(out, section.len() as u64)?;
         out.write_all(&section)?;
     }
@@ -1637,6 +1653,29 @@ fn read_understanding_field_versions_to(
                     let volumes = loaded.iter_mut().filter_map(|(_, volume)| volume.as_mut());
                     for (volume, field) in volumes.zip(fields) {
                         *volume.paint_mut() = field;
+                    }
+                }
+            }
+            tag = next_tag(input);
+        }
+        // The layers, over the paint as it was seen, on the same terms: a
+        // section not taken leaves each body that paint as one layer. See
+        // `paint/layer_file.rs`.
+        if tag.as_ref() == Some(crate::paint::layer_file::TAG) {
+            let mut length = [0u8; 8];
+            if input.read_exact(&mut length).is_ok() {
+                let length = u64::from_le_bytes(length);
+                let mut bytes = Vec::new();
+                let taken = input.take(length).read_to_end(&mut bytes);
+                let bodies = loaded.iter().filter(|(_, volume)| volume.is_some()).count();
+                if taken.is_ok_and(|read| read as u64 == length)
+                    && let Ok(stacks) = crate::paint::layer_file::decode(&bytes, bodies)
+                {
+                    let volumes = loaded.iter_mut().filter_map(|(_, volume)| volume.as_mut());
+                    for (volume, stack) in volumes.zip(stacks) {
+                        if let Some(stack) = stack {
+                            volume.restore_layers(stack);
+                        }
                     }
                 }
             }

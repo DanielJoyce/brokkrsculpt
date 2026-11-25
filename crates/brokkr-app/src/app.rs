@@ -8,6 +8,8 @@ mod autosave;
 mod cards;
 mod context;
 mod keys;
+// The active body's layers of paint. See `app/layers.rs`.
+mod layers;
 mod rail;
 mod workspace;
 pub use adding::Insert;
@@ -5777,6 +5779,10 @@ impl Brokkr {
         if self.eyedropper_takes(point, start) {
             return;
         }
+        // A hidden or locked layer takes no paint. See `app/layers.rs`.
+        if self.painting_colour() && self.layer_refuses_paint() {
+            return;
+        }
         self.arm_recorder();
 
         let started = Instant::now();
@@ -10707,6 +10713,7 @@ impl Brokkr {
             Message::PaintRemoved => self.remove_paint(),
             Message::Overhang(message) => self.overhang_changed(message),
             Message::Painting(message) => self.painting_changed(message),
+            Message::Layers(message) => self.layers_changed(message),
             Message::PaintCoatChosen(coat) => self.paint_coat = coat,
             Message::PaintEdited(edit) => self.edit_paint(edit),
             Message::Studio(message) => return self.studio_changed(message),

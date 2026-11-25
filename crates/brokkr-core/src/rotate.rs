@@ -111,7 +111,7 @@ impl Volume {
         // under it would be left behind by a walk of `brick_coords`.
         *rotated.mask_mut() = self.mask().rotated(rotation);
         *rotated.colour_mut() = self.colour().rotated(rotation);
-        *rotated.paint_mut() = self.paint().rotated(rotation);
+        rotated.carry_layers_from(self, |paint| paint.rotated(rotation));
         rotated.mark_everything_dirty();
         rotated
     }
