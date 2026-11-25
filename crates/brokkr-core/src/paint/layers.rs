@@ -240,6 +240,27 @@ pub struct LayerState {
     pub active: usize,
 }
 
+/// Layers taken out of a stack, each with its place, and which layer was
+/// active when they were: what undoing a coat keeps for its redo.
+#[derive(Debug, Clone)]
+pub struct TakenLayers {
+    /// Bottom to top, each at the place it had.
+    pub layers: Vec<(usize, LayerMeta, PaintField)>,
+    pub active: LayerId,
+}
+
+impl TakenLayers {
+    /// What it holds.
+    pub fn bytes(&self) -> usize {
+        let mut stats = crate::volume::VolumeStats::default();
+        for (_, meta, field) in &self.layers {
+            field.add_to_stats(&mut stats);
+            stats.resident_bytes += size_of::<LayerMeta>() + meta.name.len();
+        }
+        stats.resident_bytes
+    }
+}
+
 impl LayerState {
     /// What it holds: its paint bricks and its names.
     pub fn bytes(&self) -> usize {
@@ -398,6 +419,129 @@ impl Layers {
         }
         self.swap_active(at, active_paint);
         Some(id)
+    }
+
+    /// Take the layers with these ids out of the stack, with their places,
+    /// and the id of the layer active before. The one that was active stays
+    /// so if it is left, or the one nearest it below. A stack left with one
+    /// plain layer named "Paint" is the implicit one again.
+    pub(crate) fn take(&mut self, ids: &[LayerId], active_paint: &mut PaintField) -> TakenLayers {
+        let active = self.active_id();
+        if self.metas.is_empty() {
+            return TakenLayers { layers: Vec::new(), active };
+        }
+        // Every layer's paint in `fields` while the stack is rearranged.
+        std::mem::swap(&mut self.fields[self.active], active_paint);
+        let mut places: Vec<usize> = self
+            .metas
+            .iter()
+            .enumerate()
+            .filter(|(_, meta)| ids.contains(&meta.id))
+            .map(|(at, _)| at)
+            .collect();
+        places.sort_unstable();
+        let was = self.active;
+        let mut layers = Vec::with_capacity(places.len());
+        for &at in places.iter().rev() {
+            let meta = self.metas.remove(at);
+            let field = self.fields.remove(at);
+            self.recorders.remove(at);
+            layers.push((at, meta, field));
+        }
+        layers.reverse();
+        if self.metas.is_empty() {
+            self.metas.push(LayerMeta::plain(0, "Paint"));
+            self.fields.push(PaintField::default());
+            self.recorders.push(None);
+        }
+        let below = places.iter().filter(|at| **at < was).count();
+        self.active = self
+            .metas
+            .iter()
+            .position(|meta| meta.id == active)
+            .unwrap_or(was.saturating_sub(below).min(self.metas.len() - 1));
+        std::mem::swap(&mut self.fields[self.active], active_paint);
+        if self.metas.len() == 1
+            && self.metas[0].is_plain()
+            && self.metas[0].id == 0
+            && self.metas[0].name == "Paint"
+        {
+            self.metas.clear();
+            self.fields.clear();
+            self.recorders.clear();
+            self.active = 0;
+        }
+        self.composite = PaintField::default();
+        TakenLayers { layers, active }
+    }
+
+    /// Give the stack these layers' settings in this order, the same layers
+    /// as it has, and make the one with `active` active; and hand back the
+    /// settings and order it had. What undoing a change to a layer's
+    /// settings or place does, without the paint.
+    pub(crate) fn arrange(
+        &mut self,
+        metas: Vec<LayerMeta>,
+        active: LayerId,
+        active_paint: &mut PaintField,
+    ) -> (Vec<LayerMeta>, LayerId) {
+        let had = (self.metas(), self.active_id());
+        let same = {
+            let mut now: Vec<LayerId> = had.0.iter().map(|meta| meta.id).collect();
+            let mut then: Vec<LayerId> = metas.iter().map(|meta| meta.id).collect();
+            now.sort_unstable();
+            then.sort_unstable();
+            now == then
+        };
+        if !same {
+            return had;
+        }
+        self.realise();
+        std::mem::swap(&mut self.fields[self.active], active_paint);
+        let mut fields = Vec::with_capacity(metas.len());
+        let mut recorders = Vec::with_capacity(metas.len());
+        for meta in &metas {
+            let at = self.metas.iter().position(|held| held.id == meta.id).expect("the same ids");
+            fields.push(std::mem::take(&mut self.fields[at]));
+            recorders.push(self.recorders[at].take());
+        }
+        self.metas = metas;
+        self.fields = fields;
+        self.recorders = recorders;
+        self.active = self.metas.iter().position(|meta| meta.id == active).unwrap_or(0);
+        std::mem::swap(&mut self.fields[self.active], active_paint);
+        if self.metas.len() == 1
+            && self.metas[0].is_plain()
+            && self.metas[0].id == 0
+            && self.metas[0].name == "Paint"
+        {
+            self.metas.clear();
+            self.fields.clear();
+            self.recorders.clear();
+            self.active = 0;
+        }
+        self.composite = PaintField::default();
+        had
+    }
+
+    /// Put layers taken out back at their places, and make the one that was
+    /// active then active again.
+    pub(crate) fn put_back(&mut self, taken: TakenLayers, active_paint: &mut PaintField) {
+        if taken.layers.is_empty() {
+            return;
+        }
+        self.realise();
+        std::mem::swap(&mut self.fields[self.active], active_paint);
+        for (at, meta, field) in taken.layers {
+            let at = at.min(self.metas.len());
+            self.next_id = self.next_id.max(meta.id + 1);
+            self.metas.insert(at, meta);
+            self.fields.insert(at, field);
+            self.recorders.insert(at, None);
+        }
+        self.active = self.metas.iter().position(|meta| meta.id == taken.active).unwrap_or(0);
+        std::mem::swap(&mut self.fields[self.active], active_paint);
+        self.composite = PaintField::default();
     }
 
     /// Make another layer the active one.

@@ -345,3 +345,73 @@ proptest! {
         prop_assert_eq!(flat, seen, "a flatten changed what is seen");
     }
 }
+
+/// Layers taken out come back where they were, with their paint, and the
+/// stack between is the stack before they were added.
+#[test]
+fn layers_taken_out_come_back_as_they_were() {
+    let mut volume = two_layers();
+    volume.set_active_layer(0);
+    let before = volume.layer_state();
+    let first = volume.add_layer("Coat", Blend::Multiply).expect("room");
+    coat(&mut volume, [9, 90, 9, 200]);
+    let at = volume.layers().active();
+    volume.reorder_layer(at, 0);
+    let second = volume.add_layer("Glaze", Blend::Glaze).expect("room");
+    coat(&mut volume, [90, 9, 9, 100]);
+    let after = volume.layer_state();
+
+    let taken = volume.take_layers(&[first, second]);
+    assert_eq!(volume.layers().metas(), before.metas);
+    assert_eq!(at_all(&volume), vec![RED, BLUE]);
+    volume.put_layers_back(taken);
+    assert_eq!(volume.layers().metas(), after.metas);
+    assert_eq!(volume.layers().active(), after.active);
+    for (field, was) in volume.layer_fields().iter().zip(&after.fields) {
+        assert!(same(field, was), "a layer's paint did not come back");
+    }
+
+    // Taking every real layer leaves the implicit one.
+    let mut fresh = ball();
+    let only = fresh.add_layer("Only", Blend::Normal).expect("room");
+    let _ = fresh.take_layers(&[only]);
+    assert!(fresh.layers().is_plain());
+    assert_eq!(fresh.layers().len(), 1);
+}
+
+fn at_all(volume: &Volume) -> Vec<Rgba> {
+    at(volume, ON)
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 32, ..ProptestConfig::default() })]
+
+    /// Any order and any settings, arranged and arranged back, are the
+    /// stack as it was, paint and all.
+    #[test]
+    fn layers_arranged_and_back_are_as_they_were(
+        order in Just(vec![0usize, 1, 2, 3]).prop_shuffle(),
+        opacity in 0.0f32..1.0,
+        active in 0usize..4,
+    ) {
+        let mut volume = two_layers();
+        volume.add_layer("Third", Blend::Screen).expect("room");
+        coat(&mut volume, [1, 2, 3, 40]);
+        volume.add_layer("Fourth", Blend::Glaze).expect("room");
+        let before = volume.layer_state();
+        let metas = volume.layers().metas();
+        let wanted: Vec<LayerMeta> = order
+            .iter()
+            .map(|at| LayerMeta { opacity, ..metas[*at].clone() })
+            .collect();
+        let (had, had_active) = volume.arrange_layers(wanted.clone(), metas[active].id);
+        prop_assert_eq!(volume.layers().metas(), wanted);
+        prop_assert_eq!(volume.layers().active_id(), metas[active].id);
+        volume.arrange_layers(had, had_active);
+        prop_assert_eq!(volume.layers().metas(), before.metas.clone());
+        prop_assert_eq!(volume.layers().active(), before.active);
+        for (field, was) in volume.layer_fields().iter().zip(&before.fields) {
+            prop_assert!(same(field, was), "a layer's paint moved");
+        }
+    }
+}

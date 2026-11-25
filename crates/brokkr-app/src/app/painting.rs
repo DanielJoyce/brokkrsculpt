@@ -77,6 +77,8 @@ pub(super) struct PaintingState {
     pub rack: super::rack::RackState,
     /// The airbrush. See `app/airbrush.rs`.
     pub airbrush: super::airbrush::AirbrushState,
+    /// The one-click coats. See `app/coats.rs`.
+    pub coats: super::coats::CoatsState,
 }
 
 impl Default for PaintingState {
@@ -93,6 +95,7 @@ impl Default for PaintingState {
             layers: Default::default(),
             rack: Default::default(),
             airbrush: Default::default(),
+            coats: Default::default(),
         }
     }
 }

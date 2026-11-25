@@ -14,6 +14,8 @@ mod layers;
 mod rack;
 // The airbrush, and the Paint mode's brush sizes. See `app/airbrush.rs`.
 mod airbrush;
+// The one-click coats. See `app/coats.rs`.
+mod coats;
 mod rail;
 mod workspace;
 pub use adding::Insert;
@@ -10729,6 +10731,7 @@ impl Brokkr {
             Message::Layers(message) => self.layers_changed(message),
             Message::Rack(message) => self.rack_changed(message),
             Message::Airbrush(message) => self.airbrush_changed(message),
+            Message::Coats(message) => self.coats_changed(message),
             Message::PaintCoatChosen(coat) => self.paint_coat = coat,
             Message::PaintEdited(edit) => self.edit_paint(edit),
             Message::Studio(message) => return self.studio_changed(message),

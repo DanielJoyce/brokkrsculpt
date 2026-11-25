@@ -1,11 +1,11 @@
 # The paint rack, and painting a figure
 
-A design, asked for by the maintainer on 2026-11-25. Stage 1, layers, is
-built ("Stage 1, as built" at the end of section 1), stage 2, the index
-and racks ("Stage 2, as built" at the end of section 3), and stage 3,
-brush sizes and the airbrush ("Stage 3, as built" in section 5); the rest
-is not yet.
-It covers:
+A design, asked for by the maintainer on 2026-11-25. Built so far, each
+with an "as built" part where its design is: stage 1, layers (end of
+section 1); stage 2, the index and racks (end of section 3); stage 3,
+brush sizes and the airbrush (section 5); and stage 4, the sponge and the
+one-click coats (end of section 7). Stamps and decals, and varnish, are
+not built yet. It covers:
 
 - a searchable index of real hobby paints, from the
   [miniature-paints](https://github.com/Arcturus5404/miniature-paints)
@@ -598,6 +598,86 @@ The four steps of the sponge above, in one press:
   ("Spongechop: dark" and so on) and the contrast a layer of its own with
   the contrast blend, so changing the light afterwards brightens the
   contrast over it.
+
+### Stage 4, as built (2026-11-25)
+
+**The sponge** (`paint/touch.rs`) gained three settings beside covers,
+speck and more on edges: **Into recesses** (how far into a crease it
+reaches: at none a full crease takes nothing, at all a recess takes what
+a flat does; a third to start), **Toward the light** (how much a face
+turned from the light is passed over; none to start), and the **foam**:
+Fine, Coarse (specks twice the size), or Torn (the same noise read where
+a coarser noise pushes it, so the share caught is unchanged and the
+edges are ragged). The light is the coats' light. Each dab is a new
+seed, as before, so dabbing again fills in.
+
+**The coats** (`paint/coats.rs`, `app/coats.rs`), in a COATS block under
+LAYERS in Paint's settings. The light is set once for all of them:
+*From above* (75 degrees up, toward the front), *From the view* (toward
+the camera now), or by *Light round* and *Light up* in degrees. The
+dragged sun on a dome is not done. Each coat's colours are swatches that
+take the colour in hand when pressed, so they come from the rack.
+
+- **Base coat**: the colour in hand over all of the body, on a new layer
+  "Base coat" put at the bottom of the stack.
+- **Zenithal**: a new layer "Zenithal" over the active one. A point's
+  value is how squarely it faces the light, `(n . l + 1) / 2`, raised to
+  `90 / cone` (a narrow cone is a hard top light), through the dark,
+  optional middle and light primers. **Shadows** is a box, off to start
+  (open question 3): a ray toward the light from each point, stepping by
+  the field's own distance, and a point something stands in front of
+  keeps a quarter of its light.
+- **Spongechop**: four layers over the active one, "Spongechop: dark"
+  (a full coat), "middle" and "light" (sponged), and "contrast" with the
+  Contrast blend if the box is ticked. A point's weight is 0.45 of how
+  much it faces the light, 0.3 of how high it stands along the light over
+  the body's reach, and 0.25 of how far out of a crease it is (from the
+  field's Laplacian). The middle covers a share rising over weights 0.3
+  to 0.6, the light over 0.6 to 0.85, each thresholded on the sponge's
+  own speck noise with a soft rim, so the gradient is broken as a sponge
+  leaves it. The sponge in hand is the one used. Each press is a new
+  speckle.
+
+Every coat respects the mask, and is one undo.
+
+**Undo, made smaller.** A coat over a whole figure adds layers covering
+all of it, and stage 1's undo kept the whole stack for every change: on
+the application's starting ball three coats outgrew the history's
+budget and pushed the first off, which a test caught. Now a change that
+only adds layers (a coat, a new layer, a duplicate, a paint's new layer)
+keeps their ids (`Change::LayersAdded`; undone, their paint goes to the
+redo side as `Change::LayersTaken`), and one that changes only settings
+or order (eye, lock, blend, opacity, name, up, down) keeps the settings
+(`Change::LayerSettings`), which also ended a clone of every layer's
+paint at each step of an opacity drag. Merge down, delete and flatten,
+which throw paint away, still keep the whole stack.
+
+**Tested.** Properties: the sponge never takes less where the surface
+stands up more or faces the light more, a recess takes what a flat does
+at full reach and nothing at none, and every foam covers its density on
+a flat; a zenithal is never darker facing the light more, nor with a
+wider cone; a spongechop never earns a recess more light than the peak
+beside it, and its light never covers more than its middle; layers
+arranged and arranged back are as they were. Worked: a base coat at the
+bottom covering the body; a zenithal light on top, dark below, held off
+by the mask; shadows darken the top of a ball under another; a
+spongechop's layers, dark everywhere, its light far more on top; layers
+taken out and put back, and taking every real layer leaves the implicit
+one. The application by its messages: each coat is its layers and one
+undo; a coat's swatch takes the colour in hand; the light from the view
+is toward the camera and the sponge takes it; a zenithal is seen light
+on top and dark below. On the screen: the block, a zenithal (dark seen
+from below), and a spongechop on the starting ball.
+
+**Not done in this stage.** The sun dragged on a dome; a live preview
+before Apply; a coat on every visible body at once (it is the active
+body, and the mask for a part of it); a Foundry triad or three paints
+picked for the spongechop in one go (each swatch takes the colour in
+hand); the spongechop's height "over its surroundings" is height along
+the light over the whole body, not over a neighbourhood; what a zenithal
+with shadows costs on a large model is not measured (by arithmetic, a
+ray of up to the body's length over the light, stepped by the field's
+distance but at least a voxel, for each voxel of the band).
 
 ## 8. Varnish
 

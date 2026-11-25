@@ -125,6 +125,10 @@ impl Default for Drybrush {
 }
 
 /// A sponge.
+///
+/// Reworked in stage 4 of `docs/PAINT-RACK.md` to work as a torn foam
+/// sponge does on a figure: it prefers what stands up and what faces the
+/// light, and keeps out of recesses by as much as its reach says.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Sponge {
     /// How much of a flat is covered, 0..=1, as a share of its area.
@@ -134,11 +138,60 @@ pub struct Sponge {
     /// How much more lands on raised edges, 0..=1. At 1 a full edge is
     /// covered whatever the density.
     pub edges: f32,
+    /// How far into a recess it reaches, 0..=1: at 1 a recess takes as
+    /// much as a flat, at 0 a full crease takes nothing.
+    pub reach: f32,
+    /// How much it prefers what faces the light, 0..=1: at 1 a face turned
+    /// from the light takes nothing.
+    pub toward_light: f32,
+    /// Toward the light. Up, unless a zenithal says otherwise.
+    pub light: Vec3,
+    pub foam: Foam,
+}
+
+/// The texture of the sponge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub enum Foam {
+    /// Small, even specks.
+    #[default]
+    Fine,
+    /// Specks twice the size.
+    Coarse,
+    /// Specks with ragged edges, as a piece of foam torn off a pack.
+    Torn,
+}
+
+impl Foam {
+    pub const ALL: [Foam; 3] = [Foam::Fine, Foam::Coarse, Foam::Torn];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Foam::Fine => "Fine",
+            Foam::Coarse => "Coarse",
+            Foam::Torn => "Torn",
+        }
+    }
+}
+
+impl Sponge {
+    /// The sponge as it was before stage 4: as much in a recess as on a
+    /// flat, no light, fine foam. What the older tests are written for.
+    pub const PLAIN: Sponge = Sponge {
+        density: 0.35,
+        grain_mm: 0.6,
+        edges: 0.5,
+        reach: 1.0,
+        toward_light: 0.0,
+        light: Vec3::Y,
+        foam: Foam::Fine,
+    };
 }
 
 impl Default for Sponge {
+    /// Out of the recesses for the most part, and not yet minding the
+    /// light.
     fn default() -> Self {
-        Self { density: 0.35, grain_mm: 0.6, edges: 0.5 }
+        Self { reach: 0.35, ..Self::PLAIN }
     }
 }
 
@@ -291,7 +344,8 @@ impl Coat {
             let gradient = gradient_at(region, voxel);
             let normal = gradient.normalize_or_zero();
             let on_surface = voxel.as_vec3() - normal * distance;
-            let raised = curvatures.raised(on_surface, coat.crease_gain);
+            let relief = curvatures.relief(on_surface, coat.crease_gain);
+            let raised = relief.max(0.0);
 
             // The gate's pattern is read where this point is the image of.
             let world = position - normal * (distance * voxel_size);
@@ -301,9 +355,11 @@ impl Coat {
                     let facing = 0.5 - 0.5 * normal.dot(travel);
                     dry.catches(raised, facing, frame.bristle(in_source, dry, coat.seed), coat.load)
                 }
-                Gate::Sponge(sponge) => {
-                    sponge.catches(raised, Frame::speck(in_source, sponge, coat.seed))
-                }
+                Gate::Sponge(sponge) => sponge.catches(
+                    relief,
+                    normal.dot(sponge.light),
+                    Frame::speck(in_source, sponge, coat.seed),
+                ),
             };
             if caught { slot } else { held }
         });
@@ -354,16 +410,24 @@ impl Drybrush {
 }
 
 impl Sponge {
-    /// Whether a point is caught. `speck` is uniform in 0..1 over the
-    /// surface, so on a flat the share caught is the density.
-    pub fn catches(&self, raised: f32, speck: f32) -> bool {
-        speck < self.share(raised)
+    /// Whether a point is caught. `relief` is how far the surface stands
+    /// up there (1 on a full edge, -1 in a full crease) and `facing` how
+    /// squarely it faces the light (the dot of its normal with the light).
+    /// `speck` is uniform in 0..1 over the surface, so on a flat facing the
+    /// light the share caught is the density.
+    pub fn catches(&self, relief: f32, facing: f32, speck: f32) -> bool {
+        speck < self.share(relief, facing)
     }
 
-    /// The share of the surface a sponge covers where it is this raised.
-    fn share(&self, raised: f32) -> f32 {
-        self.density.clamp(0.0, 1.0)
-            + (1.0 - self.density.clamp(0.0, 1.0)) * self.edges.clamp(0.0, 1.0) * raised
+    /// The share of the surface a sponge covers at a point.
+    pub fn share(&self, relief: f32, facing: f32) -> f32 {
+        let density = self.density.clamp(0.0, 1.0);
+        let mut share = density + (1.0 - density) * self.edges.clamp(0.0, 1.0) * relief.max(0.0);
+        if relief < 0.0 {
+            share *= 1.0 - (1.0 - self.reach.clamp(0.0, 1.0)) * (-relief).min(1.0);
+        }
+        let lit = (facing.clamp(-1.0, 1.0) + 1.0) * 0.5;
+        share * (1.0 - self.toward_light.clamp(0.0, 1.0) * (1.0 - lit))
     }
 
     /// How much of a full touch a point takes, 0..=1, for paint that can be
@@ -373,8 +437,8 @@ impl Sponge {
     /// share of everything is still everything and a share of nothing is
     /// still nothing.
     #[debug_ensures((0.0..=1.0).contains(&ret), "a share of a full touch")]
-    pub fn amount(&self, raised: f32, speck: f32) -> f32 {
-        ((self.share(raised) * (1.0 + SPECK_RIM) - speck) / SPECK_RIM).clamp(0.0, 1.0)
+    pub fn amount(&self, relief: f32, facing: f32, speck: f32) -> f32 {
+        ((self.share(relief, facing) * (1.0 + SPECK_RIM) - speck) / SPECK_RIM).clamp(0.0, 1.0)
     }
 }
 
@@ -430,7 +494,18 @@ impl Frame {
     /// gates are fed the same way.
     pub(super) fn speck(world: Vec3, sponge: Sponge, seed: u32) -> f32 {
         let grain = sponge.grain_mm.max(1e-3);
-        evened(value_noise(TURNED * (world / grain), seed))
+        let at = TURNED * (world / grain);
+        match sponge.foam {
+            Foam::Fine => evened(value_noise(at, seed)),
+            Foam::Coarse => evened(value_noise(at * 0.5, seed)),
+            // The same noise, read where a coarser noise pushes it: the
+            // share under a threshold is the same, and the edges are torn.
+            Foam::Torn => {
+                let push = |offset: u32| value_noise(at * 0.35, seed.wrapping_add(offset)) - 0.5;
+                let warp = Vec3::new(push(101), push(202), push(303)) * 2.5;
+                evened(value_noise(at + warp, seed))
+            }
+        }
     }
 }
 
@@ -544,6 +619,8 @@ impl<'a> Curvatures<'a> {
     /// to the bit: a cell's curvature is itself a sum in a fixed order, and
     /// a mirror visits the samples in another. A voxel sitting within a
     /// rounding error of the threshold can still differ from its twin.
+    /// Only the tests ask it now: the sponge reads the whole relief.
+    #[cfg(test)]
     fn raised(&self, at: Vec3, gain: f32) -> f32 {
         self.relief(at, gain).max(0.0)
     }
@@ -796,7 +873,8 @@ mod tests {
         let mut plain = masked();
         brush.apply_paint(&mut plain, &stamp, 2, &mut crate::brush::BrushScratch::new());
         let mut gated = masked();
-        let everything = Touch::Sponge(Sponge { density: 1.0, grain_mm: 1.0, edges: 0.0 });
+        let everything =
+            Touch::Sponge(Sponge { density: 1.0, grain_mm: 1.0, edges: 0.0, ..Sponge::PLAIN });
         coat(everything).apply(&brush, &mut gated, &stamp, 2, &mut TouchScratch::new());
 
         let wanted = painted_near(&plain, ON_FLAT, 9.0);
@@ -1042,7 +1120,8 @@ mod tests {
         let brush = paint_brush(10.0);
         let stamp = Stamp::new(ON_FLAT, Vec3::Z, BrushDirection::Add);
         let sponged = |density: f32| {
-            let sponge = Touch::Sponge(Sponge { density, grain_mm: 1.0, edges: 0.0 });
+            let sponge =
+                Touch::Sponge(Sponge { density, grain_mm: 1.0, edges: 0.0, ..Sponge::PLAIN });
             let mut volume = cube();
             coat(sponge).apply(&brush, &mut volume, &stamp, 5, &mut TouchScratch::new());
             volume
@@ -1095,7 +1174,8 @@ mod tests {
         let brush = paint_brush(8.0);
         let stamp = Stamp::new(ON_EDGE, Vec3::new(1.0, 1.0, 0.0).normalize(), BrushDirection::Add);
         let on_the_edge = |edges: f32| {
-            let sponge = Touch::Sponge(Sponge { density: 0.1, grain_mm: 1.0, edges });
+            let sponge =
+                Touch::Sponge(Sponge { density: 0.1, grain_mm: 1.0, edges, ..Sponge::PLAIN });
             let mut volume = cube();
             coat(sponge).apply(&brush, &mut volume, &stamp, 5, &mut TouchScratch::new());
             let line: Vec<bool> =
@@ -1118,7 +1198,12 @@ mod tests {
         // has turned a little.
         let second = Stamp::new(ON_FLAT + Vec3::new(2.0, 0.0, 0.0), Vec3::Z, BrushDirection::Add)
             .with_tangent(Vec3::new(1.0, 0.3, 0.0).normalize());
-        let sponge = coat(Touch::Sponge(Sponge { density: 0.3, grain_mm: 1.0, edges: 0.5 }));
+        let sponge = coat(Touch::Sponge(Sponge {
+            density: 0.3,
+            grain_mm: 1.0,
+            edges: 0.5,
+            ..Sponge::PLAIN
+        }));
         let under_the_first = |volume: &Volume| painted_near(volume, ON_FLAT, 7.9);
 
         let mut once = cube();
@@ -1146,7 +1231,12 @@ mod tests {
         let brush = paint_brush(6.0);
         let at = Vec3::new(5.0, 2.0, HALF);
         let stamp = Stamp::new(at, Vec3::Z, BrushDirection::Add).with_tangent(Vec3::X);
-        let sponge = coat(Touch::Sponge(Sponge { density: 0.4, grain_mm: 1.0, edges: 0.0 }));
+        let sponge = coat(Touch::Sponge(Sponge {
+            density: 0.4,
+            grain_mm: 1.0,
+            edges: 0.0,
+            ..Sponge::PLAIN
+        }));
         let mut volume = cube();
         sponge.apply_symmetric(
             &brush,
@@ -1227,7 +1317,12 @@ mod tests {
         let mut volume = cube();
         Coat::LOADED.apply(&brush, &mut volume, &stamp, 6, &mut TouchScratch::new());
         let before = painted_near(&volume, ON_FLAT, 7.5);
-        let sponge = coat(Touch::Sponge(Sponge { density: 0.3, grain_mm: 1.0, edges: 0.0 }));
+        let sponge = coat(Touch::Sponge(Sponge {
+            density: 0.3,
+            grain_mm: 1.0,
+            edges: 0.0,
+            ..Sponge::PLAIN
+        }));
         sponge.apply(
             &brush,
             &mut volume,
@@ -1315,6 +1410,58 @@ mod timing {
                  drybrush {dry:.2} ms, sponge {sponge:.2} ms",
                 radius / voxel
             );
+        }
+    }
+
+    /// The reworked sponge, stage 4 of `docs/PAINT-RACK.md`.
+    mod reworked {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn foam() -> impl Strategy<Value = Foam> {
+            prop_oneof![Just(Foam::Fine), Just(Foam::Coarse), Just(Foam::Torn)]
+        }
+
+        proptest! {
+            /// Standing up more, or facing the light more, never takes a
+            /// sponge less; and at full reach and no light a recess takes
+            /// what a flat does.
+            #[test]
+            fn more_raised_or_more_lit_is_never_less(
+                density in 0.0f32..1.0,
+                edges in 0.0f32..1.0,
+                reach in 0.0f32..1.0,
+                toward_light in 0.0f32..1.0,
+                a in -1.0f32..1.0,
+                b in -1.0f32..1.0,
+                facing in -1.0f32..1.0,
+                lit in -1.0f32..1.0,
+            ) {
+                let sponge = Sponge { density, edges, reach, toward_light, ..Sponge::default() };
+                let (low, high) = (a.min(b), a.max(b));
+                prop_assert!(sponge.share(high, facing) >= sponge.share(low, facing) - 1e-6);
+                let (away, toward) = (facing.min(lit), facing.max(lit));
+                prop_assert!(sponge.share(a, toward) >= sponge.share(a, away) - 1e-6);
+                let open = Sponge { reach: 1.0, toward_light: 0.0, ..sponge };
+                prop_assert!((open.share(-a.abs(), facing) - open.share(0.0, facing)).abs() < 1e-6);
+                let shut = Sponge { reach: 0.0, toward_light: 0.0, ..sponge };
+                prop_assert!(shut.share(-1.0, facing) < 1e-6, "a full crease took paint at no reach");
+            }
+
+            /// Whatever the foam, the share of a flat a sponge catches is
+            /// its density, near enough.
+            #[test]
+            fn every_foam_covers_its_density(density in 0.1f32..0.9, foam in foam(), seed in 0u32..1000) {
+                let sponge = Sponge { density, grain_mm: 1.0, foam, ..Sponge::PLAIN };
+                let mut caught = 0;
+                let samples = 4000;
+                for at in 0..samples {
+                    let world = Vec3::new((at % 80) as f32 * 0.9, 0.0, (at / 80) as f32 * 0.9);
+                    caught += usize::from(sponge.catches(0.0, 1.0, Frame::speck(world, sponge, seed)));
+                }
+                let share = caught as f32 / samples as f32;
+                prop_assert!((share - density).abs() < 0.12, "{:?} at {} caught {}", foam, density, share);
+            }
         }
     }
 }

@@ -405,6 +405,16 @@ true of it too, and what it adds is this.
   every export that carries colour: a colour a vertex in a PLY, the
   texture of an *OBJ+PNG* or a *GLB*, and in a 3MF the loaded filament
   nearest the colour, wherever the paint covers at least half.
+- **One-click coats.** COATS, under the layers: a *Base coat* of the
+  colour in hand at the bottom of the stack; a *Zenithal*, dark to light
+  by how much each part faces a light you set (from above, from the
+  view, or by its angles), with an optional middle primer, a spray cone
+  and shadows; and a *Spongechop*, the slapchop done with a sponge: a
+  dark coat, a middle and a light sponged on by how high, how lit and
+  how far out of a recess each part is, and a contrast paint over them.
+  Each goes on layers of its own and is one undo step. The sponge itself
+  keeps out of recesses by as much as you say, can prefer what faces the
+  light, and comes in fine, coarse or torn foam.
 - **Racks of paints.** Paint's library is a rack: a set of paints of
   your own, kept as a file you can hand to someone, with as many racks as
   you like and one in hand. *Add paints* searches an index of 9,909
