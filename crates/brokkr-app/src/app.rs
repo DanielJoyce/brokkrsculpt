@@ -18,6 +18,8 @@ mod airbrush;
 mod coats;
 // The Decal touch. See `app/decal.rs`.
 mod decal;
+// The coarse preview of a shape being dragged out. See `app/insert_preview.rs`.
+mod insert_preview;
 mod rail;
 mod workspace;
 pub use adding::Insert;
@@ -5039,6 +5041,8 @@ impl Brokkr {
             self.model_radius,
         );
         self.add_cut_preview(&mut batch);
+        // A shape being dragged out, drawn coarse. See `app/insert_preview.rs`.
+        self.add_insert_preview(&mut batch);
         self.shared.swap_overlay(&mut batch);
         self.overlay = batch;
     }

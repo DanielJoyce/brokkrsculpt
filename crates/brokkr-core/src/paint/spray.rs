@@ -26,10 +26,12 @@
 //! [`crate::paint::stroke::laid`], so a Glaze or an Erase sprays too.
 
 use glam::{IVec3, Vec3};
-use rustc_hash::FxHashMap;
+use rayon::prelude::*;
 
 use super::field::PaintField;
+use super::field::bricks_between;
 use super::stroke::{Pigment, laid};
+use crate::brick::{BRICK_VOXELS, Brick, BrickCoord, brick_index};
 use crate::mask::PROTECTED;
 use crate::volume::Volume;
 
@@ -77,55 +79,103 @@ impl Volume {
         let lo = ((at - Vec3::splat(reach)) / voxel_size).floor().as_ivec3();
         let hi = ((at + Vec3::splat(reach)) / voxel_size).ceil().as_ivec3();
 
-        // What each voxel the spray reaches takes, worked out first: the
-        // facing reads the field, which the edit below holds.
-        let mut takes: FxHashMap<IVec3, f32> = FxHashMap::default();
-        for z in lo.z..=hi.z {
-            for y in lo.y..=hi.y {
-                for x in lo.x..=hi.x {
-                    let voxel = IVec3::new(x, y, z);
-                    let position = voxel.as_vec3() * voxel_size;
-                    let offset = position - at;
-                    let along = offset.dot(direction);
-                    if along.abs() > spray.radius {
-                        continue;
-                    }
-                    let off = (offset - direction * along).length();
-                    if off > reach {
-                        continue;
-                    }
-                    if !PaintField::paintable(self.sample_voxel(voxel)) {
-                        continue;
-                    }
-                    let normal = self.gradient_world(position).normalize_or_zero();
-                    let facing = (-normal.dot(direction)).max(0.0);
-                    let take = amount * spray.spot(off) * facing;
-                    if take > 1e-4 {
-                        takes.insert(voxel, take.min(1.0));
+        // What each voxel the spray reaches takes, worked out first, a
+        // brick at a time and the bricks across every core: the facing
+        // reads the field, which the edit below holds. A brick that is
+        // empty space, or solid or empty throughout, holds no paint and is
+        // passed over whole; the first version asked every voxel of the box,
+        // 35 ms a frame for a 10 mm spot, measured by `what_painting_costs`.
+        let reach_squared = reach * reach;
+        let coords: Vec<BrickCoord> =
+            bricks_between(BrickCoord::containing(lo).0, BrickCoord::containing(hi).0).collect();
+        let takes: Vec<(BrickCoord, Vec<f32>)> = coords
+            .into_par_iter()
+            .filter_map(|coord| {
+                let values = match self.brick(coord)? {
+                    Brick::Uniform(value) if !PaintField::paintable(*value) => return None,
+                    brick => brick,
+                };
+                let origin = coord.origin();
+                let from = lo.max(origin);
+                let to = hi.min(coord.max_voxel());
+                if from.cmpgt(to).any() {
+                    return None;
+                }
+                let mut take = vec![0.0_f32; BRICK_VOXELS];
+                let mut any = false;
+                for z in from.z..=to.z {
+                    for y in from.y..=to.y {
+                        for x in from.x..=to.x {
+                            let voxel = IVec3::new(x, y, z);
+                            let local = voxel - origin;
+                            let index =
+                                brick_index(local.x as usize, local.y as usize, local.z as usize);
+                            let distance = match values {
+                                Brick::Uniform(value) => *value,
+                                Brick::Dense(data) => data[index],
+                            };
+                            if !PaintField::paintable(distance) {
+                                continue;
+                            }
+                            let offset = voxel.as_vec3() * voxel_size - at;
+                            let along = offset.dot(direction);
+                            if along.abs() > spray.radius {
+                                continue;
+                            }
+                            let across = offset - direction * along;
+                            let off_squared = across.length_squared();
+                            if off_squared > reach_squared {
+                                continue;
+                            }
+                            // The normal by central differences of the stored
+                            // field: six lookups, where the trilinear gradient
+                            // is forty-eight.
+                            let sample = |step: IVec3| self.sample_voxel(voxel + step);
+                            let normal = Vec3::new(
+                                sample(IVec3::X) - sample(-IVec3::X),
+                                sample(IVec3::Y) - sample(-IVec3::Y),
+                                sample(IVec3::Z) - sample(-IVec3::Z),
+                            )
+                            .normalize_or_zero();
+                            let facing = (-normal.dot(direction)).max(0.0);
+                            let amount = amount * spray.spot(off_squared.sqrt()) * facing;
+                            if amount > 1e-4 {
+                                take[index] = amount.min(1.0);
+                                any = true;
+                            }
+                        }
                     }
                 }
-            }
-        }
+                any.then_some((coord, take))
+            })
+            .collect();
         if takes.is_empty() {
             return 0;
         }
         let mut laid_on = 0;
         let pigment = spray.pigment;
-        self.edit_paint_over(lo, hi, |voxel, _, held, _, protection| {
-            let Some(take) = takes.get(&voxel) else {
-                return held;
-            };
-            let free = 1.0 - f32::from(protection) / f32::from(PROTECTED);
-            let take = take * free;
-            if take <= 0.0 {
-                return held;
-            }
-            let after = laid(held, pigment, take);
-            if after != held {
-                laid_on += 1;
-            }
-            after
-        });
+        for (coord, take) in &takes {
+            let origin = coord.origin();
+            let (from, to) = (lo.max(origin), hi.min(coord.max_voxel()));
+            self.edit_paint_over(from, to, |voxel, _, held, _, protection| {
+                let local = voxel - origin;
+                let amount =
+                    take[brick_index(local.x as usize, local.y as usize, local.z as usize)];
+                if amount <= 0.0 {
+                    return held;
+                }
+                let free = 1.0 - f32::from(protection) / f32::from(PROTECTED);
+                let amount = amount * free;
+                if amount <= 0.0 {
+                    return held;
+                }
+                let after = laid(held, pigment, amount);
+                if after != held {
+                    laid_on += 1;
+                }
+                after
+            });
+        }
         laid_on
     }
 }
