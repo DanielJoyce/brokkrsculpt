@@ -212,7 +212,9 @@ impl Brokkr {
                 .width(Length::Fill),
                 self.tools(),
             ]
-            .spacing(theme::S3)
+            .spacing(theme::S3),
+            // What the last action did, once, at the foot. See `app/cards.rs`.
+            self.status_bar(),
         ]
         .spacing(theme::S3)
         .padding(theme::S3);
@@ -224,6 +226,15 @@ impl Brokkr {
         // prompt draw over a screen that has not been dismissed yet.
         if self.welcome {
             return stack![body, self.welcome_card(), self.resize_frame()].into();
+        }
+
+        // The two cards of the menus, one rank down: each is raised only from
+        // a menu or a key, when no prompt is waiting. See `app/cards.rs`.
+        if self.shortcuts {
+            return stack![body, self.shortcuts_card(), self.resize_frame()].into();
+        }
+        if self.preferences {
+            return stack![body, self.preferences_card(), self.resize_frame()].into();
         }
 
         // The unsaved-work prompt outranks an open menu: it is modal, and a
@@ -414,19 +425,10 @@ impl Brokkr {
             wordmark,
             menus,
             text(title).size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
-            // Takes the slack, so the status and the controls sit right and
-            // everything else stays left.
-            text(self.status.clone())
-                .size(theme::CAPTION_SIZE)
-                .width(Length::Fill)
-                .align_x(Alignment::End)
-                .color(
-                    if self.status.contains("not exported") || self.status.contains("could not") {
-                        theme::ERROR
-                    } else {
-                        theme::TEXT_MUTE
-                    }
-                ),
+            // Takes the slack, so the controls sit right and everything else
+            // stays left. The status line that was here is the status bar's
+            // now, at the foot of the window: see `status_bar`.
+            space().width(Length::Fill),
             control(
                 icon::IconName::Minimise,
                 "Minimise",
@@ -1088,6 +1090,31 @@ impl Brokkr {
                 .style(theme::section_heading)
                 .on_press(message)
         };
+        // An entry with its key at the right, the way every menu bar shows
+        // one. Greyed when there is nothing for it to do.
+        let keyed = |label: &'static str, key: &'static str, message: Option<Message>| {
+            button(
+                row![
+                    text(label).size(theme::TEXT_SIZE_SMALL).width(Length::Fill),
+                    text(key).size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
+                ]
+                .align_y(Alignment::Center),
+            )
+            .width(Length::Fill)
+            .padding(theme::PAD_MENU_ITEM)
+            .style(theme::section_heading)
+            .on_press_maybe(message)
+        };
+        // A view setting: a tick and its name.
+        let switch = |label: &'static str, on: bool, message: Message| {
+            container(
+                checkbox(on)
+                    .label(label)
+                    .on_toggle(move |_| message.clone())
+                    .text_size(theme::TEXT_SIZE_SMALL),
+            )
+            .padding(theme::PAD_MENU_ITEM)
+        };
         let separator = || {
             container(text("").size(1))
                 .width(Length::Fill)
@@ -1170,10 +1197,39 @@ impl Brokkr {
                     .push(entry("Open in OrcaSlicer", Message::OpenInSlicer))
                     .push(entry("Check the printer", Message::PrinterChecked))
             }
-            // No Settings menu: the properties panel already carries every
-            // setting there is, and a second surface for the same state would
-            // drift from it.
+            TopMenu::Edit => column![
+                keyed("Undo", "Ctrl Z", self.history.can_undo().then_some(Message::Undo)),
+                keyed("Redo", "Ctrl Shift Z", self.history.can_redo().then_some(Message::Redo)),
+                separator(),
+                keyed("Invert the mask", "", Some(Message::MaskInverted)),
+                keyed("Clear the mask", "", Some(Message::MaskCleared)),
+                separator(),
+                // The settings of the application rather than of the
+                // document: the pen, the SpaceMouse, the update check. They
+                // left the panel for this card, where they are set once and
+                // not every stroke.
+                keyed("Preferences\u{2026}", "", Some(Message::PreferencesOpened)),
+            ]
+            .spacing(1),
+            TopMenu::View => column![
+                switch("Paint", self.show_paint, Message::ShowPaintToggled),
+                switch("Creases", self.show_cavity, Message::ShowCavityToggled),
+                switch(
+                    "Overhangs",
+                    self.overhang.shown,
+                    Message::Overhang(crate::message::OverhangMessage::Shown(!self.overhang.shown))
+                ),
+                switch("Mask", self.show_mask, Message::ShowMaskToggled),
+                separator(),
+                switch("Pictures in the bodies list", self.thumbnails, Message::ThumbnailsToggled),
+                switch("Frame stats", self.stats_open, Message::StatsToggled),
+                separator(),
+                keyed("Frame the body", "F", Some(Message::CameraFramedOnActive)),
+            ]
+            .spacing(1),
             TopMenu::Help => column![
+                keyed("Keyboard shortcuts", "?", Some(Message::ShortcutsOpened)),
+                separator(),
                 text(format!("BrokkrSculpt {}", env!("CARGO_PKG_VERSION")))
                     .size(theme::TEXT_SIZE_SMALL)
                     .color(theme::TEXT),
@@ -1257,13 +1313,13 @@ impl Brokkr {
         // Under whichever button opened it, roughly. The bar is laid out by
         // iced so the exact x is not knowable here; left aligned under the
         // menus is close enough and cannot fall off the edge.
-        let left = match which {
-            TopMenu::File => 96.0,
-            TopMenu::Help => 148.0,
-        };
+        // Measured on the screen: each word of the bar is about as wide as
+        // the next, so each menu sits one step to the right of the last.
+        let left = 96.0
+            + 52.0 * TopMenu::ALL.iter().position(|menu| *menu == which).unwrap_or_default() as f32;
 
         container(
-            container(body).padding(theme::S2).width(Length::Fixed(190.0)).style(theme::menu_card),
+            container(body).padding(theme::S2).width(Length::Fixed(210.0)).style(theme::menu_card),
         )
         .padding(Padding { left, top: 0.0, ..Padding::ZERO })
         .into()
@@ -2323,18 +2379,16 @@ impl Brokkr {
             if self.timeline.playing { "Stop" } else { "Play the stored views" },
         );
 
-        let hint = match self.timeline.keys.len() {
-            0 => "click to store a view".to_string(),
-            1 => "1 key — drag to re-time, right click to remove".to_string(),
-            many => format!("{many} keys — drag to re-time, right click to remove"),
-        };
-
         row![
             play,
-            sensor(strip)
-                .on_show(|size| Message::TimelineResized(size.width))
-                .on_resize(|size| Message::TimelineResized(size.width)),
-            text(hint).size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
+            // What a press does on the strip, on hover rather than as a
+            // caption beside it.
+            crate::ui::tip(
+                sensor(strip)
+                    .on_show(|size| Message::TimelineResized(size.width))
+                    .on_resize(|size| Message::TimelineResized(size.width)),
+                "Click to store this view. Drag a key to re-time it, right click to remove it",
+            ),
         ]
         .spacing(theme::S2)
         .align_y(Alignment::Center)
@@ -2342,17 +2396,6 @@ impl Brokkr {
     }
 
     fn tools(&self) -> Element<'_, Message> {
-        // In mask mode the modifier means something else entirely, and it means
-        // it for every brush -- the mask has no "no opposite" case, because
-        // protection always has one. Reading `brush.kind.is_directional()` here
-        // while masking would tell three of the eight brushes that ctrl does
-        // nothing, when it is the unmask gesture.
-        let invert_hint = match (self.tool, self.brush.kind.is_directional()) {
-            (Tool::Mask, _) => "ctrl or alt drag unmasks",
-            (_, _) if self.brush.kind == BrushKind::Paint => "ctrl or alt drag erases the paint",
-            (_, true) => "ctrl or alt drag removes",
-            (_, false) => "no opposite: ctrl does nothing",
-        };
         // Strength means nothing to the paint brush -- a slot has no half, see
         // `BrushKind::Paint` -- so its place is taken by the thing that does:
         // which filament the stroke lays down.
@@ -2368,14 +2411,12 @@ impl Brokkr {
                 Message::BrushRadiusChanged
             )
             .step(0.05)
-            .shown(format!("{:.2} mm", self.brush.radius)),
+            .shown(format!("{:.2} mm", self.brush.radius))
+            .tip("Or hold S and drag in the view"),
             checkbox(self.dynamic_radius)
                 .label("scale with model")
                 .on_toggle(Message::DynamicRadiusToggled)
                 .text_size(theme::LABEL_SIZE),
-            text("hold s and drag to resize, u for strength")
-                .size(theme::CAPTION_SIZE)
-                .color(theme::TEXT_MUTE),
         ]
         .spacing(theme::S2);
 
@@ -2392,7 +2433,8 @@ impl Brokkr {
                     Message::BrushStrengthChanged
                 )
                 .step(0.01)
-                .shown(format!("{:.2}", self.brush.strength)),
+                .shown(format!("{:.2}", self.brush.strength))
+                .tip("Or hold U and drag in the view"),
             ]
             .spacing(theme::S2)
             .into()
@@ -2426,8 +2468,8 @@ impl Brokkr {
         .size(theme::LABEL_SIZE)
         .color(theme::TEXT_DIM);
 
-        container(
-            scrollable(column![
+        container(scrollable(
+            column![
                 self.section(PanelSection::Bodies, || self.bodies_panel()),
                 // The palette of brushes, and the brushes that add. See
                 // `app/studio.rs` and `app/adding.rs`. Every block has a
@@ -2440,44 +2482,24 @@ impl Brokkr {
                     self.expanded[PanelSection::Brush as usize],
                     Message::SectionToggled(PanelSection::Brush),
                     Some(in_hand.into()),
-                    || column![
-                        text(invert_hint).size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
-                        radius,
-                        strength,
-                        falloff,
-                        self.studio_panel(),
-                    ]
-                    .spacing(theme::S3)
-                    .into(),
+                    || column![radius, strength, falloff, self.studio_panel(),]
+                        .spacing(theme::S3)
+                        .into(),
                 ),
                 self.section(PanelSection::Stroke, || self.stroke_panel()),
                 self.section(PanelSection::Form, || self.form_panel()),
                 self.section(PanelSection::Pattern, || self.pattern_panel()),
-                self.section(PanelSection::Pen, || self.pen_panel()),
-                self.section(PanelSection::SpaceMouse, || self.spacemouse_panel()),
                 self.section(PanelSection::History, || history.into()),
                 self.section(PanelSection::Detail, || self.detail_panel()),
                 self.section(PanelSection::Filament, || self.filament_panel()),
                 self.section(PanelSection::Export, || self.export_panel()),
                 crate::ui::button_secondary("Reset sphere", Some(Message::ResetSphere)),
-                // `1-8`: `BrushKind::ALL` is eight since Paint landed, and the
-                // line was `1-6` for a while after Move made it seven.
-                //
-                // The ctrl line is here because the half-space mask has no
-                // button anywhere: it rides the cut's own drag, which is what
-                // makes it free, and a gesture with no control on screen is a
-                // gesture nobody finds.
-                text(
-                    "drag: sculpt\nctrl or alt drag: invert\nshift drag: smooth\nright drag: orbit\nshift right drag: pan\nwheel: zoom\n1-8: brush\nm: mask\nctrl + cut drag or loop: mask it\nhold h: show the mask\nx y z: mirror\n[ ]: radius\nctrl z, ctrl shift z: undo, redo"
-                )
-                .size(theme::CAPTION_SIZE)
-                .color(theme::TEXT_MUTE),
             ]
             .spacing(theme::S4)
             // Room for the scrollbar, which iced draws over the content rather
             // than beside it. Without this the last button of a row is clipped.
-            .padding(Padding { right: theme::S4, ..Padding::ZERO })),
-        )
+            .padding(Padding { right: theme::S4, ..Padding::ZERO }),
+        ))
         .padding(theme::PANEL_PADDING)
         .width(Length::Fixed(258.0))
         .height(Length::Fill)
@@ -2491,7 +2513,7 @@ impl Brokkr {
     /// puck that is connected but silent, or one whose axes are not where the
     /// labels claim, is otherwise undiagnosable from inside the application.
     /// The pen panel exists for the same reason.
-    fn spacemouse_panel(&self) -> Element<'_, Message> {
+    pub(super) fn spacemouse_panel(&self) -> Element<'_, Message> {
         let config = &self.spacemouse.config;
         let motion = self.spacemouse.motion();
         let full_scale = self.spacemouse.full_scale();
@@ -2609,15 +2631,20 @@ impl Brokkr {
         column![
             header,
             readout,
-            // Where the tuned settings end up, so they can be read back and
-            // pasted in as the built in defaults once they are right.
-            text(
-                spacemouse::Config::path()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_else(|| "settings cannot be saved: no config directory".into())
-            )
-            .size(theme::LABEL_SIZE)
-            .color(theme::TEXT_MUTE),
+            // Where the tuned settings are kept was written here as a path,
+            // and paths are not what a panel says (`docs/WORKSPACES.md`).
+            // Only the case where they cannot be kept at all is said.
+            {
+                let unkept: Element<'_, Message> = if spacemouse::Config::path().is_none() {
+                    text("Settings cannot be saved: no config directory")
+                        .size(theme::LABEL_SIZE)
+                        .color(theme::WARN)
+                        .into()
+                } else {
+                    column![].into()
+                };
+                unkept
+            },
             row![
                 button(text("Invert all").size(theme::LABEL_SIZE))
                     .width(Length::Fill)
@@ -2947,14 +2974,9 @@ impl Brokkr {
         .spacing(theme::S2);
 
         let mut stacked = column![
-            // The pictures are session state and must not dirty the document.
-            // Photoshop's Panel Options offers None beside three sizes and the
-            // standard advice for a heavy document is None, so the switch is
-            // faithful to the reference rather than a retreat from it.
-            checkbox(self.thumbnails)
-                .label("Thumbnails")
-                .on_toggle(|_| Message::ThumbnailsToggled)
-                .text_size(theme::LABEL_SIZE),
+            // The pictures' switch is in the View menu, with the other view
+            // settings. They are session state and do not dirty the
+            // document.
             scrollable(rows).height(Length::Fixed(row_h * visible_rows)),
             verbs,
         ]
@@ -3546,10 +3568,7 @@ impl Brokkr {
         // chosen, so they are hidden rather than shown greyed: an empty row is
         // less to read than a disabled one.
         let settings: Element<'_, Message> = if pattern.kind == PatternKind::None {
-            text("carve a pattern in with ctrl")
-                .size(theme::LABEL_SIZE)
-                .color(theme::TEXT_MUTE)
-                .into()
+            column![].into()
         } else {
             column![
                 // The lower bound follows the voxel size: a feature finer
@@ -3579,13 +3598,6 @@ impl Brokkr {
                 )
                 .step(0.02)
                 .shown(format!("{:.2}", pattern.depth)),
-                text(if pattern.kind.follows_the_stroke() {
-                    "combs along the drag"
-                } else {
-                    "fixed in world space, so strokes reinforce"
-                })
-                .size(theme::LABEL_SIZE)
-                .color(theme::TEXT_MUTE),
             ]
             .spacing(theme::S1)
             .into()
@@ -3737,19 +3749,8 @@ impl Brokkr {
             button(text("Sync filaments from printer").size(theme::LABEL_SIZE))
                 .style(theme::tool_button)
                 .on_press(Message::PaletteSyncRequested),
-            // View state, beside the colours it shows. Off draws every body as
-            // bare clay and changes nothing a stroke wrote.
-            checkbox(self.show_paint)
-                .label("show paint")
-                .on_toggle(|_| Message::ShowPaintToggled)
-                .text_size(theme::LABEL_SIZE),
-            // The other thing drawn onto the surface that is not the surface.
-            // Here for now because this is where the view toggles for it are;
-            // it moves when the paint mode gives them a home of their own.
-            checkbox(self.show_cavity)
-                .label("show creases")
-                .on_toggle(|_| Message::ShowCavityToggled)
-                .text_size(theme::LABEL_SIZE),
+            // Show paint and show creases were here, and are in the View
+            // menu now with the other view settings.
         ]
         .spacing(theme::S2)
         .into()
@@ -3770,24 +3771,6 @@ impl Brokkr {
             },
         );
 
-        let status: Element<'_, Message> = if self.status.is_empty() {
-            text(format!("to {}", Self::export_directory().display()))
-                .size(theme::LABEL_SIZE)
-                .color(theme::TEXT_MUTE)
-                .into()
-        } else {
-            text(self.status.clone())
-                .size(theme::LABEL_SIZE)
-                .color(
-                    if self.status.contains("not exported") || self.status.contains("could not") {
-                        theme::ERROR
-                    } else {
-                        theme::OK
-                    },
-                )
-                .into()
-        };
-
         // How finely to mesh it, above the buttons it governs. In
         // millimetres, because that is what a print is measured in.
         let detail = row![
@@ -3804,7 +3787,10 @@ impl Brokkr {
         // decision about how the printed parts go together.
         let key = self.key_spec;
         let keys = column![
-            text("Parting keys: cut tool, alt held").size(theme::LABEL_SIZE).color(theme::TEXT_DIM),
+            crate::ui::tip(
+                crate::ui::sub_label("Parting keys"),
+                "Made with the Cut tool, Alt held"
+            ),
             pick_list(brokkr_core::part::KeyKind::ALL, Some(key.kind), |kind| {
                 Message::KeySettingChanged(KeySetting::Kind(kind))
             })
@@ -3845,7 +3831,7 @@ impl Brokkr {
         ]
         .spacing(theme::S1);
 
-        column![detail, self.overhang_panel(), buttons, self.textured_exports(), status, keys]
+        column![detail, self.overhang_panel(), buttons, self.textured_exports(), keys]
             .spacing(theme::S2)
             .into()
     }
@@ -3857,7 +3843,7 @@ impl Brokkr {
     /// like a mouse: strokes work, they just never vary. The device name, the
     /// device's own pressure range and a live peak turn that into something
     /// answerable in a few seconds.
-    fn pen_panel(&self) -> Element<'_, Message> {
+    pub(super) fn pen_panel(&self) -> Element<'_, Message> {
         let devices = self.tablet.devices();
         let diagnosis = self.tablet.diagnosis();
         let status: Element<'_, Message> = match devices.first() {
@@ -4027,7 +4013,7 @@ fn shorten(text: &str) -> String {
 ///
 /// The window's resize strips are stacked *above* the card in `view`, so they
 /// keep working: reverse traversal reaches them first.
-fn modal_layer<'a>(card: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+pub(super) fn modal_layer<'a>(card: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     opaque(
         container(card)
             .width(Length::Fill)

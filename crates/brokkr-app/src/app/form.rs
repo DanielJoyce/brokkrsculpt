@@ -22,8 +22,8 @@ use std::time::Instant;
 
 use brokkr_core::form::{FormError, level_for};
 use brokkr_core::{Change, Entry, FormPyramid, Volume};
-use iced::widget::{column, text};
-use iced::{Element, Length};
+use iced::Element;
+use iced::widget::column;
 
 use super::Brokkr;
 use crate::message::{FormMessage, Message};
@@ -156,7 +156,10 @@ impl Brokkr {
         let changed = |message: FormMessage| Message::Form(message);
         let form = self.form;
         let apply = move |message: FormMessage| {
-            crate::ui::button_secondary("Apply", Some(changed(message)))
+            crate::ui::tip(
+                crate::ui::button_secondary("Apply", Some(changed(message))),
+                "To the whole body, less what the mask protects",
+            )
         };
         column![
             crate::ui::number(
@@ -191,10 +194,6 @@ impl Brokkr {
             .step(0.05)
             .shown(format!("x {:.2}", form.gain))
             .trailing(apply(FormMessage::DetailGainApplied)),
-            text("the whole body, less what the mask protects")
-                .size(theme::LABEL_SIZE)
-                .color(theme::TEXT_MUTE)
-                .width(Length::Fill),
         ]
         .spacing(theme::S2)
         .into()

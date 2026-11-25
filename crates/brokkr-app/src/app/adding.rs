@@ -1023,20 +1023,19 @@ impl Brokkr {
                 }),
             );
         }
-        panel
-            .push(
-                text(match (what, state.separate) {
-                    (Insert::Laid, _) => {
-                        "drag along the model. the brush's radius is its thickness"
-                    }
-                    (Insert::Hung, _) => "press at one end, drag to the other",
-                    (_, true) => "press where it goes, drag to size and turn it",
-                    (_, false) => "press, drag to size and turn. ctrl or alt takes it out",
-                })
-                .size(theme::LABEL_SIZE)
-                .color(theme::TEXT_MUTE),
-            )
-            .into()
+        panel.into()
+    }
+
+    /// What a drag does with the insert in hand, for the status bar. See
+    /// `app/cards.rs`.
+    pub(super) fn insert_prompt(&self) -> Option<&'static str> {
+        let what = self.inserts.what?;
+        Some(match (what, self.inserts.separate) {
+            (Insert::Laid, _) => "Drag along the model; the brush's radius is its thickness",
+            (Insert::Hung, _) => "Press at one end, drag to the other",
+            (_, true) => "Press where it goes, drag to size and turn it",
+            (_, false) => "Press, drag to size and turn; Ctrl or Alt takes it out",
+        })
     }
 }
 

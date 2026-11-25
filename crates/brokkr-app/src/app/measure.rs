@@ -354,6 +354,16 @@ impl Brokkr {
     /// The Measure button, in the bottom left of the viewport under the
     /// scale bar, and beside it what was measured and a button to clear
     /// it.
+    /// What a click does while measuring, for the status bar. See
+    /// `app/cards.rs`.
+    pub(super) fn measure_prompt(&self) -> Option<&'static str> {
+        self.measure.armed.then_some(if self.measure.from.is_none() {
+            "Click two points on the model"
+        } else {
+            "And the second point"
+        })
+    }
+
     pub(super) fn measure_controls(&self) -> Element<'_, Message> {
         let armed = self.measure.armed;
         let mut controls = row![
@@ -364,17 +374,6 @@ impl Brokkr {
         ]
         .spacing(theme::S2)
         .align_y(Alignment::Center);
-        if armed {
-            controls = controls.push(
-                text(if self.measure.from.is_none() {
-                    "click two points on the model"
-                } else {
-                    "and the second point"
-                })
-                .size(theme::CAPTION_SIZE)
-                .color(theme::TEXT_DIM),
-            );
-        }
         if let Some(distance) = self.measure.distance() {
             controls = controls
                 .push(

@@ -215,8 +215,6 @@ impl Brokkr {
                 .style(theme::tool_button)
                 .on_press(changed(message))
         };
-        let caption =
-            |words: &'static str| text(words).size(theme::LABEL_SIZE).color(theme::TEXT_MUTE);
         if self.on_the_bench() {
             column![
                 row![
@@ -224,7 +222,6 @@ impl Brokkr {
                     wide("Back to the model", WorkbenchMessage::Left),
                 ]
                 .spacing(theme::S1),
-                caption("nothing done here is kept. the brush in hand is: Keep it by name above"),
             ]
         } else {
             column![
@@ -233,7 +230,6 @@ impl Brokkr {
                     wide("On a copy of this", WorkbenchMessage::Opened(Piece::Copy)),
                 ]
                 .spacing(theme::S1),
-                caption("set the model aside and try a brush on something that does not matter"),
             ]
         }
         .spacing(theme::S1)

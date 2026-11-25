@@ -26,7 +26,7 @@
 use brokkr_core::overhang::{self, Overhangs, STEEPEST_RANGE, USUAL_STEEPEST};
 use glam::Vec3;
 use iced::Element;
-use iced::widget::{checkbox, column, text};
+use iced::widget::{checkbox, column};
 
 use super::Brokkr;
 use crate::message::{Message, OverhangMessage};
@@ -149,24 +149,18 @@ impl Brokkr {
         ]
         .spacing(theme::S1);
         if self.overhang.shown {
-            panel = panel
-                .push(
-                    crate::ui::number(
-                        &self.drafts,
-                        "overhang.steepest",
-                        "Leaning past upright by",
-                        self.overhang.steepest,
-                        STEEPEST_RANGE,
-                        move |degrees| changed(OverhangMessage::Steepest(degrees)),
-                    )
-                    .step(1.0)
-                    .shown(format!("{:.0}°", self.overhang.steepest)),
+            panel = panel.push(
+                crate::ui::number(
+                    &self.drafts,
+                    "overhang.steepest",
+                    "Leaning past upright by",
+                    self.overhang.steepest,
+                    STEEPEST_RANGE,
+                    move |degrees| changed(OverhangMessage::Steepest(degrees)),
                 )
-                .push(
-                    text("as it stands: turned over in the slicer it is another print")
-                        .size(theme::LABEL_SIZE)
-                        .color(theme::TEXT_MUTE),
-                );
+                .step(1.0)
+                .shown(format!("{:.0}°", self.overhang.steepest)),
+            );
         }
         panel.into()
     }

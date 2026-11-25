@@ -645,13 +645,7 @@ impl Brokkr {
         let changed = |setting: TouchSetting| Message::PaintTouchChanged(setting);
         match self.touch.kind {
             PaintTouch::Loaded => {}
-            PaintTouch::Wash => {
-                picker = picker.push(
-                    text("runs into the creases and off the edges. Best as a glaze")
-                        .size(theme::LABEL_SIZE)
-                        .color(theme::TEXT_MUTE),
-                );
-            }
+            PaintTouch::Wash => {}
             PaintTouch::Drybrush => {
                 let dry = self.touch.dry;
                 let load = self.touch.load_mm.0;
@@ -775,11 +769,6 @@ impl Brokkr {
                         )
                         .step(0.01)
                         .shown(format!("{:.2}", touch.fill_sharpness)),
-                    )
-                    .push(
-                        text("click a panel to fill it, or a groove to line it")
-                            .size(theme::LABEL_SIZE)
-                            .color(theme::TEXT_MUTE),
                     );
                 // How alike is alike, for a colour, and the whole body in
                 // one press, for a slot: the colour brush has that button
@@ -1030,9 +1019,6 @@ impl Brokkr {
                 button(text("Mix paints").size(theme::LABEL_SIZE))
                     .style(theme::tool_button)
                     .on_press(Message::PaintsStarted),
-                text("washes and highlights, on top of the slots")
-                    .size(theme::LABEL_SIZE)
-                    .color(theme::TEXT_MUTE),
             ]
             .spacing(theme::S2)
             .into();

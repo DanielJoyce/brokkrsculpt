@@ -188,6 +188,7 @@ pub struct Number<'a> {
     shown: Option<String>,
     trailing: Option<Element<'a, Message>>,
     on_release: Option<Message>,
+    tip: Option<&'static str>,
     on_change: Box<dyn Fn(f32) -> Message + 'a>,
 }
 
@@ -210,6 +211,7 @@ pub fn number<'a>(
         shown: None,
         trailing: None,
         on_release: None,
+        tip: None,
         on_change: Box::new(on_change),
     }
 }
@@ -232,6 +234,13 @@ impl<'a> Number<'a> {
     /// one undo entry or one save.
     pub fn on_release(mut self, message: Message) -> Self {
         self.on_release = Some(message);
+        self
+    }
+
+    /// What the number's label says on hover: a key that sets it from the
+    /// viewport, or what it works on.
+    pub fn tip(mut self, tip: &'static str) -> Self {
+        self.tip = Some(tip);
         self
     }
 
@@ -270,6 +279,7 @@ impl<'a> From<Number<'a>> for Element<'a, Message> {
             shown,
             trailing,
             on_release,
+            tip: hover,
             on_change,
         } = number;
         let shown = shown.unwrap_or_else(|| format!("{value:.2}"));
@@ -281,13 +291,16 @@ impl<'a> From<Number<'a>> for Element<'a, Message> {
             .padding(theme::PAD_FIELD)
             .align_x(Alignment::End)
             .width(Length::Fixed(FIELD_WIDTH));
-        let mut top = row![
-            text(label).size(theme::LABEL_SIZE).color(theme::TEXT_DIM),
-            Space::new().width(Length::Fill),
-            field
-        ]
-        .align_y(Alignment::Center)
-        .spacing(theme::S2);
+        let label: Element<'a, Message> = {
+            let label = text(label).size(theme::LABEL_SIZE).color(theme::TEXT_DIM);
+            match hover {
+                Some(hover) => tip(label, hover),
+                None => label.into(),
+            }
+        };
+        let mut top = row![label, Space::new().width(Length::Fill), field]
+            .align_y(Alignment::Center)
+            .spacing(theme::S2);
         if let Some(trailing) = trailing {
             top = top.push(trailing);
         }

@@ -1190,23 +1190,7 @@ impl Brokkr {
                     move |side| {
                         Message::Studio(StudioMessage::ActionsChosen(Actions { side, ..actions }))
                     },
-                ))
-                .push(
-                    text(match actions.side {
-                        Side::Both => "fills up to the plane and cuts down to it",
-                        Side::Fill => "fills up to the plane and cuts nothing",
-                        Side::Cut => "cuts down to the plane and fills nothing",
-                    })
-                    .size(theme::LABEL_SIZE)
-                    .color(theme::TEXT_MUTE),
-                );
-        }
-        if actions.is_nothing() {
-            amounts = amounts.push(
-                text("a brush of nothing does nothing")
-                    .size(theme::LABEL_SIZE)
-                    .color(theme::TEXT_MUTE),
-            );
+                ));
         }
         amounts.into()
     }
@@ -1490,17 +1474,16 @@ impl Brokkr {
             // A picture across the tip: the one in hand, which is the one
             // the stamp presses.
             let tipped = self.studio.tip_on;
-            settings = settings.push(crate::ui::toggle(
-                "Picture across the tip",
-                tipped,
-                changed(StudioMessage::TipToggled(!tipped)),
+            settings = settings.push(crate::ui::tip(
+                crate::ui::toggle(
+                    "Picture across the tip",
+                    tipped,
+                    changed(StudioMessage::TipToggled(!tipped)),
+                ),
+                "Where the picture is bright the brush works, its top along the stroke",
             ));
             if tipped {
-                settings = settings.push(self.picture_picker()).push(
-                    text("where the picture is bright the brush works, its top along the stroke")
-                        .size(theme::LABEL_SIZE)
-                        .color(theme::TEXT_MUTE),
-                );
+                settings = settings.push(self.picture_picker());
             }
             // Whether a stroke builds on itself, and whether it is a line
             // or the brush set down every so often.
@@ -1537,6 +1520,16 @@ impl Brokkr {
             }
         }
         settings.into()
+    }
+
+    /// What a drag does with the stamp in hand, for the status bar. See
+    /// `app/cards.rs`.
+    pub(super) fn stamp_prompt(&self) -> Option<&'static str> {
+        self.studio.stamp_on.then_some(if self.studio.stamp_along > 0.0 {
+            "Drag to lay a row, each the brush's size"
+        } else {
+            "Press where it goes, drag to size and turn it"
+        })
     }
 
     /// How the brush is led: the STROKE section.
@@ -1589,15 +1582,6 @@ impl Brokkr {
                     .shown(format!("{:.1} wide", self.studio.stamp_along)),
                 );
             }
-            stamp = stamp.push(
-                text(if along {
-                    "drag to lay a row, each the brush's size"
-                } else {
-                    "press where it goes, drag to size and turn it"
-                })
-                .size(theme::LABEL_SIZE)
-                .color(theme::TEXT_MUTE),
-            );
         }
         column![
             stamp,
