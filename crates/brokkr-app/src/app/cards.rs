@@ -239,10 +239,13 @@ mod tests {
     #[test]
     fn every_letter_on_the_card_is_a_key() {
         for (key, _) in SHORTCUTS {
+            // A line that names Ctrl is a chord, and its letters are decoded
+            // with Ctrl held: "Ctrl G" is no bare G.
+            let command = key.contains("Ctrl");
             for word in key.split([',', ' ']) {
                 if word.len() == 1 && word.chars().all(|c| c.is_ascii_alphabetic()) {
                     assert!(
-                        crate::viewport::shortcut(&word.to_lowercase(), false, false, false)
+                        crate::viewport::shortcut(&word.to_lowercase(), command, false, false)
                             .is_some(),
                         "the card names {word}, which is no key"
                     );

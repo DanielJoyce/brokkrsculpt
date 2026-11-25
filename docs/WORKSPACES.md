@@ -79,7 +79,7 @@ One pull request each, into `feature/studio`.
 | Stage | State | What it is |
 |---|---|---|
 | U1 The kit | **Done**, 2026-11-25 | `ui.rs`: a folding section, a number, a choice of a few, a button, a tooltip. Every panel block under a heading that folds; every slider a number; every icon-only button named on hover; Inter shipped |
-| U2 Menus, status bar, Preferences | Not begun | Edit and View menus, a status bar, a Preferences dialog (issue 74), the panel's prose out (issue 69) |
+| U2 Menus, status bar, Preferences | **Done**, 2026-11-25 | Edit and View menus, a status bar at the foot, a Preferences card (the pen, the SpaceMouse, updates), a Keyboard shortcuts card on `?`, and every grey caption out of the panel |
 | U3 Context bar and one popup | Not begun | The bar over the viewport and the right-click card from one function; a rail of tool kinds; keys 1 to 8 from the library |
 | U4 Workspaces | Not begun | The switcher, a library and inspector for each, what each remembers |
 | U5 Each workspace its own | Not begun | Paint's filaments, Kitbash's placement (issue 77), Print, a drawn falloff (issue 78) and pressure curve (issue 76) |
@@ -141,3 +141,55 @@ Not done in U1:
 - An icon in a disabled button keeps its colour: an icon is drawn at a
   colour fixed when it is built, and cannot follow the button's state.
 - Nothing moved between blocks, and nothing was taken out.
+
+### U2: menus, a status bar, Preferences
+
+- **Edit**: Undo and Redo with their keys (greyed when there is nothing to
+  do), Invert the mask, Clear the mask, Preferences.
+- **View**: Paint, Creases, Overhangs, Mask, Pictures in the bodies list,
+  Frame stats, as ticks; Frame the body. Show paint and show creases left
+  FILAMENT, and the Thumbnails tick left BODIES, for this menu. The
+  overhangs tick stays in EXPORT as well, where its angle is.
+- **Help**: Keyboard shortcuts first.
+- **The status bar**, at the foot of the window (`app/cards.rs`): what the
+  last action did, in red when it failed, and three readings: the voxel
+  size, the triangles drawn, the bodies. The status line left the title
+  bar and the export block, where it was shown twice at once. While a
+  gesture waits for its clicks the bar says what to do instead: Measure's
+  two points, the insert in hand, the stamp in hand. Those were captions
+  beside the Measure button and under ADD and STROKE.
+- **Preferences** (Edit menu): the pen, the SpaceMouse, the update check
+  and the welcome screen on startup. PEN and SPACEMOUSE left the panel.
+  No key: Ctrl and comma already hides the active body.
+- **Keyboard shortcuts** (Help menu, or `?`): every key and held modifier
+  on one card, in two columns. The cheat sheet at the foot of the panel
+  went, and so did every caption that said what a key or a modifier does.
+- **Captions out**, the rest of them: what ctrl does, S and U, the
+  pattern's, the export path, the workbench's two, FORM's, the stamp's,
+  the plane's sides, a brush of nothing, the wash's, the fill's, the
+  overhang's, Parting keys' key, the timeline's, the SpaceMouse
+  settings' file path. Where one said something a user needs, it is the
+  control's tooltip: Radius and Strength name S and U, Picture across the
+  tip says what bright means, FORM's Apply says it works on the whole
+  body less the mask, Parting keys says Cut with Alt, the timeline says
+  click, drag and right click.
+
+Tests: `the_cards_of_the_menus_open_hold_the_keys_and_close` (each card
+takes its menu away, holds the keys, and goes on Escape and on Close),
+`question_mark_is_the_shortcuts_card`, `every_letter_on_the_card_is_a_key`
+(every letter the card names decodes to a key, chords with Ctrl held),
+`the_devices_are_not_in_the_panel`.
+
+On a screen: the four menus, each under its word; the shortcuts card,
+which a click outside does not close; the Preferences card; the status
+bar; the panel top to bottom with no caption left in it.
+
+Not done in U2:
+
+- The settings system of issue 74 (limits as settings) is not built.
+  Preferences is where it will go.
+- Help has no page for what the shortcuts card cannot say (issue 69).
+- A menu is placed under its word by a measured step, not by where iced
+  lays the word out.
+- The scale bar's "at the middle of the view" stays: it says what the
+  reading is of, not how to use it.

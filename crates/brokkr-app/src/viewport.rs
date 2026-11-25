@@ -899,6 +899,10 @@ pub(crate) fn shortcut(character: &str, command: bool, shift: bool, alt: bool) -
         "z" => Some(Message::SymmetryAxisToggled(MirrorAxis::Z)),
         "[" => Some(Message::BrushRadiusScaled(1.0 / RADIUS_STEP)),
         "]" => Some(Message::BrushRadiusScaled(RADIUS_STEP)),
+        // Every key on one card: Help, Keyboard shortcuts. The question mark
+        // is what most applications put it on; a shifted slash arrives here
+        // as "?" already.
+        "?" => Some(Message::ShortcutsOpened),
         _ => None,
     }
 }

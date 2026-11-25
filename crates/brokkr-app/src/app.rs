@@ -5,6 +5,7 @@
 mod adding;
 // The crash net, written without stopping the drawing. See `app/autosave.rs`.
 mod autosave;
+mod cards;
 pub use adding::Insert;
 // Vector displacement maps, for the brushes that add: `app/maps.rs`.
 mod maps;
@@ -748,6 +749,11 @@ pub struct Brokkr {
     gizmo_baked: Option<brokkr_core::Similarity>,
     /// Whether the welcome screen is up. See [`crate::welcome`].
     welcome: bool,
+    /// The Preferences card is up: the pen, the SpaceMouse and how the
+    /// application behaves, out of the panel. See `docs/WORKSPACES.md`.
+    preferences: bool,
+    /// The keyboard shortcuts card is up.
+    shortcuts: bool,
     /// Whether it opens by itself next time.
     ///
     /// Held rather than read where it is drawn: the tick is inside `view()`,
@@ -2169,6 +2175,8 @@ impl Brokkr {
             gizmo_base: None,
             gizmo_baked: None,
             welcome: false,
+            preferences: false,
+            shortcuts: false,
             welcome_on_startup: true,
             palette: crate::palette::Palette::default(),
             feed: crate::articles::Feed::default(),
@@ -7424,11 +7432,6 @@ impl Brokkr {
         Ok(())
     }
 
-    fn export_directory() -> std::path::PathBuf {
-        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-        home.unwrap_or_else(std::env::temp_dir).join("brokkrsculpt")
-    }
-
     /// Weld every visible body and write them all out to a chosen path.
     ///
     /// Refuses to write anything that would not print. A slicer given a mesh
@@ -9201,6 +9204,8 @@ impl Brokkr {
     /// widening it and quietly killing the drag.**
     fn modal_open(&self) -> bool {
         self.welcome
+            || self.preferences
+            || self.shortcuts
             || self.confirm.is_some()
             || self.orient_prompt.is_some()
             || self.bug_report.is_some()
@@ -9234,6 +9239,13 @@ impl Brokkr {
                 // keyboard exit is the one thing worse than no modal.
                 if self.welcome {
                     self.welcome = false;
+                    return Task::none();
+                }
+                // The same for the two cards of the menus, which hold
+                // nothing typed either.
+                if self.shortcuts || self.preferences {
+                    self.shortcuts = false;
+                    self.preferences = false;
                     return Task::none();
                 }
                 self.update(Message::MenuClosed)
@@ -9890,6 +9902,18 @@ impl Brokkr {
                 let slot = self.live_strength_slot();
                 self.strengths[slot] = strength;
             }
+            // Cards of the menus: each takes the menu it was chosen from
+            // away, as the welcome screen does below.
+            Message::PreferencesOpened => {
+                self.top_menu = None;
+                self.preferences = true;
+            }
+            Message::PreferencesClosed => self.preferences = false,
+            Message::ShortcutsOpened => {
+                self.top_menu = None;
+                self.shortcuts = true;
+            }
+            Message::ShortcutsClosed => self.shortcuts = false,
             Message::WelcomeOpened => {
                 // The menu it was chosen from has to go, or it is left drawn
                 // beneath the scrim: reachable to nothing, and still there when

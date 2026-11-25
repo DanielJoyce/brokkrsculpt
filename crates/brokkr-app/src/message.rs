@@ -558,15 +558,19 @@ pub enum PointerEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TopMenu {
     File,
+    Edit,
+    View,
     Help,
 }
 
 impl TopMenu {
-    pub const ALL: [TopMenu; 2] = [TopMenu::File, TopMenu::Help];
+    pub const ALL: [TopMenu; 4] = [TopMenu::File, TopMenu::Edit, TopMenu::View, TopMenu::Help];
 
     pub fn label(self) -> &'static str {
         match self {
             TopMenu::File => "File",
+            TopMenu::Edit => "Edit",
+            TopMenu::View => "View",
             TopMenu::Help => "Help",
         }
     }
@@ -647,8 +651,6 @@ pub enum PanelSection {
     Stroke,
     Form,
     Pattern,
-    Pen,
-    SpaceMouse,
     History,
     Detail,
     Filament,
@@ -657,7 +659,7 @@ pub enum PanelSection {
 
 impl PanelSection {
     /// In the order the panel draws them.
-    pub const ALL: [PanelSection; 14] = [
+    pub const ALL: [PanelSection; 12] = [
         PanelSection::Bodies,
         PanelSection::Brushes,
         PanelSection::Workbench,
@@ -666,8 +668,6 @@ impl PanelSection {
         PanelSection::Stroke,
         PanelSection::Form,
         PanelSection::Pattern,
-        PanelSection::Pen,
-        PanelSection::SpaceMouse,
         PanelSection::History,
         PanelSection::Detail,
         PanelSection::Filament,
@@ -684,8 +684,6 @@ impl PanelSection {
             PanelSection::Stroke => "STROKE",
             PanelSection::Form => "FORM",
             PanelSection::Pattern => "PATTERN",
-            PanelSection::Pen => "PEN",
-            PanelSection::SpaceMouse => "SPACEMOUSE",
             PanelSection::History => "HISTORY",
             PanelSection::Detail => "DETAIL",
             PanelSection::Filament => "FILAMENT",
@@ -710,14 +708,7 @@ impl PanelSection {
     /// FORM starts closed since every heading folds (`ui.rs`): it works on
     /// the whole body, which is done now and then and not stroke by stroke.
     pub fn open_by_default(self) -> bool {
-        !matches!(
-            self,
-            PanelSection::Pen
-                | PanelSection::SpaceMouse
-                | PanelSection::Detail
-                | PanelSection::Filament
-                | PanelSection::Form
-        )
+        !matches!(self, PanelSection::Detail | PanelSection::Filament | PanelSection::Form)
     }
 }
 
@@ -890,6 +881,13 @@ pub enum Message {
     FieldSet(&'static str, Box<Message>),
     /// A field's draft did not read as a number and is let go.
     FieldDropped(&'static str),
+    /// Edit, Preferences: the card that holds the settings of the
+    /// application rather than of the document. See `docs/WORKSPACES.md`.
+    PreferencesOpened,
+    PreferencesClosed,
+    /// Help, Keyboard shortcuts: every key and held modifier, on a card.
+    ShortcutsOpened,
+    ShortcutsClosed,
     PressureToggled(bool),
     PressureCurveChanged(f32),
     TiltToggled(bool),
