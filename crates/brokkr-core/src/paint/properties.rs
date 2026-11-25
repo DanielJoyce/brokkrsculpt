@@ -359,8 +359,9 @@ proptest! {
 
     /// A stroke is a layer over the path it took: the same paint whichever
     /// way the path is walked, and walked there and back again in one
-    /// stroke, for any pigment over any paint, any pressures along it, and
-    /// anything a brush with no direction catches.
+    /// stroke no thinner and no more than a coat, for any pigment over any
+    /// paint, any pressures along it, and anything a brush with no
+    /// direction catches.
     #[test]
     fn a_path_is_the_same_paint_walked_either_way(
         stamps in prop::collection::vec((-4.0_f32..4.0, -4.0_f32..4.0, 0.1_f32..=1.0), 1..7),
@@ -388,7 +389,26 @@ proptest! {
         let backwards = painted(&mut stamps.iter().rev());
         let twice = painted(&mut stamps.iter().chain(stamps.iter().rev()));
         prop_assert!(same(forwards.paint(), backwards.paint()), "the direction mattered");
-        prop_assert!(same(forwards.paint(), twice.paint()), "walking it back again mattered");
+        // Walked back again it lays more where the first way was thin, and
+        // never more than a coat: where the first way laid a coat, the
+        // second leaves it be. See `paint/stroke.rs`.
+        let coat = laid(under, pigment, 1.0);
+        let thicker = |was: u8, now: u8| match pigment.mode {
+            Mode::Erase => now <= was,
+            Mode::Paint | Mode::Glaze => now >= was,
+        };
+        for coord in forwards.paint().bricks().keys() {
+            let origin = coord.origin();
+            for index in 0..BRICK_VOXELS {
+                let (x, y, z) = crate::paint::layers::voxel_of(index);
+                let voxel = origin + IVec3::new(x, y, z);
+                let (once, again) = (forwards.paint().at(voxel), twice.paint().at(voxel));
+                if once == coat {
+                    prop_assert_eq!(again, coat, "more than a coat at {}", voxel);
+                }
+                prop_assert!(thicker(once[3], again[3]), "thinner at {}: {:?} {:?}", voxel, once, again);
+            }
+        }
     }
 
     /// A stroke undone is the paint that was there, and done again is the

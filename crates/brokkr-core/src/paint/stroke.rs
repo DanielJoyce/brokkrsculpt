@@ -15,17 +15,34 @@
 //! be eaten from the inside.
 //!
 //! So nothing here reads what the last stamp wrote. Through a stroke each
-//! voxel keeps one number, its **coverage**: the most any stamp of the
-//! stroke has given it. What the voxel holds is
+//! voxel keeps its **coverage**, and what it holds is
 //!
 //! ```text
 //! laid(what it held when the stroke began, the pigment, coverage)
 //! ```
 //!
 //! worked out from the paint as it was before the stroke, which the open
-//! undo record already holds ([`Volume::edit_paint_over`]). Going over the
-//! same place twice in one stroke changes nothing. A second stroke lays a
-//! second coat.
+//! undo record already holds ([`Volume::edit_paint_over`]). A second
+//! stroke lays a second coat.
+//!
+//! # Coverage: the most, and what was deposited
+//!
+//! The coverage is the larger of two numbers, held to one coat:
+//!
+//! - the **most** any one stamp of the stroke gave the voxel, which is
+//!   what a click without moving lays: the brush's own falloff;
+//! - what the stroke has **deposited** there as it travelled: each stamp
+//!   lays what it reaches by the distance it moved, scaled so that the
+//!   middle of one straight pass is one coat. A slow stroke and a fast one
+//!   deposit the same.
+//!
+//! The coverage was the most alone until 2026-11-25, when the maintainer
+//! saw a return pass laid beside a first one leave a paler seam between
+//! them, and a turn leave a pale wedge inside its corner: each of those is
+//! reached only by the soft edges of the brush, and the most of two soft
+//! edges is less than either middle. Deposited, the two edges add up to a
+//! coat. A stroke still never lays more than a coat, so going over paint
+//! with the same stroke never makes it paler or darker than a coat of it.
 //!
 //! # Linear light
 //!
@@ -284,9 +301,9 @@ pub fn pooled(relief: f32) -> f32 {
 /// stamp laid outside one.
 #[derive(Debug, Default)]
 pub struct PaintStroke {
-    /// The most any stamp of this stroke has given each voxel, 0..=255, a
-    /// brick at a time. Only the bricks a stamp has laid paint in.
-    coverage: FxHashMap<BrickCoord, Box<[u8; BRICK_VOXELS]>>,
+    /// What this stroke has given each voxel, a brick at a time. Only the
+    /// bricks a stamp has laid paint in.
+    coverage: FxHashMap<BrickCoord, Cover>,
     /// The last stamp of this stroke: the brush is swept from there to the
     /// next.
     last: Option<End>,
@@ -498,6 +515,13 @@ impl PaintStroke {
         // the sweep is the brush set down already.
         let moved = from.at != here.at || from.facing != here.facing;
         let dab = moved.then(|| Sweep::between(here, here, radius));
+        // What this stamp deposits on a voxel the sweep reaches fully, in
+        // coats: the distance moved across the surface over what one
+        // straight pass deposits on its middle line. See the module
+        // documentation.
+        let moved_across =
+            if sweep.per_length > 0.0 { sweep.per_length.recip().sqrt() } else { 0.0 };
+        let per_reach = moved_across / (2.0 * radius * falloff_mean(brush.falloff)) * COAT as f32;
         let Self { coverage, scratch, .. } = self;
         let voxel_size = volume.voxel_size();
         let (low, high) = sweep.bounds();
@@ -538,18 +562,20 @@ impl PaintStroke {
             volume.edit_paint_over(from, to, |voxel, position, held, before, protection| {
                 let free = 1.0 - f32::from(protection) / f32::from(PROTECTED);
                 let (across, pressed) = sweep.reach(position);
-                let mut reach = falloff.weight(across) * pressed;
+                let swept = falloff.weight(across) * pressed * free;
+                let mut reach = swept;
                 if let Some(dab) = &dab {
                     let (across, pressed) = dab.reach(position);
-                    reach = reach.max(falloff.weight(across) * pressed);
+                    reach = reach.max(falloff.weight(across) * pressed * free);
                 }
-                let reach = reach * free;
                 // Outside the brush, or wholly protected. Only for speed:
                 // nothing would be laid here further down either.
                 if reach <= 0.0 {
                     return held;
                 }
-                let mut amount = reach * pattern.weight(position);
+                // What thins the paint apart from the brush: the pattern, and
+                // what of the surface the touch catches.
+                let mut thinned = pattern.weight(position);
                 if let Some(curvatures) = &curvatures {
                     // One step down the gradient to the surface this voxel
                     // is paint for, as a gated slot stamp takes it.
@@ -559,7 +585,7 @@ impl PaintStroke {
                     let relief = curvatures.relief(on_surface, lay.crease_gain);
                     let world = position - normal * (distance * voxel_size);
                     let in_source = (world - flip.offset) * flip.sign;
-                    amount *= match lay.catch {
+                    thinned *= match lay.catch {
                         Catch::All => 1.0,
                         Catch::Recesses => pooled(relief),
                         Catch::Raised(dry) => {
@@ -574,16 +600,28 @@ impl PaintStroke {
                         ),
                     };
                 }
-                let wanted = (amount.clamp(0.0, 1.0) * 255.0).round() as u8;
-                let local = voxel - origin;
-                let index = brick_index(local.x as usize, local.y as usize, local.z as usize);
-                // Only ever more: a voxel a stamp has covered is not
-                // uncovered by a later one that gives it less.
-                if wanted == 0 || cover.as_ref().is_some_and(|cover| wanted <= cover[index]) {
+                let thinned = thinned.clamp(0.0, 1.0);
+                let most = ((reach * thinned).clamp(0.0, 1.0) * 255.0).round() as u8;
+                // Whole numbers, so that the sum is the same in any order.
+                // Only the sweep deposits, not the dab at its end, which is
+                // at the other end when the stroke is walked the other way.
+                let deposit = (swept * thinned * per_reach).round() as u32;
+                if most == 0 && deposit == 0 {
                     return held;
                 }
-                let cover = cover.get_or_insert_with(nothing_covered);
-                cover[index] = wanted;
+                let local = voxel - origin;
+                let index = brick_index(local.x as usize, local.y as usize, local.z as usize);
+                let cover = cover.get_or_insert_with(Cover::nothing);
+                let was = cover.at(index);
+                cover.most[index] = cover.most[index].max(most);
+                cover.deposited[index] =
+                    (u32::from(cover.deposited[index]) + deposit).min(COAT) as u16;
+                let wanted = cover.at(index);
+                // Only ever more: a voxel a stamp has covered is not
+                // uncovered by a later one that gives it less.
+                if wanted <= was {
+                    return held;
+                }
                 ready.over(before, f32::from(wanted) / 255.0)
             });
             if let Some(cover) = cover {
@@ -603,8 +641,46 @@ struct Mirror<'a> {
     from: End,
 }
 
-fn nothing_covered() -> Box<[u8; BRICK_VOXELS]> {
-    vec![0_u8; BRICK_VOXELS].into_boxed_slice().try_into().expect("length is BRICK_VOXELS")
+/// One coat deposited, in [`Cover::deposited`]'s units. Whole numbers, so
+/// that what is deposited adds up the same in any order: a stroke walked
+/// backwards lays the paint it lays forwards, to the bit.
+const COAT: u32 = 1 << 15;
+
+/// What a stroke has given the voxels of one brick. See the module
+/// documentation.
+#[derive(Debug, Clone)]
+struct Cover {
+    /// The most any one stamp gave, 0..=255.
+    most: Box<[u8; BRICK_VOXELS]>,
+    /// What the stroke has deposited, [`COAT`] being one coat, held there.
+    deposited: Box<[u16; BRICK_VOXELS]>,
+}
+
+impl Cover {
+    fn nothing() -> Self {
+        Self {
+            most: vec![0_u8; BRICK_VOXELS].into_boxed_slice().try_into().expect("BRICK_VOXELS"),
+            deposited: vec![0_u16; BRICK_VOXELS]
+                .into_boxed_slice()
+                .try_into()
+                .expect("BRICK_VOXELS"),
+        }
+    }
+
+    /// The coverage at `index`, 0..=255: the larger of the most and what
+    /// was deposited, held to a coat.
+    fn at(&self, index: usize) -> u8 {
+        let deposited = (u32::from(self.deposited[index]) * 255 + COAT / 2) / COAT;
+        self.most[index].max(deposited.min(255) as u8)
+    }
+}
+
+/// The mean of a falloff over the brush's radius: what a straight pass
+/// deposits on its middle line is this times the brush's width.
+fn falloff_mean(falloff: crate::brush::FalloffCurve) -> f32 {
+    const SAMPLES: usize = 64;
+    let sum: f32 = (0..SAMPLES).map(|at| falloff.weight((at as f32 + 0.5) / SAMPLES as f32)).sum();
+    (sum / SAMPLES as f32).max(1e-3)
 }
 
 #[cfg(test)]
@@ -837,25 +913,36 @@ mod tests {
 
     /// A stroke lays one coat: each voxel takes the most any stamp gave it,
     /// over what it held before the stroke, however many stamps cross it.
-    /// Going over the same place again in the same stroke changes nothing,
-    /// and a second stroke lays a second coat.
+    /// A click lays the brush's falloff, and a stamp twice over in the same
+    /// place lays it once. A pass lays a coat down its middle and never
+    /// more; the brush is measured across the surface. Going back over a
+    /// pass in the same stroke is no thinner and no more than a coat, and a
+    /// second stroke lays a second coat.
     #[test]
     fn a_stroke_lays_one_coat_however_many_stamps_cross_a_voxel() {
         let brush = brush(4.0);
         let half_red = pigment(RED, 0.5);
         let stamps: Vec<Stamp> =
             (0..=12).map(|step| on(ON_FLAT + Vec3::X * (step as f32 * 0.5), Vec3::Z)).collect();
-        // What the stroke should leave on a voxel that held `before`: the
-        // brush swept along the line the stamps are on, from x = 0 to
-        // x = 6, measured across the face and not through it.
-        let wanted = |position: Vec3, before: Rgba| {
-            let along = position.x.clamp(0.0, 6.0);
-            let across = Vec3::new(position.x - along, position.y, 0.0).length();
-            let coverage = (brush.falloff.weight(across / 4.0) * 255.0).round() as u8;
-            laid(before, half_red, f32::from(coverage) / 255.0)
-        };
 
         for under in [BARE, [GREEN[0], GREEN[1], GREEN[2], 255]] {
+            let coat = laid(under, half_red, 1.0);
+
+            // A click: the falloff, to the bit, measured across the face.
+            let mut volume = cube();
+            volume.edit_paint(IVec3::splat(-40), IVec3::splat(40), |_, _, _, _| under);
+            let mut stroke = PaintStroke::new();
+            volume.begin_stroke();
+            stroke.begin();
+            stroke.stamp(&mut volume, &brush, &stamps[0], &Lay::loaded(half_red));
+            stroke.stamp(&mut volume, &brush, &stamps[0], &Lay::loaded(half_red));
+            for (voxel, position, paint) in near(&volume, ON_FLAT, 5.0) {
+                let across = Vec3::new(position.x - ON_FLAT.x, position.y, 0.0).length();
+                let coverage = (brush.falloff.weight(across / 4.0) * 255.0).round() as u8;
+                assert_eq!(paint, laid(under, half_red, f32::from(coverage) / 255.0), "{voxel}");
+            }
+            drop(volume.end_stroke());
+
             let mut volume = cube();
             volume.edit_paint(IVec3::splat(-40), IVec3::splat(40), |_, _, _, _| under);
             let mut stroke = PaintStroke::new();
@@ -869,10 +956,20 @@ mod tests {
             let after = near(&volume, ON_FLAT + Vec3::X * 3.0, 9.0);
             let (mut soft, mut full) = (0, 0);
             for (voxel, position, paint) in &after {
-                assert_eq!(*paint, wanted(*position, under), "{voxel} over {under:?}");
+                // A coat down the middle of the pass, and nothing past the
+                // brush's rim.
+                let along = position.x.clamp(0.0, 6.0);
+                let across = Vec3::new(position.x - along, position.y, 0.0).length();
+                if across < 0.5 && (1.0..5.0).contains(&position.x) {
+                    assert_eq!(*paint, coat, "{voxel} on the middle line");
+                }
+                if across > 4.0 {
+                    assert_eq!(*paint, under, "{voxel} past the rim");
+                }
+                assert!(paint[3] <= coat[3], "{voxel}: more than a coat");
                 let laid_here = *paint != under;
-                soft += usize::from(laid_here && *paint != laid(under, half_red, 1.0));
-                full += usize::from(*paint == laid(under, half_red, 1.0));
+                soft += usize::from(laid_here && *paint != coat);
+                full += usize::from(*paint == coat);
             }
             // Controls: the brush has a soft edge, and a middle that is not.
             assert!(soft > 500 && full > 5, "{soft} voxels part covered and {full} wholly");
@@ -885,11 +982,21 @@ mod tests {
             }
             assert!(stroke.bricks() > 0);
 
-            // The same stamps again, still in the stroke: nothing.
-            for stamp in &stamps {
+            // The same stamps again, still in the stroke: thicker on the
+            // soft edge, and the middle still a coat.
+            for stamp in stamps.iter().rev() {
                 stroke.stamp(&mut volume, &brush, stamp, &Lay::loaded(half_red));
             }
-            assert_eq!(near(&volume, ON_FLAT + Vec3::X * 3.0, 9.0), after);
+            let again = near(&volume, ON_FLAT + Vec3::X * 3.0, 9.0);
+            let mut thicker = 0;
+            for ((voxel, _, was), (_, _, now)) in after.iter().zip(&again) {
+                assert!(now[3] >= was[3] && now[3] <= coat[3], "{voxel}: {was:?} then {now:?}");
+                if *was == coat {
+                    assert_eq!(*now, coat, "{voxel}");
+                }
+                thicker += usize::from(now != was);
+            }
+            assert!(thicker > 100, "going back added to {thicker} voxels");
             let edit = volume.end_stroke().expect("a stroke that painted");
 
             // A second stroke over the first lays a second coat.
@@ -903,12 +1010,45 @@ mod tests {
 
             // And each is one undo, back to what was there.
             volume.apply_edit(second);
-            assert_eq!(near(&volume, ON_FLAT + Vec3::X * 3.0, 9.0), after);
+            assert_eq!(near(&volume, ON_FLAT + Vec3::X * 3.0, 9.0), again);
             volume.apply_edit(edit);
             for (voxel, _, paint) in near(&volume, ON_FLAT + Vec3::X * 3.0, 9.0) {
                 assert_eq!(paint, under, "{voxel} after the undo");
             }
         }
+    }
+
+    /// A pass and a return beside it in one stroke, three quarters of a
+    /// radius apart: the line between them is a coat, as their middles
+    /// are, and not the paler seam the most of two soft edges left (seen
+    /// by the maintainer, 2026-11-25). The same for the inside of a turn.
+    #[test]
+    fn a_return_pass_beside_the_first_leaves_no_paler_seam() {
+        let brush = brush(4.0);
+        let half_red = pigment(RED, 0.5);
+        let coat = laid(BARE, half_red, 1.0);
+        let gap = 3.0;
+        let out = (0..=24).map(|step| on(ON_FLAT + Vec3::X * (step as f32 * 0.5), Vec3::Z));
+        let back = (0..=24)
+            .rev()
+            .map(|step| on(ON_FLAT + Vec3::new(step as f32 * 0.5, gap, 0.0), Vec3::Z));
+        let mut volume = cube();
+        let mut stroke = PaintStroke::new();
+        volume.begin_stroke();
+        stroke.begin();
+        for stamp in out.chain(back) {
+            stroke.stamp(&mut volume, &brush, &stamp, &Lay::loaded(half_red));
+        }
+        let face = (HALF / VOXEL) as i32;
+        let at = |x: f32, y: f32| {
+            volume.paint().at(IVec3::new((x / VOXEL) as i32, (y / VOXEL) as i32, face))
+        };
+        for x in [4.0, 6.0, 8.0] {
+            assert_eq!(at(x, 0.0), coat, "the first pass's middle at {x}");
+            assert_eq!(at(x, gap), coat, "the return's middle at {x}");
+            assert_eq!(at(x, gap / 2.0), coat, "the seam between them at {x}");
+        }
+        drop(volume.end_stroke());
     }
 
     /// The mask holds paint off in proportion, the pen's pressure scales
