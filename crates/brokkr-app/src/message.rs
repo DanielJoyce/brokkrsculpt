@@ -981,6 +981,12 @@ pub enum Message {
     /// A number key, 1 to 8 as 0 to 7: the open workspace's library's
     /// brush of that place.
     LibraryKey(usize),
+    /// A palette tile was right clicked: offer the keys to put it on. By
+    /// its place on the palette. See `app/keys.rs`.
+    KeyMenuOpened(usize),
+    /// Put the brush whose key row is up on this key, 0 for the key 1.
+    KeyPut(usize),
+    KeyMenuClosed,
     PreferencesOpened,
     PreferencesClosed,
     /// Help, Keyboard shortcuts: every key and held modifier, on a card.

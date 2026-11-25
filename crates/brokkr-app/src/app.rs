@@ -7,6 +7,7 @@ mod adding;
 mod autosave;
 mod cards;
 mod context;
+mod keys;
 mod rail;
 mod workspace;
 pub use adding::Insert;
@@ -764,6 +765,11 @@ pub struct Brokkr {
     /// Set while `keep_to_the_mode` runs, so the messages it sends do not
     /// run it again.
     keeping: bool,
+    /// Which brush each of the keys 1 to 8 picks in each mode. See
+    /// `app/keys.rs`.
+    keys: keys::Keys,
+    /// The palette's brush whose "put on a key" row is up, by its place.
+    key_menu: Option<usize>,
     /// The keyboard shortcuts card is up.
     shortcuts: bool,
     /// Whether it opens by itself next time.
@@ -1917,6 +1923,9 @@ impl Brokkr {
     /// safe against running twice, to serve one request at startup.
     pub fn new() -> (Self, Task<Message>) {
         let mut app = Self::with_devices(Tablet::start(), SpaceMouse::start());
+        // The keys a user set, from the settings directory. Not in
+        // `with_devices`, which the tests build through.
+        app.keys = keys::Keys::load();
         // **Read here and not in `with_devices`, which is what the tests
         // build through.** The welcome screen is modal, so an application
         // constructed with it up has every keyboard and pointer path blocked by
@@ -2190,6 +2199,8 @@ impl Brokkr {
             rail_last_brush: None,
             desk: workspace::Desk::default(),
             keeping: false,
+            keys: keys::Keys::default(),
+            key_menu: None,
             shortcuts: false,
             welcome_on_startup: true,
             palette: crate::palette::Palette::default(),
@@ -9902,6 +9913,9 @@ impl Brokkr {
             Message::WorkspaceBack => return self.enter_workspace(self.desk.last),
             Message::DockTabChosen(tab) => self.desk.memory[self.desk.now as usize].tab = tab,
             Message::LibraryKey(index) => return self.library_key(index),
+            Message::KeyMenuOpened(place) => self.key_menu = Some(place),
+            Message::KeyMenuClosed => self.key_menu = None,
+            Message::KeyPut(key) => self.put_on_key(key),
             Message::PreferencesOpened => {
                 self.top_menu = None;
                 self.preferences = true;

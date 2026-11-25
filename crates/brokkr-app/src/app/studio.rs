@@ -1203,6 +1203,46 @@ impl Brokkr {
         amounts.into()
     }
 
+    /// The row that puts a right clicked tile on a key: its name, the
+    /// eight keys, the one it is on lit, and a way out.
+    fn key_row(&self) -> Option<Element<'_, Message>> {
+        let place = self.key_menu?;
+        let palette = self.studio.presets.palette();
+        let name = palette.get(place)?.0.name.clone();
+        let on = self.key_of_place(place);
+        let keys = (0..super::keys::KEYS).fold(row![].spacing(2), |assembled, key| {
+            assembled.push(
+                crate::ui::toggle((key + 1).to_string(), on == Some(key), Message::KeyPut(key))
+                    .width(Length::Fill),
+            )
+        });
+        Some(
+            column![
+                row![
+                    text(format!("Put {name} on a key"))
+                        .size(theme::LABEL_SIZE)
+                        .color(theme::TEXT_DIM)
+                        .width(Length::Fill),
+                    crate::ui::tip(
+                        button(crate::icon::icon(
+                            crate::icon::IconName::Close,
+                            theme::ICON_INLINE,
+                            theme::TEXT_MUTE
+                        ))
+                        .padding(theme::PAD_CHOICE)
+                        .style(theme::section_heading)
+                        .on_press(Message::KeyMenuClosed),
+                        "Leave the keys as they are",
+                    ),
+                ]
+                .align_y(iced::Alignment::Center),
+                keys,
+            ]
+            .spacing(theme::S1)
+            .into(),
+        )
+    }
+
     /// The palette: the brushes there are, and keeping the one in hand.
     /// Over the brush's own block, because choosing a brush is what comes
     /// first.
@@ -1265,6 +1305,9 @@ impl Brokkr {
         .style(if self.studio.adding { theme::tool_button_active } else { theme::tool_button })
         .on_press(changed(StudioMessage::AddToggled));
         let mut panel = column![heading].spacing(theme::S1);
+        if let Some(row) = self.key_row() {
+            panel = panel.push(row);
+        }
         if self.studio.adding {
             panel = panel.push(add);
         }
@@ -1322,12 +1365,9 @@ impl Brokkr {
                     .spacing(2.0);
             // The first eight carry the key that picks them, in a corner of
             // the picture. See `viewport::shortcut`.
-            let keyed = self
-                .desk
-                .now
-                .palette_places()
-                .map(|places| index.wrapping_sub(places.start))
-                .filter(|place| *place < crate::viewport::KEYED_BRUSHES);
+            // The key that picks it in the open mode, set by the user or
+            // the palette's own place. See `app/keys.rs`.
+            let keyed = self.key_of_place(index);
             let face: Element<'_, Message> = if let Some(place) = keyed {
                 iced::widget::stack![
                     face,
@@ -1352,6 +1392,10 @@ impl Brokkr {
                     theme::tool_button
                 })
                 .on_press(Message::Studio(StudioMessage::PresetChosen(index)))
+        };
+        // A right click on a tile offers the keys to put it on.
+        let brush = |index: usize| {
+            iced::widget::mouse_area(brush(index)).on_right_press(Message::KeyMenuOpened(index))
         };
         let rows = |from: usize, to: usize, across: usize| {
             let indices: Vec<usize> = (from..to).collect();
