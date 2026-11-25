@@ -576,6 +576,26 @@ impl TopMenu {
     }
 }
 
+/// A button of the tool rail down the left of the window. See
+/// `app/rail.rs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rail {
+    /// Whichever brush of the palette is in hand.
+    Brush,
+    /// Upstream's Move: a drag carries the surface along.
+    Move,
+    /// The paint brush.
+    Paint,
+    Mask,
+    Transform,
+    Cut,
+}
+
+impl Rail {
+    pub const ALL: [Rail; 6] =
+        [Rail::Brush, Rail::Move, Rail::Paint, Rail::Mask, Rail::Transform, Rail::Cut];
+}
+
 /// What the user answered to the unsaved-work prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfirmChoice {
@@ -867,11 +887,6 @@ pub enum Message {
     DiagnosticsCopied,
     /// Open the issue tracker in a browser, with what we know prefilled.
     IssueOpened,
-    /// A numeric field in the menu was typed into. Carries the raw text, since
-    /// a half typed value has to survive until it parses.
-    MenuFieldEdited(SizingTarget, String),
-    /// Commit whatever is in the field being edited and stop editing it.
-    MenuFieldSubmitted,
     /// Typing in a number's field, by the key `ui::number` was given. Held
     /// as a draft until it is submitted. See `ui.rs`.
     FieldEdited(&'static str, String),
@@ -883,6 +898,8 @@ pub enum Message {
     FieldDropped(&'static str),
     /// Edit, Preferences: the card that holds the settings of the
     /// application rather than of the document. See `docs/WORKSPACES.md`.
+    /// A button of the tool rail. See `app/rail.rs`.
+    RailChosen(Rail),
     PreferencesOpened,
     PreferencesClosed,
     /// Help, Keyboard shortcuts: every key and held modifier, on a card.

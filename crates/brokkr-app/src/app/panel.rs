@@ -12,10 +12,10 @@
 
 use std::sync::Arc;
 
-use brokkr_core::{BrushKind, FalloffCurve, MaskFilter, MirrorAxis, PatternKind};
+use brokkr_core::{BrushKind, FalloffCurve, MaskFilter, PatternKind};
 use iced::widget::{
     button, checkbox, column, container, mouse_area, opaque, pick_list, rich_text, row, scrollable,
-    sensor, slider, space, span, stack, text, text_editor, text_input,
+    sensor, space, span, stack, text, text_editor, text_input,
 };
 use iced::{Alignment, Element, Length, Padding};
 
@@ -24,7 +24,7 @@ use super::{
 };
 use glam::Vec2;
 
-use crate::app::{MaskCard, SizingTarget, Tool};
+use crate::app::{MaskCard, Tool};
 use crate::icon;
 use crate::message::{
     ConfirmChoice, ExportDetail, ExportFormat, KeySetting, MaskGenerator, Message, PanelSection,
@@ -203,8 +203,11 @@ impl Brokkr {
         let body = column![
             self.header(),
             row![
-                self.tool_strip(),
+                // The kinds of tool, and over the viewport the controls of
+                // the one in hand. See `app/rail.rs` and `app/context.rs`.
+                self.rail(),
                 column![
+                    self.context_bar(),
                     self.timeline_strip(),
                     container(scene).width(Length::Fill).height(Length::Fill)
                 ]
@@ -1785,40 +1788,6 @@ impl Brokkr {
         // something out rather than add to the number.
         const HEIGHT: f32 = 660.0;
 
-        let numeric = |label: &'static str,
-                       which: SizingTarget,
-                       range: std::ops::RangeInclusive<f32>,
-                       step: f32,
-                       on_slide: fn(f32) -> Message| {
-            let value = match which {
-                SizingTarget::Radius => self.brush.radius,
-                SizingTarget::Strength => self.brush.strength,
-            };
-            column![
-                row![
-                    text(label)
-                        .size(theme::LABEL_SIZE)
-                        .color(theme::TEXT_DIM)
-                        .width(Length::FillPortion(2)),
-                    text_input("", &self.menu_field_text(which))
-                        .on_input(move |text| Message::MenuFieldEdited(which, text))
-                        .on_submit(Message::MenuFieldSubmitted)
-                        .size(theme::LABEL_SIZE)
-                        .width(Length::FillPortion(1)),
-                ]
-                .spacing(theme::S2)
-                .align_y(Alignment::Center),
-                slider(range, value, on_slide).step(step),
-            ]
-            .spacing(theme::S1)
-        };
-
-        let falloff = crate::ui::segmented(
-            FalloffCurve::ALL.map(|curve| (curve, curve.label())),
-            self.brush.falloff,
-            Message::FalloffChanged,
-        );
-
         let patterns = || {
             PatternKind::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, kind| {
                 let (style, ink) = theme::tool_toggle(kind == self.brush.pattern.kind);
@@ -1832,41 +1801,24 @@ impl Brokkr {
             })
         };
 
+        // The same controls as the context bar over the viewport, built by
+        // the same functions, so the two cannot drift: see `app/context.rs`.
         let mut body = column![
             text(self.live_tool_label()).size(theme::LABEL_SIZE).color(theme::TEXT_MUTE),
-            numeric(
-                "Radius mm",
-                SizingTarget::Radius,
-                super::MIN_RADIUS_MM..=self.max_radius(),
-                0.05,
-                Message::BrushRadiusChanged
-            ),
+            self.radius_number(false),
         ]
         .spacing(theme::S3);
-
-        // The same substitution the panel makes: while painting there is no
-        // strength and no falloff to offer, and the thing to offer instead is
-        // the filament. A menu that listed both under PAINT contradicted the
-        // panel beside it.
+        // The same substitution the panel makes: while painting the thing to
+        // offer beside the size is what is laid, which carries its own
+        // opacity. A menu that listed a strength under PAINT contradicted
+        // the panel beside it.
         if self.brush.kind == BrushKind::Paint && self.tool != Tool::Mask {
             body = body.push(self.painting_picker(false));
-            // A colour has a soft edge where a slot has none.
-            if self.painting_colour() {
-                body = body
-                    .push(text("Falloff").size(theme::LABEL_SIZE).color(theme::TEXT_DIM))
-                    .push(falloff);
-            }
-        } else {
-            body = body
-                .push(numeric(
-                    "Strength",
-                    SizingTarget::Strength,
-                    super::MIN_STRENGTH..=self.max_strength(),
-                    0.01,
-                    Message::BrushStrengthChanged,
-                ))
-                .push(text("Falloff").size(theme::LABEL_SIZE).color(theme::TEXT_DIM))
-                .push(falloff);
+        } else if let Some(weight) = self.weight_number(false) {
+            body = body.push(weight);
+        }
+        if let Some(falloff) = self.falloff_choice() {
+            body = body.push(crate::ui::sub_label("Falloff")).push(falloff);
         }
 
         if self.tool == Tool::Mask {
@@ -2086,219 +2038,6 @@ impl Brokkr {
         }
 
         block.into()
-    }
-
-    /// The always visible strip of brushes down the left.
-    ///
-    /// A strip rather than the dropdown this replaced: choosing a brush was two
-    /// clicks and a read, for something that should be one glance and one key.
-    /// The numbers match the 1..7 shortcuts, so the key and the button are
-    /// visibly the same thing.
-    ///
-    /// Down the left rather than along the top, which is what SindriCAD's
-    /// ribbon would imply. That is a deliberate departure: a strip costs no
-    /// viewport height, and it keeps the tools on the side the tablet hand is
-    /// already on. The colours are still SindriCAD's tokens, so the two
-    /// applications stay a family.
-    ///
-    /// # The vertical budget, and what the mask button cost to fit
-    ///
-    /// This column has to fit a 768-high window without scrolling — it is a
-    /// plain container with no `scrollable` and no clip, so anything past the
-    /// bottom is simply not there. See [`theme::ICON_TOOL`]. Adding the mask as
-    /// an eleventh button put it over, and two things were subtracted to pay
-    /// for it: the two-line "hold shift: smooth" hint, which the live Smooth
-    /// highlight beside it and the cheat sheet at the foot of the properties
-    /// panel already say twice over, and the separate CUT and MASK headings,
-    /// now one MODE heading over the two buttons that share that meaning.
-    ///
-    /// Arithmetic over the constants, and it is **arithmetic rather than a
-    /// measurement**: the mask button adds about 63 px (an 18 px icon, an 11 px
-    /// label, 10 px of button padding and an 8 px gap), the hint returned 34 and
-    /// the second heading 21, so the strip grew by roughly 8 px net over the
-    /// version that fitted. One screenshot at 768 settles it properly and none
-    /// has been taken.
-    fn tool_strip(&self) -> Element<'_, Message> {
-        let smoothing = self.shift;
-
-        let brushes = BrushKind::ALL.into_iter().enumerate().fold(
-            column![].spacing(theme::S2),
-            |assembled, (index, kind)| {
-                // While shift is held every stroke smooths, so the strip shows
-                // Smooth as live. The selection underneath is untouched.
-                let live =
-                    if smoothing { kind == BrushKind::Smooth } else { kind == self.brush.kind };
-                let (style, ink) = theme::tool_toggle(live);
-                assembled.push(
-                    button(
-                        // The word stays under the icon, and that is the whole
-                        // mitigation for seven tools that all push a surface
-                        // around. SindriCAD's icons carry their labels in the
-                        // ribbon for the same reason; an icon-only strip would
-                        // bet the tool picker on telling clay from draw at
-                        // eighteen pixels.
-                        column![
-                            icon::icon(icon::IconName::for_brush(kind), theme::ICON_TOOL, ink),
-                            text(kind.label()).size(theme::TEXT_SIZE_SMALL),
-                            text(format!("{}", index + 1)).size(theme::CAPTION_SIZE),
-                        ]
-                        // `align_x` alone is not centring. A column defaults to
-                        // `Shrink`, so it hugs its widest child and then sits at
-                        // the LEFT of the button -- and `align_x` only centres
-                        // the children within that shrunken box. The result is
-                        // three elements that agree with each other and with
-                        // nothing else, and it reads as centred only on
-                        // whichever button holds the longest word. `Fill` is
-                        // what makes the box the button.
-                        .width(Length::Fill)
-                        .spacing(0)
-                        .align_x(Alignment::Center),
-                    )
-                    .width(Length::Fill)
-                    .style(style)
-                    .on_press(Message::BrushKindChanged(kind)),
-                )
-            },
-        );
-
-        // The mirror toggles keep their letters and get no icon. X, Y and Z are
-        // plain ASCII, so they carry none of the font-fallback risk that made
-        // the rest of this worth doing -- and an axis is a thing a letter names
-        // better than a picture can. A mirror-plane glyph turned per axis reads
-        // for X and Y and then has to say "depth" in two dimensions for Z,
-        // which is the point at which a set starts inventing puzzles.
-        let mirrors =
-            MirrorAxis::ALL.into_iter().fold(column![].spacing(theme::S2), |assembled, axis| {
-                assembled.push(
-                    button(
-                        text(axis.label())
-                            .size(theme::TEXT_SIZE_SMALL)
-                            // Same trap as the brush buttons: a `text` is
-                            // `Shrink`, so a single letter in a `Fill` button
-                            // sits against its left edge.
-                            .width(Length::Fill)
-                            .align_x(Alignment::Center),
-                    )
-                    .width(Length::Fill)
-                    .style(if self.symmetry.axis(axis) {
-                        theme::tool_button_active
-                    } else {
-                        theme::tool_button
-                    })
-                    .on_press(Message::SymmetryAxisToggled(axis)),
-                )
-            });
-
-        let (cut_style, cut_ink) = theme::tool_toggle(self.tool == Tool::Cut);
-        let (mask_style, mask_ink) = theme::tool_toggle(self.tool == Tool::Mask);
-        let (move_style, move_ink) = theme::tool_toggle(self.tool == Tool::Transform);
-
-        container(
-            scrollable(
-                column![
-                    text("TOOL").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
-                    brushes,
-                    text("MIRROR").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
-                    mirrors,
-                    text("MODE").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
-                    // The live state is shown in the strip, not just in the status
-                    // line, because **these are the two modes that change what a
-                    // left drag does, and only one of the two is destructive.**
-                    // (That sentence used to read "this is the one mode", here and
-                    // in `handoff.md`; masking made both halves false.) That
-                    // asymmetry is also why Escape clears the cut and not the mask:
-                    // a cut is a pending destructive thing, a mask is expensive
-                    // work with no undo entry until the stroke lands.
-                    //
-                    // The words stay for exactly that reason: "armed" versus
-                    // "plane" is a state, and an icon says which tool this is, not
-                    // whether it is about to go off.
-                    button(
-                        column![
-                            icon::icon(icon::IconName::CutPlane, theme::ICON_TOOL, cut_ink),
-                            text(if self.tool == Tool::Cut { "armed" } else { "plane" })
-                                .size(theme::TEXT_SIZE_SMALL),
-                        ]
-                        .width(Length::Fill)
-                        .spacing(0)
-                        .align_x(Alignment::Center)
-                    )
-                    .width(Length::Fill)
-                    .style(cut_style)
-                    .on_press(Message::ToolChanged(Tool::Cut)),
-                    button(
-                        column![
-                            icon::icon(icon::IconName::Mask, theme::ICON_TOOL, mask_ink),
-                            // The same live substitution the brush buttons make for
-                            // Smooth: while shift is held a mask drag blurs, so the
-                            // button says what the next drag will actually do.
-                            text(match (self.tool == Tool::Mask, smoothing) {
-                                (true, true) => "blur",
-                                (true, false) => "on",
-                                (false, _) => "mask",
-                            })
-                            .size(theme::TEXT_SIZE_SMALL),
-                        ]
-                        .width(Length::Fill)
-                        .spacing(0)
-                        .align_x(Alignment::Center)
-                    )
-                    .width(Length::Fill)
-                    .style(mask_style)
-                    .on_press(Message::ToolChanged(Tool::Mask)),
-                    // The third mode that changes what a left drag does. The word
-                    // under it says whether the next release will cost the surface
-                    // anything, which is the one thing about this tool a user
-                    // cannot see by looking at the model.
-                    button(
-                        column![
-                            icon::icon(icon::IconName::Gizmo, theme::ICON_TOOL, move_ink),
-                            text(match self.tool == Tool::Transform {
-                                true if smoothing => "free",
-                                true => "snap",
-                                false => "move",
-                            })
-                            .size(theme::TEXT_SIZE_SMALL),
-                        ]
-                        .width(Length::Fill)
-                        .spacing(0)
-                        .align_x(Alignment::Center)
-                    )
-                    .width(Length::Fill)
-                    .style(move_style)
-                    .on_press(Message::ToolChanged(Tool::Transform)),
-                ]
-                .spacing(theme::S3)
-                .align_x(Alignment::Center),
-            )
-            // **The strip outgrew the window and the last button was clipped to
-            // a sliver.** Its own doc comment above predicted this -- "one
-            // screenshot at 768 settles it properly and none has been taken" --
-            // and then the gizmo added a fourth mode button and the prediction
-            // came true: Thomas found the tool only by noticing the sliver.
-            //
-            // Scrollable rather than smaller, for the same reason the
-            // properties panel is: shrinking type or dropping the words under
-            // the icons would bet the tool picker on telling clay from draw at
-            // eighteen pixels, which the brush buttons above explicitly refuse
-            // to do. The scrollbar is only reachable when it is needed.
-            .height(Length::Fill),
-        )
-        .padding(theme::S3)
-        // **Wide enough for the labels AND the scrollbar.** 76 was measured
-        // against a strip that did not have one. Making it scrollable took a
-        // scrollbar's width out of the content -- iced spends it from the
-        // inside rather than overlaying -- and the labels under the icons lost
-        // exactly that much: "Flatten" and "Smooth" came back clipped, which
-        // reads as a rendering fault rather than as a strip that is too narrow.
-        //
-        // The words are the reason this column is not eighteen pixels of icon
-        // in the first place, per the note above, so they set the width and the
-        // scrollbar is added to it rather than taken out of it.
-        .width(Length::Fixed(92.0))
-        .height(Length::Fill)
-        .style(theme::tool_strip)
-        .into()
     }
 
     /// The timeline strip: stored views, a playhead, and a play button.

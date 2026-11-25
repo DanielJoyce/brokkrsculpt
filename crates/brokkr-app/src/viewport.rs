@@ -17,7 +17,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use brokkr_core::{BrickCoord, BrickMesh, BrushKind, MirrorAxis, NodeId};
+use brokkr_core::{BrickCoord, BrickMesh, MirrorAxis, NodeId};
 use brokkr_gpu::{Frustum, OverlayBatch, PixelRect, PoolStats, SculptRenderer, SlotKey, Uniforms};
 use iced::mouse;
 use iced::touch;
@@ -810,6 +810,9 @@ const RADIUS_STEP: f32 = 1.15;
 /// characters is a keystroke the user meant for something else entirely. It
 /// also keeps `ctrl+alt+…` free for the chords the tool strip and the body
 /// panel are about to claim.
+/// How many brushes of the palette have a key: 1 to 8.
+pub(crate) const KEYED_BRUSHES: usize = 8;
+
 pub(crate) fn shortcut(character: &str, command: bool, shift: bool, alt: bool) -> Option<Message> {
     if command || alt {
         // The only chorded shortcuts. Anything else with control or alt held
@@ -841,13 +844,14 @@ pub(crate) fn shortcut(character: &str, command: bool, shift: bool, alt: bool) -
         return undo_chord.then_some(if shift { Message::Redo } else { Message::Undo });
     }
 
-    // Brushes are numbered in the order the tool strip shows them, so the key
-    // and the button are always the same thing.
+    // The first eight brushes of the palette, which carry the numbers on
+    // their tiles, so the key and the tile are always the same thing. See
+    // `docs/WORKSPACES.md`: the maintainer's decision of 2026-11-25.
     if let Ok(digit) = character.parse::<usize>()
         && let Some(index) = digit.checked_sub(1)
-        && let Some(kind) = BrushKind::ALL.get(index)
+        && index < KEYED_BRUSHES
     {
-        return Some(Message::BrushKindChanged(*kind));
+        return Some(Message::Studio(crate::message::StudioMessage::PresetChosen(index)));
     }
 
     match character.to_ascii_lowercase().as_str() {
@@ -2148,17 +2152,20 @@ mod shortcut_tests {
     }
 
     #[test]
-    fn the_digits_select_brushes_in_the_order_the_tool_strip_shows_them() {
-        for (index, kind) in BrushKind::ALL.into_iter().enumerate() {
+    fn the_digits_select_the_first_eight_brushes_of_the_palette() {
+        for index in 0..KEYED_BRUSHES {
             let key = (index + 1).to_string();
             assert!(
-                matches!(press(&key), Some(Message::BrushKindChanged(selected)) if selected == kind),
-                "key {key} should select {kind}"
+                matches!(
+                    press(&key),
+                    Some(Message::Studio(crate::message::StudioMessage::PresetChosen(chosen)))
+                        if chosen == index
+                ),
+                "key {key} should choose the palette's brush {index}"
             );
         }
-        // One past the last brush, so the mapping cannot silently wrap round.
-        let past_the_end = (BrushKind::ALL.len() + 1).to_string();
-        assert!(press(&past_the_end).is_none());
+        // One past the last, so the mapping cannot silently wrap round.
+        assert!(press(&(KEYED_BRUSHES + 1).to_string()).is_none());
         assert!(press("0").is_none(), "there is no brush zero");
     }
 

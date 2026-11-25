@@ -575,7 +575,7 @@ impl Brokkr {
     }
 
     /// The brush as it is set up now, as a preset under `name`.
-    fn preset_now(&self, name: String) -> Preset {
+    pub(super) fn preset_now(&self, name: String) -> Preset {
         let picture = self.studio.built_in.map_or(StampOf::InHand, StampOf::BuiltIn);
         let stamp = self.studio.stamp_on.then_some((picture, self.studio.stamp_height));
         Preset {
@@ -603,7 +603,7 @@ impl Brokkr {
     /// brush kept as Draw at two millimetres is Draw too. The one that
     /// says the most is the one that is lit, and the earlier of two that
     /// say as much.
-    fn lit(palette: &[(&Preset, Place)], now: &Preset) -> Option<usize> {
+    pub(super) fn lit(palette: &[(&Preset, Place)], now: &Preset) -> Option<usize> {
         let says = |preset: &Preset| {
             usize::from(preset.size_mm.is_some()) + usize::from(preset.strength.is_some())
         };
@@ -1331,6 +1331,23 @@ impl Brokkr {
             let face =
                 column![picture, text(name).size(theme::LABEL_SIZE).width(Length::Fill).center(),]
                     .spacing(2.0);
+            // The first eight carry the key that picks them, in a corner of
+            // the picture. See `viewport::shortcut`.
+            let face: Element<'_, Message> = if index < crate::viewport::KEYED_BRUSHES {
+                iced::widget::stack![
+                    face,
+                    container(
+                        text((index + 1).to_string())
+                            .size(theme::CAPTION_SIZE)
+                            .color(theme::ON_ACCENT),
+                    )
+                    .padding(iced::Padding { top: 0.0, bottom: 0.0, left: 3.0, right: 3.0 })
+                    .style(theme::key_badge),
+                ]
+                .into()
+            } else {
+                face.into()
+            };
             button(face)
                 .width(Length::Fill)
                 .padding(iced::Padding { top: 3.0, bottom: 3.0, left: 2.0, right: 2.0 })
@@ -2970,10 +2987,14 @@ mod tests {
         assert_eq!(app.brush.kind, BrushKind::Flatten);
         assert_eq!(app.brush.strength, 0.3);
 
-        // A strength typed into the menu's field goes to the brush in
-        // hand, and to its slot only when the brush is next changed. A
-        // brush kept before then keeps the one in hand.
-        app.edit_menu_field(super::super::SizingTarget::Strength, "0.5".to_string());
+        // A strength typed into a field goes to the brush in hand, and to
+        // its slot only when the brush is next changed. A brush kept before
+        // then keeps the one in hand. The field sends what its slider does,
+        // through `FieldSet`: see `ui.rs`.
+        update(
+            &mut app,
+            Message::FieldSet("brush.strength", Box::new(Message::BrushStrengthChanged(0.5))),
+        );
         assert_eq!(app.brush.strength, 0.5);
         set(&mut app, StudioMessage::PresetNamed("Typed".to_string()));
         set(&mut app, StudioMessage::PresetSaved);

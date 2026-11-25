@@ -6,6 +6,8 @@ mod adding;
 // The crash net, written without stopping the drawing. See `app/autosave.rs`.
 mod autosave;
 mod cards;
+mod context;
+mod rail;
 pub use adding::Insert;
 // Vector displacement maps, for the brushes that add: `app/maps.rs`.
 mod maps;
@@ -752,6 +754,9 @@ pub struct Brokkr {
     /// The Preferences card is up: the pen, the SpaceMouse and how the
     /// application behaves, out of the panel. See `docs/WORKSPACES.md`.
     preferences: bool,
+    /// The palette's brush that was in hand when the rail went to Move or
+    /// Paint, for its Brush button to come back to. See `app/rail.rs`.
+    rail_last_brush: Option<usize>,
     /// The keyboard shortcuts card is up.
     shortcuts: bool,
     /// Whether it opens by itself next time.
@@ -853,7 +858,6 @@ pub struct Brokkr {
     /// Held as text rather than parsed on every keystroke, because a half typed
     /// value like `2.` does not parse and snapping the field back to the old
     /// number mid-edit makes it unusable.
-    menu_edit: Option<(SizingTarget, String)>,
     /// What is being typed into the panels' number fields, by key. See
     /// `ui.rs`.
     pub(crate) drafts: crate::ui::Drafts,
@@ -2176,6 +2180,7 @@ impl Brokkr {
             gizmo_baked: None,
             welcome: false,
             preferences: false,
+            rail_last_brush: None,
             shortcuts: false,
             welcome_on_startup: true,
             palette: crate::palette::Palette::default(),
@@ -2198,7 +2203,6 @@ impl Brokkr {
             last_autosave: Instant::now(),
             autosave: autosave::Autosave::default(),
             last_activity: Instant::now(),
-            menu_edit: None,
             drafts: crate::ui::Drafts::new(),
             // ON, which is what Thomas asked for, and the bench now supports
             // it: 8.03, 7.89 and 7.88 ms across three runs on a quiet machine
@@ -8010,43 +8014,6 @@ impl Brokkr {
         }
     }
 
-    /// Take a keystroke in one of the menu's numeric fields.
-    ///
-    /// The text is kept whatever it says, so `2.` and an empty field survive
-    /// being typed through. The value only moves when the text parses to
-    /// something inside the same bounds the sliders use -- a field that silently
-    /// accepted 500 mm would be worse than one that ignores it.
-    fn edit_menu_field(&mut self, which: SizingTarget, text: String) {
-        if let Ok(value) = text.trim().parse::<f32>()
-            && value.is_finite()
-        {
-            match which {
-                SizingTarget::Radius => {
-                    self.brush.radius = value.clamp(MIN_RADIUS_MM, self.max_radius());
-                }
-                SizingTarget::Strength => {
-                    // The LIVE tool's ceiling, so the mask's 1.0 is typeable.
-                    self.brush.strength = value.clamp(MIN_STRENGTH, self.max_strength());
-                }
-            }
-        }
-        self.menu_edit = Some((which, text));
-    }
-
-    /// The text a menu field should show: what is being typed, or the current
-    /// value formatted.
-    pub(crate) fn menu_field_text(&self, which: SizingTarget) -> String {
-        if let Some((editing, text)) = &self.menu_edit
-            && *editing == which
-        {
-            return text.clone();
-        }
-        match which {
-            SizingTarget::Radius => format!("{:.2}", self.brush.radius),
-            SizingTarget::Strength => format!("{:.2}", self.brush.strength),
-        }
-    }
-
     /// Move the number a sizing gesture is holding, from how far the pointer
     /// has travelled since it began.
     ///
@@ -9904,6 +9871,7 @@ impl Brokkr {
             }
             // Cards of the menus: each takes the menu it was chosen from
             // away, as the welcome screen does below.
+            Message::RailChosen(which) => return self.rail_chosen(which),
             Message::PreferencesOpened => {
                 self.top_menu = None;
                 self.preferences = true;
@@ -10467,7 +10435,6 @@ impl Brokkr {
                 }
                 self.adding = false;
                 self.menu = None;
-                self.menu_edit = None;
                 self.top_menu = None;
                 self.cube_menu = None;
                 // Unlike `confirm` above, this one IS cleared: declining to
@@ -10476,8 +10443,6 @@ impl Brokkr {
                 // loses the work.
                 self.orient_prompt = None;
             }
-            Message::MenuFieldEdited(which, text) => self.edit_menu_field(which, text),
-            Message::MenuFieldSubmitted => self.menu_edit = None,
             Message::FieldEdited(key, typed) => {
                 self.drafts.insert(key, typed);
             }
@@ -15516,34 +15481,59 @@ mod tests {
         );
     }
 
-    /// A numeric field is the reason the menu beats the panel, and the reason it
-    /// is fiddly: half typed text has to survive, but a value outside the
-    /// slider's range must not be accepted quietly.
+    /// A number typed in the menu, as in the panel and the bar: the value
+    /// moves on enter and not before, held to the slider's range, and junk
+    /// leaves it alone. The menu's own fields applied every keystroke that
+    /// parsed; they are the kit's `ui::number` now (`docs/WORKSPACES.md`).
     #[test]
-    fn a_typed_field_survives_being_half_written_and_still_clamps() {
+    fn a_typed_radius_arrives_on_enter_and_still_clamps() {
         let mut app = app();
-
-        // Part way through typing "2.5": neither "" nor "2." parses, and
-        // snapping the field back mid-edit would make it unusable.
-        for text in ["", "2", "2.", "2.5"] {
-            update(&mut app, Message::MenuFieldEdited(SizingTarget::Radius, text.to_string()));
-            assert_eq!(app.menu_field_text(SizingTarget::Radius), text, "the text was lost");
+        let set = |app: &mut Brokkr, carried: Message| {
+            update(app, Message::FieldSet("brush.radius", Box::new(carried)));
+        };
+        for typed in ["", "2", "2.", "2.5"] {
+            update(&mut app, Message::FieldEdited("brush.radius", typed.to_string()));
         }
+        assert_ne!(app.brush.radius, 2.5, "typing alone moved the value");
+        set(&mut app, Message::BrushRadiusChanged(2.5));
         assert!((app.brush.radius - 2.5).abs() < 1.0e-5, "the value never arrived");
-
-        // Junk leaves the value alone rather than zeroing it.
-        update(&mut app, Message::MenuFieldEdited(SizingTarget::Radius, "banana".into()));
-        assert!((app.brush.radius - 2.5).abs() < 1.0e-5, "junk moved the value");
-
-        // Out of range is clamped, not accepted.
-        update(&mut app, Message::MenuFieldEdited(SizingTarget::Radius, "500".into()));
-        assert_eq!(app.brush.radius, MAX_RADIUS_MM);
-        update(&mut app, Message::MenuFieldEdited(SizingTarget::Strength, "-5".into()));
+        assert!(app.drafts.is_empty());
+        // Out of range is held to the slider's range by the field, which
+        // is what sends it.
+        let submitted = |app: &Brokkr, key: &'static str, typed: &str| {
+            let mut drafts = crate::ui::Drafts::new();
+            drafts.insert(key, typed.to_string());
+            match key {
+                "brush.radius" => crate::ui::number(
+                    &drafts,
+                    key,
+                    "Radius",
+                    app.brush.radius,
+                    MIN_RADIUS_MM..=app.max_radius(),
+                    Message::BrushRadiusChanged,
+                )
+                .submitted(),
+                _ => crate::ui::number(
+                    &drafts,
+                    key,
+                    "Strength",
+                    app.brush.strength,
+                    MIN_STRENGTH..=app.max_strength(),
+                    Message::BrushStrengthChanged,
+                )
+                .submitted(),
+            }
+        };
+        let message = submitted(&app, "brush.radius", "500");
+        update(&mut app, message);
+        assert_eq!(app.brush.radius, app.max_radius());
+        let message = submitted(&app, "brush.strength", "-5");
+        update(&mut app, message);
         assert_eq!(app.brush.strength, MIN_STRENGTH);
-
-        // Once submitted the field goes back to showing the real value.
-        update(&mut app, Message::MenuFieldSubmitted);
-        assert_eq!(app.menu_field_text(SizingTarget::Radius), format!("{:.2}", app.brush.radius));
+        // And junk leaves the value where it was.
+        let message = submitted(&app, "brush.radius", "banana");
+        update(&mut app, message);
+        assert_eq!(app.brush.radius, app.max_radius());
     }
 
     #[test]
