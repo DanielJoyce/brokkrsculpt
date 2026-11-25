@@ -239,6 +239,12 @@ impl Brokkr {
                 };
                 self.update(Message::Studio(StudioMessage::PresetChosen(place)))
             }
+            // In colour, the rack in hand's paints; by filament slot, the
+            // touches. See `app/rack.rs`.
+            Workspace::Paint if self.painting_colour() => {
+                self.rack_key(index);
+                iced::Task::none()
+            }
             Workspace::Paint => match PaintTouch::ALL.get(index) {
                 Some(touch) => self.update(Message::PaintTouchChosen(*touch)),
                 None => iced::Task::none(),
@@ -655,6 +661,15 @@ mod tests {
         let palette = app.studio.presets.palette();
         assert_eq!(Brokkr::lit(&palette, &now), Some(2));
         update(&mut app, Message::WorkspaceChosen(Workspace::Paint));
+        update(&mut app, Message::LibraryKey(2));
+        assert_eq!(app.painting.colour, app.painting.rack.rack().paints[2].rgb);
+        // By filament slot, the keys are the touches.
+        update(
+            &mut app,
+            Message::Painting(crate::message::PaintingMessage::Target(
+                crate::message::PaintTarget::Slots,
+            )),
+        );
         update(&mut app, Message::LibraryKey(2));
         assert_eq!(app.touch.kind, PaintTouch::ALL[2]);
         update(&mut app, Message::WorkspaceChosen(Workspace::Transform));

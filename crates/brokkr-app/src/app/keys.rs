@@ -13,7 +13,8 @@
 //!
 //! Kept in `keys.conf` in the settings directory, one `mode.key = name`
 //! a line: what a user chose, which survives a reinstall. Paint's keys are
-//! the five touches and are not set here.
+//! the rack in hand's first eight, painting in colour, and the touches by
+//! filament slot; neither is set here. See `app/rack.rs`.
 
 use std::path::Path;
 

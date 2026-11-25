@@ -6,7 +6,14 @@ The first pass of the classifier in docs/PAINT-RACK.md: the product line
 decides first, then the paint's name, then a short list of exceptions.
 It prints the count of each kind.
 
-    scripts/paint_index.py <path to miniature-paints/paints> [out.json] [kind [brand]]
+    scripts/paint_index.py <path to miniature-paints/paints> [out.json|out.tsv] [kind [brand]]
+
+With an out.tsv, it writes the index the application ships,
+assets/paints/index.tsv: one paint a line, brand, line, name, code, hex,
+kind and flags, tab separated, sorted. The flags are `a` for a paint made
+for the airbrush, `s` for a spray, and `D`, `B` or `L` for the dark, base
+and light of a Foundry triad. The kinds in `scripts/paint_overrides.tsv`
+(brand, line, name, kind) win over the rules.
 
 The tables are https://github.com/Arcturus5404/miniature-paints (MIT).
 """
@@ -64,10 +71,44 @@ def role(r):
     if r['brand']=='Foundry': return (m.group(1).lower() if m else 'base')
     return None
 for r in rows: r['kind']=kind(r); r['role']=role(r)
+import os
+OVERRIDES=os.path.join(os.path.dirname(os.path.abspath(__file__)),'paint_overrides.tsv')
+overridden=0
+if os.path.exists(OVERRIDES):
+    table={}
+    for l in open(OVERRIDES):
+        if l.startswith('#') or not l.strip(): continue
+        b,st,n,k=l.rstrip('\n').split('\t')
+        table[(b,st,n)]=k
+    for r in rows:
+        k=table.get((r['brand'],r['set'],r['name']))
+        if k: r['kind']=k; overridden+=1
+print(overridden,'kinds overridden')
 c=collections.Counter(r['kind'] for r in rows)
 print(sum(c.values()),'rows;',len(BAD),'without a colour;',sum(r['shifted'] for r in rows),'with shifted columns'); 
 for k,v in c.most_common(): print(f"{k:16}{v}")
-if OUT: json.dump(rows, open(OUT, 'w'))
+def flags(r):
+    f=''
+    if r['kind'].startswith('air') or r['kind'].endswith('air'): f+='a'
+    if r['kind'].startswith('spray'): f+='s'
+    if r['role']: f+={'shade':'D','base':'B','light':'L'}[r['role']]
+    return f
+def plain_kind(k):
+    # "air+metallic" is a metallic made for the airbrush: the flag says air.
+    if '+' in k: return k.split('+')[1]
+    return k
+def clean(t): return t.replace('\t',' ').strip()
+if OUT and OUT.endswith('.tsv'):
+    seen=set(); out=[]
+    for r in rows:
+        line='\t'.join([clean(r['brand']),clean(r['set']),clean(r['name']),clean(r['code']),r['hex'][1:],plain_kind(r['kind']),flags(r)])
+        if line in seen: continue
+        seen.add(line); out.append(line)
+    out.sort(key=lambda l: l.lower())
+    with open(OUT,'w') as f:
+        f.write('\n'.join(out)+'\n')
+    print(len(out),'lines written')
+elif OUT: json.dump(rows, open(OUT, 'w'))
 if ARGS:
     for r in rows:
         if r['kind'] == ARGS[0] and (len(ARGS) < 2 or r['brand'] == ARGS[1]):

@@ -401,6 +401,16 @@ true of it too, and what it adds is this.
   every export that carries colour: a colour a vertex in a PLY, the
   texture of an *OBJ+PNG* or a *GLB*, and in a 3MF the loaded filament
   nearest the colour, wherever the paint covers at least half.
+- **Racks of paints.** Paint's library is a rack: a set of paints of
+  your own, kept as a file you can hand to someone, with as many racks as
+  you like and one in hand. *Add paints* searches an index of 9,909
+  hobby paints from 34 brands (the
+  [miniature-paints](https://github.com/Arcturus5404/miniature-paints)
+  tables, MIT) by name, code or nearest colour, narrowed by brand and by
+  kind: paint, air, metallic, contrast, wash, stain, primer, spray, dry
+  or effect. *New colour* puts the colour in hand on the rack by a name.
+  The keys 1 to 8 pick the rack's first eight. Choosing a wash, a stain
+  or a contrast gives it a layer of its own blend.
 - **Layers of paint.** LAYERS, at the top of the Paint mode's settings:
   up to sixteen a body, each with a name, a blend (*Normal*, *Multiply*,
   *Screen*, *Glaze*, a *Wash* that pools in the creases, a *Contrast*

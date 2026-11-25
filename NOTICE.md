@@ -174,3 +174,11 @@ The clay matcap the model is shaded with is *generated in code*
 the application needs out of the repository entirely — that was the reasoning
 before any of the above existed, and it still holds for anything the renderer
 consumes.
+
+**The paint index is third-party data.** `assets/paints/index.tsv` is
+generated from the tables of
+[miniature-paints](https://github.com/Arcturus5404/miniature-paints),
+copyright 2022 Rick Fleuren, under the MIT licence, whose text is beside
+it as `assets/paints/LICENSE-miniature-paints`. The kinds in it are this
+project's own (`scripts/paint_index.py`). The paint names and brands are
+the makers' trademarks, used to name their products.
