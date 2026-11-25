@@ -5039,6 +5039,8 @@ impl Brokkr {
         self.add_cut_preview(&mut batch);
         // A shape being dragged out, drawn coarse. See `app/insert_preview.rs`.
         self.add_insert_preview(&mut batch);
+        // The decal being dragged. See `app/decal.rs`.
+        self.add_decal_preview(&mut batch);
         self.shared.swap_overlay(&mut batch);
         self.overlay = batch;
     }
@@ -6650,8 +6652,9 @@ impl Brokkr {
         self.move_stroke.end();
         self.move_grab = None;
         let body = self.doc.active();
-        // A decal's new layer goes in the same entry as its dab. See
-        // `app/decal.rs`.
+        // A decal dragged out is laid as the button comes up, and its new
+        // layer goes in the same entry as its dab. See `app/decal.rs`.
+        self.set_the_decal_down();
         let edit = self.doc.active_volume_mut().end_stroke();
         if let Some(entry) = self.stroke_entry(body, edit) {
             let before = self.history.stats();

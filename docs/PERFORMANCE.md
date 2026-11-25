@@ -773,6 +773,20 @@ differed by up to 2 ms:
 About a fifth more at 10 mm, by the means of the two. The airbrush does
 not take this path and was not changed.
 
+**A decal drawn while it is dragged, and laid once (2026-11-25).** It
+was dabbed again at every move, and each dab asked every voxel of the
+cube round it. Now a move draws it on a grid cast onto the surface, and
+the dab, which passes over bricks with no surface and works across every
+core, is laid when the button comes up (`app/decal.rs`,
+`paint/decal.rs`). `what_a_decal_costs`, release build:
+
+| A decal across | One move, before | One move, after | Laid on release |
+|---|---|---|---|
+| 4.5 mm | 3.4 ms | 2.8 ms | 4.9 ms |
+| 11 mm | 15.0 ms | 7.3 ms | 9.1 ms |
+| 21 mm | 57.6 ms | 10.8 ms | 12.9 ms |
+| 41 mm | 261 ms | 15.5 ms | 27.4 ms |
+
 **And a crash.** A drag toward the horizon of the surface pressed on asked
 for a shape with no end, and a test that dragged 3,000 pixels past the model
 was killed by the kernel for memory. A shape is now held to 160 voxels from

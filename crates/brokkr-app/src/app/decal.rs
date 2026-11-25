@@ -5,9 +5,13 @@
 //! [`brokkr_core::paint::decal`].
 //!
 //! Press where it goes; drag away to size it and round to turn it, and it
-//! is dabbed again at each move, over the paint as it was, so what is left
-//! when the button comes up is one dab. A click dabs it at the brush's
-//! size. It goes on the active layer if that is a decal layer, or on a new
+//! is dabbed when the button comes up. While it is dragged it is drawn
+//! over the model and not laid: the picture on a grid cast along the view
+//! onto the surface, each cell in the picture's colour. Asked for by the
+//! maintainer on 2026-11-25 ("render as decal before actually stamping
+//! onto paint layer"): it was dabbed again at every move, which grew with
+//! the cube of its size, 50 ms a move at 21 mm across. A click dabs it at
+//! the brush's size. It goes on the active layer if that is a decal layer, or on a new
 //! one over it named for the picture, and the new layer and the dab are
 //! one undo entry.
 //!
@@ -21,7 +25,7 @@ use std::sync::Arc;
 
 use brokkr_core::paint::decal::{BuiltInPicture, Dab, Picture};
 use brokkr_core::{Change, Entry, NodeId};
-use glam::{IVec3, Vec2};
+use glam::Vec2;
 use iced::widget::{button, column, row, text};
 use iced::{Element, Length, Task};
 
@@ -42,9 +46,13 @@ const SOFT_RANGE: std::ops::RangeInclusive<f32> = 0.0..=0.5;
 struct Gesture {
     pressed: Vec2,
     dab: Dab,
-    /// The box the last dab of it reached.
-    reach: Option<(IVec3, IVec3)>,
+    /// What is drawn of it until it is laid: triangles on the surface, each
+    /// with its colour.
+    preview: Vec<([glam::Vec3; 3], [f32; 4])>,
 }
+
+/// How many cells across the preview's grid is.
+const PREVIEW_CELLS: usize = 48;
 
 /// The Decal touch's settings, and a dab under way.
 #[derive(Debug)]
@@ -58,6 +66,9 @@ pub(super) struct DecalState {
     gesture: Option<Gesture>,
     /// The stack before a dab made its decal layer, for the one entry.
     made_layer: Option<Before>,
+    /// How wide the last dab was, world units, for a measurement.
+    #[cfg(test)]
+    pub last_size: f32,
 }
 
 impl Default for DecalState {
@@ -71,6 +82,8 @@ impl Default for DecalState {
             own,
             gesture: None,
             made_layer: None,
+            #[cfg(test)]
+            last_size: 0.0,
         }
     }
 }
@@ -184,22 +197,20 @@ impl Brokkr {
         self.touch.kind == PaintTouch::Decal
     }
 
-    /// A press or a move of the Decal touch.
+    /// A press or a move of the Decal touch: where it goes, how big and
+    /// how turned, drawn and not laid. See the module documentation.
     pub(super) fn decal_to(&mut self, pixel: Vec2, start: bool) {
         if start {
             self.painting.decal.gesture = None;
             let Some(at) = self.surface_under(pixel) else {
                 return;
             };
-            let (_, picture) = self.painting.decal.picture();
             let (_, along) = self.ray_through(pixel);
             let across = |offset: Vec2| {
                 let (_, ray) = self.ray_through(pixel + offset);
                 (ray - along * ray.dot(along)).normalize_or_zero()
             };
             let (right, up) = (across(Vec2::new(10.0, 0.0)), across(Vec2::new(0.0, -10.0)));
-            self.decal_layer();
-            self.arm_recorder();
             let stamp = self
                 .painting
                 .decal
@@ -215,9 +226,9 @@ impl Brokkr {
                 soft: self.painting.decal.soft,
                 stamp,
             };
-            let reach = Some(self.doc.active_volume_mut().dab(&picture, &dab, None));
-            self.painting.decal.gesture = Some(Gesture { pressed: pixel, dab, reach });
-            self.remesh_dirty();
+            let preview = self.decal_preview(&dab);
+            self.painting.decal.gesture = Some(Gesture { pressed: pixel, dab, preview });
+            self.refresh_overlay();
             return;
         }
         let Some(gesture) = self.painting.decal.gesture.clone() else {
@@ -236,10 +247,104 @@ impl Brokkr {
             turn: (-pulled.y).atan2(pulled.x),
             ..gesture.dab
         };
+        let preview = self.decal_preview(&dab);
+        self.painting.decal.gesture = Some(Gesture { dab, preview, ..gesture });
+        self.refresh_overlay();
+    }
+
+    /// Lay the dab dragged out, when the button comes up: on a decal layer,
+    /// in the stroke whose entry the layer joins. Called at the end of a
+    /// stroke, before its entry is made.
+    pub(super) fn set_the_decal_down(&mut self) {
+        let Some(gesture) = self.painting.decal.gesture.as_ref() else {
+            return;
+        };
+        let dab = gesture.dab;
+        #[cfg(test)]
+        {
+            self.painting.decal.last_size = dab.size;
+        }
         let (_, picture) = self.painting.decal.picture();
-        let reach = self.doc.active_volume_mut().dab(&picture, &dab, gesture.reach);
-        self.painting.decal.gesture = Some(Gesture { reach: Some(reach), dab, ..gesture });
+        self.decal_layer();
+        self.arm_recorder();
+        let _ = self.doc.active_volume_mut().dab(&picture, &dab, None);
+        if let Some(gesture) = self.painting.decal.gesture.as_mut() {
+            gesture.preview.clear();
+        }
         self.remesh_dirty();
+        self.refresh_overlay();
+    }
+
+    /// The picture on a grid laid along the view onto the surface, each
+    /// cell in the colour the dab would lay there: what is drawn while the
+    /// dab is dragged.
+    fn decal_preview(&self, dab: &Dab) -> Vec<([glam::Vec3; 3], [f32; 4])> {
+        let (_, picture) = self.painting.decal.picture();
+        let volume = self.doc.active_volume();
+        let voxel = volume.voxel_size();
+        let along = dab.along.normalize_or_zero();
+        let cells = PREVIEW_CELLS;
+        // Each corner of the grid, cast along the view from in front of the
+        // picture's plane onto the surface, and lifted a voxel toward the
+        // eye so the surface does not hide it.
+        let corner = |i: usize, j: usize| {
+            let uv = Vec2::new(i as f32 / cells as f32, j as f32 / cells as f32);
+            let mut at = dab.on_plane(&picture, uv) - along * dab.size;
+            let mut travelled = 0.0;
+            for _ in 0..96 {
+                let distance = volume.sample_world(at) * voxel;
+                if distance < voxel * 0.1 {
+                    return Some(at - along * voxel);
+                }
+                let step = distance.max(voxel * 0.25);
+                at += along * step;
+                travelled += step;
+                if travelled > dab.size * 2.0 {
+                    return None;
+                }
+            }
+            None
+        };
+        let corners: Vec<Option<glam::Vec3>> = (0..=cells)
+            .flat_map(|j| (0..=cells).map(move |i| (i, j)))
+            .map(|(i, j)| corner(i, j))
+            .collect();
+        let at = |i: usize, j: usize| corners[j * (cells + 1) + i];
+        let mut triangles = Vec::new();
+        for j in 0..cells {
+            for i in 0..cells {
+                let (Some(a), Some(b), Some(c), Some(d)) =
+                    (at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1))
+                else {
+                    continue;
+                };
+                let middle =
+                    Vec2::new((i as f32 + 0.5) / cells as f32, (j as f32 + 0.5) / cells as f32);
+                let (colour, amount) = dab.shows(&picture, middle);
+                if amount < 0.02 {
+                    continue;
+                }
+                let colour = [
+                    f32::from(colour[0]) / 255.0,
+                    f32::from(colour[1]) / 255.0,
+                    f32::from(colour[2]) / 255.0,
+                    amount.min(1.0) * 0.9,
+                ];
+                triangles.push(([a, b, c], colour));
+                triangles.push(([a, c, d], colour));
+            }
+        }
+        triangles
+    }
+
+    /// The dab being dragged, drawn over the model.
+    pub(super) fn add_decal_preview(&self, batch: &mut brokkr_gpu::OverlayBatch) {
+        let Some(gesture) = &self.painting.decal.gesture else {
+            return;
+        };
+        for ([a, b, c], colour) in &gesture.preview {
+            batch.push_triangle(*a, *b, *c, *colour);
+        }
     }
 
     /// Make the active layer a decal layer, or a new one named for the
@@ -343,6 +448,7 @@ impl Brokkr {
 mod tests {
     use super::*;
     use crate::message::{PointerButton, PointerEvent};
+    use glam::IVec3;
     use iced::Vector;
 
     const SIZE: Vector = Vector { x: 800.0, y: 600.0 };
@@ -427,5 +533,49 @@ mod tests {
         update(&mut app, Message::Decal(DecalMessage::Soft(9.0)));
         assert_eq!(app.painting.decal.soft, 0.5);
         drop(app.decal_settings());
+    }
+
+    /// What one move of a decal being dragged to size costs, and its
+    /// release, at sizes from a small one to one across most of the ball.
+    /// A measurement, run by hand in release:
+    /// `cargo test --release -p brokkr-app -- --ignored what_a_decal_costs --nocapture`.
+    #[test]
+    #[ignore = "a measurement, run by hand"]
+    fn what_a_decal_costs() {
+        for pulled in [20.0, 60.0, 120.0, 240.0] {
+            let mut app = app();
+            update(
+                &mut app,
+                Message::Pointer(PointerEvent::Pressed {
+                    button: PointerButton::Left,
+                    position: CENTRE,
+                    size: SIZE,
+                }),
+            );
+            update(&mut app, Message::Frame);
+            let moves = 8;
+            let started = std::time::Instant::now();
+            for step in 0..moves {
+                let at = Vector { x: CENTRE.x + pulled + step as f32, y: CENTRE.y };
+                update(
+                    &mut app,
+                    Message::Pointer(PointerEvent::Moved { position: at, size: SIZE }),
+                );
+                update(&mut app, Message::Frame);
+            }
+            let per_move = started.elapsed().as_secs_f32() * 1000.0 / moves as f32;
+            let started = std::time::Instant::now();
+            update(
+                &mut app,
+                Message::Pointer(PointerEvent::Released { button: PointerButton::Left }),
+            );
+            update(&mut app, Message::Frame);
+            let release = started.elapsed().as_secs_f32() * 1000.0;
+            let size = app.painting.decal.last_size;
+            eprintln!(
+                "pulled {pulled} px, {size:.1} mm across: {per_move:.1} ms a move, {release:.1} ms the release, {} voxels",
+                painted(&app)
+            );
+        }
     }
 }
