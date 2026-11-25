@@ -3289,51 +3289,6 @@ impl Brokkr {
         .into()
     }
 
-    /// Which filament the paint brush lays down: one swatch per slot, the live
-    /// one lit the way the tool strip lights its brush.
-    ///
-    /// Lives in the brush block and not in FILAMENT below, because it is
-    /// consulted while sculpting and FILAMENT is consulted while exporting.
-    pub(super) fn filament_picker(&self) -> Element<'_, Message> {
-        let swatches = self.palette.slots.iter().enumerate().fold(
-            row![].spacing(theme::S1),
-            |assembled, (index, slot)| {
-                let number = (index + 1).min(usize::from(u8::MAX)) as u8;
-                let live = number == self.paint_slot;
-                let (style, _) = theme::tool_toggle(live);
-                assembled.push(
-                    button(
-                        row![
-                            container(text(""))
-                                .width(12)
-                                .height(12)
-                                .style(theme::swatch(slot.swatch())),
-                            text(format!("{number}")).size(theme::LABEL_SIZE),
-                        ]
-                        .spacing(theme::S1)
-                        .align_y(Alignment::Center),
-                    )
-                    .style(style)
-                    .on_press(Message::PaintSlotChanged(number)),
-                )
-            },
-        );
-        let chosen = self
-            .palette
-            .slots
-            .get(usize::from(self.paint_slot).saturating_sub(1))
-            .map(|slot| slot.name.as_str())
-            .unwrap_or("no such slot");
-        column![
-            text(format!("Filament  {}. {chosen}", self.paint_slot))
-                .size(theme::LABEL_SIZE)
-                .color(theme::TEXT_DIM),
-            swatches,
-        ]
-        .spacing(theme::S2)
-        .into()
-    }
-
     /// The filament loaded in each slot, and a way to ask the printer.
     ///
     /// **This is what the sculpt's slot numbers MEAN**, which is why it sits

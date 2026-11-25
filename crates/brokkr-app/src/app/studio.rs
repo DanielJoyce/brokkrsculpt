@@ -1482,7 +1482,7 @@ impl Brokkr {
             }
             // The rack in hand over the touches, painting in colour. See
             // `app/rack.rs`.
-            crate::message::Workspace::Paint if self.painting_colour() => (
+            crate::message::Workspace::Paint => (
                 "PAINTS",
                 column![
                     self.rack_swatches(POPUP_ACROSS + 2),
@@ -1492,7 +1492,6 @@ impl Brokkr {
                 .spacing(theme::S2)
                 .into(),
             ),
-            crate::message::Workspace::Paint => ("PAINTS", self.touch_picker(false)),
             crate::message::Workspace::Print => return None,
         };
         let card = column![text(title).size(theme::HEADING_SIZE).color(theme::TEXT_MUTE), body]
@@ -1892,7 +1891,7 @@ mod tests {
         for z in lo.z..=hi.z {
             for y in lo.y..=hi.y {
                 for x in lo.x..=hi.x {
-                    count += usize::from(volume.colour().at(glam::IVec3::new(x, y, z)) != 0);
+                    count += usize::from(volume.paint().at(glam::IVec3::new(x, y, z))[3] != 0);
                 }
             }
         }
@@ -1908,14 +1907,6 @@ mod tests {
         let painted = |share: f32, pressure: f32| {
             let mut app = app();
             update(&mut app, Message::BrushKindChanged(BrushKind::Paint));
-            // By slot, where a voxel is painted or is not: in colour a
-            // light touch is a thinner coat as well as a narrower one.
-            update(
-                &mut app,
-                Message::Painting(crate::message::PaintingMessage::Target(
-                    crate::message::PaintTarget::Slots,
-                )),
-            );
             update(&mut app, Message::Studio(StudioMessage::SizeFromPressureChanged(share)));
             app.tablet.simulate(crate::tablet::PenState {
                 in_proximity: true,
@@ -1932,7 +1923,13 @@ mod tests {
             light * 2 < full,
             "at 0.4 of the pressure the stroke painted {light} voxels against {full}"
         );
-        assert_eq!(painted(0.0, 0.4), full, "with no share, pressure still sized the paint brush");
+        // Within a share: a light touch is a thinner coat of colour as well,
+        // and a few voxels at the stroke's soft edge round to none.
+        let even = painted(0.0, 0.4);
+        assert!(
+            even * 100 > full * 95,
+            "with no share, pressure still sized the paint brush: {even} against {full}"
+        );
     }
 
     /// How many voxels of the active body differ from an untouched ball's.

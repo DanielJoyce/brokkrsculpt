@@ -31,7 +31,7 @@ treats it as the point of the exercise: it works in **solid material** rather
 than on a hollow surface, so the things that usually go wrong between sculpting
 and printing mostly cannot happen here.
 
-- **Eight brushes** — draw, clay, smooth, inflate, pinch, flatten, move and paint, which writes a filament slot for multi-colour printing
+- **Eight brushes** — draw, clay, smooth, inflate, pinch, flatten, move and paint, which lays colour
 - **Symmetry** across any combination of the three axes
 - **Surface patterns** — scales, weave, cracks, hair and noise
 - **A plane cut** that leaves a closed, printable face
@@ -444,14 +444,10 @@ true of it too, and what it adds is this.
   down, flatten and delete are each an undo step. The layers are saved
   with the project and go with the model when it is moved, bulked,
   split or turned.
-- **Filaments and paints.** Behind *Filaments* on the paint brush is
-  painting by filament slot, as upstream has it, and *Mix paints*, which
-  swaps the slots for a rack of paints, each with a wash that pools in the
-  recesses, a highlight that catches the edges, and an undercoat lit from
-  above. Put on *Loaded*, *Drybrush* or *Sponge*, or with *Fill*, which
-  stops at creases and edges. Each paint names the filament it prints in,
-  so a model painted this way is also a multi-colour print. Everything the
-  rack does is an undo step, removing a paint included.
+- **Filaments.** Painting by filament slot is gone: paint is colour, and
+  a 3MF prints each part in the loaded filament nearest its colour. A
+  document painted by slot opens with its slots laid into colour paint, in
+  the colours they showed.
 - **A palette of brushes.** Each button shows a picture of a stroke of
   its brush, made by the brush itself. Thirty-six come with it: Draw,
   Clay, Inflate, Pinch, Smooth and Flatten, and *Gather*, *Spread*,
