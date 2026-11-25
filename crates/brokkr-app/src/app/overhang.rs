@@ -26,7 +26,7 @@
 use brokkr_core::overhang::{self, Overhangs, STEEPEST_RANGE, USUAL_STEEPEST};
 use glam::Vec3;
 use iced::Element;
-use iced::widget::{checkbox, column, slider, text};
+use iced::widget::{checkbox, column, text};
 
 use super::Brokkr;
 use crate::message::{Message, OverhangMessage};
@@ -145,25 +145,26 @@ impl Brokkr {
             checkbox(self.overhang.shown)
                 .label("show overhangs")
                 .on_toggle(move |shown| changed(OverhangMessage::Shown(shown)))
-                .text_size(theme::CAPTION_SIZE),
+                .text_size(theme::LABEL_SIZE),
         ]
         .spacing(theme::S1);
         if self.overhang.shown {
             panel = panel
                 .push(
-                    text(format!("Leaning more than  {:.0}° from upright", self.overhang.steepest))
-                        .size(theme::CAPTION_SIZE)
-                        .color(theme::TEXT_DIM),
-                )
-                .push(
-                    slider(STEEPEST_RANGE, self.overhang.steepest, move |degrees| {
-                        changed(OverhangMessage::Steepest(degrees))
-                    })
-                    .step(1.0_f32),
+                    crate::ui::number(
+                        &self.drafts,
+                        "overhang.steepest",
+                        "Leaning past upright by",
+                        self.overhang.steepest,
+                        STEEPEST_RANGE,
+                        move |degrees| changed(OverhangMessage::Steepest(degrees)),
+                    )
+                    .step(1.0)
+                    .shown(format!("{:.0}°", self.overhang.steepest)),
                 )
                 .push(
                     text("as it stands: turned over in the slicer it is another print")
-                        .size(theme::CAPTION_SIZE)
+                        .size(theme::LABEL_SIZE)
                         .color(theme::TEXT_MUTE),
                 );
         }

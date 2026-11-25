@@ -43,7 +43,7 @@ use brokkr_core::solid::{
 };
 use brokkr_core::{BrushDirection, Change, Entry, MirrorAxis, NodeId, Volume};
 use glam::{Vec2, Vec3};
-use iced::widget::{button, column, row, slider, text};
+use iced::widget::{button, column, row, text};
 use iced::{Element, Length};
 
 use super::Brokkr;
@@ -847,14 +847,18 @@ impl Brokkr {
     /// The brushes that add, and the settings of the one in hand.
     pub(super) fn adding_panel(&self) -> Element<'_, Message> {
         let changed = |message: AddMessage| Message::Add(message);
-        let reading = |label: String| text(label).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM);
+        let reading = |label: String| text(label).size(theme::LABEL_SIZE).color(theme::TEXT_DIM);
         let state = &self.inserts;
         // Pressed again, the one in hand is put away.
         let choice = |label: String, what: Insert| {
             let live = state.what == Some(what);
-            button(text(label).size(theme::CAPTION_SIZE).width(Length::Fill).center())
-                .width(Length::Fill)
-                .padding(iced::Padding { top: 5.0, bottom: 5.0, left: 2.0, right: 2.0 })
+            // A share of the row for each letter, as `ui::segmented` gives:
+            // in equal shares, seen on a screen, "Cylinder" ran past its
+            // edges.
+            let share = label.len() as u16 + 2;
+            button(text(label).size(theme::LABEL_SIZE).width(Length::Fill).center())
+                .width(Length::FillPortion(share))
+                .padding(theme::PAD_CHOICE)
                 .style(if live { theme::tool_button_active } else { theme::tool_button })
                 .on_press(changed(AddMessage::Chosen((!live).then_some(what))))
         };
@@ -866,9 +870,7 @@ impl Brokkr {
             choice("Hung cable".to_string(), Insert::Hung),
         ]
         .spacing(theme::S1);
-        let mut panel =
-            column![text("ADD").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE), shapes, cables,]
-                .spacing(theme::S1);
+        let mut panel = column![shapes, cables].spacing(theme::S1);
         // The bodies of the document, each to be lent as a shape: two to
         // a row, their names being a user's.
         let bodies: Vec<(NodeId, String)> = self
@@ -910,7 +912,7 @@ impl Brokkr {
             panel = panel.push(assembled);
         }
         panel = panel.push(
-            button(text("Take in a map…").size(theme::CAPTION_SIZE))
+            button(text("Take in a map…").size(theme::LABEL_SIZE))
                 .width(Length::Fill)
                 .style(theme::tool_button)
                 .on_press(Message::Maps(MapsMessage::Requested)),
@@ -919,7 +921,7 @@ impl Brokkr {
             return panel.into();
         };
         let way = |label: &'static str, separate: bool| {
-            button(text(label).size(theme::CAPTION_SIZE).width(Length::Fill).center())
+            button(text(label).size(theme::LABEL_SIZE).width(Length::Fill).center())
                 .width(Length::Fill)
                 .style(if state.separate == separate {
                     theme::tool_button_active
@@ -941,46 +943,53 @@ impl Brokkr {
                     } else {
                         "press, drag to size and turn. ctrl or alt turns it inside out"
                     })
-                    .size(theme::CAPTION_SIZE)
+                    .size(theme::LABEL_SIZE)
                     .color(theme::TEXT_MUTE),
                 )
                 .into();
         }
         panel = panel
-            .push(reading(if state.separate {
-                "Soft join  none: it is not joined".to_string()
-            } else if state.blend > 0.0 {
-                format!("Soft join  a fillet of {:.2} mm", state.blend * voxel_size)
-            } else {
-                "Soft join  none".to_string()
-            }))
             .push(
-                slider(0.0..=MOST_BLEND, state.blend, move |voxels| {
-                    changed(AddMessage::BlendChanged(voxels))
-                })
-                .step(0.25_f32),
+                crate::ui::number(
+                    &self.drafts,
+                    "add.blend",
+                    "Soft join",
+                    state.blend,
+                    0.0..=MOST_BLEND,
+                    move |voxels| changed(AddMessage::BlendChanged(voxels)),
+                )
+                .step(0.25)
+                .shown(if state.separate || state.blend <= 0.0 {
+                    "none".to_string()
+                } else {
+                    format!("{:.2} mm", state.blend * voxel_size)
+                }),
             )
-            .push(reading(if what.is_cable() {
-                format!("Held off the surface  {:.2} of its radius", state.lift)
-            } else {
-                format!("Held off the surface  {:.2} of its size", state.lift)
-            }))
             .push(
-                slider(LIFT_RANGE, state.lift, move |lift| changed(AddMessage::LiftChanged(lift)))
-                    .step(0.05_f32),
+                crate::ui::number(
+                    &self.drafts,
+                    "add.lift",
+                    if what.is_cable() {
+                        "Held off, of its radius"
+                    } else {
+                        "Held off, of its size"
+                    },
+                    state.lift,
+                    LIFT_RANGE,
+                    move |lift| changed(AddMessage::LiftChanged(lift)),
+                )
+                .step(0.05)
+                .shown(format!("{:+.2}", state.lift)),
             );
         if what.is_cable() {
             let ends = |live: End, chosen: fn(End) -> AddMessage| {
                 End::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, end| {
                     assembled.push(
                         button(
-                            text(end.label())
-                                .size(theme::CAPTION_SIZE)
-                                .width(Length::Fill)
-                                .center(),
+                            text(end.label()).size(theme::LABEL_SIZE).width(Length::Fill).center(),
                         )
                         .width(Length::Fill)
-                        .padding(iced::Padding { top: 5.0, bottom: 5.0, left: 2.0, right: 2.0 })
+                        .padding(theme::PAD_CHOICE)
                         .style(if end == live {
                             theme::tool_button_active
                         } else {
@@ -997,16 +1006,22 @@ impl Brokkr {
                 .push(ends(state.end, AddMessage::EndChosen));
         }
         if what == Insert::Hung {
-            panel = panel
-                .push(reading(if state.sag > 0.0 {
-                    format!("Sag  {:.2} of its span", state.sag)
+            panel = panel.push(
+                crate::ui::number(
+                    &self.drafts,
+                    "add.sag",
+                    "Sag, of its span",
+                    state.sag,
+                    SAG_RANGE,
+                    move |sag| changed(AddMessage::SagChanged(sag)),
+                )
+                .step(0.02)
+                .shown(if state.sag > 0.0 {
+                    format!("{:.2}", state.sag)
                 } else {
-                    "Sag  none: a straight run".to_string()
-                }))
-                .push(
-                    slider(SAG_RANGE, state.sag, move |sag| changed(AddMessage::SagChanged(sag)))
-                        .step(0.02_f32),
-                );
+                    "none".to_string()
+                }),
+            );
         }
         panel
             .push(
@@ -1018,7 +1033,7 @@ impl Brokkr {
                     (_, true) => "press where it goes, drag to size and turn it",
                     (_, false) => "press, drag to size and turn. ctrl or alt takes it out",
                 })
-                .size(theme::CAPTION_SIZE)
+                .size(theme::LABEL_SIZE)
                 .color(theme::TEXT_MUTE),
             )
             .into()

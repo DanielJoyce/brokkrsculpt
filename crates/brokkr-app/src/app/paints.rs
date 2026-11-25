@@ -33,8 +33,8 @@
 use brokkr_core::paint::touch::{Coat, Drybrush, Sponge, Touch};
 use brokkr_core::paint::{Finish, MAX_PAINTS, Paint, PaintTable, Wash};
 use glam::Vec3;
-use iced::widget::{button, checkbox, column, container, pick_list, row, slider, text, text_input};
-use iced::{Alignment, Element, Length, Padding};
+use iced::widget::{button, checkbox, column, container, pick_list, row, text, text_input};
+use iced::{Element, Length};
 
 use super::Brokkr;
 use crate::message::{Message, PaintCoat, PaintEdit, PaintTouch, TouchSetting, WashKind};
@@ -500,7 +500,7 @@ impl Brokkr {
     pub(super) fn textured_exports(&self) -> Element<'_, Message> {
         let sizes = TEXTURE_SIZES.into_iter().fold(row![].spacing(theme::S1), |assembled, size| {
             assembled.push(
-                button(text(format!("{size}")).size(theme::CAPTION_SIZE))
+                button(text(format!("{size}")).size(theme::LABEL_SIZE))
                     .width(Length::Fill)
                     .style(if size == self.texture_size {
                         theme::tool_button_active
@@ -515,14 +515,14 @@ impl Brokkr {
             .filter(|format| format.has_texture())
             .fold(row![].spacing(theme::S2), |assembled, format| {
                 assembled.push(
-                    button(text(format.label()).size(theme::TEXT_SIZE_SMALL))
+                    button(text(format.label()).size(theme::LABEL_SIZE))
                         .style(theme::tool_button)
                         .on_press(Message::Export(format)),
                 )
             });
         column![
             text("With the paint as a texture, of size")
-                .size(theme::CAPTION_SIZE)
+                .size(theme::LABEL_SIZE)
                 .color(theme::TEXT_DIM),
             sizes,
             formats
@@ -610,7 +610,6 @@ impl Brokkr {
     /// How the brush touches: a button each, and the settings of the one
     /// chosen.
     pub(super) fn touch_picker(&self, settings: bool) -> Element<'_, Message> {
-        let reading = |label: String| text(label).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM);
         // A slot cannot take some of a wash, so painting by slot has no
         // such touch.
         let colour = self.painting_colour();
@@ -625,7 +624,7 @@ impl Brokkr {
         for line in offered.chunks(a_row) {
             let kinds = line.iter().fold(row![].spacing(theme::S1), |assembled, kind| {
                 assembled.push(
-                    button(text(kind.label()).size(theme::CAPTION_SIZE))
+                    button(text(kind.label()).size(theme::LABEL_SIZE))
                         // A share of the row for each letter and two for
                         // the padding: in four equal buttons, seen on a
                         // screen, "Drybrush" ran into its own edge.
@@ -649,7 +648,7 @@ impl Brokkr {
             PaintTouch::Wash => {
                 picker = picker.push(
                     text("runs into the creases and off the edges. Best as a glaze")
-                        .size(theme::CAPTION_SIZE)
+                        .size(theme::LABEL_SIZE)
                         .color(theme::TEXT_MUTE),
                 );
             }
@@ -657,58 +656,97 @@ impl Brokkr {
                 let dry = self.touch.dry;
                 let load = self.touch.load_mm.0;
                 picker = picker
-                    .push(reading(format!("Catches  {:.2}", dry.catch)))
                     .push(
-                        slider(CATCH_RANGE, dry.catch, move |v| changed(TouchSetting::DryCatch(v)))
-                            .step(0.01_f32),
+                        crate::ui::number(
+                            &self.drafts,
+                            "paints.catches",
+                            "Catches",
+                            dry.catch,
+                            CATCH_RANGE,
+                            move |v| changed(TouchSetting::DryCatch(v)),
+                        )
+                        .step(0.01)
+                        .shown(format!("{:.2}", dry.catch)),
                     )
-                    .push(reading(format!("Streaks  {:.2}", dry.streak)))
                     .push(
-                        slider(STREAK_RANGE, dry.streak, move |v| {
-                            changed(TouchSetting::DryStreak(v))
-                        })
-                        .step(0.01_f32),
+                        crate::ui::number(
+                            &self.drafts,
+                            "paints.streaks",
+                            "Streaks",
+                            dry.streak,
+                            STREAK_RANGE,
+                            move |v| changed(TouchSetting::DryStreak(v)),
+                        )
+                        .step(0.01)
+                        .shown(format!("{:.2}", dry.streak)),
                     )
-                    .push(reading(format!("Bristle  {:.1} mm", dry.bristle_mm)))
                     .push(
-                        slider(BRISTLE_RANGE, dry.bristle_mm, move |v| {
-                            changed(TouchSetting::DryBristle(v))
-                        })
-                        .step(0.1_f32),
+                        crate::ui::number(
+                            &self.drafts,
+                            "paints.bristle",
+                            "Bristle",
+                            dry.bristle_mm,
+                            BRISTLE_RANGE,
+                            move |v| changed(TouchSetting::DryBristle(v)),
+                        )
+                        .step(0.1)
+                        .shown(format!("{:.1} mm", dry.bristle_mm)),
                     )
-                    .push(reading(if load > 0.0 {
-                        format!("Runs out after  {load:.0} mm")
-                    } else {
-                        "Never runs out".to_string()
-                    }))
                     .push(
-                        slider(LOAD_RANGE, load, move |v| changed(TouchSetting::DryLoad(v)))
-                            .step(5.0_f32),
+                        crate::ui::number(
+                            &self.drafts,
+                            "paints.runs_out",
+                            "Runs out after",
+                            load,
+                            LOAD_RANGE,
+                            move |v| changed(TouchSetting::DryLoad(v)),
+                        )
+                        .step(5.0)
+                        .shown(if load > 0.0 {
+                            format!("{load:.0} mm")
+                        } else {
+                            "never".to_string()
+                        }),
                     );
             }
             PaintTouch::Sponge => {
                 let sponge = self.touch.sponge;
                 picker = picker
-                    .push(reading(format!("Covers  {:.0}%", sponge.density * 100.0)))
                     .push(
-                        slider(DENSITY_RANGE, sponge.density, move |v| {
-                            changed(TouchSetting::SpongeDensity(v))
-                        })
-                        .step(0.01_f32),
+                        crate::ui::number(
+                            &self.drafts,
+                            "paints.covers",
+                            "Covers",
+                            sponge.density,
+                            DENSITY_RANGE,
+                            move |v| changed(TouchSetting::SpongeDensity(v)),
+                        )
+                        .step(0.01)
+                        .shown(format!("{:.0}%", sponge.density * 100.0)),
                     )
-                    .push(reading(format!("Speck  {:.1} mm", sponge.grain_mm)))
                     .push(
-                        slider(GRAIN_RANGE, sponge.grain_mm, move |v| {
-                            changed(TouchSetting::SpongeGrain(v))
-                        })
-                        .step(0.1_f32),
+                        crate::ui::number(
+                            &self.drafts,
+                            "paints.speck",
+                            "Speck",
+                            sponge.grain_mm,
+                            GRAIN_RANGE,
+                            move |v| changed(TouchSetting::SpongeGrain(v)),
+                        )
+                        .step(0.1)
+                        .shown(format!("{:.1} mm", sponge.grain_mm)),
                     )
-                    .push(reading(format!("More on edges  {:.2}", sponge.edges)))
                     .push(
-                        slider(EDGES_RANGE, sponge.edges, move |v| {
-                            changed(TouchSetting::SpongeEdges(v))
-                        })
-                        .step(0.01_f32),
+                        crate::ui::number(
+                            &self.drafts,
+                            "paints.more_on_edges",
+                            "More on edges",
+                            sponge.edges,
+                            EDGES_RANGE,
+                            move |v| changed(TouchSetting::SpongeEdges(v)),
+                        )
+                        .step(0.01)
+                        .shown(format!("{:.2}", sponge.edges)),
                     );
             }
             PaintTouch::Fill => {
@@ -718,24 +756,29 @@ impl Brokkr {
                         checkbox(touch.fill_stops_at_creases)
                             .label("stops at creases")
                             .on_toggle(move |on| changed(TouchSetting::FillStopsAtCreases(on)))
-                            .text_size(theme::CAPTION_SIZE),
+                            .text_size(theme::LABEL_SIZE),
                     )
                     .push(
                         checkbox(touch.fill_stops_at_edges)
                             .label("stops at edges")
                             .on_toggle(move |on| changed(TouchSetting::FillStopsAtEdges(on)))
-                            .text_size(theme::CAPTION_SIZE),
+                            .text_size(theme::LABEL_SIZE),
                     )
-                    .push(reading(format!("A line is sharper than  {:.2}", touch.fill_sharpness)))
                     .push(
-                        slider(SHARPNESS_RANGE, touch.fill_sharpness, move |v| {
-                            changed(TouchSetting::FillSharpness(v))
-                        })
-                        .step(0.01_f32),
+                        crate::ui::number(
+                            &self.drafts,
+                            "paints.a_line_is_sharper_than",
+                            "A line is sharper than",
+                            touch.fill_sharpness,
+                            SHARPNESS_RANGE,
+                            move |v| changed(TouchSetting::FillSharpness(v)),
+                        )
+                        .step(0.01)
+                        .shown(format!("{:.2}", touch.fill_sharpness)),
                     )
                     .push(
                         text("click a panel to fill it, or a groove to line it")
-                            .size(theme::CAPTION_SIZE)
+                            .size(theme::LABEL_SIZE)
                             .color(theme::TEXT_MUTE),
                     );
                 // How alike is alike, for a colour, and the whole body in
@@ -745,7 +788,7 @@ impl Brokkr {
                     self.fill_likeness(picker)
                 } else {
                     picker.push(
-                        button(text("Coat the body").size(theme::TEXT_SIZE_SMALL))
+                        button(text("Coat the body").size(theme::LABEL_SIZE))
                             .style(theme::tool_button)
                             .on_press(Message::PaintAllApplied),
                     )
@@ -984,11 +1027,11 @@ impl Brokkr {
             return column![
                 self.touch_picker(editing),
                 self.filament_picker(),
-                button(text("Mix paints").size(theme::TEXT_SIZE_SMALL))
+                button(text("Mix paints").size(theme::LABEL_SIZE))
                     .style(theme::tool_button)
                     .on_press(Message::PaintsStarted),
                 text("washes and highlights, on top of the slots")
-                    .size(theme::CAPTION_SIZE)
+                    .size(theme::LABEL_SIZE)
                     .color(theme::TEXT_MUTE),
             ]
             .spacing(theme::S2)
@@ -1025,7 +1068,7 @@ impl Brokkr {
         let mut picker = column![
             self.touch_picker(editing),
             text(format!("Paint  {}. {name}", self.paint_slot))
-                .size(theme::TEXT_SIZE_SMALL)
+                .size(theme::LABEL_SIZE)
                 .color(theme::TEXT_DIM),
             rack,
         ]
@@ -1035,16 +1078,16 @@ impl Brokkr {
                 checkbox(self.flat_paint)
                     .label("flat colour, no light")
                     .on_toggle(|_| Message::FlatPaintToggled)
-                    .text_size(theme::CAPTION_SIZE),
+                    .text_size(theme::LABEL_SIZE),
             );
             let mut add =
-                button(text("Add a paint").size(theme::TEXT_SIZE_SMALL)).style(theme::tool_button);
+                button(text("Add a paint").size(theme::LABEL_SIZE)).style(theme::tool_button);
             if self.doc.paints().len() < MAX_PAINTS {
                 add = add.on_press(Message::PaintAdded);
             }
             // The paint in hand: off the rack and off the model, and one
             // undo away from both.
-            let remove = button(text("Remove").size(theme::TEXT_SIZE_SMALL))
+            let remove = button(text("Remove").size(theme::LABEL_SIZE))
                 .style(theme::tool_button)
                 .on_press_maybe(
                     self.doc.paints().paint(self.paint_slot).map(|_| Message::PaintRemoved),
@@ -1073,13 +1116,13 @@ impl Brokkr {
 
     /// The paint in hand: its name, and one coat at a time.
     fn paint_editor<'a>(&'a self, paint: &'a Paint) -> Element<'a, Message> {
-        let reading = |label: String| text(label).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM);
+        let reading = |label: String| text(label).size(theme::LABEL_SIZE).color(theme::TEXT_DIM);
         let coat = self.paint_coat;
 
         let coats =
             PaintCoat::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, each| {
                 assembled.push(
-                    button(text(each.label()).size(theme::CAPTION_SIZE))
+                    button(text(each.label()).size(theme::LABEL_SIZE))
                         .width(Length::Fill)
                         .style(if each == coat {
                             theme::tool_button_active
@@ -1114,25 +1157,25 @@ impl Brokkr {
             }
             range = range.push(swatches);
         }
-        let channels = ["R", "G", "B"].into_iter().enumerate().fold(
-            column![].spacing(theme::S1),
-            |assembled, (channel, label)| {
+        let channels = [("paints.red", "Red"), ("paints.green", "Green"), ("paints.blue", "Blue")]
+            .into_iter()
+            .enumerate()
+            .fold(column![].spacing(theme::S2), |assembled, (channel, (key, label))| {
                 assembled.push(
-                    row![
-                        text(label).size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE).width(10),
-                        slider(0..=255_u8, colour[channel], move |level| {
-                            Message::PaintEdited(PaintEdit::Channel(channel, level))
-                        }),
-                        text(format!("{:3}", colour[channel]))
-                            .size(theme::CAPTION_SIZE)
-                            .color(theme::TEXT_DIM)
-                            .width(22),
-                    ]
-                    .spacing(theme::S2)
-                    .align_y(Alignment::Center),
+                    crate::ui::number(
+                        &self.drafts,
+                        key,
+                        label,
+                        f32::from(colour[channel]),
+                        0.0..=255.0,
+                        move |level| {
+                            Message::PaintEdited(PaintEdit::Channel(channel, level.round() as u8))
+                        },
+                    )
+                    .step(1.0)
+                    .shown(colour[channel].to_string()),
                 )
-            },
-        );
+            });
 
         let amounts: Element<'_, Message> = match coat {
             PaintCoat::Base => {
@@ -1147,22 +1190,27 @@ impl Brokkr {
                 column![
                     // A zenithal undercoat: as if the model were primed dark
                     // from below and light from above before this coat.
-                    reading(format!("Lit from above  {:.2}", paint.zenith)),
-                    slider(ZENITH_RANGE, paint.zenith, |amount| {
-                        Message::PaintEdited(PaintEdit::Zenith(amount))
-                    })
-                    .step(0.01_f32),
+                    crate::ui::number(
+                        &self.drafts,
+                        "paints.lit_from_above",
+                        "Lit from above",
+                        paint.zenith,
+                        ZENITH_RANGE,
+                        |amount| { Message::PaintEdited(PaintEdit::Zenith(amount)) }
+                    )
+                    .step(0.01)
+                    .shown(format!("{:.2}", paint.zenith)),
                     reading("Finish".to_string()),
                     pick_list(Finish::ALL, Some(paint.finish), |finish| {
                         Message::PaintEdited(PaintEdit::Finish(finish))
                     })
-                    .text_size(theme::CAPTION_SIZE)
+                    .text_size(theme::LABEL_SIZE)
                     .width(Length::Fill),
                     reading("Prints in".to_string()),
                     pick_list(choices, chosen, |choice: PrintsIn| {
                         Message::PaintEdited(PaintEdit::Filament(choice.slot))
                     })
-                    .text_size(theme::CAPTION_SIZE)
+                    .text_size(theme::LABEL_SIZE)
                     .width(Length::Fill),
                 ]
                 .spacing(theme::S1)
@@ -1172,7 +1220,7 @@ impl Brokkr {
                 let kinds =
                     WashKind::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, kind| {
                         assembled.push(
-                            button(text(kind.label()).size(theme::CAPTION_SIZE))
+                            button(text(kind.label()).size(theme::LABEL_SIZE))
                                 .width(Length::Fill)
                                 .style(theme::tool_button)
                                 .on_press(Message::PaintEdited(PaintEdit::WashKind(kind))),
@@ -1180,38 +1228,63 @@ impl Brokkr {
                     });
                 column![
                     kinds,
-                    reading(format!("On the flats  {:.2}", paint.wash.stain)),
-                    slider(STAIN_RANGE, paint.wash.stain, |amount| {
-                        Message::PaintEdited(PaintEdit::WashStain(amount))
-                    })
-                    .step(0.01_f32),
-                    reading(format!("Into the recesses  {:.2}", paint.wash.flow)),
-                    slider(FLOW_RANGE, paint.wash.flow, |amount| {
-                        Message::PaintEdited(PaintEdit::WashFlow(amount))
-                    })
-                    .step(0.05_f32),
-                    reading(format!("Off the edges  {:.2}", paint.wash.edge)),
-                    slider(EDGE_RANGE, paint.wash.edge, |amount| {
-                        Message::PaintEdited(PaintEdit::WashEdge(amount))
-                    })
-                    .step(0.01_f32),
+                    crate::ui::number(
+                        &self.drafts,
+                        "paints.on_the_flats",
+                        "On the flats",
+                        paint.wash.stain,
+                        STAIN_RANGE,
+                        |amount| { Message::PaintEdited(PaintEdit::WashStain(amount)) }
+                    )
+                    .step(0.01)
+                    .shown(format!("{:.2}", paint.wash.stain)),
+                    crate::ui::number(
+                        &self.drafts,
+                        "paints.into_the_recesses",
+                        "Into the recesses",
+                        paint.wash.flow,
+                        FLOW_RANGE,
+                        |amount| { Message::PaintEdited(PaintEdit::WashFlow(amount)) }
+                    )
+                    .step(0.05)
+                    .shown(format!("{:.2}", paint.wash.flow)),
+                    crate::ui::number(
+                        &self.drafts,
+                        "paints.off_the_edges",
+                        "Off the edges",
+                        paint.wash.edge,
+                        EDGE_RANGE,
+                        |amount| { Message::PaintEdited(PaintEdit::WashEdge(amount)) }
+                    )
+                    .step(0.01)
+                    .shown(format!("{:.2}", paint.wash.edge)),
                 ]
                 .spacing(theme::S1)
                 .into()
             }
             PaintCoat::Highlight => column![
-                reading(format!("How much  {:.2}", paint.highlight.amount)),
-                slider(AMOUNT_RANGE, paint.highlight.amount, |amount| {
-                    Message::PaintEdited(PaintEdit::HighlightAmount(amount))
-                })
-                .step(0.01_f32),
+                crate::ui::number(
+                    &self.drafts,
+                    "paints.how_much",
+                    "How much",
+                    paint.highlight.amount,
+                    AMOUNT_RANGE,
+                    |amount| { Message::PaintEdited(PaintEdit::HighlightAmount(amount)) }
+                )
+                .step(0.01)
+                .shown(format!("{:.2}", paint.highlight.amount)),
                 // Low is a drybrush over every raised form. High is an edge
                 // highlight on the sharpest lines only.
-                reading(format!("Only edges sharper than  {:.2}", paint.highlight.start)),
-                slider(START_RANGE, paint.highlight.start, |start| {
-                    Message::PaintEdited(PaintEdit::HighlightStart(start))
-                })
-                .step(0.01_f32),
+                crate::ui::number(
+                    &self.drafts,
+                    "paints.only_edges_sharper_than",
+                    "Only edges sharper than",
+                    paint.highlight.start,
+                    START_RANGE,
+                    |start| { Message::PaintEdited(PaintEdit::HighlightStart(start)) }
+                )
+                .step(0.01)
+                .shown(format!("{:.2}", paint.highlight.start)),
             ]
             .spacing(theme::S1)
             .into(),
@@ -1220,8 +1293,8 @@ impl Brokkr {
         column![
             text_input("name", &paint.name)
                 .on_input(|name| Message::PaintEdited(PaintEdit::Name(name)))
-                .padding(Padding { top: 1.0, bottom: 1.0, left: theme::S1, right: theme::S1 })
-                .size(theme::TEXT_SIZE_SMALL)
+                .padding(theme::PAD_FIELD)
+                .size(theme::LABEL_SIZE)
                 .width(Length::Fill),
             coats,
             range,

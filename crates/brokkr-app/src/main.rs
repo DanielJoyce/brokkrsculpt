@@ -61,6 +61,7 @@ mod tablet;
 mod theme;
 mod thumbnails;
 mod timeline;
+mod ui;
 mod update;
 mod viewport;
 mod welcome;
@@ -150,6 +151,11 @@ fn main() -> iced::Result {
         .title(Brokkr::title)
         .subscription(Brokkr::subscription)
         .theme(app_theme)
+        // Inter, bundled, so the face does not depend on the machine. It was
+        // named and not shipped, and fell back to whatever the system had.
+        // The licence is beside the files, in `assets/fonts`.
+        .font(include_bytes!("../../../assets/fonts/Inter-Regular.otf").as_slice())
+        .font(include_bytes!("../../../assets/fonts/Inter-SemiBold.otf").as_slice())
         .default_font(theme::FONT)
         .antialiasing(true)
         // The close button must not end the process on its own: unsaved work

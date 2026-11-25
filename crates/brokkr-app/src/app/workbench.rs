@@ -209,18 +209,16 @@ impl Brokkr {
     pub(super) fn workbench_panel(&self) -> Element<'_, Message> {
         let changed = |message: WorkbenchMessage| Message::Workbench(message);
         let wide = |label: &'static str, message: WorkbenchMessage| {
-            button(text(label).size(theme::CAPTION_SIZE).width(Length::Fill).center())
+            button(text(label).size(theme::LABEL_SIZE).width(Length::Fill).center())
                 .width(Length::Fill)
-                .padding(iced::Padding { top: 5.0, bottom: 5.0, left: 2.0, right: 2.0 })
+                .padding(theme::PAD_CHOICE)
                 .style(theme::tool_button)
                 .on_press(changed(message))
         };
-        let heading = text("WORKBENCH").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE);
         let caption =
-            |words: &'static str| text(words).size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE);
+            |words: &'static str| text(words).size(theme::LABEL_SIZE).color(theme::TEXT_MUTE);
         if self.on_the_bench() {
             column![
-                heading,
                 row![
                     wide("A fresh piece", WorkbenchMessage::Fresh),
                     wide("Back to the model", WorkbenchMessage::Left),
@@ -230,7 +228,6 @@ impl Brokkr {
             ]
         } else {
             column![
-                heading,
                 row![
                     wide("Try on a ball", WorkbenchMessage::Opened(Piece::Ball)),
                     wide("On a copy of this", WorkbenchMessage::Opened(Piece::Copy)),
@@ -255,13 +252,13 @@ impl Brokkr {
                 Piece::Ball => "WORKBENCH   a ball. nothing here is kept",
                 Piece::Copy => "WORKBENCH   a copy. nothing here is kept",
             })
-            .size(theme::TEXT_SIZE_SMALL)
+            .size(theme::LABEL_SIZE)
             .color(theme::ACCENT_HOT),
-            button(text("A fresh piece").size(theme::CAPTION_SIZE))
+            button(text("A fresh piece").size(theme::LABEL_SIZE))
                 .padding(theme::S2)
                 .style(theme::tool_button)
                 .on_press(Message::Workbench(WorkbenchMessage::Fresh)),
-            button(text("Back to the model").size(theme::CAPTION_SIZE))
+            button(text("Back to the model").size(theme::LABEL_SIZE))
                 .padding(theme::S2)
                 .style(theme::tool_button_active)
                 .on_press(Message::Workbench(WorkbenchMessage::Left)),

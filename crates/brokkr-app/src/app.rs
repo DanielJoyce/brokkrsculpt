@@ -848,6 +848,9 @@ pub struct Brokkr {
     /// value like `2.` does not parse and snapping the field back to the old
     /// number mid-edit makes it unusable.
     menu_edit: Option<(SizingTarget, String)>,
+    /// What is being typed into the panels' number fields, by key. See
+    /// `ui.rs`.
+    pub(crate) drafts: crate::ui::Drafts,
     /// Whether the body list draws its thumbnail column.
     ///
     /// **Session state, and deliberately not in the file.** Photoshop's Panel
@@ -2188,6 +2191,7 @@ impl Brokkr {
             autosave: autosave::Autosave::default(),
             last_activity: Instant::now(),
             menu_edit: None,
+            drafts: crate::ui::Drafts::new(),
             // ON, which is what Thomas asked for, and the bench now supports
             // it: 8.03, 7.89 and 7.88 ms across three runs on a quiet machine
             // against an 8.0 ms budget, so the median passes and the one
@@ -9719,6 +9723,17 @@ impl Brokkr {
     /// typing in the field", and that is a question about the message, asked
     /// once, before the message is acted on. See [`keeps_the_rename_open`].
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        // A number's slider and its field send what they set inside a
+        // `FieldSet`, which says which draft to let go. Unwrapped first, so
+        // every guard below meets the message it carries and not the wrapper.
+        // See `ui.rs`.
+        let message = match message {
+            Message::FieldSet(key, carried) => {
+                self.drafts.remove(key);
+                *carried
+            }
+            message => message,
+        };
         if self.renaming.is_some() && !keeps_the_rename_open(&message) {
             self.commit_rename();
         }
@@ -10439,6 +10454,19 @@ impl Brokkr {
             }
             Message::MenuFieldEdited(which, text) => self.edit_menu_field(which, text),
             Message::MenuFieldSubmitted => self.menu_edit = None,
+            Message::FieldEdited(key, typed) => {
+                self.drafts.insert(key, typed);
+            }
+            Message::FieldDropped(key) => {
+                self.drafts.remove(key);
+            }
+            // Unwrapped in `update` before it reaches here. Kept as an arm
+            // rather than `unreachable!`, so a test that dispatches one
+            // directly still sees the message it carries acted on.
+            Message::FieldSet(key, carried) => {
+                self.drafts.remove(key);
+                return self.dispatch(*carried);
+            }
             Message::OrientFace(to) => {
                 // Taken rather than read: the menu asked its question and has
                 // been answered, and leaving it open over a model that just
@@ -19619,10 +19647,12 @@ mod body_panel_tests {
     #[test]
     fn the_bodies_section_is_first_and_open_and_the_long_ones_start_closed() {
         assert_eq!(PanelSection::ALL[0], PanelSection::Bodies);
-        assert_eq!(PanelSection::ALL.len(), 7);
         assert!(PanelSection::Bodies.open_by_default());
         assert!(!PanelSection::Detail.open_by_default());
         assert!(!PanelSection::Filament.open_by_default());
+        // FORM works on the whole body, now and then, and starts closed since
+        // every heading folds. See `docs/WORKSPACES.md`.
+        assert!(!PanelSection::Form.open_by_default());
         // FILAMENT sits directly above EXPORT: it says what the sculpt's slot
         // numbers mean, and it is read when somebody exports.
         let position = |which: PanelSection| {
