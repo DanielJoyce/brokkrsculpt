@@ -191,6 +191,11 @@ impl Blend {
     }
 }
 
+/// How much deeper a wash or a contrast is in a full crease: the share of
+/// a second coat of itself it is multiplied by there. Asked for by the
+/// maintainer on 2026-11-25: speed paints "pull in and around details".
+const DEEPER: f32 = 0.7;
+
 /// The lightness of an sRGB colour, 0..=1, by the Rec. 709 weights.
 fn luma(colour: [f32; 3]) -> f32 {
     0.2126 * colour[0] + 0.7152 * colour[1] + 0.0722 * colour[2]
@@ -1026,7 +1031,15 @@ pub(crate) fn composite_voxel<'a>(
             [f32::from(rgba[0]) / 255.0, f32::from(rgba[1]) / 255.0, f32::from(rgba[2]) / 255.0];
         let under =
             [clay[0] * (1.0 - a) + p[0], clay[1] * (1.0 - a) + p[1], clay[2] * (1.0 - a) + p[2]];
-        let target = meta.blend.target(colour, under);
+        let mut target = meta.blend.target(colour, under);
+        if meta.blend.reads_the_shape() {
+            // Pooled paint is more paint: in a recess a wash or a contrast
+            // is deeper, as if laid over itself, by how shut in it is.
+            let deeper = crease.max(0.0) * DEEPER;
+            for channel in 0..3 {
+                target[channel] *= 1.0 - deeper * (1.0 - colour[channel]);
+            }
+        }
         for channel in 0..3 {
             p[channel] = (1.0 - k) * p[channel] + k * target[channel];
         }
@@ -1097,6 +1110,25 @@ mod tests {
         let a = f32::from(rgba[3]) / 255.0;
         let visible = |c: usize| f32::from(rgba[c]) * a + clay[c] * (1.0 - a);
         luma([visible(0), visible(1), visible(2)])
+    }
+
+    /// A wash or a contrast pooled in a crease is deeper than the same
+    /// paint on a flat, and a plain paint is the same in both.
+    #[test]
+    fn pooled_paint_is_deeper_in_a_crease() {
+        let lightness = |rgba: Rgba| u32::from(rgba[0]) + u32::from(rgba[1]) + u32::from(rgba[2]);
+        let under = [200, 200, 200];
+        for blend in [Blend::Wash, Blend::Contrast] {
+            let flat = over_undercoat(under, [150, 40, 30], blend, 0.0);
+            let shut = over_undercoat(under, [150, 40, 30], blend, 1.0);
+            let flat = lightness([flat[0], flat[1], flat[2], 255]);
+            let shut = lightness([shut[0], shut[1], shut[2], 255]);
+            assert!(shut + 60 < flat, "{blend:?}: {shut} in a crease and {flat} on a flat");
+        }
+        assert_eq!(
+            over_undercoat(under, [150, 40, 30], Blend::Normal, 1.0),
+            over_undercoat(under, [150, 40, 30], Blend::Normal, 0.0)
+        );
     }
 
     #[test]

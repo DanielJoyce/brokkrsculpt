@@ -16,10 +16,31 @@
 //! step far from the surface still says solid or not. Edges are not this
 //! function's: an edge is as open as a flat, and is told apart by the
 //! Laplacian, which [`Volume::crease_at`] puts beside it.
+//!
+//! How strongly a body pools is its own setting ([`Volume::set_pooling`]),
+//! which the application sets on every body from one number in Paint's
+//! LAYERS block, asked for by the maintainer on 2026-11-25 ("we just need
+//! a AO intensity slider for the paint engine").
 
 use glam::{IVec3, Vec3};
 
 use crate::volume::Volume;
+
+/// How strongly a wash or a contrast pools, unless it is told otherwise:
+/// what the occlusion is multiplied by before it is a crease. At 1, the
+/// first value, the maintainer found the pooling too faint for a contrast
+/// paint to work ("The effect of AO needs to be higher").
+pub const POOLING: f32 = 1.5;
+
+/// How strongly it may be set to pool, from none to twice the usual.
+pub const POOLING_RANGE: std::ops::RangeInclusive<f32> = 0.0..=3.0;
+
+/// The crease a point is, -1 a full edge to 1 shut in all round, from how
+/// shut in it is (`occlusion`, 0..=1), the field's own edge there (`edge`,
+/// -1..=0) and how strongly the paint pools (`pooling`).
+pub fn crease_of(occlusion: f32, edge: f32, pooling: f32) -> f32 {
+    (occlusion * 1.6 * pooling.max(0.0) + edge.min(0.0)).clamp(-1.0, 1.0)
+}
 
 /// How far a ray is stepped, in millimetres, each step twice the last.
 const FIRST_STEP_MM: f32 = 0.5;
@@ -71,8 +92,15 @@ impl Volume {
     /// the Laplacian for an edge, which the occlusion cannot tell from a
     /// flat. What a wash and a contrast pool by.
     pub fn crease_at(&self, voxel: IVec3) -> f32 {
+        crease_of(self.occlusion_at(voxel), self.edge_at(voxel), self.pooling())
+    }
+
+    /// How much of an edge the surface is at `voxel`, -1 a full edge to 0
+    /// none: the field's Laplacian there, which sees what stands out a
+    /// voxel or two and not a recess.
+    pub fn edge_at(&self, voxel: IVec3) -> f32 {
         let sample = |offset: IVec3| self.sample_voxel(voxel + offset);
-        let local = crate::paint::layers::crease_from(
+        crate::paint::layers::crease_from(
             sample(IVec3::ZERO),
             [
                 sample(IVec3::X),
@@ -82,8 +110,26 @@ impl Volume {
                 sample(IVec3::Z),
                 sample(-IVec3::Z),
             ],
-        );
-        (self.occlusion_at(voxel) * 1.6 + local.min(0.0)).clamp(-1.0, 1.0)
+        )
+        .min(0.0)
+    }
+
+    /// How strongly a wash or a contrast pools on this body.
+    pub fn pooling(&self) -> f32 {
+        self.pooling
+    }
+
+    /// Pool a wash or a contrast this strongly, within [`POOLING_RANGE`]:
+    /// every brick a pooling layer has paint in is put together again.
+    pub fn set_pooling(&mut self, pooling: f32) {
+        let pooling = pooling.clamp(*POOLING_RANGE.start(), *POOLING_RANGE.end());
+        if pooling == self.pooling {
+            return;
+        }
+        self.pooling = pooling;
+        if self.layers_read_the_shape() {
+            self.restack();
+        }
     }
 }
 
@@ -151,6 +197,51 @@ mod tests {
         let neck = lightness(on_surface(Vec3::ZERO, Vec3::Y));
         let top = lightness(on_surface(Vec3::new(3.6, 0.0, 0.0), Vec3::Y));
         assert!(neck + 120 < top, "the wash is {neck} at the neck and {top} on top");
+    }
+
+    /// The more a body pools, the darker a wash is at the neck against the
+    /// top of a ball; at none, only the edge the top is tells them apart.
+    /// Setting it puts the stack together again.
+    #[test]
+    fn pooling_more_darkens_the_recess_more() {
+        use crate::paint::layers::Blend;
+        let mut volume = two_balls();
+        let (lo, hi) = (IVec3::splat(-60), IVec3::splat(60));
+        volume.edit_paint(lo, hi, |_, _, _, _| [230, 230, 230, 255]);
+        volume.add_layer("Wash", Blend::Wash).expect("room");
+        volume.edit_paint(lo, hi, |_, _, _, _| [60, 40, 20, 255]);
+        let on_surface = |volume: &Volume, from: Vec3, way: Vec3| {
+            let mut at = from;
+            while volume.sample_world(at) < 0.0 {
+                at += way * 0.05;
+            }
+            (at / volume.voxel_size()).round().as_ivec3()
+        };
+        // Across the surface from the neck out to the top of one ball: the
+        // neck is shut in at any strength, and how far out of it the wash
+        // still pools is what the strength changes.
+        let line: Vec<IVec3> = (0..=18)
+            .map(|step| on_surface(&volume, Vec3::new(step as f32 * 0.2, 0.0, 0.0), Vec3::Y))
+            .collect();
+        let top = *line.last().expect("a line");
+        let mut darker = Vec::new();
+        for pooling in [0.0, 1.0, POOLING, 3.0] {
+            volume.set_pooling(pooling);
+            let mut dirty = Vec::new();
+            volume.take_dirty(&mut dirty);
+            let lightness = |voxel: IVec3| {
+                let [r, g, b, _] = volume.display_paint().at(voxel);
+                i32::from(r) + i32::from(g) + i32::from(b)
+            };
+            darker.push(line.iter().map(|voxel| lightness(top) - lightness(*voxel)).sum::<i32>());
+        }
+        assert!(
+            darker.windows(2).all(|pair| pair[1] > pair[0]),
+            "the wash is not darker along the line with more pooling: {darker:?}"
+        );
+        assert_eq!(volume.pooling(), 3.0);
+        volume.set_pooling(9.0);
+        assert_eq!(volume.pooling(), *POOLING_RANGE.end());
     }
 
     /// A single ball is open everywhere.

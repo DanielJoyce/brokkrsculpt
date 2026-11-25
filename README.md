@@ -448,6 +448,8 @@ true of it too, and what it adds is this.
   down, flatten and delete are each an undo step. The layers are saved
   with the project and go with the model when it is moved, bulked,
   split or turned.
+  *Pooling*, under them, sets how strongly a wash or a contrast pools
+  into the recesses, from none to twice the usual.
 - **Filaments.** Painting by filament slot is gone: paint is colour, and
   a 3MF prints each part in the loaded filament nearest its colour. A
   document painted by slot opens with its slots laid into colour paint, in

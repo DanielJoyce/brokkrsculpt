@@ -426,7 +426,8 @@ impl Brokkr {
         .spacing(theme::S1)
         .align_y(Alignment::Center);
 
-        column![list, actions, blend, opacity].spacing(theme::S2).into()
+        // How strongly washes and contrasts pool. See `app/pooling.rs`.
+        column![list, actions, blend, opacity, self.pooling_number()].spacing(theme::S2).into()
     }
 }
 

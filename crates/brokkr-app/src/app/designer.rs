@@ -157,9 +157,14 @@ impl Brokkr {
             |words: &'static str| text(words).size(theme::LABEL_SIZE).color(theme::TEXT_DIM);
         let colour = designer.colour();
 
-        let picture = image(super::paint_preview::handle(colour, designer.kind, PICTURE))
-            .width(Length::Fixed(PICTURE as f32))
-            .height(Length::Fixed(PICTURE as f32));
+        let picture = image(super::paint_preview::handle(
+            colour,
+            designer.kind,
+            PICTURE,
+            self.painting.pooling,
+        ))
+        .width(Length::Fixed(PICTURE as f32))
+        .height(Length::Fixed(PICTURE as f32));
         let kinds: Vec<Kind> =
             Kind::ALL.into_iter().filter(|kind| *kind != Kind::Reference).collect();
         let effect = match designer.kind.touch() {

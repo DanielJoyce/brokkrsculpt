@@ -24,6 +24,8 @@ mod designer;
 mod insert_preview;
 // A paint shown on a slapchopped ball. See `app/paint_preview.rs`.
 mod paint_preview;
+// How strongly washes and contrasts pool. See `app/pooling.rs`.
+mod pooling;
 mod rail;
 mod workspace;
 pub use adding::Insert;
@@ -9837,6 +9839,8 @@ impl Brokkr {
             }
             Message::Frame => {
                 let elapsed_ms = self.perf.record_frame();
+                // A body made since is given the pooling. See `app/pooling.rs`.
+                self.keep_pooling();
                 // **The update took.** Cleared on the first drawn frame, which
                 // is the earliest honest evidence that this build starts. A
                 // build that dies before here leaves the marker behind, and the

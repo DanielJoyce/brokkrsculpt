@@ -70,6 +70,8 @@ pub(super) struct PaintingState {
     pub decal: super::decal::DecalState,
     /// The paint designer, when it is open. See `app/designer.rs`.
     pub designer: Option<super::designer::Designer>,
+    /// How strongly washes and contrasts pool. See `app/pooling.rs`.
+    pub pooling: f32,
 }
 
 impl Default for PaintingState {
@@ -88,6 +90,7 @@ impl Default for PaintingState {
             coats: Default::default(),
             decal: Default::default(),
             designer: None,
+            pooling: super::pooling::kept(),
         }
     }
 }
@@ -135,6 +138,9 @@ impl Brokkr {
             PaintingMessage::FillLike(levels) => self.painting.fill_like = levels,
             PaintingMessage::PickArmed => self.painting.picking = !self.painting.picking,
             PaintingMessage::Coated => self.coat_the_body_in_colour(),
+            // See `app/pooling.rs`.
+            PaintingMessage::Pooling(pooling) => self.pool(pooling),
+            PaintingMessage::PoolingKept => self.pooling_kept(),
         }
     }
 

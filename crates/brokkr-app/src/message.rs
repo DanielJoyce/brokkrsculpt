@@ -314,6 +314,11 @@ pub enum PaintingMessage {
     PickArmed,
     /// Coat the whole body in the colour in hand.
     Coated,
+    /// How strongly washes and contrasts pool, on every body. See
+    /// `app/pooling.rs`.
+    Pooling(f32),
+    /// The pooling slider let go: keep it.
+    PoolingKept,
 }
 
 /// A change to the active body's layers of paint. See `app/layers.rs`.
