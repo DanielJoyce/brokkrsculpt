@@ -641,6 +641,38 @@ Not done: the preview is drawn on the surface as it is, so it does not
 show a soft edge's fade or what the mask holds off; it is coarser than
 the dab, 48 cells across whatever its size.
 
+### After use: what a drybrush would catch, shown under the brush (2026-11-25)
+
+The maintainer asked for drybrushes to "show how high you are above a
+surface so you can see what parts you are gonna hit", and then for an
+indicator rather than a full preview if a preview cost too much.
+
+A drybrush here is not held at a height: it catches what stands up into it
+by as much as its *Catch* says, from the sharpest edges at the least to
+every raised form at the most (`paint/touch.rs`, `Drybrush::amount`). A
+ring drawn at a height would show a rule the brush does not follow. So
+what is shown is its answer: with the Drybrush touch, the pointer over
+the model and no button down, each point of the surface under the ring
+that a stroke would leave paint on is tinted in the ring's orange, the
+more it would take the stronger, asked as a stroke asks it with a full
+load and no direction of travel (`Volume::drybrush_would_catch`,
+`app/dry_preview.rs`). Moving *Catch* moves what is tinted.
+
+It is not too dear for a pointer move: `what_the_catch_costs` (release,
+ignored) on the edge of a box, 0.13 ms at a 2 mm brush, 1.1 ms at 5 mm,
+5.7 ms at 10 mm, on the build machine, which has no graphics card.
+
+Tests: on a cube the edge shows and the middle of a face does not, and
+more catch never shows less; in the application, over a box's edge
+something is tinted and more catch tints no less, over the middle of a
+face nothing is, and with another touch nothing is. On the screen: a box
+inserted on the ball, its top edge tinted under the ring and its faces
+not.
+
+Not done: the bristles' streaks and the side a stroke travels toward are
+not in what is shown (it is the middle of both), and a smooth ball, which
+stands up nowhere, shows nothing, as a drybrush catches nothing there.
+
 ## 7. One-click coats
 
 Each is a small card (its few settings and a live preview on the model)
