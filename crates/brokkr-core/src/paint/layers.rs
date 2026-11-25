@@ -155,7 +155,10 @@ impl Blend {
         let off = (-crease).max(0.0);
         match self {
             Blend::Wash => (0.35 + 0.9 * into - 0.3 * off).clamp(0.0, 1.0),
-            Blend::Contrast => (0.75 + 0.4 * into - 0.45 * off).clamp(0.0, 1.0),
+            // Near a full coat on a flat: a contrast paint over a light
+            // undercoat is a strong colour. At three quarters, over near
+            // white, it read as a pastel: seen on the paint's picture.
+            Blend::Contrast => (0.9 + 0.3 * into - 0.45 * off).clamp(0.0, 1.0),
             _ => 1.0,
         }
     }
@@ -1038,6 +1041,24 @@ pub(crate) fn composite_voxel<'a>(
     }
     let straight = |channel: f32| ((channel / a).clamp(0.0, 1.0) * 255.0).round() as u8;
     [straight(p[0]), straight(p[1]), straight(p[2]), coverage]
+}
+
+/// `paint` laid at full coverage by a layer of `blend` over `under`, an
+/// opaque coat, where the surface is `crease` (-1 an edge to 1 shut in):
+/// what a paint looks like over an undercoat, by the stack's own
+/// arithmetic. A preview of a paint is made of this (`app/paint_preview.rs`).
+pub fn over_undercoat(under: [u8; 3], paint: [u8; 3], blend: Blend, crease: f32) -> [u8; 3] {
+    let below = LayerMeta::plain(0, "Under");
+    let above = LayerMeta { blend, ..LayerMeta::plain(1, "Paint") };
+    let [r, g, b, _] = composite_voxel(
+        [
+            (&below, [under[0], under[1], under[2], 255]),
+            (&above, [paint[0], paint[1], paint[2], 255]),
+        ]
+        .into_iter(),
+        crease,
+    );
+    [r, g, b]
 }
 
 /// How concave the surface is at a voxel, -1..=1, from the field's six

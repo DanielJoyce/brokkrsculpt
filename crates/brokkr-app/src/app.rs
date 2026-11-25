@@ -18,8 +18,12 @@ mod airbrush;
 mod coats;
 // The Decal touch. See `app/decal.rs`.
 mod decal;
+// The card a paint is made or changed in. See `app/designer.rs`.
+mod designer;
 // The coarse preview of a shape being dragged out. See `app/insert_preview.rs`.
 mod insert_preview;
+// A paint shown on a slapchopped ball. See `app/paint_preview.rs`.
+mod paint_preview;
 mod rail;
 mod workspace;
 pub use adding::Insert;
@@ -9197,6 +9201,8 @@ impl Brokkr {
             || self.pending_delete.is_some()
             || self.pending_merge.is_some()
             || self.pending_split.is_some()
+            // See `app/designer.rs`.
+            || self.painting.designer.is_some()
     }
 
     /// What a key press means, now that nothing in the widget tree wanted it.
@@ -10699,6 +10705,8 @@ impl Brokkr {
             Message::Painting(message) => self.painting_changed(message),
             Message::Layers(message) => self.layers_changed(message),
             Message::Rack(message) => self.rack_changed(message),
+            // See `app/designer.rs`.
+            Message::Designer(message) => self.designer_changed(message),
             Message::Airbrush(message) => self.airbrush_changed(message),
             Message::Coats(message) => self.coats_changed(message),
             Message::Decal(message) => return self.decal_changed(message),

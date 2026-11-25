@@ -399,8 +399,7 @@ true of it too, and what it adds is this.
   *Large*, and the drybrush's own three, set the radius in one press.
   A stroke is one coat however often it crosses itself, and a second
   stroke is a second coat. *Pick from model* takes a colour back off the
-  surface, and the machine's own filaments are among the swatches: a
-  filament's colour, painted at full strength, prints in that filament. The paint is
+  surface. The paint is
   saved with the project, follows the model through every edit, and is in
   every export that carries colour: a colour a vertex in a PLY, the
   texture of an *OBJ+PNG* or a *GLB*, and in a 3MF the loaded filament
@@ -433,9 +432,13 @@ true of it too, and what it adds is this.
   [miniature-paints](https://github.com/Arcturus5404/miniature-paints)
   tables, MIT) by name, code or nearest colour, narrowed by brand and by
   kind: paint, air, metallic, contrast, wash, stain, primer, spray, dry
-  or effect. *New colour* puts the colour in hand on the rack by a name.
-  The keys 1 to 8 pick the rack's first eight. Choosing a wash, a stain
-  or a contrast gives it a layer of its own blend.
+  or effect. Each paint is shown on a slapchopped ball, so a wash is
+  seen pooling and a metal shining. *New paint* and *Edit* open the paint
+  designer: a name, a kind, the colour by hex or three channels or from
+  a filament, and a rack paint mixed in. The keys 1 to 8 pick the rack's
+  first eight. Choosing a paint chooses how it goes on (a wash as a
+  wash, a contrast as a contrast) and gives a wash, a stain or a
+  contrast a layer of its own blend.
 - **Layers of paint.** LAYERS, at the top of the Paint mode's settings:
   up to sixteen a body, each with a name, a blend (*Normal*, *Multiply*,
   *Screen*, *Glaze*, a *Wash* that pools in the creases, a *Contrast*

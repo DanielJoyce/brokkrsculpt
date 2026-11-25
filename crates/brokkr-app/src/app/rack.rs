@@ -17,12 +17,12 @@
 
 use std::path::{Path, PathBuf};
 
-use iced::widget::{button, column, container, pick_list, row, text, text_input};
+use iced::widget::{button, column, container, image, pick_list, row, text, text_input};
 use iced::{Alignment, Element, Length};
 
 use super::Brokkr;
 use crate::icon;
-use crate::message::{Message, PaintTouch, RackMessage, SearchBy};
+use crate::message::{DesignerMessage, Message, PaintTouch, RackMessage, SearchBy};
 use crate::paint_index::{self, Filter, Kind};
 use crate::theme;
 
@@ -34,6 +34,8 @@ const IN_HAND: &str = "rack.conf";
 const RESULTS: usize = 40;
 /// Swatches a line, on the panel and at the pointer.
 const A_ROW: usize = 8;
+/// How big a paint's picture is on the rack, in pixels.
+const PICTURE: usize = 22;
 
 /// One paint on a rack: from the index, or a colour of the user's own,
 /// whose brand is empty.
@@ -171,9 +173,6 @@ pub(crate) struct RackState {
     pub by: SearchBy,
     pub kind: Option<Kind>,
     pub brand: Option<&'static str>,
-    /// A colour of the user's own, being named.
-    pub custom_name: String,
-    pub custom_kind: Kind,
 }
 
 impl Default for RackState {
@@ -214,8 +213,6 @@ impl RackState {
             by: SearchBy::Name,
             kind: None,
             brand: None,
-            custom_name: String::new(),
-            custom_kind: Kind::Paint,
         }
     }
 
@@ -226,6 +223,29 @@ impl RackState {
     fn rack_mut(&mut self) -> &mut Rack {
         let at = self.in_hand.min(self.racks.len() - 1);
         &mut self.racks[at]
+    }
+
+    /// Put a paint on the rack in hand, in place of the one at `instead`
+    /// or at the end, and keep the racks. Where it went, and whether the
+    /// racks were kept.
+    pub(super) fn keep_paint(
+        &mut self,
+        instead: Option<usize>,
+        paint: RackPaint,
+    ) -> (usize, Result<(), String>) {
+        let paints = &mut self.rack_mut().paints;
+        let at = match instead {
+            Some(at) if at < paints.len() => {
+                paints[at] = paint;
+                at
+            }
+            _ => {
+                paints.push(paint);
+                paints.len() - 1
+            }
+        };
+        self.chosen = Some(at);
+        (at, self.save())
     }
 
     /// A name no rack has, from `wanted`.
@@ -459,32 +479,6 @@ impl Brokkr {
                 self.status = format!("put {} on the rack", paint.name);
                 rack.paints.push(paint);
             }
-            RackMessage::CustomName(name) => {
-                state.custom_name = name;
-                keep = false;
-            }
-            RackMessage::CustomKind(kind) => {
-                state.custom_kind = kind;
-                keep = false;
-            }
-            RackMessage::CustomAdded => {
-                let name = state.custom_name.trim().to_string();
-                if name.is_empty() {
-                    self.status = "give the colour a name first".to_string();
-                    return;
-                }
-                let paint = RackPaint {
-                    name: name.clone(),
-                    brand: String::new(),
-                    rgb: self.painting.colour,
-                    kind: state.custom_kind,
-                };
-                let rack = state.rack_mut();
-                rack.paints.push(paint);
-                state.chosen = Some(rack.paints.len() - 1);
-                state.custom_name.clear();
-                self.status = format!("put {name} on the rack");
-            }
         }
         if keep && let Err(why) = self.painting.rack.save() {
             self.status = format!("the racks were not saved: {why}");
@@ -535,12 +529,11 @@ impl Brokkr {
                 };
                 swatches = swatches.push(crate::ui::tip(
                     button(
-                        container(text(""))
-                            .width(18)
-                            .height(18)
-                            .style(theme::swatch(swatch(paint.rgb))),
+                        image(super::paint_preview::handle(paint.rgb, paint.kind, PICTURE))
+                            .width(Length::Fixed(PICTURE as f32))
+                            .height(Length::Fixed(PICTURE as f32)),
                     )
-                    .padding(2)
+                    .padding(1)
                     .style(style)
                     .on_press(Message::Rack(RackMessage::Picked(at))),
                     title,
@@ -610,16 +603,16 @@ impl Brokkr {
             };
             block = block.push(
                 row![
-                    container(text(""))
-                        .width(18)
-                        .height(18)
-                        .style(theme::swatch(swatch(paint.rgb))),
+                    image(super::paint_preview::handle(paint.rgb, paint.kind, PICTURE))
+                        .width(Length::Fixed(PICTURE as f32))
+                        .height(Length::Fixed(PICTURE as f32)),
                     text(paint.title())
                         .size(theme::LABEL_SIZE)
                         .color(theme::TEXT_DIM)
                         .width(Length::Fill),
                     word("Up", (at > 0).then(|| Message::Rack(RackMessage::Raised(at)))),
                     word("Down", (at + 1 < len).then(|| Message::Rack(RackMessage::Lowered(at)))),
+                    word("Edit", Some(Message::Designer(DesignerMessage::Edit(at)))),
                     icon_button(
                         icon::IconName::Trash,
                         "Take off the rack",
@@ -631,40 +624,25 @@ impl Brokkr {
             );
         }
 
-        block = block.push(crate::ui::toggle(
-            "Add paints",
-            state.searching,
-            Message::Rack(RackMessage::Searching),
-        ));
+        block = block.push(
+            row![
+                crate::ui::toggle(
+                    "Add paints",
+                    state.searching,
+                    Message::Rack(RackMessage::Searching),
+                ),
+                button(text("New paint").size(theme::LABEL_SIZE))
+                    .padding(theme::PAD_CHOICE)
+                    .style(theme::tool_button)
+                    .on_press(Message::Designer(DesignerMessage::New)),
+            ]
+            .spacing(theme::S2)
+            .align_y(Alignment::Center),
+        );
         if state.searching {
             block = block.push(self.index_search());
         }
 
-        // A colour of the user's own: the colour in hand, named.
-        let kinds: Vec<Kind> =
-            Kind::ALL.into_iter().filter(|kind| *kind != Kind::Reference).collect();
-        block = block.push(
-            row![
-                text_input("New colour", &state.custom_name)
-                    .on_input(|name| Message::Rack(RackMessage::CustomName(name)))
-                    .on_submit(Message::Rack(RackMessage::CustomAdded))
-                    .size(theme::LABEL_SIZE)
-                    .padding(theme::PAD_FIELD)
-                    .width(Length::FillPortion(3)),
-                pick_list(kinds, Some(state.custom_kind), |kind| Message::Rack(
-                    RackMessage::CustomKind(kind)
-                ))
-                .text_size(theme::LABEL_SIZE)
-                .width(Length::FillPortion(2)),
-                icon_button(
-                    icon::IconName::Plus,
-                    "Put the colour in hand on the rack",
-                    Message::Rack(RackMessage::CustomAdded)
-                ),
-            ]
-            .spacing(theme::S1)
-            .align_y(Alignment::Center),
-        );
         block.into()
     }
 
@@ -907,7 +885,7 @@ mod tests {
 
     /// Racks are made, filled from the index, ordered, emptied, swapped
     /// and deleted by their messages, and a colour of the user's own goes
-    /// on by its name.
+    /// on by its name, from the paint designer.
     #[test]
     fn a_rack_is_made_filled_and_swapped() {
         let mut app = app();
@@ -919,10 +897,12 @@ mod tests {
         rack(&mut app, RackMessage::Added(black));
         assert_eq!(app.painting.rack.rack().paints.len(), 1, "a paint went on twice");
         update(&mut app, Message::Painting(crate::message::PaintingMessage::Colour([10, 200, 30])));
-        rack(&mut app, RackMessage::CustomAdded);
+        let design = |app: &mut Brokkr, message| update(app, Message::Designer(message));
+        design(&mut app, DesignerMessage::New);
+        design(&mut app, DesignerMessage::Save);
         assert_eq!(app.painting.rack.rack().paints.len(), 1, "a colour with no name went on");
-        rack(&mut app, RackMessage::CustomName("Goblin".to_string()));
-        rack(&mut app, RackMessage::CustomAdded);
+        design(&mut app, DesignerMessage::Name("Goblin".to_string()));
+        design(&mut app, DesignerMessage::Save);
         let paints = &app.painting.rack.rack().paints;
         assert_eq!(paints[1].name, "Goblin");
         assert_eq!(paints[1].rgb, [10, 200, 30]);

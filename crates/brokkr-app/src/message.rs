@@ -442,10 +442,30 @@ pub enum RackMessage {
     Tried(usize),
     /// Put a paint of the index on the rack.
     Added(usize),
-    CustomName(String),
-    CustomKind(crate::paint_index::Kind),
-    /// Put the colour in hand on the rack, by the name typed.
-    CustomAdded,
+}
+
+/// A change in the paint designer, the card a paint is made or changed
+/// in. See `app/designer.rs`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DesignerMessage {
+    /// Open it on the colour in hand, for a new paint.
+    New,
+    /// Open it on this paint of the rack in hand, to change it.
+    Edit(usize),
+    Close,
+    /// Put the paint on the rack and take it up.
+    Save,
+    Name(String),
+    Kind(crate::paint_index::Kind),
+    /// Start from this colour, with nothing mixed in.
+    Colour([u8; 3]),
+    /// One channel of the colour, red 0, green 1, blue 2.
+    Channel(usize, u8),
+    Hex(String),
+    /// Mix this colour in, or nothing.
+    MixWith(Option<[u8; 3]>),
+    /// How much of it, 0 to 1.
+    Mix(f32),
 }
 
 /// The overhang view. See `app/overhang.rs`.
@@ -1411,6 +1431,7 @@ pub enum Message {
     Layers(LayersMessage),
     /// The racks of paints. See `app/rack.rs`.
     Rack(RackMessage),
+    Designer(DesignerMessage),
     /// The airbrush. See `app/airbrush.rs`.
     Airbrush(AirbrushMessage),
     /// The one-click coats. See `app/coats.rs`.
