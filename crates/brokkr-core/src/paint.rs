@@ -65,6 +65,7 @@
 
 pub mod bake;
 pub mod coats;
+pub mod decal;
 pub mod field;
 pub mod file;
 pub mod fill;

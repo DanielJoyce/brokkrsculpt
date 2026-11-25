@@ -3,9 +3,9 @@
 A design, asked for by the maintainer on 2026-11-25. Built so far, each
 with an "as built" part where its design is: stage 1, layers (end of
 section 1); stage 2, the index and racks (end of section 3); stage 3,
-brush sizes and the airbrush (section 5); and stage 4, the sponge and the
-one-click coats (end of section 7). Stamps and decals, and varnish, are
-not built yet. It covers:
+brush sizes and the airbrush (section 5); stage 4, the sponge and the
+one-click coats (end of section 7); and stage 5, stamps and decals (end
+of section 6). Varnish is not built yet. It covers:
 
 - a searchable index of real hobby paints, from the
   [miniature-paints](https://github.com/Arcturus5404/miniature-paints)
@@ -545,6 +545,59 @@ real one, and then painted over or washed like anything else.
   folder of the user's own, and any picture taken in, kept as the brushes
   are.
 - **The mask** limits a dab, so a decal can be kept off a part.
+
+### Stage 5, as built (2026-11-25)
+
+A seventh touch, **Decal**, in colour only (`paint/decal.rs` in the core,
+`app/decal.rs`). The touches are laid out three, two and two: four to a
+row clipped "Wash", and three, three and one left Decal alone on a line.
+
+- **Dabbed on.** Press where it goes; drag away to size it (the picture
+  is twice as wide as the drag, at the depth of the point pressed) and
+  round to turn it. It is dabbed again at every move, over the paint as
+  it was before the stroke, and a voxel the last dab reached that this
+  one does not is given that paint back, so the drag shows it as it will
+  be and what is left is one dab. A click dabs it at the brush's size,
+  unturned.
+- **Projected along the view.** The picture lies square to the view
+  through the point pressed and is carried onto the surface it meets,
+  within half its width in front or behind, fading out as the surface
+  turns from the view.
+- **On a decal layer.** The active layer if its name starts "Decal", or
+  a new one over it, "Decal: Star" and so on. The new layer and the dab
+  are one undo entry (`LayersAdded` and the stroke in one `Entry`, which
+  undoes in reverse).
+- **Decal or stamp.** Any picture can go on as either: a decal in its
+  own colours by its own alpha, a stamp as a stencil in the paint in
+  hand, dark being paint. Choosing a built-in picture chooses which it is
+  made for.
+- **Its edge**: *Soft edge*, a share of its size, none to start.
+- **Pictures**: six that come with the application, drawn in code: three
+  decals (Star, Eye, Roundel) and three stamps (Hazard, Camo, Dots); and
+  *Picture…*, which takes in any PNG or JPEG and keeps a copy in
+  `decals/` in the data directory, read back at every start.
+- **The mask** keeps a dab off, as it keeps a brush off.
+
+**Tested.** Properties: a soft edge only ever fades, and a full turn
+lands every point where it was. Worked: a decal lays its own colour on
+the surface it meets and not on the back of the ball or outside the
+picture; a stamp lays the paint in hand where the picture is dark; a
+smaller dab in the same stroke gives back what a larger one took, and
+the dab is one undo; the mask keeps a dab off; every built-in picture has
+something in it, the stamps both dark and light; the star has five
+points. The application by its messages: a dab makes "Decal: Star", a
+longer drag covers more, the layer and the dab are one undo, and a
+second dab goes on the same layer; a built-in stamp is chosen as a
+stamp; a picture taken in is chosen; the edge is held to its range. On
+the screen: a star dragged larger and turned, which showed four points
+where five were drawn (the angle's fraction kept its sign; fixed, and
+tested), and a hazard stamp in red.
+
+**Not done in this stage.** A decal's own finish (glossy until varnish),
+which waits for varnish; a decal layer as a kind of its own rather than
+a name; the pictures shown as pictures on their buttons; removing a
+picture taken in, except from the directory; turning by a second press
+rather than the drag's direction.
 
 ## 7. One-click coats
 
