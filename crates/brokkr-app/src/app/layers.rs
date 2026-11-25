@@ -40,6 +40,7 @@ pub(super) struct LayersHeld {
 /// back. Keeping the whole stack for every change cost a clone of every
 /// layer's paint at each step of an opacity drag, and a few coats kept
 /// whole outgrew the history's budget.
+#[derive(Debug)]
 pub(super) enum Before {
     /// Layers were only added: their ids, and the layer active before.
     Added(Vec<LayerMeta>, LayerId),

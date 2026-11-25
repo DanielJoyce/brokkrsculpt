@@ -79,6 +79,8 @@ pub(super) struct PaintingState {
     pub airbrush: super::airbrush::AirbrushState,
     /// The one-click coats. See `app/coats.rs`.
     pub coats: super::coats::CoatsState,
+    /// The Decal touch. See `app/decal.rs`.
+    pub decal: super::decal::DecalState,
 }
 
 impl Default for PaintingState {
@@ -96,6 +98,7 @@ impl Default for PaintingState {
             rack: Default::default(),
             airbrush: Default::default(),
             coats: Default::default(),
+            decal: Default::default(),
         }
     }
 }
@@ -202,7 +205,9 @@ impl Brokkr {
         }
         let catch = match self.touch.kind {
             // The airbrush lays no stamps: see `app/airbrush.rs`.
-            PaintTouch::Loaded | PaintTouch::Fill | PaintTouch::Airbrush => Catch::All,
+            PaintTouch::Loaded | PaintTouch::Fill | PaintTouch::Airbrush | PaintTouch::Decal => {
+                Catch::All
+            }
             PaintTouch::Wash => Catch::Recesses,
             PaintTouch::Drybrush => Catch::Raised(self.touch.dry),
             PaintTouch::Sponge => Catch::Specks(self.touch.sponge),

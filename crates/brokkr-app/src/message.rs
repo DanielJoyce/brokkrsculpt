@@ -407,6 +407,26 @@ pub enum CoatsMessage {
     Spongechop,
 }
 
+/// Which picture a decal is. See `app/decal.rs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecalPick {
+    BuiltIn(brokkr_core::paint::decal::BuiltInPicture),
+    /// One of the user's own, by its place.
+    Own(usize),
+}
+
+/// A change to the Decal touch. See `app/decal.rs`.
+#[derive(Debug, Clone)]
+pub enum DecalMessage {
+    Chosen(DecalPick),
+    /// As a stamp in the paint in hand, or in its own colours.
+    AsStamp(bool),
+    Soft(f32),
+    /// Ask for a picture.
+    TakeIn,
+    TakenIn(Option<Result<(String, std::sync::Arc<brokkr_core::paint::decal::Picture>), String>>),
+}
+
 /// A change to the airbrush. See `app/airbrush.rs`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AirbrushMessage {
@@ -487,22 +507,25 @@ pub enum PaintTouch {
     /// Sprayed along the view while the button is held. For colour only.
     /// See `app/airbrush.rs`.
     Airbrush,
+    /// A picture dabbed on. For colour only. See `app/decal.rs`.
+    Decal,
 }
 
 impl PaintTouch {
-    pub const ALL: [PaintTouch; 6] = [
+    pub const ALL: [PaintTouch; 7] = [
         PaintTouch::Loaded,
         PaintTouch::Wash,
         PaintTouch::Drybrush,
         PaintTouch::Sponge,
         PaintTouch::Fill,
         PaintTouch::Airbrush,
+        PaintTouch::Decal,
     ];
 
     /// Whether painting by filament slot has it: a slot has no "some of
     /// it", so neither a wash nor a spray.
     pub fn for_slots(self) -> bool {
-        !matches!(self, PaintTouch::Wash | PaintTouch::Airbrush)
+        !matches!(self, PaintTouch::Wash | PaintTouch::Airbrush | PaintTouch::Decal)
     }
 
     pub fn label(self) -> &'static str {
@@ -513,6 +536,7 @@ impl PaintTouch {
             PaintTouch::Sponge => "Sponge",
             PaintTouch::Fill => "Fill",
             PaintTouch::Airbrush => "Airbrush",
+            PaintTouch::Decal => "Decal",
         }
     }
 }
@@ -1502,6 +1526,8 @@ pub enum Message {
     Airbrush(AirbrushMessage),
     /// The one-click coats. See `app/coats.rs`.
     Coats(CoatsMessage),
+    /// The Decal touch. See `app/decal.rs`.
+    Decal(DecalMessage),
     /// Which of the chosen paint's three coats the editor shows. View state.
     PaintCoatChosen(PaintCoat),
     /// How the paint brush touches the model: loaded, nearly dry, or a

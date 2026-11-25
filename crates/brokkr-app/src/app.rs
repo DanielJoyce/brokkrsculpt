@@ -16,6 +16,8 @@ mod rack;
 mod airbrush;
 // The one-click coats. See `app/coats.rs`.
 mod coats;
+// The Decal touch. See `app/decal.rs`.
+mod decal;
 mod rail;
 mod workspace;
 pub use adding::Insert;
@@ -5795,6 +5797,11 @@ impl Brokkr {
             self.airbrush_to(pixel, direction, start);
             return;
         }
+        // A decal is dabbed, not stroked. See `app/decal.rs`.
+        if self.dabbing() {
+            self.decal_to(pixel, start);
+            return;
+        }
         self.arm_recorder();
 
         let started = Instant::now();
@@ -6664,9 +6671,12 @@ impl Brokkr {
         self.move_stroke.end();
         self.move_grab = None;
         let body = self.doc.active();
-        if let Some(edit) = self.doc.active_volume_mut().end_stroke() {
+        // A decal's new layer goes in the same entry as its dab. See
+        // `app/decal.rs`.
+        let edit = self.doc.active_volume_mut().end_stroke();
+        if let Some(entry) = self.stroke_entry(body, edit) {
             let before = self.history.stats();
-            self.history.push(Entry::stroke(body, edit));
+            self.history.push(entry);
             self.record_history(before);
             // Inside the guard on purpose: a press and release that never
             // touched the model produces no edit, and must not raise a
@@ -10732,6 +10742,7 @@ impl Brokkr {
             Message::Rack(message) => self.rack_changed(message),
             Message::Airbrush(message) => self.airbrush_changed(message),
             Message::Coats(message) => self.coats_changed(message),
+            Message::Decal(message) => return self.decal_changed(message),
             Message::PaintCoatChosen(coat) => self.paint_coat = coat,
             Message::PaintEdited(edit) => self.edit_paint(edit),
             Message::Studio(message) => return self.studio_changed(message),

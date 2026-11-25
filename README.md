@@ -405,6 +405,12 @@ true of it too, and what it adds is this.
   every export that carries colour: a colour a vertex in a PLY, the
   texture of an *OBJ+PNG* or a *GLB*, and in a 3MF the loaded filament
   nearest the colour, wherever the paint covers at least half.
+- **Decals and stamps.** The *Decal* touch presses a picture onto the
+  model along the view: drag to size it and turn it, and it wraps the
+  surface it lands on. As a decal it keeps its own colours; as a stamp
+  it is a stencil in the paint in hand. It goes on a decal layer of its
+  own, so you can paint over it or wash it. Six pictures come with the
+  application, and *Picture…* takes in any PNG or JPEG and keeps it.
 - **One-click coats.** COATS, under the layers: a *Base coat* of the
   colour in hand at the bottom of the stack; a *Zenithal*, dark to light
   by how much each part faces a light you set (from above, from the
