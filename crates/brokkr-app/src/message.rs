@@ -373,6 +373,40 @@ pub enum SearchBy {
     Colour,
 }
 
+/// Which colour of a coat a swatch is. See `app/coats.rs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoatColour {
+    Dark,
+    Middle,
+    Bright,
+    ChopDark,
+    ChopMiddle,
+    ChopBright,
+    Contrast,
+}
+
+/// A change to the one-click coats. See `app/coats.rs`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CoatsMessage {
+    Opened,
+    /// The light from above, or from where the camera is.
+    Above,
+    FromView,
+    Azimuth(f32),
+    Height(f32),
+    /// Give this colour of a coat the colour in hand.
+    Take(CoatColour),
+    /// A zenithal's middle primer, on or off.
+    Middle(bool),
+    Cone(f32),
+    Shadows(bool),
+    /// A spongechop's contrast, on or off.
+    Contrast(bool),
+    BaseCoat,
+    Zenithal,
+    Spongechop,
+}
+
 /// A change to the airbrush. See `app/airbrush.rs`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AirbrushMessage {
@@ -501,6 +535,11 @@ pub enum TouchSetting {
     SpongeGrain(f32),
     /// How much more of it lands on edges.
     SpongeEdges(f32),
+    /// How far into a recess it reaches.
+    SpongeReach(f32),
+    /// How much it prefers what faces the light.
+    SpongeLight(f32),
+    SpongeFoam(brokkr_core::paint::touch::Foam),
     /// Whether a fill stops at creases, and at edges.
     FillStopsAtCreases(bool),
     FillStopsAtEdges(bool),
@@ -1461,6 +1500,8 @@ pub enum Message {
     Rack(RackMessage),
     /// The airbrush. See `app/airbrush.rs`.
     Airbrush(AirbrushMessage),
+    /// The one-click coats. See `app/coats.rs`.
+    Coats(CoatsMessage),
     /// Which of the chosen paint's three coats the editor shows. View state.
     PaintCoatChosen(PaintCoat),
     /// How the paint brush touches the model: loaded, nearly dry, or a

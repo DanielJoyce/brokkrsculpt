@@ -64,6 +64,7 @@
 //! by grey does not.
 
 pub mod bake;
+pub mod coats;
 pub mod field;
 pub mod file;
 pub mod fill;

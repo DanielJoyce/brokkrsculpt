@@ -198,6 +198,9 @@ impl TouchState {
             }
             TouchSetting::SpongeGrain(mm) => self.sponge.grain_mm = clamped(mm, GRAIN_RANGE),
             TouchSetting::SpongeEdges(value) => self.sponge.edges = clamped(value, EDGES_RANGE),
+            TouchSetting::SpongeReach(value) => self.sponge.reach = value.clamp(0.0, 1.0),
+            TouchSetting::SpongeLight(value) => self.sponge.toward_light = value.clamp(0.0, 1.0),
+            TouchSetting::SpongeFoam(foam) => self.sponge.foam = foam,
             TouchSetting::FillStopsAtCreases(on) => self.fill_stops_at_creases = on,
             TouchSetting::FillStopsAtEdges(on) => self.fill_stops_at_edges = on,
             TouchSetting::FillSharpness(value) => {
@@ -740,7 +743,37 @@ impl Brokkr {
                         )
                         .step(0.01)
                         .shown(format!("{:.2}", sponge.edges)),
-                    );
+                    )
+                    // The reworked sponge: stage 4 of `docs/PAINT-RACK.md`.
+                    .push(
+                        crate::ui::number(
+                            &self.drafts,
+                            "paints.reach",
+                            "Into recesses",
+                            sponge.reach,
+                            0.0..=1.0,
+                            move |v| changed(TouchSetting::SpongeReach(v)),
+                        )
+                        .step(0.01)
+                        .shown(format!("{:.0}%", sponge.reach * 100.0)),
+                    )
+                    .push(
+                        crate::ui::number(
+                            &self.drafts,
+                            "paints.toward_light",
+                            "Toward the light",
+                            sponge.toward_light,
+                            0.0..=1.0,
+                            move |v| changed(TouchSetting::SpongeLight(v)),
+                        )
+                        .step(0.01)
+                        .shown(format!("{:.2}", sponge.toward_light)),
+                    )
+                    .push(crate::ui::segmented(
+                        brokkr_core::paint::touch::Foam::ALL.map(|foam| (foam, foam.label())),
+                        sponge.foam,
+                        move |foam| changed(TouchSetting::SpongeFoam(foam)),
+                    ));
             }
             PaintTouch::Fill => {
                 let touch = &self.touch;

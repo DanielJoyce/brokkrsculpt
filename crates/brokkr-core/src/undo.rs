@@ -472,6 +472,30 @@ pub enum Change {
     /// [`Change::Bricks`]. The whole stack, as [`Change::WholeMask`] is the
     /// whole mask; see `paint/layers.rs`.
     Layers { body: NodeId, state: Box<crate::paint::layers::LayerState> },
+
+    /// Layers a coat added, by their ids, and the layer active before it:
+    /// undoing takes them out, and keeps their paint for the redo as
+    /// [`Change::LayersTaken`]. Small where [`Change::Layers`] holds the
+    /// whole stack: a coat over a figure adds layers covering all of it,
+    /// and a few of them kept whole outgrew the budget and pushed the
+    /// oldest entries off. See `paint/coats.rs`.
+    LayersAdded {
+        body: NodeId,
+        ids: Vec<crate::paint::layers::LayerId>,
+        active: crate::paint::layers::LayerId,
+    },
+
+    /// The settings and order of a body's layers before a change to them
+    /// alone: a name, a blend, an opacity, an eye, a lock, a move up or
+    /// down. No paint, so a drag of an opacity costs nothing to keep.
+    LayerSettings {
+        body: NodeId,
+        metas: Vec<crate::paint::layers::LayerMeta>,
+        active: crate::paint::layers::LayerId,
+    },
+
+    /// Layers taken out by undoing a coat, to put back.
+    LayersTaken { body: NodeId, taken: Box<crate::paint::layers::TakenLayers> },
 }
 
 impl Change {
@@ -519,6 +543,32 @@ impl Change {
                     .expect("a layers change names a body that is still in the document");
                 let previous = volume.restore_layers(*state);
                 Change::Layers { body, state: Box::new(previous) }
+            }
+            Change::LayerSettings { body, metas, active } => {
+                let volume = doc
+                    .volume_mut(body)
+                    .expect("a layers change names a body that is still in the document");
+                let (metas, active) = volume.arrange_layers(metas, active);
+                Change::LayerSettings { body, metas, active }
+            }
+            Change::LayersAdded { body, ids, active } => {
+                let volume = doc
+                    .volume_mut(body)
+                    .expect("a layers change names a body that is still in the document");
+                let taken = volume.take_layers(&ids);
+                if let Some(at) = volume.layers().index_of(active) {
+                    volume.set_active_layer(at);
+                }
+                Change::LayersTaken { body, taken: Box::new(taken) }
+            }
+            Change::LayersTaken { body, taken } => {
+                let volume = doc
+                    .volume_mut(body)
+                    .expect("a layers change names a body that is still in the document");
+                let active = volume.layers().active_id();
+                let ids = taken.layers.iter().map(|(_, meta, _)| meta.id).collect();
+                volume.put_layers_back(*taken);
+                Change::LayersAdded { body, ids, active }
             }
             Change::WholeVolume { body, volume } => {
                 // Always applicable, by the same invariant `Change::Bricks`
@@ -581,7 +631,10 @@ impl Change {
             Change::WholeMask { body, .. } => *body,
             Change::WholeVolume { body, .. } => *body,
             Change::Paints { body, .. } => *body,
-            Change::Layers { body, .. } => *body,
+            Change::Layers { body, .. }
+            | Change::LayerSettings { body, .. }
+            | Change::LayersAdded { body, .. }
+            | Change::LayersTaken { body, .. } => *body,
             Change::Outline { before, after } => {
                 before.iter().zip(after).find(|(was, now)| was != now).map_or_else(
                     || before.first().map_or(NodeId(0), |meta| meta.id),
@@ -604,6 +657,12 @@ impl Change {
             }
             Change::Paints { paints, .. } => paints.bytes(),
             Change::Layers { state, .. } => state.bytes(),
+            Change::LayersAdded { ids, .. } => size_of::<Self>() + ids.len() * 4,
+            Change::LayerSettings { metas, .. } => metas
+                .iter()
+                .map(|meta| size_of::<crate::paint::layers::LayerMeta>() + meta.name.len())
+                .sum(),
+            Change::LayersTaken { taken, .. } => taken.bytes(),
         }
     }
 
@@ -730,7 +789,10 @@ impl Entry {
                 Change::Bricks { body, .. } => *body,
                 Change::WholeMask { body, .. } => *body,
                 Change::WholeVolume { body, .. } => *body,
-                Change::Layers { body, .. } => *body,
+                Change::Layers { body, .. }
+                | Change::LayerSettings { body, .. }
+                | Change::LayersAdded { body, .. }
+                | Change::LayersTaken { body, .. } => *body,
                 Change::NodeAdded { id, .. } => *id,
                 // The paint rack is on the panel whatever any eye says, as
                 // the outline is. The renumbered voxels that ride with a

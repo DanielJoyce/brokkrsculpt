@@ -567,8 +567,11 @@ impl PaintStroke {
                             let bristle = frame.bristle(in_source, dry, lay.seed);
                             dry.amount(relief.max(0.0), facing, bristle, lay.load)
                         }
-                        Catch::Specks(sponge) => sponge
-                            .amount(relief.max(0.0), Frame::speck(in_source, sponge, lay.seed)),
+                        Catch::Specks(sponge) => sponge.amount(
+                            relief,
+                            normal.dot(sponge.light),
+                            Frame::speck(in_source, sponge, lay.seed),
+                        ),
                     };
                 }
                 let wanted = (amount.clamp(0.0, 1.0) * 255.0).round() as u8;
@@ -1177,7 +1180,7 @@ mod tests {
         // A brush much wider than the patch judged, so that what varies
         // across the patch is the sponge and not the brush's own edge.
         let wide = Brush { radius: 30.0, ..wide };
-        let sponge = Sponge { density: 0.4, grain_mm: 1.0, edges: 0.0 };
+        let sponge = Sponge { density: 0.4, grain_mm: 1.0, edges: 0.0, ..Sponge::PLAIN };
         let stamp = on(ON_FLAT, Vec3::Z);
         let mut volume = cube();
         let mut stroke = PaintStroke::new();
@@ -1234,7 +1237,7 @@ mod tests {
         assert_ne!(specks(&other), before, "the seed changed nothing");
         // All of a flat is all of it, and none of it is none.
         for (density, alpha) in [(1.0, 255), (0.0, 0)] {
-            let sponge = Sponge { density, grain_mm: 1.0, edges: 0.0 };
+            let sponge = Sponge { density, grain_mm: 1.0, edges: 0.0, ..Sponge::PLAIN };
             let mut volume = cube();
             dab(&mut volume, &wide, &stamp, &lay(red, Catch::Specks(sponge)));
             let patch = layer(&volume, 2.0);
@@ -1247,7 +1250,7 @@ mod tests {
     #[test]
     fn a_mirrored_stamp_lays_the_mirror_image() {
         let brush = brush(5.0);
-        let sponge = Sponge { density: 0.5, grain_mm: 1.0, edges: 0.0 };
+        let sponge = Sponge { density: 0.5, grain_mm: 1.0, edges: 0.0, ..Sponge::PLAIN };
         let at = Vec3::new(6.0, 2.0, HALF);
         let mut volume = cube();
         dab_mirrored(

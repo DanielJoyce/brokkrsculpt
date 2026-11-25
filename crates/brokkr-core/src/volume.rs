@@ -882,6 +882,37 @@ impl Volume {
         Some(id)
     }
 
+    /// Take the layers with these ids out of the stack: what undoing a coat
+    /// does. See [`crate::paint::layers::TakenLayers`].
+    pub fn take_layers(
+        &mut self,
+        ids: &[crate::paint::layers::LayerId],
+    ) -> crate::paint::layers::TakenLayers {
+        self.layers_changed();
+        let taken = self.layers.take(ids, &mut self.paint);
+        self.layers_changed();
+        taken
+    }
+
+    /// Give the stack these settings in this order, and hand back what it
+    /// had. See [`crate::undo::Change::LayerSettings`].
+    pub fn arrange_layers(
+        &mut self,
+        metas: Vec<crate::paint::layers::LayerMeta>,
+        active: crate::paint::layers::LayerId,
+    ) -> (Vec<crate::paint::layers::LayerMeta>, crate::paint::layers::LayerId) {
+        let had = self.layers.arrange(metas, active, &mut self.paint);
+        self.layers_changed();
+        had
+    }
+
+    /// Put layers taken out back: what redoing a coat does.
+    pub fn put_layers_back(&mut self, taken: crate::paint::layers::TakenLayers) {
+        self.layers_changed();
+        self.layers.put_back(taken, &mut self.paint);
+        self.layers_changed();
+    }
+
     /// Make the layer at `index` the one strokes go to.
     pub fn set_active_layer(&mut self, index: usize) {
         self.layers.swap_active(index, &mut self.paint);

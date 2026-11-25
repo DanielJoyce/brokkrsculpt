@@ -23,7 +23,7 @@ use crate::theme;
 /// A gesture on one layer that is one undo entry however many messages it
 /// takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Gesture {
+pub(super) enum Gesture {
     Opacity,
     Name,
 }
@@ -36,10 +36,42 @@ pub(super) struct LayersHeld {
     going: Option<(NodeId, LayerId, Gesture, u64)>,
 }
 
+/// What a change to the stack keeps for its undo: the least that puts it
+/// back. Keeping the whole stack for every change cost a clone of every
+/// layer's paint at each step of an opacity drag, and a few coats kept
+/// whole outgrew the history's budget.
+pub(super) enum Before {
+    /// Layers were only added: their ids, and the layer active before.
+    Added(Vec<LayerMeta>, LayerId),
+    /// Only settings or order changed.
+    Settings(Vec<LayerMeta>, LayerId),
+    /// Paint was merged or thrown away: the whole stack.
+    Whole(Box<brokkr_core::paint::layers::LayerState>),
+}
+
 impl Brokkr {
+    /// What `before` should be for a change of this kind, now.
+    fn before(&self, whole: bool) -> Before {
+        let layers = self.doc.active_volume().layers();
+        if whole {
+            Before::Whole(Box::new(self.doc.active_volume().layer_state()))
+        } else {
+            Before::Settings(layers.metas(), layers.active_id())
+        }
+    }
+
     pub(super) fn layers_changed(&mut self, message: LayersMessage) {
         let body = self.doc.active();
-        let before = self.doc.active_volume().layer_state();
+        let before = match message {
+            LayersMessage::Added | LayersMessage::Duplicated(_) => {
+                let layers = self.doc.active_volume().layers();
+                Before::Added(layers.metas(), layers.active_id())
+            }
+            LayersMessage::MergedDown(_) | LayersMessage::Deleted(_) | LayersMessage::Flattened => {
+                self.before(true)
+            }
+            _ => self.before(false),
+        };
         let metas = self.doc.active_volume().layers().metas();
         let len = metas.len();
         let meta_of = |index: usize| metas.get(index).cloned();
@@ -152,12 +184,12 @@ impl Brokkr {
         }
     }
 
-    /// Put the stack as it was before a change on the history, unless the
+    /// Put what undoes a change to the stack on the history, unless the
     /// change is the next message of a gesture already there.
-    fn push_layers_entry(
+    pub(super) fn push_layers_entry(
         &mut self,
         body: NodeId,
-        before: brokkr_core::paint::layers::LayerState,
+        before: Before,
         gesture: Option<(LayerId, Gesture)>,
     ) {
         let revision = self.history.revision();
@@ -169,7 +201,23 @@ impl Brokkr {
         {
             return;
         }
-        self.history.push(Entry::new(vec![Change::Layers { body, state: Box::new(before) }]));
+        let change = match before {
+            Before::Whole(state) => Change::Layers { body, state },
+            Before::Settings(metas, active) => Change::LayerSettings { body, metas, active },
+            Before::Added(had, active) => {
+                let ids = self
+                    .doc
+                    .active_volume()
+                    .layers()
+                    .metas()
+                    .into_iter()
+                    .filter(|meta| !had.iter().any(|was| was.id == meta.id))
+                    .map(|meta| meta.id)
+                    .collect();
+                Change::LayersAdded { body, ids, active }
+            }
+        };
+        self.history.push(Entry::new(vec![change]));
         self.painting.layers.going =
             going.map(|(body, layer, kind)| (body, layer, kind, self.history.revision()));
     }
@@ -191,7 +239,12 @@ impl Brokkr {
         }
         let active = layers.active();
         let empty = volume.paint().is_empty();
-        let before = volume.layer_state();
+        let (metas, active_id) = (layers.metas(), layers.active_id());
+        let before = if empty && !meta.locked {
+            Before::Settings(metas, active_id)
+        } else {
+            Before::Added(metas, active_id)
+        };
         let volume = self.doc.active_volume_mut();
         let said = if empty && !meta.locked {
             volume.set_layer_meta(active, LayerMeta { blend, ..meta.clone() });
