@@ -17,7 +17,7 @@ use iced::widget::{button, container, row, text};
 use iced::{Alignment, Element, Length};
 
 use super::{Brokkr, Tool};
-use crate::message::{Message, StudioMessage};
+use crate::message::{AddMessage, Message, Rail, StudioMessage};
 use crate::theme;
 
 impl Brokkr {
@@ -29,7 +29,7 @@ impl Brokkr {
     /// Whether the tool in hand is sized and weighted at all: the cut and
     /// the transform gizmo are neither.
     fn sized_now(&self) -> bool {
-        matches!(self.tool, Tool::Sculpt | Tool::Mask)
+        matches!(self.rail_lit(), Rail::Brush | Rail::Move | Rail::Paint | Rail::Mask)
     }
 
     /// The tool's size, as a number. `inline` for the bar.
@@ -106,7 +106,14 @@ impl Brokkr {
 
     /// The bar over the viewport.
     pub(super) fn context_bar(&self) -> Element<'_, Message> {
-        let name = text(self.live_tool_label()).size(theme::LABEL_SIZE).color(theme::TEXT);
+        let lit = self.rail_lit();
+        let name = text(match lit {
+            Rail::Measure => "MEASURE".to_string(),
+            Rail::Place => self.live_brush_name(),
+            _ => self.live_tool_label(),
+        })
+        .size(theme::LABEL_SIZE)
+        .color(theme::TEXT);
         let mut line = row![container(name).width(Length::Fixed(NAME_WIDTH))]
             .spacing(theme::S3)
             .align_y(Alignment::Center);
@@ -118,6 +125,10 @@ impl Brokkr {
             if let Some(falloff) = self.falloff_choice() {
                 line = line.push(container(falloff).width(Length::Fixed(FALLOFF_WIDTH)));
             }
+        } else if lit == Rail::Place {
+            for number in self.placing_numbers() {
+                line = line.push(number);
+            }
         }
         line = line.push(self.mirror_toggles());
         container(line.wrap().vertical_spacing(theme::S1))
@@ -125,6 +136,47 @@ impl Brokkr {
             .width(Length::Fill)
             .style(theme::panel)
             .into()
+    }
+
+    /// How what is being added meets the surface, on the bar: the soft
+    /// join and how far it is held off. The same numbers, under the same
+    /// keys, as Kitbash's settings. A map has neither.
+    fn placing_numbers(&self) -> Vec<Element<'_, Message>> {
+        let state = &self.inserts;
+        if matches!(state.what, None | Some(super::Insert::Map(_))) {
+            return Vec::new();
+        }
+        let voxel_size = self.doc.voxel_size();
+        vec![
+            crate::ui::number(
+                &self.drafts,
+                "add.blend",
+                "Soft join",
+                state.blend,
+                0.0..=brokkr_core::solid::MOST_BLEND,
+                |voxels| Message::Add(AddMessage::BlendChanged(voxels)),
+            )
+            .step(0.25)
+            .shown(if state.separate || state.blend <= 0.0 {
+                "none".to_string()
+            } else {
+                format!("{:.2} mm", state.blend * voxel_size)
+            })
+            .inline()
+            .into(),
+            crate::ui::number(
+                &self.drafts,
+                "add.lift",
+                "Held off",
+                state.lift,
+                super::adding::LIFT_RANGE,
+                |lift| Message::Add(AddMessage::LiftChanged(lift)),
+            )
+            .step(0.05)
+            .shown(format!("{:+.2}", state.lift))
+            .inline()
+            .into(),
+        ]
     }
 
     /// The three mirror planes, as letters that light. They were on the
@@ -192,6 +244,14 @@ mod tests {
         assert!(!app.sized_now());
         drop(app.update(Message::ToolChanged(Tool::Cut)));
         assert!(app.sized_now());
+        // Measuring has no size either, and a part to add has its own two
+        // numbers in place of a brush's.
+        drop(app.update(Message::RailChosen(Rail::Measure)));
+        assert!(!app.sized_now());
+        drop(app.update(Message::RailChosen(Rail::Place)));
+        assert!(!app.sized_now());
+        assert_eq!(app.placing_numbers().len(), 2);
+        drop(app.update(Message::RailChosen(Rail::Brush)));
         // Paint, by colour: an opacity and a falloff.
         drop(app.update(Message::BrushKindChanged(BrushKind::Paint)));
         assert!(app.painting_now());

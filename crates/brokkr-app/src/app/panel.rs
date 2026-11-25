@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use brokkr_core::{BrushKind, FalloffCurve, MaskFilter, PatternKind};
+use brokkr_core::{BrushKind, MaskFilter, PatternKind};
 use iced::widget::{
     button, checkbox, column, container, mouse_area, opaque, pick_list, rich_text, row, scrollable,
     sensor, space, span, stack, text, text_editor, text_input,
@@ -213,7 +213,9 @@ impl Brokkr {
                 ]
                 .spacing(theme::S2)
                 .width(Length::Fill),
-                self.tools(),
+                // The workspace's library and settings. See
+                // `app/workspace.rs`.
+                self.dock(),
             ]
             .spacing(theme::S3),
             // What the last action did, once, at the foot. See `app/cards.rs`.
@@ -428,9 +430,11 @@ impl Brokkr {
             wordmark,
             menus,
             text(title).size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
-            // Takes the slack, so the controls sit right and everything else
-            // stays left. The status line that was here is the status bar's
-            // now, at the foot of the window: see `status_bar`.
+            // The slack either side of the workspace switcher, so it sits in
+            // the middle and the controls right. The status line that was
+            // here is the status bar's now: see `status_bar`.
+            space().width(Length::Fill),
+            self.workspace_switcher(),
             space().width(Length::Fill),
             control(
                 icon::IconName::Minimise,
@@ -2134,118 +2138,6 @@ impl Brokkr {
         .into()
     }
 
-    fn tools(&self) -> Element<'_, Message> {
-        // Strength means nothing to the paint brush -- a slot has no half, see
-        // `BrushKind::Paint` -- so its place is taken by the thing that does:
-        // which filament the stroke lays down.
-        let painting = self.brush.kind == BrushKind::Paint && self.tool != Tool::Mask;
-
-        let radius = column![
-            crate::ui::number(
-                &self.drafts,
-                "brush.radius",
-                "Radius",
-                self.brush.radius,
-                super::MIN_RADIUS_MM..=self.max_radius(),
-                Message::BrushRadiusChanged
-            )
-            .step(0.05)
-            .shown(format!("{:.2} mm", self.brush.radius))
-            .tip("Or hold S and drag in the view"),
-            checkbox(self.dynamic_radius)
-                .label("scale with model")
-                .on_toggle(Message::DynamicRadiusToggled)
-                .text_size(theme::LABEL_SIZE),
-        ]
-        .spacing(theme::S2);
-
-        let strength: Element<'_, Message> = if painting {
-            self.painting_picker(true)
-        } else {
-            column![
-                crate::ui::number(
-                    &self.drafts,
-                    "brush.strength",
-                    "Strength",
-                    self.brush.strength,
-                    super::MIN_STRENGTH..=self.max_strength(),
-                    Message::BrushStrengthChanged
-                )
-                .step(0.01)
-                .shown(format!("{:.2}", self.brush.strength))
-                .tip("Or hold U and drag in the view"),
-            ]
-            .spacing(theme::S2)
-            .into()
-        };
-
-        // Falloff goes the way strength does while painting a slot: a slot
-        // has no rim to feather, so the row would be four buttons that change
-        // nothing. A colour has one, and keeps the row.
-        // A brush on the field has a profile, which is the falloff and
-        // more: see `app/studio.rs`.
-        let falloff: Element<'_, Message> = if painting && !self.painting_colour() {
-            column![].into()
-        } else if painting || self.tool == Tool::Mask {
-            self.falloff_row()
-        } else {
-            self.profile_row()
-        };
-
-        let history = row![
-            crate::ui::button_secondary("Undo", self.history.can_undo().then_some(Message::Undo)),
-            crate::ui::button_secondary("Redo", self.history.can_redo().then_some(Message::Redo)),
-        ]
-        .spacing(theme::S2);
-
-        // The brush in hand, beside its heading: the heading says what the
-        // block is, this says which.
-        let in_hand = text(match self.tool {
-            Tool::Mask => "Mask".to_string(),
-            _ => self.live_brush_name(),
-        })
-        .size(theme::LABEL_SIZE)
-        .color(theme::TEXT_DIM);
-
-        container(scrollable(
-            column![
-                self.section(PanelSection::Bodies, || self.bodies_panel()),
-                // The palette of brushes, and the brushes that add. See
-                // `app/studio.rs` and `app/adding.rs`. Every block has a
-                // heading that folds: see `ui.rs`.
-                self.section(PanelSection::Brushes, || self.palette_panel()),
-                self.section(PanelSection::Workbench, || self.workbench_panel()),
-                self.section(PanelSection::Add, || self.adding_panel()),
-                crate::ui::section(
-                    PanelSection::Brush.title(),
-                    self.expanded[PanelSection::Brush as usize],
-                    Message::SectionToggled(PanelSection::Brush),
-                    Some(in_hand.into()),
-                    || column![radius, strength, falloff, self.studio_panel(),]
-                        .spacing(theme::S3)
-                        .into(),
-                ),
-                self.section(PanelSection::Stroke, || self.stroke_panel()),
-                self.section(PanelSection::Form, || self.form_panel()),
-                self.section(PanelSection::Pattern, || self.pattern_panel()),
-                self.section(PanelSection::History, || history.into()),
-                self.section(PanelSection::Detail, || self.detail_panel()),
-                self.section(PanelSection::Filament, || self.filament_panel()),
-                self.section(PanelSection::Export, || self.export_panel()),
-                crate::ui::button_secondary("Reset sphere", Some(Message::ResetSphere)),
-            ]
-            .spacing(theme::S4)
-            // Room for the scrollbar, which iced draws over the content rather
-            // than beside it. Without this the last button of a row is clipped.
-            .padding(Padding { right: theme::S4, ..Padding::ZERO }),
-        ))
-        .padding(theme::PANEL_PADDING)
-        .width(Length::Fixed(258.0))
-        .height(Length::Fill)
-        .style(theme::panel)
-        .into()
-    }
-
     /// SpaceMouse settings, plus the live readout.
     ///
     /// The readout is the point of this panel as much as the bindings are: a
@@ -2446,7 +2338,7 @@ impl Brokkr {
     /// reason: it has to survive the section being collapsed. Soloing a body,
     /// folding the Bodies section away and forgetting is the same predicament as
     /// soloing and scrolling away, which is what the indicator exists for.
-    fn section<'a>(
+    pub(super) fn section<'a>(
         &'a self,
         which: PanelSection,
         body: impl FnOnce() -> Element<'a, Message>,
@@ -2538,7 +2430,7 @@ impl Brokkr {
     /// The counts need one `Vec` a frame, which is the deliberate trade: one
     /// small allocation for the whole list beats one per row, and this function
     /// is already building an `Element` per visible row.
-    fn bodies_panel(&self) -> Element<'_, Message> {
+    pub(super) fn bodies_panel(&self) -> Element<'_, Message> {
         /// Six rows with pictures, eight without — the same 190-odd pixels
         /// either way, so turning the pictures off buys rows rather than space.
         const VISIBLE_ROWS: f32 = 6.0;
@@ -3270,7 +3162,7 @@ impl Brokkr {
     /// One control rather than a brush per pattern: Clay plus Scales and
     /// Inflate plus Hair are both useful, and enumerating the product of two
     /// lists is exactly the complexity the brief asks to avoid.
-    fn pattern_panel(&self) -> Element<'_, Message> {
+    pub(super) fn pattern_panel(&self) -> Element<'_, Message> {
         let pattern = self.brush.pattern;
 
         let kinds =
@@ -3351,7 +3243,7 @@ impl Brokkr {
     /// memory by its inverse cube, so a dragged slider would walk a model
     /// straight past what the mesh pool holds. Two steps make the cost of each
     /// one obvious.
-    fn detail_panel(&self) -> Element<'_, Message> {
+    pub(super) fn detail_panel(&self) -> Element<'_, Message> {
         let finer = self.doc.voxel_size() / 2.0;
         let coarser = self.doc.voxel_size() * 2.0;
 
@@ -3385,20 +3277,6 @@ impl Brokkr {
             // show beside it is what the current resolution MEANS at that size.
             // Without this the field reads as a detail control, which it is not.
             text(&self.detail_advice).size(theme::LABEL_SIZE).color(theme::TEXT_DIM),
-        ]
-        .spacing(theme::S2)
-        .into()
-    }
-
-    /// The four falloff curves, the live one lit.
-    fn falloff_row(&self) -> Element<'_, Message> {
-        column![
-            crate::ui::sub_label("Falloff"),
-            crate::ui::segmented(
-                FalloffCurve::ALL.map(|curve| (curve, curve.label())),
-                self.brush.falloff,
-                Message::FalloffChanged,
-            ),
         ]
         .spacing(theme::S2)
         .into()
@@ -3459,7 +3337,7 @@ impl Brokkr {
     /// from the machine with the button; there is no colour picker here because
     /// the answer that matters is what is physically loaded, and the printer
     /// knows that better than a mouse does.
-    fn filament_panel(&self) -> Element<'_, Message> {
+    pub(super) fn filament_panel(&self) -> Element<'_, Message> {
         let rows = self.palette.slots.iter().enumerate().fold(
             column![].spacing(theme::S1),
             |assembled, (index, slot)| {
@@ -3496,7 +3374,7 @@ impl Brokkr {
     }
 
     /// Export controls, plus what the last attempt did.
-    fn export_panel(&self) -> Element<'_, Message> {
+    pub(super) fn export_panel(&self) -> Element<'_, Message> {
         // The formats with a picture in them are a row of their own, under
         // the size of that picture: see `textured_exports`.
         let buttons = ExportFormat::ALL.into_iter().filter(|format| !format.has_texture()).fold(

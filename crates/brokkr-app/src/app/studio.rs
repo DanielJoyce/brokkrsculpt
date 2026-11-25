@@ -1243,38 +1243,19 @@ impl Brokkr {
             .spacing(theme::S1),
         ]
         .spacing(theme::S1);
-        // The heading: adding a brush, and the palette at the pointer for a
-        // hand that is on a pen and not on the `b` key.
-        // On a line of their own under the word: seen on a screen, the
-        // panel is too narrow for the word and both buttons on one.
-        let small = theme::PAD_CHOICE;
-        let heading = column![
-            row![
-                button(
-                    text(if self.studio.adding { "Done adding" } else { "+ Add a brush" })
-                        .size(theme::LABEL_SIZE)
-                        .width(Length::Fill)
-                        .center()
-                )
+        // Adding a brush, over the palette. The palette at the pointer had
+        // a button beside it; the maintainer had it out on 2026-11-25 as a
+        // second way to the `b` key, which the shortcuts card names.
+        let heading = button(
+            text(if self.studio.adding { "Done adding" } else { "+ Add a brush" })
+                .size(theme::LABEL_SIZE)
                 .width(Length::Fill)
-                .padding(small)
-                .style(if self.studio.adding {
-                    theme::tool_button_active
-                } else {
-                    theme::tool_button
-                })
-                .on_press(changed(StudioMessage::AddToggled)),
-                button(
-                    text("At the pointer  b").size(theme::LABEL_SIZE).width(Length::Fill).center()
-                )
-                .width(Length::Fill)
-                .padding(small)
-                .style(theme::tool_button)
-                .on_press(changed(StudioMessage::PaletteToggled)),
-            ]
-            .spacing(theme::S1),
-        ]
-        .spacing(theme::S1);
+                .center(),
+        )
+        .width(Length::Fill)
+        .padding(theme::PAD_CHOICE)
+        .style(if self.studio.adding { theme::tool_button_active } else { theme::tool_button })
+        .on_press(changed(StudioMessage::AddToggled));
         let mut panel = column![heading].spacing(theme::S1);
         if self.studio.adding {
             panel = panel.push(add);
@@ -1333,11 +1314,17 @@ impl Brokkr {
                     .spacing(2.0);
             // The first eight carry the key that picks them, in a corner of
             // the picture. See `viewport::shortcut`.
-            let face: Element<'_, Message> = if index < crate::viewport::KEYED_BRUSHES {
+            let keyed = self
+                .desk
+                .now
+                .palette_places()
+                .map(|places| index.wrapping_sub(places.start))
+                .filter(|place| *place < crate::viewport::KEYED_BRUSHES);
+            let face: Element<'_, Message> = if let Some(place) = keyed {
                 iced::widget::stack![
                     face,
                     container(
-                        text((index + 1).to_string())
+                        text((place + 1).to_string())
                             .size(theme::CAPTION_SIZE)
                             .color(theme::ON_ACCENT),
                     )
@@ -1376,11 +1363,17 @@ impl Brokkr {
             |words: &'static str| text(words).size(theme::LABEL_SIZE).color(theme::TEXT_DIM);
         // The ones that come with the application under a heading for
         // each kind of work, and then the user's own.
+        // The open workspace's groups: Kitbash's library is the brushes that
+        // add, Sculpt's the rest. See `app/workspace.rs`.
+        let kitbash = self.desk.now == crate::message::Workspace::Kitbash;
         let mut grid = column![].spacing(theme::S1);
         for (group, places) in super::presets::groups() {
+            if (group == "Add") != kitbash {
+                continue;
+            }
             grid = grid.push(heading(group)).push(rows(places.start, places.end, across));
         }
-        if palette.len() > came {
+        if palette.len() > came && !kitbash {
             grid = grid.push(heading("Yours")).push(rows(came, palette.len(), own_across));
         }
         grid.into()

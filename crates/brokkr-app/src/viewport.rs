@@ -840,18 +840,28 @@ pub(crate) fn shortcut(character: &str, command: bool, shift: bool, alt: bool) -
             // as a typo.
             return Some(if shift { Message::BodyUngrouped } else { Message::BodyGrouped });
         }
+        // Ctrl and 1 to 4: a workspace. The bare digits are the library's.
+        if command
+            && !alt
+            && let Ok(digit) = character.parse::<usize>()
+            && let Some(which) =
+                digit.checked_sub(1).and_then(|index| crate::message::Workspace::ALL.get(index))
+        {
+            return Some(Message::WorkspaceChosen(*which));
+        }
         let undo_chord = command && !alt && character.eq_ignore_ascii_case("z");
         return undo_chord.then_some(if shift { Message::Redo } else { Message::Undo });
     }
 
-    // The first eight brushes of the palette, which carry the numbers on
-    // their tiles, so the key and the tile are always the same thing. See
-    // `docs/WORKSPACES.md`: the maintainer's decision of 2026-11-25.
+    // The first eight of the open workspace's library, which carry the
+    // numbers on their tiles, so the key and the tile are always the same
+    // thing. See `docs/WORKSPACES.md`: the maintainer's decision of
+    // 2026-11-25, and `app/workspace.rs` for what each library is.
     if let Ok(digit) = character.parse::<usize>()
         && let Some(index) = digit.checked_sub(1)
         && index < KEYED_BRUSHES
     {
-        return Some(Message::Studio(crate::message::StudioMessage::PresetChosen(index)));
+        return Some(Message::LibraryKey(index));
     }
 
     match character.to_ascii_lowercase().as_str() {
@@ -2152,16 +2162,12 @@ mod shortcut_tests {
     }
 
     #[test]
-    fn the_digits_select_the_first_eight_brushes_of_the_palette() {
+    fn the_digits_select_the_first_eight_of_the_library() {
         for index in 0..KEYED_BRUSHES {
             let key = (index + 1).to_string();
             assert!(
-                matches!(
-                    press(&key),
-                    Some(Message::Studio(crate::message::StudioMessage::PresetChosen(chosen)))
-                        if chosen == index
-                ),
-                "key {key} should choose the palette's brush {index}"
+                matches!(press(&key), Some(Message::LibraryKey(chosen)) if chosen == index),
+                "key {key} should choose the library's brush {index}"
             );
         }
         // One past the last, so the mapping cannot silently wrap round.
@@ -2219,7 +2225,8 @@ mod shortcut_tests {
         // manager, so claiming it here would steal it.
         assert!(control("s").is_none());
         assert!(control("x").is_none(), "ctrl x is not a mirror toggle");
-        assert!(control("1").is_none());
+        // Ctrl and 1 to 4 pick a workspace; past them nothing.
+        assert!(control("5").is_none());
     }
 
     /// Alt is the modifier that was silently ignored, and this is what the

@@ -81,7 +81,7 @@ One pull request each, into `feature/studio`.
 | U1 The kit | **Done**, 2026-11-25 | `ui.rs`: a folding section, a number, a choice of a few, a button, a tooltip. Every panel block under a heading that folds; every slider a number; every icon-only button named on hover; Inter shipped |
 | U2 Menus, status bar, Preferences | **Done**, 2026-11-25 | Edit and View menus, a status bar at the foot, a Preferences card (the pen, the SpaceMouse, updates), a Keyboard shortcuts card on `?`, and every grey caption out of the panel |
 | U3 Context bar and one popup | **Done**, 2026-11-25 | The bar over the viewport and the right-click card from the same functions; a rail of tool kinds; keys 1 to 8 pick the palette's first eight, numbered on their tiles |
-| U4 Workspaces | Not begun | The switcher, a library and inspector for each, what each remembers |
+| U4 Workspaces | **Done**, 2026-11-25 | The switcher in the title bar, Ctrl and 1 to 4, Tab back; for each workspace a rail, a bar, a library and settings; what each remembers |
 | U5 Each workspace its own | Not begun | Paint's filaments, Kitbash's placement (issue 77), Print, a drawn falloff (issue 78) and pressure curve (issue 76) |
 
 ### U1: the kit
@@ -252,3 +252,64 @@ Not done in U3:
   the bar; the inspector of U4 decides what stays.
 - While shift is held the rail's Brush button says "smooth", but the
   palette does not light Smooth as the strip did.
+
+### U4: the workspaces
+
+`app/workspace.rs`. The switcher is in the middle of the title bar
+(Sculpt, Kitbash, Paint, Print; Ctrl and 1 to 4; Tab goes back to the
+one before). The right-hand panel is the dock now, 276 wide where it was
+258: two tabs, the workspace's library (named for what is in it:
+Brushes, Parts, Paints, Export) and its Settings, and the bodies list
+at its foot in every workspace.
+
+| Workspace | Rail | Library | Settings |
+|---|---|---|---|
+| Sculpt | Brush, Move, Mask, Transform, Cut, Measure | The palette's Sculpt and Lines and stamps groups, and the user's own | BRUSH, STROKE, PATTERN, FORM, WORKBENCH, DETAIL |
+| Kitbash | Place, Transform, Cut, Measure | The palette's Add group; a copy of a body; maps taken in | ADD (how what is in hand meets the surface), DETAIL |
+| Paint | Paint, Mask, Measure | The paint: modes, touches, colour, the machine's filaments | BRUSH (size and edge), STROKE, FILAMENT |
+| Print | Measure, Cut, Transform | Export: detail, overhangs, formats, textures, parting keys | DETAIL, FILAMENT |
+
+The bar follows the lit tool: a brush's size, weight and edge; for
+Place, the soft join and how far the part is held off; for Measure, the
+cut and the gizmo, the mirror planes alone.
+
+A switch keeps the document as it was and each workspace as it was
+left. On the way out, a workspace's lit tool, its tab, its open
+sections and, for Kitbash, the part in hand are kept, and the part and
+a measurement are put down so neither is armed under another
+workspace's tools. On the way in, the workspace's tool is taken up
+again: Brush and the palette's brush that was in hand, Place and the
+part, Paint, or Measure, which is what Print opens with, so that a drag
+in Print does not sculpt.
+
+The keys 1 to 8 pick the open workspace's library: the Sculpt group's
+first eight in Sculpt, the Add group's in Kitbash (numbered on their
+tiles), the five touches in Paint, nothing in Print.
+
+HISTORY and Reset sphere left the dock: undo and redo are the Edit menu
+and their keys, and File, New is a fresh sphere. The palette's "At the
+pointer" button went too, at the maintainer's word on 2026-11-25: it was
+a second way to the `b` key.
+
+Tests: `no_switch_changes_the_document` (a property: any run of
+switches and Tabs keeps the camera, the mirror planes, the active body,
+the body count, the undo history and the field at four points, and
+lights only a tool the open workspace's rail has),
+`a_workspace_is_found_as_it_was_left`,
+`kitbash_holds_what_it_adds_and_only_there`,
+`the_number_keys_follow_the_workspace`, `ctrl_and_a_digit_is_a_workspace`,
+`tab_goes_back_and_a_card_holds_it`. `the_falloff_offered_follows_the_tool`
+covers Measure and Place.
+
+On a screen: each workspace's rail, bar and library; Settings; the
+switcher. The bar in Print first showed the paint brush's numbers, left
+from Paint, and in Kitbash the brush's; it follows the lit tool now.
+
+Not done in U4:
+
+- The user's own brushes are shown in Sculpt only, adding ones too.
+- The `b` palette at the pointer shows the open workspace's groups; in
+  Paint and Print it shows Sculpt's.
+- Each workspace's scroll position is not kept.
+- Tab cannot be seen working under Xvfb, which passes no keys; it is
+  tested through the key message.

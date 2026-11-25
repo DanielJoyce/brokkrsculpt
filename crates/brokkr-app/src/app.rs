@@ -8,6 +8,7 @@ mod autosave;
 mod cards;
 mod context;
 mod rail;
+mod workspace;
 pub use adding::Insert;
 // Vector displacement maps, for the brushes that add: `app/maps.rs`.
 mod maps;
@@ -757,6 +758,9 @@ pub struct Brokkr {
     /// The palette's brush that was in hand when the rail went to Move or
     /// Paint, for its Brush button to come back to. See `app/rail.rs`.
     rail_last_brush: Option<usize>,
+    /// The open workspace and what each remembers. See
+    /// `app/workspace.rs`.
+    desk: workspace::Desk,
     /// The keyboard shortcuts card is up.
     shortcuts: bool,
     /// Whether it opens by itself next time.
@@ -2181,6 +2185,7 @@ impl Brokkr {
             welcome: false,
             preferences: false,
             rail_last_brush: None,
+            desk: workspace::Desk::default(),
             shortcuts: false,
             welcome_on_startup: true,
             palette: crate::palette::Palette::default(),
@@ -9236,6 +9241,14 @@ impl Brokkr {
                 // ordinary messages and cannot return another `KeyPressed`.
                 self.update(message)
             }
+            // Tab: back to the workspace before this one, the one key that
+            // makes Sculpt and Paint and Sculpt again a flick. Under a card
+            // it does nothing, as every shortcut does.
+            iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab)
+                if !self.modal_open() && !modifiers.command() =>
+            {
+                self.update(Message::WorkspaceBack)
+            }
             iced::keyboard::Key::Named(_) | iced::keyboard::Key::Unidentified => Task::none(),
         }
     }
@@ -9872,6 +9885,10 @@ impl Brokkr {
             // Cards of the menus: each takes the menu it was chosen from
             // away, as the welcome screen does below.
             Message::RailChosen(which) => return self.rail_chosen(which),
+            Message::WorkspaceChosen(which) => return self.enter_workspace(which),
+            Message::WorkspaceBack => return self.enter_workspace(self.desk.last),
+            Message::DockTabChosen(tab) => self.desk.memory[self.desk.now as usize].tab = tab,
+            Message::LibraryKey(index) => return self.library_key(index),
             Message::PreferencesOpened => {
                 self.top_menu = None;
                 self.preferences = true;
