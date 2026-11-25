@@ -845,7 +845,10 @@ impl Brokkr {
     }
 
     /// The brushes that add, and the settings of the one in hand.
-    pub(super) fn adding_panel(&self) -> Element<'_, Message> {
+    /// Kitbash's library, beyond the palette's brushes that add: a copy
+    /// of a body, the maps taken in, and taking one in. See
+    /// `app/workspace.rs`.
+    pub(super) fn adding_library(&self) -> Element<'_, Message> {
         let changed = |message: AddMessage| Message::Add(message);
         let reading = |label: String| text(label).size(theme::LABEL_SIZE).color(theme::TEXT_DIM);
         let state = &self.inserts;
@@ -862,15 +865,7 @@ impl Brokkr {
                 .style(if live { theme::tool_button_active } else { theme::tool_button })
                 .on_press(changed(AddMessage::Chosen((!live).then_some(what))))
         };
-        let shapes = Form::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, form| {
-            assembled.push(choice(form.label().to_string(), Insert::Shape(form)))
-        });
-        let cables = row![
-            choice("Cable".to_string(), Insert::Laid),
-            choice("Hung cable".to_string(), Insert::Hung),
-        ]
-        .spacing(theme::S1);
-        let mut panel = column![shapes, cables].spacing(theme::S1);
+        let mut panel = column![].spacing(theme::S1);
         // The bodies of the document, each to be lent as a shape: two to
         // a row, their names being a user's.
         let bodies: Vec<(NodeId, String)> = self
@@ -917,6 +912,15 @@ impl Brokkr {
                 .style(theme::tool_button)
                 .on_press(Message::Maps(MapsMessage::Requested)),
         );
+        panel.into()
+    }
+
+    /// The settings of what is in hand to add: Kitbash's inspector.
+    pub(super) fn adding_settings(&self) -> Element<'_, Message> {
+        let changed = |message: AddMessage| Message::Add(message);
+        let reading = |label: String| text(label).size(theme::LABEL_SIZE).color(theme::TEXT_DIM);
+        let state = &self.inserts;
+        let mut panel = column![].spacing(theme::S1);
         let Some(what) = state.what else {
             return panel.into();
         };
@@ -1575,18 +1579,27 @@ mod tests {
     #[test]
     fn something_to_add_is_in_hand_until_a_brush_is() {
         let mut app = app();
-        drop(app.adding_panel());
+        {
+            drop(app.adding_library());
+            drop(app.adding_settings());
+        }
         update(&mut app, Message::Studio(crate::message::StudioMessage::StampToggled(true)));
         choose(&mut app, Insert::Shape(Form::Torus));
         assert!(app.inserting() && !app.studio.stamping(), "the stamp stayed up");
-        drop(app.adding_panel());
+        {
+            drop(app.adding_library());
+            drop(app.adding_settings());
+        }
         // Pressed again it is put away.
         set(&mut app, AddMessage::Chosen(None));
         assert!(!app.inserting());
 
         for what in [Insert::Laid, Insert::Hung, Insert::Shape(Form::Box)] {
             choose(&mut app, what);
-            drop(app.adding_panel());
+            {
+                drop(app.adding_library());
+                drop(app.adding_settings());
+            }
             drop(app.view());
         }
         update(&mut app, Message::BrushKindChanged(brokkr_core::BrushKind::Clay));
@@ -1673,7 +1686,10 @@ mod tests {
         assert_eq!((state.start, state.end), (End::Ball, End::Collar));
         assert_eq!(app.brush.radius, 1.25, "the cable's thickness was not kept");
         assert_eq!(app.live_brush_name(), "WASHING LINE");
-        drop(app.adding_panel());
+        {
+            drop(app.adding_library());
+            drop(app.adding_settings());
+        }
         drop(app.palette_panel());
 
         // A copy of a body is this document's, and no brush can say which.

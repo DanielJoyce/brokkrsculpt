@@ -582,6 +582,10 @@ impl TopMenu {
 pub enum Rail {
     /// Whichever brush of the palette is in hand.
     Brush,
+    /// Kitbash's: something to add is in hand, and a drag sets it down.
+    Place,
+    /// A click on the model is a point of a measurement.
+    Measure,
     /// Upstream's Move: a drag carries the surface along.
     Move,
     /// The paint brush.
@@ -592,8 +596,75 @@ pub enum Rail {
 }
 
 impl Rail {
-    pub const ALL: [Rail; 6] =
-        [Rail::Brush, Rail::Move, Rail::Paint, Rail::Mask, Rail::Transform, Rail::Cut];
+    pub const ALL: [Rail; 8] = [
+        Rail::Brush,
+        Rail::Place,
+        Rail::Move,
+        Rail::Paint,
+        Rail::Mask,
+        Rail::Transform,
+        Rail::Cut,
+        Rail::Measure,
+    ];
+}
+
+/// A workspace of the window: what the rail, the bar and the dock offer.
+/// See `app/workspace.rs` and `docs/WORKSPACES.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Workspace {
+    #[default]
+    Sculpt,
+    Kitbash,
+    Paint,
+    Print,
+}
+
+impl Workspace {
+    pub const ALL: [Workspace; 4] =
+        [Workspace::Sculpt, Workspace::Kitbash, Workspace::Paint, Workspace::Print];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Workspace::Sculpt => "Sculpt",
+            Workspace::Kitbash => "Kitbash",
+            Workspace::Paint => "Paint",
+            Workspace::Print => "Print",
+        }
+    }
+
+    /// Its key, as the switcher's tooltip says it.
+    pub fn key(self) -> &'static str {
+        match self {
+            Workspace::Sculpt => "Ctrl 1",
+            Workspace::Kitbash => "Ctrl 2",
+            Workspace::Paint => "Ctrl 3",
+            Workspace::Print => "Ctrl 4",
+        }
+    }
+}
+
+/// The two tabs of the dock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DockTab {
+    /// What the workspace offers to pick from.
+    #[default]
+    Library,
+    /// The settings of what is in hand.
+    Inspector,
+}
+
+impl DockTab {
+    /// The tab's name in a workspace: its library is named for what is in
+    /// it.
+    pub fn label(self, workspace: Workspace) -> &'static str {
+        match (self, workspace) {
+            (DockTab::Inspector, _) => "Settings",
+            (DockTab::Library, Workspace::Sculpt) => "Brushes",
+            (DockTab::Library, Workspace::Kitbash) => "Parts",
+            (DockTab::Library, Workspace::Paint) => "Paints",
+            (DockTab::Library, Workspace::Print) => "Export",
+        }
+    }
 }
 
 /// What the user answered to the unsaved-work prompt.
@@ -900,6 +971,15 @@ pub enum Message {
     /// application rather than of the document. See `docs/WORKSPACES.md`.
     /// A button of the tool rail. See `app/rail.rs`.
     RailChosen(Rail),
+    /// Open a workspace. See `app/workspace.rs`.
+    WorkspaceChosen(Workspace),
+    /// Back to the workspace before this one: Tab.
+    WorkspaceBack,
+    /// A tab of the dock.
+    DockTabChosen(DockTab),
+    /// A number key, 1 to 8 as 0 to 7: the open workspace's library's
+    /// brush of that place.
+    LibraryKey(usize),
     PreferencesOpened,
     PreferencesClosed,
     /// Help, Keyboard shortcuts: every key and held modifier, on a card.

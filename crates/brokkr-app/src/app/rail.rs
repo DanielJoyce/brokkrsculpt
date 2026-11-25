@@ -32,6 +32,14 @@ pub(super) const RAIL_WIDTH: f32 = 64.0;
 impl Brokkr {
     /// Which rail button is lit.
     pub(super) fn rail_lit(&self) -> Rail {
+        // Measuring takes the left click from every tool, so it is lit over
+        // them; and something to add in hand is Kitbash's Place.
+        if self.measure.armed {
+            return Rail::Measure;
+        }
+        if self.tool == Tool::Sculpt && self.inserting() {
+            return Rail::Place;
+        }
         match self.tool {
             Tool::Mask => Rail::Mask,
             Tool::Transform => Rail::Transform,
@@ -53,7 +61,29 @@ impl Brokkr {
                 app.update(Message::ToolChanged(Tool::Sculpt))
             }
         };
-        match chosen {
+        // Measuring is put down by any other button, as Escape puts it down.
+        let mut measuring = iced::Task::none();
+        if chosen != Rail::Measure && self.measure.armed {
+            measuring = self.update(Message::Measure(crate::message::MeasureMessage::Armed(false)));
+        }
+        let task = match chosen {
+            Rail::Measure => {
+                let task = to_sculpt(self);
+                return iced::Task::batch([
+                    task,
+                    self.update(Message::Measure(crate::message::MeasureMessage::Armed(
+                        !self.measure.armed,
+                    ))),
+                ]);
+            }
+            Rail::Place => {
+                let task = to_sculpt(self);
+                let insert = self.kitbash_insert();
+                iced::Task::batch([
+                    task,
+                    self.update(Message::Add(crate::message::AddMessage::Chosen(Some(insert)))),
+                ])
+            }
             Rail::Brush => {
                 let task = to_sculpt(self);
                 // Back from Move or Paint to the palette's brush that was
@@ -82,7 +112,8 @@ impl Brokkr {
             Rail::Mask => self.update(Message::ToolChanged(Tool::Mask)),
             Rail::Transform => self.update(Message::ToolChanged(Tool::Transform)),
             Rail::Cut => self.update(Message::ToolChanged(Tool::Cut)),
-        }
+        };
+        iced::Task::batch([measuring, task])
     }
 
     /// The rail itself.
@@ -103,6 +134,12 @@ impl Brokkr {
                     }),
                     if smoothing && on { "smooth" } else { "Brush" },
                     "The palette's brush in hand",
+                ),
+                Rail::Place => (IconName::Plus, "Place", "A drag on the model sets the part down"),
+                Rail::Measure => (
+                    IconName::Info,
+                    if on { "on" } else { "Measure" },
+                    "Measure: click two points on the model",
                 ),
                 Rail::Move => (IconName::BrushMove, "Move", "Move: a drag carries the surface"),
                 Rail::Paint => (IconName::BrushPaint, "Paint", "Paint"),
@@ -148,8 +185,13 @@ impl Brokkr {
                 tip,
             )
         };
-        let buttons =
-            Rail::ALL.into_iter().fold(column![].spacing(theme::S2), |assembled, which| {
+        let buttons = self
+            .desk
+            .now
+            .rail()
+            .iter()
+            .copied()
+            .fold(column![].spacing(theme::S2), |assembled, which| {
                 assembled.push(button_of(which))
             });
         container(scrollable(buttons).height(Length::Fill))
