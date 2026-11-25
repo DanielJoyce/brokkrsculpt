@@ -263,6 +263,19 @@ impl Volume {
         true
     }
 
+    /// A varnish over all of the body, on a new layer of the Varnish blend
+    /// over the active one, "Varnish: Matte" and so on. `false` when the
+    /// stack is full. Stage 6 of `docs/PAINT-RACK.md`.
+    pub fn varnish_coat(&mut self, finish: crate::paint::Finish) -> bool {
+        let name = format!("Varnish: {}", finish.label());
+        if self.coat_layer(&name, Blend::Varnish).is_none() {
+            return false;
+        }
+        let code = finish.code();
+        self.fill_active(|_, _, _| Some(([code, 0, 0], 1.0)));
+        true
+    }
+
     /// A zenithal, on a new layer "Zenithal" over the active one. `false`
     /// when the stack is full.
     pub fn zenithal(&mut self, zenithal: &Zenithal) -> bool {
@@ -336,6 +349,7 @@ fn layer_at(volume: &Volume, layer: usize, voxel: IVec3) -> Rgba {
 mod tests {
     use super::*;
     use crate::paint::field::BARE;
+    use crate::paint::layers::LayerMeta;
     use proptest::prelude::*;
 
     fn ball() -> Volume {
@@ -350,6 +364,34 @@ mod tests {
 
     const TOP: IVec3 = IVec3::new(0, 20, 0);
     const BOTTOM: IVec3 = IVec3::new(0, -20, 0);
+
+    /// A varnish coat is a Varnish layer whose finish is every voxel's,
+    /// and lays no colour: what is seen is what was under it.
+    #[test]
+    fn a_varnish_coat_lays_a_finish_and_no_colour() {
+        let mut volume = ball();
+        volume.edit_paint(IVec3::splat(-30), IVec3::splat(30), |_, _, _, _| [200, 10, 10, 255]);
+        let mut dirty = Vec::new();
+        volume.take_dirty(&mut dirty);
+        let seen = volume.display_paint().at(TOP);
+        assert!(volume.varnish_coat(crate::paint::Finish::Gloss));
+        volume.take_dirty(&mut dirty);
+        assert_eq!(volume.layers().metas()[1].blend, Blend::Varnish);
+        assert_eq!(volume.finish_at(TOP), crate::paint::Finish::Gloss.code());
+        assert_eq!(volume.display_paint().at(TOP), seen, "a varnish changed the colour");
+        // Hidden, it is no finish; flattened, it stays a varnish.
+        let mut meta = volume.layers().metas()[1].clone();
+        meta.visible = false;
+        volume.set_layer_meta(1, meta.clone());
+        assert_eq!(volume.finish_at(TOP), 0);
+        volume.set_layer_meta(1, LayerMeta { visible: true, ..meta });
+        volume.flatten_layers();
+        volume.take_dirty(&mut dirty);
+        let blends: Vec<_> = volume.layers().metas().into_iter().map(|meta| meta.blend).collect();
+        assert_eq!(blends, [Blend::Normal, Blend::Varnish], "a flatten lost the varnish");
+        assert_eq!(volume.finish_at(TOP), crate::paint::Finish::Gloss.code());
+        assert_eq!(volume.display_paint().at(TOP), seen);
+    }
 
     /// A base coat goes at the bottom of the stack and covers the body.
     #[test]

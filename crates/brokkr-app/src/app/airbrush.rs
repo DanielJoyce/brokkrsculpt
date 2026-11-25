@@ -157,7 +157,7 @@ impl Brokkr {
         let spread = (away / self.camera.distance.max(1e-3)).clamp(*SPREAD.start(), *SPREAD.end());
         let pressure = self.tablet.stamp_pressure(self.pressure_enabled, self.pressure_curve);
         let spray = Spray {
-            pigment: self.painting.pigment(direction),
+            pigment: self.pigment(direction),
             radius: self.brush.radius * spread,
             overspray: self.painting.airbrush.overspray,
         };

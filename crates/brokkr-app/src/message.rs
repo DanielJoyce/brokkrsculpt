@@ -405,6 +405,9 @@ pub enum CoatsMessage {
     BaseCoat,
     Zenithal,
     Spongechop,
+    /// The finish a varnish lays.
+    Varnish(brokkr_core::paint::Finish),
+    VarnishCoat,
 }
 
 /// Which picture a decal is. See `app/decal.rs`.

@@ -138,6 +138,22 @@ struct VertexOutput {
     // version of the paint on its way out: the dark fringe every painting
     // program has had once.
     @location(6) paint: vec4<f32>,
+    // The finish a varnish laid here, byte 3 of the attribute buffer, by
+    // `brokkr_core::paint::Finish::code`: nought for none. Flat: a finish is
+    // one or another.
+    @location(7) @interpolate(flat) finish: u32,
+}
+
+// How rough and how metal a finish is, by its code.
+// `brokkr_core::paint::Finish::roughness_and_metal` is the other copy.
+fn finish_of(code: u32) -> vec2<f32> {
+    switch code {
+        case 1u: { return vec2<f32>(0.9, 0.0); }
+        case 2u: { return vec2<f32>(0.5, 0.0); }
+        case 3u: { return vec2<f32>(0.15, 0.0); }
+        case 4u: { return vec2<f32>(0.35, 1.0); }
+        default: { return vec2<f32>(1.0, 0.0); }
+    }
 }
 
 // sRGB to linear light. `brokkr_core::paint::linear`, and the same numbers.
@@ -171,6 +187,7 @@ fn vertex_main(
     let t = (cavity_byte - 128.0) / 127.0;
     out.cavity = select(CAVITY_RANGE * t * abs(t), 0.0, cavity_byte < 0.5);
     out.paint = vec4<f32>(srgb_to_linear(paint.rgb) * paint.a, paint.a);
+    out.finish = u32(round(attributes.a * 255.0));
     return out;
 }
 
@@ -245,6 +262,21 @@ fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) ->
             coat = in.paint.rgb;
         }
         colour = colour * (1.0 - in.paint.a) + coat;
+    }
+
+    // The finish a varnish laid, over the paint: a highlight from a light
+    // above and to the left of the camera, as tight and as bright as the
+    // finish is smooth, and a metal's own colour in its highlight and less
+    // of it lit flat. Not drawn flat, where there is no light to catch.
+    if (uniforms.paint_shown == 1u && in.finish != 0u) {
+        let finish = finish_of(in.finish);
+        let polish = 1.0 - finish.x;
+        let light = normalize(vec3<f32>(-0.35, 0.55, 0.75));
+        let half_way = normalize(light + vec3<f32>(0.0, 0.0, 1.0));
+        let shine = mix(6.0, 160.0, polish * polish);
+        let caught = pow(max(dot(normal, half_way), 0.0), shine) * polish * 0.7;
+        let tint = mix(vec3<f32>(1.0), colour * 2.0, finish.y);
+        colour = colour * (1.0 - 0.35 * finish.y) + caught * tint;
     }
 
     // The creases and edges, AFTER the paint so they model a painted surface

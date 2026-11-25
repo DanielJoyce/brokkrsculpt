@@ -405,6 +405,11 @@ true of it too, and what it adds is this.
   every export that carries colour: a colour a vertex in a PLY, the
   texture of an *OBJ+PNG* or a *GLB*, and in a 3MF the loaded filament
   nearest the colour, wherever the paint covers at least half.
+- **Varnish.** Matte, satin or gloss, coated over the whole body from
+  COATS or brushed on a layer set to *Varnish* (gloss on the eyes, matte
+  over the rest). It lays no colour; the viewport draws it as a
+  highlight as tight as the finish is glossy, and a GLB export carries
+  it as the model's roughness.
 - **Decals and stamps.** The *Decal* touch presses a picture onto the
   model along the view: drag to size it and turn it, and it wraps the
   surface it lands on. As a decal it keeps its own colours; as a stamp

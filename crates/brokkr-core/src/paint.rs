@@ -87,8 +87,9 @@ pub mod touch;
 /// of them with their four vectors each is four kilobytes.
 pub const MAX_PAINTS: usize = 63;
 
-/// How glossy a paint is. Not drawn yet; saved, so that paints made now keep
-/// what they were given when it is.
+/// How glossy a paint is. A varnish layer's finish is drawn and exported
+/// (`paint/layers.rs`, stage 6 of `docs/PAINT-RACK.md`); a slot paint's is
+/// saved and not drawn yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Finish {
     #[default]
@@ -112,6 +113,27 @@ impl Finish {
 
     fn byte(self) -> u8 {
         self as u8
+    }
+
+    /// Its code in a varnish layer and on a vertex: one more than its byte,
+    /// so that nought is no finish at all.
+    pub fn code(self) -> u8 {
+        self.byte() + 1
+    }
+
+    pub fn from_code(code: u8) -> Option<Self> {
+        code.checked_sub(1).and_then(Self::from_byte)
+    }
+
+    /// How rough and how metal it looks, each 0..=1: what the viewport
+    /// shades by and what an export's roughness and metal picture holds.
+    pub fn roughness_and_metal(self) -> (f32, f32) {
+        match self {
+            Finish::Matte => (0.9, 0.0),
+            Finish::Satin => (0.5, 0.0),
+            Finish::Gloss => (0.15, 0.0),
+            Finish::Metallic => (0.35, 1.0),
+        }
     }
 
     fn from_byte(byte: u8) -> Option<Self> {
