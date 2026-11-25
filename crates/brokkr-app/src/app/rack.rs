@@ -22,7 +22,7 @@ use iced::{Alignment, Element, Length};
 
 use super::Brokkr;
 use crate::icon;
-use crate::message::{Message, RackMessage, SearchBy};
+use crate::message::{Message, PaintTouch, RackMessage, SearchBy};
 use crate::paint_index::{self, Filter, Kind};
 use crate::theme;
 
@@ -497,7 +497,17 @@ impl Brokkr {
         self.painting.colour = paint.rgb;
         self.studio.popup = None;
         self.status = format!("paint: {}", paint.name);
-        self.suit_the_layer(&paint.name, paint.kind.blend());
+        // The way this kind of paint is put on, already chosen: a wash as a
+        // wash, a contrast as a contrast, an air paint by the airbrush. Any
+        // other touch is the user's to choose after, a contrast drybrushed
+        // included. A plain paint keeps the touch in hand, unless that touch
+        // was a wash's or a contrast's.
+        if let Some(touch) = paint.kind.touch() {
+            self.touch.kind = touch;
+        } else if matches!(self.touch.kind, PaintTouch::Wash | PaintTouch::Contrast) {
+            self.touch.kind = PaintTouch::Loaded;
+        }
+        self.suit_the_layer(&paint.name, paint.kind.blend(), paint.kind == Kind::Metallic);
     }
 
     /// The key from 1 to 8 in Paint, painting in colour: the rack's paint
@@ -859,6 +869,40 @@ mod tests {
         assert_eq!(blend(&app), brokkr_core::paint::layers::Blend::Wash);
         update(&mut app, Message::Undo);
         assert_eq!(app.doc.active_volume().layers().len(), 1, "the new layer was not one undo");
+    }
+
+    /// A paint of a kind with its own way of going on has that touch chosen
+    /// for it, and the user may change it after: a contrast drybrushed
+    /// stays on its contrast layer. A metallic goes on a metal layer.
+    #[test]
+    fn a_paint_kind_chooses_its_touch_and_the_user_may_change_it() {
+        use brokkr_core::paint::layers::Blend;
+        let mut app = app();
+        let starter = Rack::starter();
+        let at = |kind| {
+            starter.paints.iter().position(|paint| paint.kind == kind).expect("in the starter")
+        };
+        let active = |app: &Brokkr| {
+            let layers = app.doc.active_volume().layers();
+            layers.metas()[layers.active()].clone()
+        };
+        rack(&mut app, RackMessage::Picked(at(Kind::Contrast)));
+        assert_eq!(app.touch.kind, PaintTouch::Contrast);
+        assert_eq!(active(&app).blend, Blend::Contrast);
+        update(&mut app, Message::PaintTouchChosen(PaintTouch::Drybrush));
+        assert_eq!(app.touch.kind, PaintTouch::Drybrush);
+        assert_eq!(
+            active(&app).blend,
+            Blend::Contrast,
+            "a drybrush took the contrast off its layer"
+        );
+        rack(&mut app, RackMessage::Picked(at(Kind::Wash)));
+        assert_eq!(app.touch.kind, PaintTouch::Wash);
+        rack(&mut app, RackMessage::Picked(at(Kind::Paint)));
+        assert_eq!(app.touch.kind, PaintTouch::Loaded, "a plain paint kept the wash's touch");
+        rack(&mut app, RackMessage::Picked(at(Kind::Metallic)));
+        assert!(active(&app).metal, "a metallic is not on a metal layer");
+        assert_eq!(active(&app).blend, Blend::Normal);
     }
 
     /// Racks are made, filled from the index, ordered, emptied, swapped

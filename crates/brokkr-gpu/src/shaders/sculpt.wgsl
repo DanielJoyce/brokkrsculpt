@@ -275,8 +275,22 @@ fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) ->
         let half_way = normalize(light + vec3<f32>(0.0, 0.0, 1.0));
         let shine = mix(6.0, 160.0, polish * polish);
         let caught = pow(max(dot(normal, half_way), 0.0), shine) * polish * 0.7;
-        let tint = mix(vec3<f32>(1.0), colour * 2.0, finish.y);
-        colour = colour * (1.0 - 0.35 * finish.y) + caught * tint;
+        if (finish.y > 0.5 && in.paint.a > 0.0) {
+            // A metal is mostly what it reflects: dark where it faces away
+            // from the light above, bright where it catches it, a hard
+            // highlight in its own colour, and a thin rim where it turns
+            // away from the eye. The lit paint alone read as a shiny paint
+            // and not as metal: seen by the maintainer.
+            let albedo = in.paint.rgb / max(in.paint.a, 1.0e-3);
+            let up = normal.y * 0.5 + 0.5;
+            let facing = max(normal.z, 0.0);
+            let reflected = mix(0.06, 1.25, smoothstep(0.3, 0.95, up)) * (0.5 + 0.5 * facing);
+            let rim = pow(1.0 - facing, 3.0) * 0.3;
+            let metal = albedo * (reflected * 1.35 + rim) + caught * 2.2 * mix(vec3<f32>(1.0), albedo, 0.5);
+            colour = mix(colour, metal, in.paint.a);
+        } else {
+            colour = colour + caught * vec3<f32>(1.0);
+        }
     }
 
     // The creases and edges, AFTER the paint so they model a painted surface

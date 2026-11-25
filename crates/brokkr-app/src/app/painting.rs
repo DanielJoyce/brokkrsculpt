@@ -191,7 +191,11 @@ impl Brokkr {
             PaintTouch::Loaded | PaintTouch::Fill | PaintTouch::Airbrush | PaintTouch::Decal => {
                 Catch::All
             }
-            PaintTouch::Wash => Catch::Recesses,
+            // A wash and a contrast go on where the brush goes: their layer's
+            // blend pools them, by the surface's occlusion, when the stack is
+            // put together. Pooled here too, by the local crease, they pooled
+            // twice and in the wrong place. See `brokkr_core::paint::occlusion`.
+            PaintTouch::Wash | PaintTouch::Contrast => Catch::All,
             PaintTouch::Drybrush => Catch::Raised(self.touch.dry),
             PaintTouch::Sponge => Catch::Specks(self.touch.sponge),
         };
@@ -653,13 +657,19 @@ mod tests {
             sponged.len(),
             loaded.len()
         );
-        let washed = laid_with(PaintTouch::Wash);
-        let most = f32::from(most_covered(&washed)) / 255.0;
-        let flat = brokkr_core::paint::stroke::WASH_FLAT;
-        assert!(
-            (most - flat).abs() < 0.1,
-            "a wash on a ball left {most} at most, and {flat} is a flat"
-        );
+        // A wash and a contrast are laid as the brush goes, on a layer of
+        // their own blend, which does the pooling.
+        for (touch, blend) in [
+            (PaintTouch::Wash, brokkr_core::paint::layers::Blend::Wash),
+            (PaintTouch::Contrast, brokkr_core::paint::layers::Blend::Contrast),
+        ] {
+            let mut app = app();
+            update(&mut app, Message::PaintTouchChosen(touch));
+            let layers = app.doc.active_volume().layers();
+            assert_eq!(layers.metas()[layers.active()].blend, blend, "{touch:?}");
+            stroke(&mut app);
+            assert!(!painted(&app).is_empty(), "{touch:?} laid nothing");
+        }
     }
 
     /// A click with the Fill touch pours the colour over the paint it lands

@@ -23,7 +23,7 @@
 //!     u16 name length, then that many bytes of UTF-8
 //!     u8  blend           see `Blend::code`
 //!     f32 opacity
-//!     u8  1: shown; 2: locked
+//!     u8  1: shown; 2: locked; 4: metal
 //!   u64 length of the layers' paint, then a paint section of that many
 //!       bytes holding one field a layer (0 when every layer is empty)
 //! ```
@@ -38,6 +38,7 @@ pub(crate) const TAG: &[u8; 8] = b"BRKLAYR1";
 
 const SHOWN: u8 = 1;
 const LOCKED: u8 = 2;
+const METAL: u8 = 4;
 
 /// The section for these bodies' stacks, `None` for a plain one, or `None`
 /// when every body is plain.
@@ -63,7 +64,11 @@ pub(crate) fn encode(bodies: &[Option<LayerState>]) -> Option<Vec<u8>> {
             out.extend_from_slice(name);
             out.push(meta.blend.code());
             out.extend_from_slice(&meta.opacity.to_le_bytes());
-            out.push(if meta.visible { SHOWN } else { 0 } | if meta.locked { LOCKED } else { 0 });
+            out.push(
+                if meta.visible { SHOWN } else { 0 }
+                    | if meta.locked { LOCKED } else { 0 }
+                    | if meta.metal { METAL } else { 0 },
+            );
         }
         let paint = super::file::encode(state.fields.iter()).unwrap_or_default();
         out.extend_from_slice(&(paint.len() as u64).to_le_bytes());
@@ -126,6 +131,7 @@ pub(crate) fn decode(bytes: &[u8], bodies: usize) -> Result<Vec<Option<LayerStat
                 opacity,
                 visible: flags & SHOWN != 0,
                 locked: flags & LOCKED != 0,
+                metal: flags & METAL != 0,
             });
         }
         let mut ids: Vec<u32> = metas.iter().map(|meta| meta.id).collect();

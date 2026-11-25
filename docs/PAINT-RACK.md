@@ -800,6 +800,43 @@ saved finish drawn; the OBJ+PNG export's roughness (its MTL has no map
 for it that every reader takes); a varnish hiding a decal's edge, which
 needs the decal's own gloss first.
 
+### After use: pooling, effects by kind, and metal (2026-11-25)
+
+The maintainer used the six stages and found that washes and contrasts
+did not pool, that a paint's kind should already choose how it goes on,
+and that metallics did not look metallic.
+
+**Pooling by occlusion** (`paint/occlusion.rs`). A Wash or Contrast layer
+pooled by the field's Laplacian at a voxel, which sees a crease a voxel
+or two wide. Now it pools by how shut in the surface is: six rays from
+just off the surface across the hemisphere it faces, stepped out at 0.5,
+1, 2 and 4 mm, a ray that meets solid counting the more the nearer. The
+Laplacian is kept for an edge, which the occlusion cannot tell from a
+flat. It is worked out only where a pooling layer has paint, when the
+stack is put together. A test: a dark wash over a light coat on two balls
+side by side is seen darker where they meet than on top.
+
+**The touch is the effect.** A seventh way of putting paint on,
+*Contrast*, beside *Wash*. Both lay paint where the brush goes; choosing
+either gives the active layer that blend (an empty layer takes it, one
+with paint gets a new layer over it), and the blend does the pooling, so
+it is not done twice. Choosing a paint chooses its touch: a wash
+*Wash*, a contrast *Contrast*, an air or spray paint the *Airbrush*, a
+dry paint the *Drybrush*. Any touch can be chosen after: a contrast
+drybrushed stays on its contrast layer. A plain paint keeps the touch in
+hand, unless that was a wash's or a contrast's.
+
+**Metal.** A layer can be *metal*, kept in the file as a flag. Its paint
+has the metallic finish where it is the top paint with half a coat or
+more; a plain coat over it takes the finish away and a varnish over that
+gives its own. A metallic paint from the rack goes on a metal layer. The
+shader draws metal as mostly reflection: dark where it faces away from
+the light above, bright where it catches it, a hard highlight in its own
+colour and a thin rim; a render test measures a metallic gold ball's
+spread of light from its darkest to its brightest at more than half as
+much again as the same gold as paint, with a highlight that is gold and
+not white.
+
 ## 9. Where it goes in the window
 
 - **Paint's library tab** is the rack: the rack's name and a list to swap

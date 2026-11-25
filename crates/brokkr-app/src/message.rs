@@ -481,20 +481,24 @@ pub enum PaintTouch {
     /// Not a stroke at all: the paint is poured where the pointer is and
     /// runs until a line of the model stops it.
     Fill,
-    /// Into the recesses and off the edges, as a wash runs. For colour
-    /// only: a slot has no "some of it".
+    /// A wash: laid where the brush goes, on a layer of the Wash blend,
+    /// which pools it in the recesses by how shut in they are.
     Wash,
-    /// Sprayed along the view while the button is held. For colour only.
+    /// A contrast paint: laid where the brush goes, on a layer of the
+    /// Contrast blend, which tints by what is under it and pools.
+    Contrast,
+    /// Sprayed along the view while the button is held.
     /// See `app/airbrush.rs`.
     Airbrush,
-    /// A picture dabbed on. For colour only. See `app/decal.rs`.
+    /// A picture dabbed on. See `app/decal.rs`.
     Decal,
 }
 
 impl PaintTouch {
-    pub const ALL: [PaintTouch; 7] = [
+    pub const ALL: [PaintTouch; 8] = [
         PaintTouch::Loaded,
         PaintTouch::Wash,
+        PaintTouch::Contrast,
         PaintTouch::Drybrush,
         PaintTouch::Sponge,
         PaintTouch::Fill,
@@ -502,15 +506,10 @@ impl PaintTouch {
         PaintTouch::Decal,
     ];
 
-    /// Whether painting by filament slot has it: a slot has no "some of
-    /// it", so neither a wash nor a spray.
-    pub fn for_slots(self) -> bool {
-        !matches!(self, PaintTouch::Wash | PaintTouch::Airbrush | PaintTouch::Decal)
-    }
-
     pub fn label(self) -> &'static str {
         match self {
             PaintTouch::Wash => "Wash",
+            PaintTouch::Contrast => "Contrast",
             PaintTouch::Loaded => "Loaded",
             PaintTouch::Drybrush => "Drybrush",
             PaintTouch::Sponge => "Sponge",

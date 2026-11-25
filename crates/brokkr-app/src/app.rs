@@ -10716,7 +10716,22 @@ impl Brokkr {
                 }
             }
             Message::FlatPaintToggled => self.flat_paint = !self.flat_paint,
-            Message::PaintTouchChosen(touch) => self.touch.kind = touch,
+            Message::PaintTouchChosen(touch) => {
+                self.touch.kind = touch;
+                // A wash or a contrast goes on a layer of its own blend. See
+                // `app/layers.rs`.
+                match touch {
+                    crate::message::PaintTouch::Wash => {
+                        self.suit_the_layer("Wash", brokkr_core::paint::layers::Blend::Wash, false)
+                    }
+                    crate::message::PaintTouch::Contrast => self.suit_the_layer(
+                        "Contrast",
+                        brokkr_core::paint::layers::Blend::Contrast,
+                        false,
+                    ),
+                    _ => {}
+                }
+            }
             Message::PaintTouchChanged(setting) => self.touch.set(setting),
             // And the verbs, which DO change protection and all of which are
             // undoable in one entry apiece.

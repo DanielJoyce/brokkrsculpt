@@ -204,6 +204,10 @@ pub struct LayerMeta {
     pub visible: bool,
     /// A locked layer takes no paint.
     pub locked: bool,
+    /// Its paint is metal: where it is on top, the surface has the metallic
+    /// finish ([`crate::paint::Finish::Metallic`]). What a metallic paint
+    /// from the rack is laid on.
+    pub metal: bool,
 }
 
 impl LayerMeta {
@@ -216,12 +220,13 @@ impl LayerMeta {
             opacity: 1.0,
             visible: true,
             locked: false,
+            metal: false,
         }
     }
 
     /// Whether a layer lying like this over nothing is its paint as it is.
     fn is_plain(&self) -> bool {
-        self.blend == Blend::Normal && self.opacity >= 1.0 && self.visible
+        self.blend == Blend::Normal && self.opacity >= 1.0 && self.visible && !self.metal
     }
 }
 
@@ -344,8 +349,10 @@ impl Layers {
     }
 
     /// Whether a varnish is shown anywhere in the stack.
+    /// Whether a varnish or a metal is shown anywhere in the stack: whether
+    /// the surface has a finish anywhere.
     pub(crate) fn has_varnish(&self) -> bool {
-        self.metas.iter().any(|meta| meta.visible && meta.blend == Blend::Varnish)
+        self.metas.iter().any(|meta| meta.visible && (meta.blend == Blend::Varnish || meta.metal))
     }
 
     /// Make the implicit layer a real one, so it can be named and stacked.
@@ -717,26 +724,35 @@ impl Layers {
         let field =
             |index: usize| if index == self.active { active_paint } else { &self.fields[index] };
 
-        // The finish: the top shown varnish with half a coat or more.
-        let varnishes: Vec<&PaintBrick> = metas
+        // The finish: from the top down, the first shown layer with half a
+        // coat or more decides. A varnish gives its own; a metal layer's
+        // paint is metallic; any other paint covers what was under it and
+        // has none.
+        let shown: Vec<(&LayerMeta, &PaintBrick)> = metas
             .iter()
             .enumerate()
             .rev()
-            .filter(|(_, meta)| meta.visible && meta.blend == Blend::Varnish)
-            .filter_map(|(index, _)| field(index).brick(coord))
+            .filter(|(_, meta)| meta.visible && meta.opacity > 0.0)
+            .filter_map(|(index, meta)| field(index).brick(coord).map(|brick| (meta, brick)))
             .collect();
-        let finish = (!varnishes.is_empty())
+        let finishing = shown.iter().any(|(meta, _)| meta.blend == Blend::Varnish || meta.metal);
+        let finish = finishing
             .then(|| {
                 let mut out = PaintBrick::dense_filled(BARE);
                 let data = out.make_dense();
                 let mut any = false;
                 for (voxel, slot) in data.iter_mut().enumerate() {
-                    if let Some(rgba) = varnishes
+                    let top = shown
                         .iter()
-                        .map(|brick| brick.rgba_at(voxel))
-                        .find(|rgba| rgba[3] >= 128)
-                    {
-                        *slot = [rgba[0], 0, 0, 255];
+                        .map(|(meta, brick)| (meta, brick.rgba_at(voxel)))
+                        .find(|(_, rgba)| rgba[3] >= 128);
+                    let code = match top {
+                        Some((meta, rgba)) if meta.blend == Blend::Varnish => rgba[0],
+                        Some((meta, _)) if meta.metal => crate::paint::Finish::Metallic.code(),
+                        _ => 0,
+                    };
+                    if code != 0 {
+                        *slot = [code, 0, 0, 255];
                         any = true;
                     }
                 }
@@ -758,7 +774,13 @@ impl Layers {
         let data = out.make_dense();
         let mut any = false;
         for (voxel, slot) in data.iter_mut().enumerate() {
-            let crease = if shaped { crease(voxel) } else { 0.0 };
+            // The crease only where a layer that pools has paint: it is a
+            // march of rays, and most voxels of a brick have none.
+            let pools = shaped
+                && layers.iter().any(|(meta, brick)| {
+                    meta.blend.reads_the_shape() && brick.rgba_at(voxel)[3] != 0
+                });
+            let crease = if pools { crease(voxel) } else { 0.0 };
             let rgba = composite_voxel(
                 layers.iter().map(|(meta, brick)| (*meta, brick.rgba_at(voxel))),
                 crease,
