@@ -190,12 +190,33 @@ pub const FONT: Font = Font::with_name("Inter");
 pub const TEXT_SIZE: f32 = 13.0;
 pub const TEXT_SIZE_SMALL: f32 = 11.0;
 pub const CAPTION_SIZE: f32 = 10.0;
+/// A section's heading, in capitals. See `ui.rs`.
+pub const HEADING_SIZE: f32 = CAPTION_SIZE;
+/// What every control's label, button and checkbox is written at. See
+/// `ui.rs`: one size for all of them, where there were three.
+pub const LABEL_SIZE: f32 = TEXT_SIZE_SMALL;
 /// The one heading big enough to be read as a title, on the welcome screen.
 /// Nothing inside the application proper uses it: panels are dense by design
 /// and a heading this size in one would cost a row of controls.
 pub const TITLE_SIZE: f32 = 20.0;
 /// Monospace for the debug overlay, where columns of numbers must not jitter.
 pub const MONO: Font = Font::MONOSPACE;
+
+// Padding, one set a kind of control, from the spacing scale. Before these
+// there were a dozen literal pairs written at the call sites.
+/// A button with a word on it.
+pub const PAD_BUTTON: Padding = Padding { top: 3.0, right: S3, bottom: 3.0, left: S3 };
+/// A button in a row of choices that fill the row's width: little room
+/// beside the word, since five of them share a narrow panel.
+pub const PAD_CHOICE: Padding = Padding { top: 3.0, right: 2.0, bottom: 3.0, left: 2.0 };
+/// A button with only an icon on it.
+pub const PAD_ICON_BUTTON: Padding = Padding { top: S1, right: S1, bottom: S1, left: S1 };
+/// A field that takes typing.
+pub const PAD_FIELD: Padding = Padding { top: 2.0, right: S2, bottom: 2.0, left: S2 };
+/// A tooltip's card.
+pub const PAD_TIP: Padding = Padding { top: S1, right: S3, bottom: S1, left: S3 };
+/// An entry in a menu.
+pub const PAD_MENU_ITEM: Padding = Padding { top: 3.0, right: S3, bottom: 3.0, left: S3 };
 
 /// Standard padding inside a docked panel.
 pub const PANEL_PADDING: Padding = Padding { top: S4, right: S5, bottom: S4, left: S5 };
@@ -280,10 +301,17 @@ pub fn tool_button(
         Status::Pressed => RAISED_2,
         Status::Active | Status::Disabled => PANEL_2,
     };
+    // **Disabled is drawn dim.** It was drawn exactly as Active, so Redo
+    // with nothing to redo looked as pressable as Undo beside it.
+    let disabled = status == Status::Disabled;
     iced::widget::button::Style {
         background: Some(background.into()),
-        text_color: TEXT_DIM,
-        border: iced::Border { color: LINE_STRONG, width: 1.0, radius: RADIUS_SM.into() },
+        text_color: if disabled { TEXT_MUTE } else { TEXT_DIM },
+        border: iced::Border {
+            color: if disabled { LINE } else { LINE_STRONG },
+            width: 1.0,
+            radius: RADIUS_SM.into(),
+        },
         ..Default::default()
     }
 }

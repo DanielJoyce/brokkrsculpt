@@ -640,20 +640,35 @@ pub struct Imported {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PanelSection {
     Bodies,
+    Brushes,
+    Workbench,
+    Add,
+    Brush,
+    Stroke,
+    Form,
     Pattern,
     Pen,
     SpaceMouse,
+    History,
     Detail,
     Filament,
     Export,
 }
 
 impl PanelSection {
-    pub const ALL: [PanelSection; 7] = [
+    /// In the order the panel draws them.
+    pub const ALL: [PanelSection; 14] = [
         PanelSection::Bodies,
+        PanelSection::Brushes,
+        PanelSection::Workbench,
+        PanelSection::Add,
+        PanelSection::Brush,
+        PanelSection::Stroke,
+        PanelSection::Form,
         PanelSection::Pattern,
         PanelSection::Pen,
         PanelSection::SpaceMouse,
+        PanelSection::History,
         PanelSection::Detail,
         PanelSection::Filament,
         PanelSection::Export,
@@ -662,9 +677,16 @@ impl PanelSection {
     pub fn title(self) -> &'static str {
         match self {
             PanelSection::Bodies => "BODIES",
+            PanelSection::Brushes => "BRUSHES",
+            PanelSection::Workbench => "WORKBENCH",
+            PanelSection::Add => "ADD",
+            PanelSection::Brush => "BRUSH",
+            PanelSection::Stroke => "STROKE",
+            PanelSection::Form => "FORM",
             PanelSection::Pattern => "PATTERN",
             PanelSection::Pen => "PEN",
             PanelSection::SpaceMouse => "SPACEMOUSE",
+            PanelSection::History => "HISTORY",
             PanelSection::Detail => "DETAIL",
             PanelSection::Filament => "FILAMENT",
             PanelSection::Export => "EXPORT",
@@ -684,6 +706,9 @@ impl PanelSection {
     /// four rows plus a button, it sits directly above EXPORT which must stay
     /// reachable, and it is read at the moment somebody exports rather than
     /// while they sculpt.
+    ///
+    /// FORM starts closed since every heading folds (`ui.rs`): it works on
+    /// the whole body, which is done now and then and not stroke by stroke.
     pub fn open_by_default(self) -> bool {
         !matches!(
             self,
@@ -691,6 +716,7 @@ impl PanelSection {
                 | PanelSection::SpaceMouse
                 | PanelSection::Detail
                 | PanelSection::Filament
+                | PanelSection::Form
         )
     }
 }
@@ -855,6 +881,15 @@ pub enum Message {
     MenuFieldEdited(SizingTarget, String),
     /// Commit whatever is in the field being edited and stop editing it.
     MenuFieldSubmitted,
+    /// Typing in a number's field, by the key `ui::number` was given. Held
+    /// as a draft until it is submitted. See `ui.rs`.
+    FieldEdited(&'static str, String),
+    /// A number's slider moved or its field was submitted: the draft under
+    /// the key goes, and then the message carried is acted on as if it had
+    /// come alone. `Brokkr::update` unwraps it before anything else.
+    FieldSet(&'static str, Box<Message>),
+    /// A field's draft did not read as a number and is let go.
+    FieldDropped(&'static str),
     PressureToggled(bool),
     PressureCurveChanged(f32),
     TiltToggled(bool),

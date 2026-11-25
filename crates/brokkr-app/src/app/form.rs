@@ -22,7 +22,7 @@ use std::time::Instant;
 
 use brokkr_core::form::{FormError, level_for};
 use brokkr_core::{Change, Entry, FormPyramid, Volume};
-use iced::widget::{button, column, row, slider, text};
+use iced::widget::{column, text};
 use iced::{Element, Length};
 
 use super::Brokkr;
@@ -153,42 +153,50 @@ impl Brokkr {
 
     /// The form controls, under the studio block.
     pub(super) fn form_panel(&self) -> Element<'_, Message> {
-        let reading = |label: String| text(label).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM);
         let changed = |message: FormMessage| Message::Form(message);
         let form = self.form;
+        let apply = move |message: FormMessage| {
+            crate::ui::button_secondary("Apply", Some(changed(message)))
+        };
         column![
-            text("FORM").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
-            reading(format!("Detail is finer than  {:.1} mm", form.detail_mm)),
-            slider(DETAIL_RANGE, form.detail_mm, move |mm| {
-                changed(FormMessage::DetailSizeChanged(mm))
-            })
-            .step(0.1_f32),
-            reading(format!("Bulk  {:+.2} mm", form.amount_mm)),
-            row![
-                slider(AMOUNT_RANGE, form.amount_mm, move |mm| {
-                    changed(FormMessage::AmountChanged(mm))
-                })
-                .step(0.05_f32),
-                button(text("Apply").size(theme::CAPTION_SIZE))
-                    .style(theme::tool_button)
-                    .on_press(changed(FormMessage::BulkApplied)),
-            ]
-            .spacing(theme::S2),
-            reading(format!("Detail  x {:.2}", form.gain)),
-            row![
-                slider(GAIN_RANGE, form.gain, move |gain| changed(FormMessage::GainChanged(gain)))
-                    .step(0.05_f32),
-                button(text("Apply").size(theme::CAPTION_SIZE))
-                    .style(theme::tool_button)
-                    .on_press(changed(FormMessage::DetailGainApplied)),
-            ]
-            .spacing(theme::S2),
+            crate::ui::number(
+                &self.drafts,
+                "form.detail",
+                "Detail is finer than",
+                form.detail_mm,
+                DETAIL_RANGE,
+                move |mm| changed(FormMessage::DetailSizeChanged(mm)),
+            )
+            .step(0.1)
+            .shown(format!("{:.1} mm", form.detail_mm)),
+            crate::ui::number(
+                &self.drafts,
+                "form.bulk",
+                "Bulk",
+                form.amount_mm,
+                AMOUNT_RANGE,
+                move |mm| changed(FormMessage::AmountChanged(mm)),
+            )
+            .step(0.05)
+            .shown(format!("{:+.2} mm", form.amount_mm))
+            .trailing(apply(FormMessage::BulkApplied)),
+            crate::ui::number(
+                &self.drafts,
+                "form.gain",
+                "Detail",
+                form.gain,
+                GAIN_RANGE,
+                move |gain| changed(FormMessage::GainChanged(gain)),
+            )
+            .step(0.05)
+            .shown(format!("x {:.2}", form.gain))
+            .trailing(apply(FormMessage::DetailGainApplied)),
             text("the whole body, less what the mask protects")
-                .size(theme::CAPTION_SIZE)
+                .size(theme::LABEL_SIZE)
                 .color(theme::TEXT_MUTE)
                 .width(Length::Fill),
         ]
-        .spacing(theme::S1)
+        .spacing(theme::S2)
         .into()
     }
 }

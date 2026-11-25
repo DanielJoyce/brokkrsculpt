@@ -29,7 +29,7 @@ use brokkr_core::paint::stroke::{Catch, Lay, Mode, PaintStroke, Pigment, laid};
 use brokkr_core::paint::touch::Coat;
 use brokkr_core::{Brush, BrushDirection, Stamp};
 use glam::Vec3;
-use iced::widget::{button, checkbox, column, container, row, slider, text};
+use iced::widget::{button, checkbox, column, container, row, text};
 use iced::{Alignment, Element, Length};
 
 use super::Brokkr;
@@ -234,15 +234,18 @@ impl Brokkr {
         block: iced::widget::Column<'a, Message>,
     ) -> iced::widget::Column<'a, Message> {
         let like = self.painting.fill_like;
-        block
-            .push(
-                text(format!("Runs over paint within  {like} levels"))
-                    .size(theme::CAPTION_SIZE)
-                    .color(theme::TEXT_DIM),
+        block.push(
+            crate::ui::number(
+                &self.drafts,
+                "paint.fill_like",
+                "Runs over paint within, levels",
+                f32::from(like),
+                0.0..=255.0,
+                |levels| Message::Painting(PaintingMessage::FillLike(levels.round() as u8)),
             )
-            .push(slider(0..=255_u8, like, |levels| {
-                Message::Painting(PaintingMessage::FillLike(levels))
-            }))
+            .step(1.0)
+            .shown(like.to_string()),
+        )
     }
 
     /// Lay the colour in hand over the whole of the active body, by the
@@ -274,7 +277,7 @@ impl Brokkr {
         let targets =
             PaintTarget::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, target| {
                 assembled.push(
-                    button(text(target.label()).size(theme::CAPTION_SIZE))
+                    button(text(target.label()).size(theme::LABEL_SIZE))
                         .width(Length::Fill)
                         .style(if target == self.painting.target {
                             theme::tool_button_active
@@ -294,14 +297,14 @@ impl Brokkr {
     /// The colour brush: what it does, how it touches, the colour, and how
     /// much of it.
     fn colour_picker(&self, editing: bool) -> Element<'_, Message> {
-        let reading = |label: String| text(label).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM);
+        let reading = |label: String| text(label).size(theme::LABEL_SIZE).color(theme::TEXT_DIM);
         let painting = &self.painting;
         let colour = painting.colour;
 
         let modes =
             PaintMode::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, mode| {
                 assembled.push(
-                    button(text(mode.label()).size(theme::CAPTION_SIZE))
+                    button(text(mode.label()).size(theme::LABEL_SIZE))
                         .width(Length::Fill)
                         .style(if mode == painting.mode {
                             theme::tool_button_active
@@ -318,7 +321,7 @@ impl Brokkr {
         let in_hand = row![
             container(text("")).width(28).height(18).style(theme::swatch(swatch_colour(colour))),
             reading(format!("{:3} {:3} {:3}", colour[0], colour[1], colour[2])),
-            button(text("Pick from model").size(theme::CAPTION_SIZE))
+            button(text("Pick from model").size(theme::LABEL_SIZE))
                 .width(Length::Fill)
                 .style(if painting.picking {
                     theme::tool_button_active
@@ -334,11 +337,15 @@ impl Brokkr {
             modes,
             self.touch_picker(editing),
             in_hand,
-            reading(format!("Opacity  {:.0}%", painting.opacity * 100.0)),
-            slider(OPACITY_RANGE, painting.opacity, |opacity| {
-                Message::Painting(PaintingMessage::Opacity(opacity))
-            })
-            .step(0.01_f32),
+            crate::ui::number(
+                &self.drafts,
+                "paint.opacity",
+                "Opacity",
+                painting.opacity,
+                OPACITY_RANGE,
+                |opacity| Message::Painting(PaintingMessage::Opacity(opacity)),
+            )
+            .shown(format!("{:.2}", painting.opacity)),
         ]
         .spacing(theme::S2);
         if !editing {
@@ -384,25 +391,28 @@ impl Brokkr {
             }
             range = range.push(swatches);
         }
-        let channels = ["R", "G", "B"].into_iter().enumerate().fold(
-            column![].spacing(theme::S1),
-            |assembled, (channel, label)| {
+        let channels = [("paint.red", "Red"), ("paint.green", "Green"), ("paint.blue", "Blue")]
+            .into_iter()
+            .enumerate()
+            .fold(column![].spacing(theme::S2), |assembled, (channel, (key, label))| {
                 assembled.push(
-                    row![
-                        text(label).size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE).width(10),
-                        slider(0..=255_u8, colour[channel], move |level| {
-                            Message::Painting(PaintingMessage::Channel(channel, level))
-                        }),
-                        text(format!("{:3}", colour[channel]))
-                            .size(theme::CAPTION_SIZE)
-                            .color(theme::TEXT_DIM)
-                            .width(22),
-                    ]
-                    .spacing(theme::S2)
-                    .align_y(Alignment::Center),
+                    crate::ui::number(
+                        &self.drafts,
+                        key,
+                        label,
+                        f32::from(colour[channel]),
+                        0.0..=255.0,
+                        move |level| {
+                            Message::Painting(PaintingMessage::Channel(
+                                channel,
+                                level.round() as u8,
+                            ))
+                        },
+                    )
+                    .step(1.0)
+                    .shown(colour[channel].to_string()),
                 )
-            },
-        );
+            });
         picker = picker
             .push(spools)
             .push(range)
@@ -411,10 +421,10 @@ impl Brokkr {
                 checkbox(self.flat_paint)
                     .label("flat colour, no light")
                     .on_toggle(|_| Message::FlatPaintToggled)
-                    .text_size(theme::CAPTION_SIZE),
+                    .text_size(theme::LABEL_SIZE),
             )
             .push(
-                button(text("Coat the body").size(theme::TEXT_SIZE_SMALL))
+                button(text("Coat the body").size(theme::LABEL_SIZE))
                     .style(theme::tool_button)
                     .on_press(Message::Painting(PaintingMessage::Coated)),
             );

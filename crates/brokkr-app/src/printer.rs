@@ -161,7 +161,9 @@ fn parse_status(body: &str) -> Result<Status, String> {
 
 /// What is loaded in one of the printer's tool heads.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Filament {
+// `pub` and not `pub(crate)`: `Message::PaletteSynced` carries it, and
+// `Message` is `pub`, which `-D private-interfaces` refuses otherwise.
+pub struct Filament {
     pub vendor: String,
     pub material: String,
     pub sub_type: String,

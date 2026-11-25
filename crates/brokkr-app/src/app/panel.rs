@@ -374,12 +374,7 @@ impl Brokkr {
             |assembled, menu| {
                 assembled.push(
                     button(text(menu.label()).size(theme::TEXT_SIZE_SMALL))
-                        .padding(Padding {
-                            top: 2.0,
-                            bottom: 2.0,
-                            left: theme::S3,
-                            right: theme::S3,
-                        })
+                        .padding(theme::PAD_BUTTON)
                         .style(if self.top_menu == Some(menu) {
                             theme::tool_button_active
                         } else {
@@ -402,11 +397,17 @@ impl Brokkr {
         // font fallback, so the same three controls draw differently on another
         // machine. `window_control` carries the hover state in its background
         // because an icon cannot take the button's text colour.
-        let control = |name: icon::IconName, style: theme::ButtonStyle, message: Message| {
-            button(icon::icon(name, theme::ICON_CHROME, theme::TEXT_DIM))
-                .padding(Padding { top: theme::S1, bottom: theme::S1, left: 7.0, right: 7.0 })
-                .style(style)
-                .on_press(message)
+        let control = |name: icon::IconName,
+                       tip: &'static str,
+                       style: theme::ButtonStyle,
+                       message: Message| {
+            crate::ui::tip(
+                button(icon::icon(name, theme::ICON_CHROME, theme::TEXT_DIM))
+                    .padding(Padding { top: theme::S1, bottom: theme::S1, left: 7.0, right: 7.0 })
+                    .style(style)
+                    .on_press(message),
+                tip,
+            )
         };
 
         let bar = row![
@@ -426,13 +427,24 @@ impl Brokkr {
                         theme::TEXT_MUTE
                     }
                 ),
-            control(icon::IconName::Minimise, theme::window_control, Message::WindowMinimise),
+            control(
+                icon::IconName::Minimise,
+                "Minimise",
+                theme::window_control,
+                Message::WindowMinimise
+            ),
             control(
                 icon::IconName::Maximise,
+                "Maximise",
                 theme::window_control,
                 Message::TitleBarDoubleClicked,
             ),
-            control(icon::IconName::Close, theme::window_control_close, Message::WindowClose),
+            control(
+                icon::IconName::Close,
+                "Close",
+                theme::window_control_close,
+                Message::WindowClose
+            ),
         ]
         .spacing(theme::S4)
         .align_y(Alignment::Center);
@@ -1072,7 +1084,7 @@ impl Brokkr {
         let entry = |label: &'static str, message: Message| {
             button(text(label).size(theme::TEXT_SIZE_SMALL))
                 .width(Length::Fill)
-                .padding(Padding { top: 3.0, bottom: 3.0, left: theme::S3, right: theme::S3 })
+                .padding(theme::PAD_MENU_ITEM)
                 .style(theme::section_heading)
                 .on_press(message)
         };
@@ -1114,12 +1126,7 @@ impl Brokkr {
                         assembled.push(
                             button(text(label).size(theme::TEXT_SIZE_SMALL))
                                 .width(Length::Fill)
-                                .padding(Padding {
-                                    top: 3.0,
-                                    bottom: 3.0,
-                                    left: theme::S3,
-                                    right: theme::S3,
-                                })
+                                .padding(theme::PAD_MENU_ITEM)
                                 .style(theme::section_heading)
                                 .on_press(Message::OpenRecent(path.clone())),
                         )
@@ -1283,10 +1290,13 @@ impl Brokkr {
         // the icon is a canvas drawn at a fixed colour and cannot follow the
         // button's foreground the way text does. See `icon.rs`'s header.
         let (style, ink) = theme::tool_toggle(self.stats_open);
-        let toggle = button(icon::icon(icon::IconName::Info, theme::ICON_CHROME, ink))
-            .padding(theme::S2)
-            .style(style)
-            .on_press(Message::StatsToggled);
+        let toggle = crate::ui::tip(
+            button(icon::icon(icon::IconName::Info, theme::ICON_CHROME, ink))
+                .padding(theme::S2)
+                .style(style)
+                .on_press(Message::StatsToggled),
+            "Frame stats",
+        );
 
         let mut stacked = column![toggle].spacing(theme::S2);
 
@@ -1381,12 +1391,13 @@ impl Brokkr {
         // sculpts. The `Button` inside captures, and only inside its own
         // bounds. That is the rule this file records for `mask_card`, applied
         // the other way round -- see [`Self::mask_card`] and [`modal_layer`].
-        let bug = container(
+        let bug = container(crate::ui::tip(
             button(icon::icon(icon::IconName::Bug, theme::ICON_CHROME, theme::TEXT_DIM))
                 .padding(theme::S2)
                 .style(theme::tool_button)
                 .on_press(Message::BugReportOpened),
-        )
+            "Report a bug",
+        ))
         .width(Length::Fill)
         .height(Length::Fill)
         .align_x(Alignment::End)
@@ -1730,13 +1741,13 @@ impl Brokkr {
             column![
                 row![
                     text(label)
-                        .size(theme::CAPTION_SIZE)
+                        .size(theme::LABEL_SIZE)
                         .color(theme::TEXT_DIM)
                         .width(Length::FillPortion(2)),
                     text_input("", &self.menu_field_text(which))
                         .on_input(move |text| Message::MenuFieldEdited(which, text))
                         .on_submit(Message::MenuFieldSubmitted)
-                        .size(theme::CAPTION_SIZE)
+                        .size(theme::LABEL_SIZE)
                         .width(Length::FillPortion(1)),
                 ]
                 .spacing(theme::S2)
@@ -1746,34 +1757,27 @@ impl Brokkr {
             .spacing(theme::S1)
         };
 
-        let falloff =
-            FalloffCurve::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, curve| {
-                assembled.push(
-                    button(text(curve.label()).size(theme::CAPTION_SIZE))
-                        .width(Length::Fill)
-                        .style(if curve == self.brush.falloff {
-                            theme::tool_button_active
-                        } else {
-                            theme::tool_button
-                        })
-                        .on_press(Message::FalloffChanged(curve)),
-                )
-            });
+        let falloff = crate::ui::segmented(
+            FalloffCurve::ALL.map(|curve| (curve, curve.label())),
+            self.brush.falloff,
+            Message::FalloffChanged,
+        );
 
         let patterns = || {
             PatternKind::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, kind| {
                 let (style, ink) = theme::tool_toggle(kind == self.brush.pattern.kind);
-                assembled.push(
+                assembled.push(crate::ui::tip(
                     button(icon::icon(icon::IconName::for_pattern(kind), theme::ICON_CHROME, ink))
                         .width(Length::Fill)
                         .style(style)
                         .on_press(Message::PatternChanged(kind)),
-                )
+                    kind.label(),
+                ))
             })
         };
 
         let mut body = column![
-            text(self.live_tool_label()).size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
+            text(self.live_tool_label()).size(theme::LABEL_SIZE).color(theme::TEXT_MUTE),
             numeric(
                 "Radius mm",
                 SizingTarget::Radius,
@@ -1793,7 +1797,7 @@ impl Brokkr {
             // A colour has a soft edge where a slot has none.
             if self.painting_colour() {
                 body = body
-                    .push(text("Falloff").size(theme::CAPTION_SIZE).color(theme::TEXT_DIM))
+                    .push(text("Falloff").size(theme::LABEL_SIZE).color(theme::TEXT_DIM))
                     .push(falloff);
             }
         } else {
@@ -1805,7 +1809,7 @@ impl Brokkr {
                     0.01,
                     Message::BrushStrengthChanged,
                 ))
-                .push(text("Falloff").size(theme::CAPTION_SIZE).color(theme::TEXT_DIM))
+                .push(text("Falloff").size(theme::LABEL_SIZE).color(theme::TEXT_DIM))
                 .push(falloff);
         }
 
@@ -1815,7 +1819,7 @@ impl Brokkr {
             body = body.push(self.mask_block());
         } else {
             body = body
-                .push(text("Pattern").size(theme::CAPTION_SIZE).color(theme::TEXT_DIM))
+                .push(text("Pattern").size(theme::LABEL_SIZE).color(theme::TEXT_DIM))
                 .push(patterns());
 
             // The pattern's own numbers only mean anything once one is chosen.
@@ -1823,20 +1827,26 @@ impl Brokkr {
                 let floor = self.doc.voxel_size() * brokkr_core::MIN_SCALE_VOXELS;
                 body = body.push(
                     column![
-                        text(format!("Feature  {:.2} mm", self.brush.pattern.scale_mm))
-                            .size(theme::CAPTION_SIZE)
-                            .color(theme::TEXT_DIM),
-                        slider(
-                            floor..=brokkr_core::MAX_SCALE_MM,
+                        crate::ui::number(
+                            &self.drafts,
+                            "menu.pattern_feature",
+                            "Feature",
                             self.brush.pattern.scale_mm.clamp(floor, brokkr_core::MAX_SCALE_MM),
+                            floor..=brokkr_core::MAX_SCALE_MM,
                             Message::PatternScaleChanged
                         )
-                        .step(0.05_f32),
-                        text(format!("Depth  {:.2}", self.brush.pattern.depth))
-                            .size(theme::CAPTION_SIZE)
-                            .color(theme::TEXT_DIM),
-                        slider(0.0..=1.0, self.brush.pattern.depth, Message::PatternDepthChanged)
-                            .step(0.02_f32),
+                        .step(0.05)
+                        .shown(format!("{:.2} mm", self.brush.pattern.scale_mm)),
+                        crate::ui::number(
+                            &self.drafts,
+                            "menu.pattern_depth",
+                            "Depth",
+                            self.brush.pattern.depth,
+                            0.0..=1.0,
+                            Message::PatternDepthChanged
+                        )
+                        .step(0.02)
+                        .shown(format!("{:.2}", self.brush.pattern.depth)),
                     ]
                     .spacing(theme::S1),
                 );
@@ -1896,14 +1906,14 @@ impl Brokkr {
     /// the instant the next grab touched it.
     fn mask_block(&self) -> Element<'_, Message> {
         let verb = |label: &'static str, message: Message| {
-            button(text(label).size(theme::CAPTION_SIZE))
+            button(text(label).size(theme::LABEL_SIZE))
                 .width(Length::Fill)
                 .style(theme::tool_button)
                 .on_press(message)
         };
 
         let filter = |which: MaskFilter| {
-            button(text(which.label()).size(theme::CAPTION_SIZE))
+            button(text(which.label()).size(theme::LABEL_SIZE))
                 .width(Length::Fill)
                 .style(if which == self.mask_filter {
                     theme::tool_button_active
@@ -1918,68 +1928,84 @@ impl Brokkr {
         // on release. What it reads instead are the two sliders below it, which
         // is why they sit under the row rather than one per button.
         let generator = |which: MaskGenerator| {
-            button(text(which.label()).size(theme::CAPTION_SIZE))
+            button(text(which.label()).size(theme::LABEL_SIZE))
                 .width(Length::Fill)
                 .style(theme::tool_button)
                 .on_press(Message::MaskGenerated(which))
         };
 
         let mut block = column![
-            text("Mask").size(theme::CAPTION_SIZE).color(theme::TEXT_DIM),
+            text("Mask").size(theme::LABEL_SIZE).color(theme::TEXT_DIM),
             row![verb("Clear", Message::MaskCleared), verb("Invert", Message::MaskInverted)]
                 .spacing(theme::S1),
             verb("Mask all", Message::MaskAllApplied),
             row![filter(MaskFilter::Blur), filter(MaskFilter::Sharpen)].spacing(theme::S1),
             row![filter(MaskFilter::Grow), filter(MaskFilter::Shrink)].spacing(theme::S1),
-            text(format!("Amount  {:.2}", self.mask_amount))
-                .size(theme::CAPTION_SIZE)
-                .color(theme::TEXT_DIM),
             // `on_release` is what makes the whole drag ONE undo entry: every
             // step of it re-applies from the same snapshot, and the release is
             // where that snapshot goes into history.
-            slider(0.0..=1.0, self.mask_amount, Message::MaskAmountChanged)
-                .step(0.05_f32)
-                .on_release(Message::MaskAmountReleased),
+            crate::ui::number(
+                &self.drafts,
+                "mask.amount",
+                "Amount",
+                self.mask_amount,
+                0.0..=1.0,
+                Message::MaskAmountChanged
+            )
+            .step(0.05)
+            .shown(format!("{:.2}", self.mask_amount))
+            .on_release(Message::MaskAmountReleased),
             // Not disabled when the tint is off: the slider is where a user who
             // turned it off finds out what they turned off, and moving it is
             // the obvious way to ask for it back.
-            text(format!("Tint  {:.2}", self.mask_tint))
-                .size(theme::CAPTION_SIZE)
-                .color(theme::TEXT_DIM),
-            slider(0.0..=1.0, self.mask_tint, Message::MaskTintChanged).step(0.05_f32),
+            crate::ui::number(
+                &self.drafts,
+                "mask.tint",
+                "Tint",
+                self.mask_tint,
+                0.0..=1.0,
+                Message::MaskTintChanged
+            )
+            .step(0.05)
+            .shown(format!("{:.2}", self.mask_tint)),
             checkbox(self.show_mask)
                 .label("Show mask")
                 .on_toggle(|_| Message::ShowMaskToggled)
-                .text_size(theme::CAPTION_SIZE),
-            text("Make one from the shape").size(theme::CAPTION_SIZE).color(theme::TEXT_DIM),
+                .text_size(theme::LABEL_SIZE),
+            text("Make one from the shape").size(theme::LABEL_SIZE).color(theme::TEXT_DIM),
             MaskGenerator::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, which| {
                 assembled.push(generator(which))
             }),
             // In MILLIMETRES, which is the whole of what makes this better than
             // ZBrush's: its cavity masking is resolution-relative and this is
             // not, so the number means the same thing after a resample.
-            text(format!("Feature  {:.2} mm", self.mask_feature_mm))
-                .size(theme::CAPTION_SIZE)
-                .color(theme::TEXT_DIM),
-            slider(super::MASK_FEATURE_RANGE_MM, self.mask_feature_mm, Message::MaskFeatureChanged)
-                .step(0.05_f32),
+            crate::ui::number(
+                &self.drafts,
+                "mask.feature",
+                "Feature",
+                self.mask_feature_mm,
+                super::MASK_FEATURE_RANGE_MM,
+                Message::MaskFeatureChanged
+            )
+            .step(0.05)
+            .shown(format!("{:.2} mm", self.mask_feature_mm)),
             // In VOXELS with the millimetres beside it, and the other way round
             // would be wrong: the ceiling is twice the narrow band, which is a
             // property of the field and not of the model, so a millimetre
             // slider's maximum would move under a resample.
-            text(format!(
-                "Thinner than  {} vx ({:.2} mm)",
-                self.mask_thickness_voxels,
-                self.mask_thickness_voxels as f32 * self.doc.voxel_size()
-            ))
-            .size(theme::CAPTION_SIZE)
-            .color(theme::TEXT_DIM),
-            slider(
-                1.0..=brokkr_core::MAX_THICKNESS_VOXELS as f32,
+            crate::ui::number(
+                &self.drafts,
+                "mask.thinner",
+                format!(
+                    "Thinner than, {:.2} mm",
+                    self.mask_thickness_voxels as f32 * self.doc.voxel_size()
+                ),
                 self.mask_thickness_voxels as f32,
+                1.0..=brokkr_core::MAX_THICKNESS_VOXELS as f32,
                 Message::MaskThicknessChanged
             )
-            .step(1.0_f32),
+            .step(1.0)
+            .shown(format!("{} vx", self.mask_thickness_voxels)),
             // Here rather than in the bodies panel's verb row, which is icons:
             // this is a mask operation, it reads with the verbs it belongs to,
             // and it costs no new icon and no new icon test.
@@ -1998,7 +2024,7 @@ impl Brokkr {
         if self.brush.pattern.kind != PatternKind::None {
             block = block.push(
                 text(format!("Pattern: {}", self.brush.pattern.kind.label()))
-                    .size(theme::CAPTION_SIZE)
+                    .size(theme::LABEL_SIZE)
                     .color(theme::TEXT_MUTE),
             );
         }
@@ -2283,14 +2309,19 @@ impl Brokkr {
             .on_right_press(Message::TimelineRemoveKey);
 
         let (play_style, play_ink) = theme::tool_toggle(self.timeline.playing);
-        let play = button(icon::icon(
-            if self.timeline.playing { icon::IconName::Stop } else { icon::IconName::Play },
-            theme::ICON_CHROME,
-            play_ink,
-        ))
-        .padding(Padding { top: 1.0, right: 6.0, bottom: 1.0, left: 6.0 })
-        .style(play_style)
-        .on_press_maybe((self.timeline.keys.len() >= 2).then_some(Message::TimelinePlayToggled));
+        let play = crate::ui::tip(
+            button(icon::icon(
+                if self.timeline.playing { icon::IconName::Stop } else { icon::IconName::Play },
+                theme::ICON_CHROME,
+                play_ink,
+            ))
+            .padding(Padding { top: 1.0, right: 6.0, bottom: 1.0, left: 6.0 })
+            .style(play_style)
+            .on_press_maybe(
+                (self.timeline.keys.len() >= 2).then_some(Message::TimelinePlayToggled),
+            ),
+            if self.timeline.playing { "Stop" } else { "Play the stored views" },
+        );
 
         let hint = match self.timeline.keys.len() {
             0 => "click to store a view".to_string(),
@@ -2328,19 +2359,20 @@ impl Brokkr {
         let painting = self.brush.kind == BrushKind::Paint && self.tool != Tool::Mask;
 
         let radius = column![
-            text(format!("Radius  {:.2} mm", self.brush.radius))
-                .size(theme::TEXT_SIZE_SMALL)
-                .color(theme::TEXT_DIM),
-            slider(
-                super::MIN_RADIUS_MM..=self.max_radius(),
+            crate::ui::number(
+                &self.drafts,
+                "brush.radius",
+                "Radius",
                 self.brush.radius,
+                super::MIN_RADIUS_MM..=self.max_radius(),
                 Message::BrushRadiusChanged
             )
-            .step(0.05_f32),
+            .step(0.05)
+            .shown(format!("{:.2} mm", self.brush.radius)),
             checkbox(self.dynamic_radius)
                 .label("scale with model")
                 .on_toggle(Message::DynamicRadiusToggled)
-                .text_size(theme::CAPTION_SIZE),
+                .text_size(theme::LABEL_SIZE),
             text("hold s and drag to resize, u for strength")
                 .size(theme::CAPTION_SIZE)
                 .color(theme::TEXT_MUTE),
@@ -2351,15 +2383,16 @@ impl Brokkr {
             self.painting_picker(true)
         } else {
             column![
-                text(format!("Strength  {:.2}", self.brush.strength))
-                    .size(theme::TEXT_SIZE_SMALL)
-                    .color(theme::TEXT_DIM),
-                slider(
-                    super::MIN_STRENGTH..=self.max_strength(),
+                crate::ui::number(
+                    &self.drafts,
+                    "brush.strength",
+                    "Strength",
                     self.brush.strength,
+                    super::MIN_STRENGTH..=self.max_strength(),
                     Message::BrushStrengthChanged
                 )
-                .step(0.01_f32),
+                .step(0.01)
+                .shown(format!("{:.2}", self.brush.strength)),
             ]
             .spacing(theme::S2)
             .into()
@@ -2379,46 +2412,54 @@ impl Brokkr {
         };
 
         let history = row![
-            button(text("Undo").size(theme::TEXT_SIZE_SMALL))
-                .style(theme::tool_button)
-                .on_press_maybe(self.history.can_undo().then_some(Message::Undo)),
-            button(text("Redo").size(theme::TEXT_SIZE_SMALL))
-                .style(theme::tool_button)
-                .on_press_maybe(self.history.can_redo().then_some(Message::Redo)),
+            crate::ui::button_secondary("Undo", self.history.can_undo().then_some(Message::Undo)),
+            crate::ui::button_secondary("Redo", self.history.can_redo().then_some(Message::Redo)),
         ]
         .spacing(theme::S2);
+
+        // The brush in hand, beside its heading: the heading says what the
+        // block is, this says which.
+        let in_hand = text(match self.tool {
+            Tool::Mask => "Mask".to_string(),
+            _ => self.live_brush_name(),
+        })
+        .size(theme::LABEL_SIZE)
+        .color(theme::TEXT_DIM);
 
         container(
             scrollable(column![
                 self.section(PanelSection::Bodies, || self.bodies_panel()),
                 // The palette of brushes, and the brushes that add. See
-                // `app/studio.rs` and `app/adding.rs`.
-                self.palette_panel(),
-                self.workbench_panel(),
-                self.adding_panel(),
-                text(match self.tool {
-                    Tool::Mask => "MASK".to_string(),
-                    _ => self.live_brush_name(),
-                })
-                .size(theme::CAPTION_SIZE)
-                .color(theme::TEXT_MUTE),
-                text(invert_hint).size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
-                radius,
-                strength,
-                falloff,
-                self.studio_panel(),
-                self.form_panel(),
+                // `app/studio.rs` and `app/adding.rs`. Every block has a
+                // heading that folds: see `ui.rs`.
+                self.section(PanelSection::Brushes, || self.palette_panel()),
+                self.section(PanelSection::Workbench, || self.workbench_panel()),
+                self.section(PanelSection::Add, || self.adding_panel()),
+                crate::ui::section(
+                    PanelSection::Brush.title(),
+                    self.expanded[PanelSection::Brush as usize],
+                    Message::SectionToggled(PanelSection::Brush),
+                    Some(in_hand.into()),
+                    || column![
+                        text(invert_hint).size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
+                        radius,
+                        strength,
+                        falloff,
+                        self.studio_panel(),
+                    ]
+                    .spacing(theme::S3)
+                    .into(),
+                ),
+                self.section(PanelSection::Stroke, || self.stroke_panel()),
+                self.section(PanelSection::Form, || self.form_panel()),
                 self.section(PanelSection::Pattern, || self.pattern_panel()),
                 self.section(PanelSection::Pen, || self.pen_panel()),
                 self.section(PanelSection::SpaceMouse, || self.spacemouse_panel()),
-                text("HISTORY").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
-                history,
+                self.section(PanelSection::History, || history.into()),
                 self.section(PanelSection::Detail, || self.detail_panel()),
                 self.section(PanelSection::Filament, || self.filament_panel()),
                 self.section(PanelSection::Export, || self.export_panel()),
-                button(text("Reset sphere").size(theme::TEXT_SIZE_SMALL))
-                    .style(theme::tool_button)
-                    .on_press(Message::ResetSphere),
+                crate::ui::button_secondary("Reset sphere", Some(Message::ResetSphere)),
                 // `1-8`: `BrushKind::ALL` is eight since Paint landed, and the
                 // line was `1-6` for a while after Move made it seven.
                 //
@@ -2458,10 +2499,10 @@ impl Brokkr {
         let status = self.spacemouse.diagnosis();
         let header: Element<'_, Message> = match self.spacemouse.devices().first() {
             Some(device) => {
-                text(device.name.clone()).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM).into()
+                text(device.name.clone()).size(theme::LABEL_SIZE).color(theme::TEXT_DIM).into()
             }
             None => text(status.explain())
-                .size(theme::CAPTION_SIZE)
+                .size(theme::LABEL_SIZE)
                 .color(if status == spacemouse::Diagnosis::NoDevice {
                     theme::TEXT_MUTE
                 } else {
@@ -2481,14 +2522,14 @@ impl Brokkr {
                 assembled.push(
                     row![
                         text(axis.label())
-                            .size(theme::CAPTION_SIZE)
+                            .size(theme::LABEL_SIZE)
                             .color(theme::TEXT_MUTE)
                             .width(Length::Fixed(84.0)),
                         text(format!("{value:>6.0}"))
-                            .size(theme::CAPTION_SIZE)
+                            .size(theme::LABEL_SIZE)
                             .color(if past_deadzone { theme::ACCENT } else { theme::TEXT_MUTE }),
                         text(format!("{:>4.0}%", value / full_scale.max(1.0) * 100.0))
-                            .size(theme::CAPTION_SIZE)
+                            .size(theme::LABEL_SIZE)
                             .color(theme::TEXT_MUTE),
                     ]
                     .spacing(theme::S2),
@@ -2502,12 +2543,12 @@ impl Brokkr {
                 let binding = config.binding(action);
                 assembled.push(
                     column![
-                        text(action.label()).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM),
+                        text(action.label()).size(theme::LABEL_SIZE).color(theme::TEXT_DIM),
                         row![
                             pick_list(spacemouse::Axis::ALL, Some(binding.source), move |axis| {
                                 Message::SpaceMouse(SpaceMouseSetting::Binding(action, axis))
                             })
-                            .text_size(theme::CAPTION_SIZE)
+                            .text_size(theme::LABEL_SIZE)
                             // Portioned rather than Fill, or the picker eats
                             // the row and clips the flip label off the edge.
                             .width(Length::FillPortion(2)),
@@ -2516,7 +2557,7 @@ impl Brokkr {
                                 .on_toggle(move |invert| Message::SpaceMouse(
                                     SpaceMouseSetting::Invert(action, invert)
                                 ))
-                                .text_size(theme::CAPTION_SIZE)
+                                .text_size(theme::LABEL_SIZE)
                                 .width(Length::FillPortion(1)),
                         ]
                         .spacing(theme::S2)
@@ -2532,7 +2573,7 @@ impl Brokkr {
                 assembled.push(
                     column![
                         text(format!("Button {}", index + 1))
-                            .size(theme::CAPTION_SIZE)
+                            .size(theme::LABEL_SIZE)
                             .color(theme::TEXT_DIM),
                         pick_list(
                             ButtonAction::ALL,
@@ -2541,7 +2582,7 @@ impl Brokkr {
                                 index, action
                             ))
                         )
-                        .text_size(theme::CAPTION_SIZE)
+                        .text_size(theme::LABEL_SIZE)
                         .width(Length::Fill),
                     ]
                     .spacing(theme::S1),
@@ -2554,15 +2595,13 @@ impl Brokkr {
         let sensitivity =
             |label: &'static str, value: f32, default: f32, make: fn(f32) -> SpaceMouseSetting| {
                 let multiple = value / default;
-                column![
-                    text(format!("{label}  {multiple:.2}x"))
-                        .size(theme::CAPTION_SIZE)
-                        .color(theme::TEXT_DIM),
-                    slider(0.1..=5.0, multiple, move |m| Message::SpaceMouse(make(m * default)))
-                        .step(0.05_f32)
-                        .on_release(Message::SpaceMouse(SpaceMouseSetting::Save)),
-                ]
-                .spacing(theme::S1)
+                // The label is the key: there is one of each.
+                crate::ui::number(&self.drafts, label, label, multiple, 0.1..=5.0, move |m| {
+                    Message::SpaceMouse(make(m * default))
+                })
+                .step(0.05)
+                .shown(format!("x {multiple:.2}"))
+                .on_release(Message::SpaceMouse(SpaceMouseSetting::Save))
             };
 
         let defaults = SpaceMouseConfig::default();
@@ -2577,39 +2616,42 @@ impl Brokkr {
                     .map(|path| path.display().to_string())
                     .unwrap_or_else(|| "settings cannot be saved: no config directory".into())
             )
-            .size(theme::CAPTION_SIZE)
+            .size(theme::LABEL_SIZE)
             .color(theme::TEXT_MUTE),
             row![
-                button(text("Invert all").size(theme::CAPTION_SIZE))
+                button(text("Invert all").size(theme::LABEL_SIZE))
                     .width(Length::Fill)
                     .style(theme::tool_button)
                     .on_press(Message::SpaceMouse(SpaceMouseSetting::InvertAll)),
-                button(text("Reset").size(theme::CAPTION_SIZE))
+                button(text("Reset").size(theme::LABEL_SIZE))
                     .width(Length::Fill)
                     .style(theme::tool_button)
                     .on_press(Message::SpaceMouse(SpaceMouseSetting::Reset)),
             ]
             .spacing(theme::S2),
             row![
-                text("Mode").size(theme::CAPTION_SIZE).color(theme::TEXT_DIM),
+                text("Mode").size(theme::LABEL_SIZE).color(theme::TEXT_DIM),
                 pick_list(
                     [spacemouse::Mode::Object, spacemouse::Mode::Camera],
                     Some(config.mode),
                     |mode| Message::SpaceMouse(SpaceMouseSetting::Mode(mode))
                 )
-                .text_size(theme::CAPTION_SIZE)
+                .text_size(theme::LABEL_SIZE)
                 .width(Length::Fill),
             ]
             .spacing(theme::S2)
             .align_y(Alignment::Center),
             column![
-                text(format!("Deadzone  {:.0}", config.deadzone))
-                    .size(theme::CAPTION_SIZE)
-                    .color(theme::TEXT_DIM),
-                slider(0.0..=120.0, config.deadzone, |value| Message::SpaceMouse(
-                    SpaceMouseSetting::Deadzone(value)
-                ))
-                .step(1.0_f32)
+                crate::ui::number(
+                    &self.drafts,
+                    "spacemouse.deadzone",
+                    "Deadzone",
+                    config.deadzone,
+                    0.0..=120.0,
+                    |value| Message::SpaceMouse(SpaceMouseSetting::Deadzone(value))
+                )
+                .step(1.0)
+                .shown(format!("{:.0}", config.deadzone))
                 .on_release(Message::SpaceMouse(SpaceMouseSetting::Save)),
             ]
             .spacing(theme::S1),
@@ -2643,42 +2685,16 @@ impl Brokkr {
         which: PanelSection,
         body: impl FnOnce() -> Element<'a, Message>,
     ) -> Element<'a, Message> {
-        let open = self.expanded[which as usize];
-        let heading = button(
-            row![
-                // The caret keeps `TEXT_MUTE` through hover while the title
-                // beside it lifts to `TEXT`, because `section_heading` signals
-                // hover through `text_color` and an icon cannot follow that.
-                // Tolerable here, unlike on the window controls, precisely
-                // because there IS a word next to it still doing the job.
-                icon::icon(
-                    if open { icon::IconName::CaretDown } else { icon::IconName::CaretRight },
-                    theme::ICON_INLINE,
-                    theme::TEXT_MUTE,
-                ),
-                text(which.title()).size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
-            ]
-            .align_y(Alignment::Center)
-            .spacing(theme::S2),
+        // The SOLO badge goes beside the heading and not inside it: inside,
+        // a press on the word would fold the section away, which is not
+        // what a status indicator should do. See `ui::heading`.
+        crate::ui::section(
+            which.title(),
+            self.expanded[which as usize],
+            Message::SectionToggled(which),
+            self.solo_badge(which),
+            body,
         )
-        .width(Length::Fill)
-        .padding(0)
-        .style(theme::section_heading)
-        .on_press(Message::SectionToggled(which));
-
-        let heading: Element<'a, Message> = match self.solo_badge(which) {
-            // Beside the heading and not inside it. Nesting would work — a
-            // `Button` forwards to its content and returns early on
-            // `is_event_captured`, the same mechanism the row's eye rides — but
-            // it would also make a press on the word "SOLO" fold the section
-            // away, which is not what a status indicator should do.
-            Some(badge) => {
-                row![heading, badge].align_y(Alignment::Center).spacing(theme::S2).into()
-            }
-            None => heading.into(),
-        };
-
-        if open { column![heading, body()].spacing(theme::S2).into() } else { heading }
     }
 
     /// `SOLO: <name>  [exit]`, drawn beside the Bodies heading while the mode is
@@ -2703,10 +2719,13 @@ impl Brokkr {
             row![
                 text("SOLO").size(theme::CAPTION_SIZE).color(theme::ACCENT),
                 text(node.name.as_str()).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM),
-                button(icon::icon(icon::IconName::Close, theme::ICON_INLINE, theme::TEXT_MUTE))
-                    .padding(Padding { top: 1.0, bottom: 1.0, left: theme::S1, right: theme::S1 })
-                    .style(theme::section_heading)
-                    .on_press(Message::SoloExited),
+                crate::ui::tip(
+                    button(icon::icon(icon::IconName::Close, theme::ICON_INLINE, theme::TEXT_MUTE))
+                        .padding(theme::PAD_FIELD)
+                        .style(theme::section_heading)
+                        .on_press(Message::SoloExited),
+                    "Leave solo"
+                ),
             ]
             .align_y(Alignment::Center)
             .spacing(theme::S1)
@@ -2855,17 +2874,23 @@ impl Brokkr {
         let visible_rows = if self.thumbnails { VISIBLE_ROWS } else { VISIBLE_ROWS_BARE };
 
         let verbs = row![
-            button(icon::icon(icon::IconName::Plus, theme::ICON_INLINE, theme::TEXT_DIM))
-                .padding(Padding { top: 2.0, bottom: 2.0, left: theme::S3, right: theme::S3 })
-                .style(if self.adding { theme::tool_button_active } else { theme::tool_button })
-                .on_press(Message::PrimitiveMenuToggled),
-            button(icon::icon(icon::IconName::Trash, theme::ICON_INLINE, theme::TEXT_DIM))
-                .padding(Padding { top: 2.0, bottom: 2.0, left: theme::S3, right: theme::S3 })
-                .style(theme::tool_button)
-                // Greyed rather than refusing on press: the last body cannot go,
-                // and a button that looks pressable and is not teaches the user
-                // that the application ignores them.
-                .on_press_maybe((self.doc.body_count() > 1).then_some(Message::BodyDeleted)),
+            crate::ui::tip(
+                button(icon::icon(icon::IconName::Plus, theme::ICON_INLINE, theme::TEXT_DIM))
+                    .padding(theme::PAD_BUTTON)
+                    .style(if self.adding { theme::tool_button_active } else { theme::tool_button })
+                    .on_press(Message::PrimitiveMenuToggled),
+                "Add a body"
+            ),
+            crate::ui::tip(
+                button(icon::icon(icon::IconName::Trash, theme::ICON_INLINE, theme::TEXT_DIM))
+                    .padding(theme::PAD_BUTTON)
+                    .style(theme::tool_button)
+                    // Greyed rather than refusing on press: the last body cannot go,
+                    // and a button that looks pressable and is not teaches the user
+                    // that the application ignores them.
+                    .on_press_maybe((self.doc.body_count() > 1).then_some(Message::BodyDeleted)),
+                "Delete this body"
+            ),
             // Always pressable, and REFUSING on press with the count in the
             // status line -- never greyed. Three reasons, in order of weight:
             //
@@ -2885,10 +2910,13 @@ impl Brokkr {
             // * a greyed button says only "no". The refusal says which ceiling
             //   and how far over it, which is the only form in which any of
             //   this is useful to someone with sixty-four bodies open.
-            button(icon::icon(icon::IconName::Copy, theme::ICON_INLINE, theme::TEXT_DIM))
-                .padding(Padding { top: 2.0, bottom: 2.0, left: theme::S3, right: theme::S3 })
-                .style(theme::tool_button)
-                .on_press(Message::BodyDuplicated),
+            crate::ui::tip(
+                button(icon::icon(icon::IconName::Copy, theme::ICON_INLINE, theme::TEXT_DIM))
+                    .padding(theme::PAD_BUTTON)
+                    .style(theme::tool_button)
+                    .on_press(Message::BodyDuplicated),
+                "Duplicate"
+            ),
             // Always pressable and refusing on press, for the three reasons
             // above -- and here the first of them is sharper still. Whether a
             // merge is legal is "is the next row a body at this depth", which
@@ -2896,19 +2924,25 @@ impl Brokkr {
             // brick map, which is not, and this row is built every frame. Two
             // of merge's outcomes could be greyed for and the third could not,
             // so all three refuse the same way and each says which it is.
-            button(icon::icon(icon::IconName::MergeDown, theme::ICON_INLINE, theme::TEXT_DIM))
-                .padding(Padding { top: 2.0, bottom: 2.0, left: theme::S3, right: theme::S3 })
-                .style(theme::tool_button)
-                .on_press(Message::BodyMergedDown),
+            crate::ui::tip(
+                button(icon::icon(icon::IconName::MergeDown, theme::ICON_INLINE, theme::TEXT_DIM))
+                    .padding(theme::PAD_BUTTON)
+                    .style(theme::tool_button)
+                    .on_press(Message::BodyMergedDown),
+                "Merge into the body below"
+            ),
             // Always pressable and refusing on press, for the same three
             // reasons. Whether a split would do anything cannot be known
             // without walking every voxel of the body, which is the one thing
             // a row built every frame may never do -- so there is nothing to
             // grey on, and the answer arrives as a card or as a status line.
-            button(icon::icon(icon::IconName::Split, theme::ICON_INLINE, theme::TEXT_DIM))
-                .padding(Padding { top: 2.0, bottom: 2.0, left: theme::S3, right: theme::S3 })
-                .style(theme::tool_button)
-                .on_press(Message::BodySplit),
+            crate::ui::tip(
+                button(icon::icon(icon::IconName::Split, theme::ICON_INLINE, theme::TEXT_DIM))
+                    .padding(theme::PAD_BUTTON)
+                    .style(theme::tool_button)
+                    .on_press(Message::BodySplit),
+                "Split into its separate pieces"
+            ),
         ]
         .spacing(theme::S2);
 
@@ -2920,7 +2954,7 @@ impl Brokkr {
             checkbox(self.thumbnails)
                 .label("Thumbnails")
                 .on_toggle(|_| Message::ThumbnailsToggled)
-                .text_size(theme::CAPTION_SIZE),
+                .text_size(theme::LABEL_SIZE),
             scrollable(rows).height(Length::Fixed(row_h * visible_rows)),
             verbs,
         ]
@@ -2934,7 +2968,7 @@ impl Brokkr {
                 row![].spacing(theme::S1),
                 |assembled, kind| {
                     assembled.push(
-                        button(text(kind.label()).size(theme::CAPTION_SIZE))
+                        button(text(kind.label()).size(theme::LABEL_SIZE))
                             .width(Length::Fill)
                             .style(theme::tool_button)
                             .on_press(Message::PrimitiveAdded(kind)),
@@ -3084,12 +3118,13 @@ impl Brokkr {
             } else {
                 icon::IconName::CaretDown
             };
-            line = line.push(
+            line = line.push(crate::ui::tip(
                 button(icon::icon(chevron, theme::ICON_INLINE, theme::TEXT_MUTE))
                     .padding(0)
                     .style(theme::section_heading)
                     .on_press(Message::FolderCollapseToggled(node.id)),
-            );
+                "Fold or unfold",
+            ));
         }
 
         // At most one row is being renamed, so this is one `NodeId` compare and
@@ -3105,41 +3140,32 @@ impl Brokkr {
                     .id(super::RENAME_FIELD)
                     .on_input(Message::BodyRenameEdited)
                     .on_submit(Message::BodyRenameSubmitted)
-                    .padding(Padding { top: 1.0, bottom: 1.0, left: theme::S1, right: theme::S1 })
-                    .size(theme::TEXT_SIZE_SMALL)
+                    .padding(theme::PAD_FIELD)
+                    .size(theme::LABEL_SIZE)
                     .width(Length::Fill),
             ),
             None => line.push(
-                text(node.name.as_str())
-                    .size(theme::TEXT_SIZE_SMALL)
-                    .color(ink)
-                    .width(Length::Fill),
+                text(node.name.as_str()).size(theme::LABEL_SIZE).color(ink).width(Length::Fill),
             ),
         };
 
         if !node.is_body() {
             line = line
                 .push(
-                    text(count_label(facts.count))
-                        .size(theme::CAPTION_SIZE)
-                        .color(theme::TEXT_MUTE),
+                    text(count_label(facts.count)).size(theme::LABEL_SIZE).color(theme::TEXT_MUTE),
                 )
                 // A folder's own delete, and NOT a mode of the verb row's. The
                 // verb row names the active body, which is always a body, so a
                 // collapsed folder can never swallow a body delete -- that is
                 // the ZBrush hour-losing failure made unrepresentable rather
                 // than remembered.
-                .push(
+                .push(crate::ui::tip(
                     button(icon::icon(icon::IconName::Trash, theme::ICON_INLINE, theme::TEXT_MUTE))
-                        .padding(Padding {
-                            top: 2.0,
-                            bottom: 2.0,
-                            left: theme::S1,
-                            right: theme::S1,
-                        })
+                        .padding(theme::PAD_CHOICE)
                         .style(theme::section_heading)
                         .on_press(Message::FolderDeleted(node.id)),
-                );
+                    "Delete this folder",
+                ));
         }
 
         // The solo circle, on the active row and on the folders holding it and
@@ -3150,9 +3176,9 @@ impl Brokkr {
         // also select or rename the row.
         if facts.soloable {
             let ring = if facts.soloed { theme::ACCENT } else { theme::TEXT_MUTE };
-            line = line.push(
+            line = line.push(crate::ui::tip(
                 button(icon::icon(icon::IconName::Solo, theme::ICON_INLINE, ring))
-                    .padding(Padding { top: 2.0, bottom: 2.0, left: theme::S1, right: theme::S1 })
+                    .padding(theme::PAD_CHOICE)
                     .style(theme::section_heading)
                     // A toggle, so the way in is also a way out and the button
                     // never lies about what it will do. Escape and the header
@@ -3162,15 +3188,17 @@ impl Brokkr {
                     } else {
                         Message::SoloEntered(node.id)
                     }),
-            );
+                if facts.soloed { "Leave solo" } else { "Solo" },
+            ));
         }
 
-        let line = line.push(
+        let line = line.push(crate::ui::tip(
             button(icon::icon(eye, theme::ICON_INLINE, eye_ink))
-                .padding(Padding { top: 2.0, bottom: 2.0, left: theme::S1, right: theme::S1 })
+                .padding(theme::PAD_CHOICE)
                 .style(theme::section_heading)
                 .on_press(Message::BodyVisibilityToggled(node.id)),
-        );
+            "Show or hide",
+        ));
 
         // Active outranks out-of-scope, and it has to: selecting a row solo is
         // not showing is allowed -- a view mode never vetoes a structural
@@ -3500,7 +3528,7 @@ impl Brokkr {
                                     theme::ICON_CHROME,
                                     ink
                                 ),
-                                text(kind.label()).size(theme::CAPTION_SIZE),
+                                text(kind.label()).size(theme::LABEL_SIZE),
                             ]
                             .spacing(theme::S2)
                             .align_y(Alignment::Center),
@@ -3519,37 +3547,44 @@ impl Brokkr {
         // less to read than a disabled one.
         let settings: Element<'_, Message> = if pattern.kind == PatternKind::None {
             text("carve a pattern in with ctrl")
-                .size(theme::CAPTION_SIZE)
+                .size(theme::LABEL_SIZE)
                 .color(theme::TEXT_MUTE)
                 .into()
         } else {
             column![
-                text(format!("Feature size  {:.2} mm", pattern.scale_mm))
-                    .size(theme::CAPTION_SIZE)
-                    .color(theme::TEXT_DIM),
                 // The lower bound follows the voxel size: a feature finer
                 // than a few voxels cannot be represented, and offering it
                 // would only produce a model the exporter then refuses.
-                slider(
-                    (self.doc.voxel_size() * brokkr_core::MIN_SCALE_VOXELS)
-                        ..=brokkr_core::MAX_SCALE_MM,
+                crate::ui::number(
+                    &self.drafts,
+                    "pattern.feature",
+                    "Feature size",
                     pattern.scale_mm.clamp(
                         self.doc.voxel_size() * brokkr_core::MIN_SCALE_VOXELS,
                         brokkr_core::MAX_SCALE_MM
                     ),
+                    (self.doc.voxel_size() * brokkr_core::MIN_SCALE_VOXELS)
+                        ..=brokkr_core::MAX_SCALE_MM,
                     Message::PatternScaleChanged
                 )
-                .step(0.05_f32),
-                text(format!("Depth  {:.2}", pattern.depth))
-                    .size(theme::CAPTION_SIZE)
-                    .color(theme::TEXT_DIM),
-                slider(0.0..=1.0, pattern.depth, Message::PatternDepthChanged).step(0.02_f32),
+                .step(0.05)
+                .shown(format!("{:.2} mm", pattern.scale_mm)),
+                crate::ui::number(
+                    &self.drafts,
+                    "pattern.depth",
+                    "Depth",
+                    pattern.depth,
+                    0.0..=1.0,
+                    Message::PatternDepthChanged
+                )
+                .step(0.02)
+                .shown(format!("{:.2}", pattern.depth)),
                 text(if pattern.kind.follows_the_stroke() {
                     "combs along the drag"
                 } else {
                     "fixed in world space, so strokes reinforce"
                 })
-                .size(theme::CAPTION_SIZE)
+                .size(theme::LABEL_SIZE)
                 .color(theme::TEXT_MUTE),
             ]
             .spacing(theme::S1)
@@ -3571,26 +3606,26 @@ impl Brokkr {
 
         column![
             text(format!("Voxel  {:.3} mm", self.doc.voxel_size()))
-                .size(theme::TEXT_SIZE_SMALL)
+                .size(theme::LABEL_SIZE)
                 .color(theme::TEXT_DIM),
             row![
-                button(text("finer").size(theme::TEXT_SIZE_SMALL))
+                button(text("finer").size(theme::LABEL_SIZE))
                     .style(theme::tool_button)
                     .on_press_maybe((finer >= FINEST_VOXEL_MM).then_some(Message::Resample(finer))),
-                button(text("coarser").size(theme::TEXT_SIZE_SMALL))
+                button(text("coarser").size(theme::LABEL_SIZE))
                     .style(theme::tool_button)
                     .on_press_maybe(
                         (coarser <= COARSEST_VOXEL_MM).then_some(Message::Resample(coarser))
                     ),
             ]
             .spacing(theme::S2),
-            text("Print size").size(theme::TEXT_SIZE_SMALL).color(theme::TEXT_DIM),
+            text("Print size").size(theme::LABEL_SIZE).color(theme::TEXT_DIM),
             row![
                 text_input("longest mm", &self.working_size_field)
                     .on_input(Message::WorkingSizeTyped)
                     .on_submit(Message::WorkingSizeCommitted)
-                    .size(theme::TEXT_SIZE_SMALL),
-                button(text("set").size(theme::TEXT_SIZE_SMALL))
+                    .size(theme::LABEL_SIZE),
+                button(text("set").size(theme::LABEL_SIZE))
                     .style(theme::tool_button)
                     .on_press(Message::WorkingSizeCommitted),
             ]
@@ -3598,7 +3633,7 @@ impl Brokkr {
             // Scaling is free and changes no voxel, so the only honest thing to
             // show beside it is what the current resolution MEANS at that size.
             // Without this the field reads as a detail control, which it is not.
-            text(&self.detail_advice).size(theme::TEXT_SIZE_SMALL).color(theme::TEXT_DIM),
+            text(&self.detail_advice).size(theme::LABEL_SIZE).color(theme::TEXT_DIM),
         ]
         .spacing(theme::S2)
         .into()
@@ -3607,19 +3642,12 @@ impl Brokkr {
     /// The four falloff curves, the live one lit.
     fn falloff_row(&self) -> Element<'_, Message> {
         column![
-            text("Falloff").size(theme::TEXT_SIZE_SMALL).color(theme::TEXT_DIM),
-            FalloffCurve::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, curve| {
-                assembled.push(
-                    button(text(curve.label()).size(theme::CAPTION_SIZE))
-                        .width(Length::Fill)
-                        .style(if curve == self.brush.falloff {
-                            theme::tool_button_active
-                        } else {
-                            theme::tool_button
-                        })
-                        .on_press(Message::FalloffChanged(curve)),
-                )
-            }),
+            crate::ui::sub_label("Falloff"),
+            crate::ui::segmented(
+                FalloffCurve::ALL.map(|curve| (curve, curve.label())),
+                self.brush.falloff,
+                Message::FalloffChanged,
+            ),
         ]
         .spacing(theme::S2)
         .into()
@@ -3644,7 +3672,7 @@ impl Brokkr {
                                 .width(12)
                                 .height(12)
                                 .style(theme::swatch(slot.swatch())),
-                            text(format!("{number}")).size(theme::CAPTION_SIZE),
+                            text(format!("{number}")).size(theme::LABEL_SIZE),
                         ]
                         .spacing(theme::S1)
                         .align_y(Alignment::Center),
@@ -3662,7 +3690,7 @@ impl Brokkr {
             .unwrap_or("no such slot");
         column![
             text(format!("Filament  {}. {chosen}", self.paint_slot))
-                .size(theme::TEXT_SIZE_SMALL)
+                .size(theme::LABEL_SIZE)
                 .color(theme::TEXT_DIM),
             swatches,
         ]
@@ -3694,11 +3722,9 @@ impl Brokkr {
                             .height(14)
                             .style(theme::swatch(slot.swatch())),
                         text(format!("{}. {}", index + 1, slot.name))
-                            .size(theme::TEXT_SIZE_SMALL)
+                            .size(theme::LABEL_SIZE)
                             .color(theme::TEXT),
-                        text(slot.material.clone())
-                            .size(theme::CAPTION_SIZE)
-                            .color(theme::TEXT_MUTE),
+                        text(slot.material.clone()).size(theme::LABEL_SIZE).color(theme::TEXT_MUTE),
                     ]
                     .spacing(theme::S2)
                     .align_y(iced::Alignment::Center),
@@ -3708,7 +3734,7 @@ impl Brokkr {
 
         column![
             rows,
-            button(text("Sync filaments from printer").size(theme::TEXT_SIZE_SMALL))
+            button(text("Sync filaments from printer").size(theme::LABEL_SIZE))
                 .style(theme::tool_button)
                 .on_press(Message::PaletteSyncRequested),
             // View state, beside the colours it shows. Off draws every body as
@@ -3716,14 +3742,14 @@ impl Brokkr {
             checkbox(self.show_paint)
                 .label("show paint")
                 .on_toggle(|_| Message::ShowPaintToggled)
-                .text_size(theme::CAPTION_SIZE),
+                .text_size(theme::LABEL_SIZE),
             // The other thing drawn onto the surface that is not the surface.
             // Here for now because this is where the view toggles for it are;
             // it moves when the paint mode gives them a home of their own.
             checkbox(self.show_cavity)
                 .label("show creases")
                 .on_toggle(|_| Message::ShowCavityToggled)
-                .text_size(theme::CAPTION_SIZE),
+                .text_size(theme::LABEL_SIZE),
         ]
         .spacing(theme::S2)
         .into()
@@ -3737,7 +3763,7 @@ impl Brokkr {
             row![].spacing(theme::S2),
             |assembled, format| {
                 assembled.push(
-                    button(text(format.label()).size(theme::TEXT_SIZE_SMALL))
+                    button(text(format.label()).size(theme::LABEL_SIZE))
                         .style(theme::tool_button)
                         .on_press(Message::Export(format)),
                 )
@@ -3746,12 +3772,12 @@ impl Brokkr {
 
         let status: Element<'_, Message> = if self.status.is_empty() {
             text(format!("to {}", Self::export_directory().display()))
-                .size(theme::CAPTION_SIZE)
+                .size(theme::LABEL_SIZE)
                 .color(theme::TEXT_MUTE)
                 .into()
         } else {
             text(self.status.clone())
-                .size(theme::CAPTION_SIZE)
+                .size(theme::LABEL_SIZE)
                 .color(
                     if self.status.contains("not exported") || self.status.contains("could not") {
                         theme::ERROR
@@ -3765,9 +3791,9 @@ impl Brokkr {
         // How finely to mesh it, above the buttons it governs. In
         // millimetres, because that is what a print is measured in.
         let detail = row![
-            text("Detail").size(theme::CAPTION_SIZE).color(theme::TEXT_DIM),
+            text("Detail").size(theme::LABEL_SIZE).color(theme::TEXT_DIM),
             pick_list(ExportDetail::ALL, Some(self.export_detail), Message::ExportDetailChanged)
-                .text_size(theme::CAPTION_SIZE)
+                .text_size(theme::LABEL_SIZE)
                 .width(Length::Fill),
         ]
         .spacing(theme::S2)
@@ -3777,36 +3803,43 @@ impl Brokkr {
         // print: the clearance is the printer's, and a pin or a magnet is a
         // decision about how the printed parts go together.
         let key = self.key_spec;
-        let reading = |label: String| text(label).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM);
         let keys = column![
-            text("Parting keys: cut tool, alt held")
-                .size(theme::CAPTION_SIZE)
-                .color(theme::TEXT_DIM),
+            text("Parting keys: cut tool, alt held").size(theme::LABEL_SIZE).color(theme::TEXT_DIM),
             pick_list(brokkr_core::part::KeyKind::ALL, Some(key.kind), |kind| {
                 Message::KeySettingChanged(KeySetting::Kind(kind))
             })
-            .text_size(theme::CAPTION_SIZE)
+            .text_size(theme::LABEL_SIZE)
             .width(Length::Fill),
-            reading(format!("Radius  {:.1} mm", key.radius_mm)),
-            slider(0.5..=6.0, key.radius_mm, |mm| {
-                Message::KeySettingChanged(KeySetting::Radius(mm))
-            })
-            .step(0.1_f32),
-            reading(format!("Depth  {:.1} mm", key.depth_mm)),
-            slider(0.5..=8.0, key.depth_mm, |mm| {
+            crate::ui::number(
+                &self.drafts,
+                "key.radius",
+                "Radius",
+                key.radius_mm,
+                0.5..=6.0,
+                |mm| { Message::KeySettingChanged(KeySetting::Radius(mm)) }
+            )
+            .step(0.1)
+            .shown(format!("{:.1} mm", key.radius_mm)),
+            crate::ui::number(&self.drafts, "key.depth", "Depth", key.depth_mm, 0.5..=8.0, |mm| {
                 Message::KeySettingChanged(KeySetting::Depth(mm))
             })
-            .step(0.1_f32),
+            .step(0.1)
+            .shown(format!("{:.1} mm", key.depth_mm)),
             // The one that belongs to the machine. About 0.2 for filament and
             // under 0.1 for resin; a test print is the only real answer.
-            reading(format!("Clearance  {:.2} mm a side", key.clearance_mm)),
-            slider(0.0..=0.6, key.clearance_mm, |mm| {
-                Message::KeySettingChanged(KeySetting::Clearance(mm))
-            })
-            .step(0.05_f32),
+            crate::ui::number(
+                &self.drafts,
+                "key.clearance",
+                "Clearance a side",
+                key.clearance_mm,
+                0.0..=0.6,
+                |mm| { Message::KeySettingChanged(KeySetting::Clearance(mm)) }
+            )
+            .step(0.05)
+            .shown(format!("{:.2} mm", key.clearance_mm)),
             // The real answer: a plate of sockets at six clearances and a
             // peg, to print and try. See `app/fit_test.rs`.
-            button(text("Print a fit test\u{2026}").size(theme::CAPTION_SIZE))
+            button(text("Print a fit test\u{2026}").size(theme::LABEL_SIZE))
                 .style(theme::tool_button)
                 .on_press(Message::FitTestRequested),
         ]
@@ -3830,9 +3863,9 @@ impl Brokkr {
         let status: Element<'_, Message> = match devices.first() {
             Some(device) => {
                 let mut lines = column![
-                    text(device.name.clone()).size(theme::CAPTION_SIZE).color(theme::OK),
+                    text(device.name.clone()).size(theme::LABEL_SIZE).color(theme::OK),
                     text(format!("{} levels", device.pressure_max))
-                        .size(theme::CAPTION_SIZE)
+                        .size(theme::LABEL_SIZE)
                         .color(theme::TEXT_MUTE),
                 ]
                 .spacing(1);
@@ -3845,13 +3878,13 @@ impl Brokkr {
                 // story and this adds nothing.
                 if diagnosis != Diagnosis::Listening {
                     lines = lines.push(
-                        text(self.tablet.describe()).size(theme::CAPTION_SIZE).color(theme::WARN),
+                        text(self.tablet.describe()).size(theme::LABEL_SIZE).color(theme::WARN),
                     );
                 }
                 lines.into()
             }
             None => text(self.tablet.describe())
-                .size(theme::CAPTION_SIZE)
+                .size(theme::LABEL_SIZE)
                 .color(match diagnosis {
                     Diagnosis::PermissionDenied | Diagnosis::PipeFailed => theme::WARN,
                     _ => theme::TEXT_MUTE,
@@ -3889,21 +3922,25 @@ impl Brokkr {
             checkbox(self.pressure_enabled)
                 .label("Pressure")
                 .on_toggle(Message::PressureToggled)
-                .text_size(theme::TEXT_SIZE_SMALL),
-            text(format!("Curve  {:.2}", self.pressure_curve))
-                .size(theme::TEXT_SIZE_SMALL)
-                .color(theme::TEXT_DIM),
-            slider(0.30..=3.00, self.pressure_curve, Message::PressureCurveChanged).step(0.05_f32),
+                .text_size(theme::LABEL_SIZE),
+            crate::ui::number(
+                &self.drafts,
+                "pen.curve",
+                "Curve",
+                self.pressure_curve,
+                0.30..=3.00,
+                Message::PressureCurveChanged
+            )
+            .step(0.05)
+            .shown(format!("{:.2}", self.pressure_curve)),
             checkbox(self.tilt_enabled)
                 .label("Tilt steers stroke")
                 .on_toggle(Message::TiltToggled)
-                .text_size(theme::TEXT_SIZE_SMALL),
-            text(capabilities.unwrap_or_default())
-                .size(theme::CAPTION_SIZE)
-                .color(theme::TEXT_MUTE),
+                .text_size(theme::LABEL_SIZE),
+            text(capabilities.unwrap_or_default()).size(theme::LABEL_SIZE).color(theme::TEXT_MUTE),
             row![
-                text(live).size(theme::CAPTION_SIZE).font(theme::MONO).color(theme::TEXT_DIM),
-                button(text("reset").size(theme::CAPTION_SIZE))
+                text(live).size(theme::LABEL_SIZE).font(theme::MONO).color(theme::TEXT_DIM),
+                button(text("reset").size(theme::LABEL_SIZE))
                     .style(theme::tool_button)
                     .on_press(Message::ResetPressurePeak),
             ]
@@ -4038,5 +4075,32 @@ mod tests {
 
         // And one step per level, so no two depths can draw in the same place.
         assert_eq!(row_content_x(1) - row_content_x(0), INDENT_PER_DEPTH);
+    }
+
+    /// Driven through the application: typing holds a draft and changes
+    /// nothing, and the message a submit or a slider sends sets the value
+    /// and lets the draft go.
+    #[test]
+    fn a_draft_lasts_until_its_number_is_set() {
+        let mut app = Brokkr::with_tablet(crate::tablet::Tablet::inert());
+        let before = app.brush.radius;
+        drop(app.update(Message::FieldEdited("brush.radius", "4.".into())));
+        assert_eq!(app.drafts.get("brush.radius").map(String::as_str), Some("4."));
+        assert_eq!(app.brush.radius, before, "typing alone set the radius");
+        drop(
+            app.update(Message::FieldSet(
+                "brush.radius",
+                Box::new(Message::BrushRadiusChanged(4.0)),
+            )),
+        );
+        assert_eq!(app.brush.radius, 4.0);
+        assert!(app.drafts.is_empty(), "the draft outlived the value it was typed against");
+        drop(app.update(Message::FieldEdited("brush.radius", "nonsense".into())));
+        drop(app.update(Message::FieldSet(
+            "brush.radius",
+            Box::new(Message::FieldDropped("brush.radius")),
+        )));
+        assert_eq!(app.brush.radius, 4.0);
+        assert!(app.drafts.is_empty());
     }
 }

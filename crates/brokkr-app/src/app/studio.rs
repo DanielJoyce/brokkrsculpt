@@ -60,7 +60,7 @@ use brokkr_core::brush::compound::{Actions, Compound, Layer, MOST_PLATEAU, Profi
 use brokkr_core::brush::stamp::{Placement, StampError, StampGesture};
 use brokkr_core::{Brush, BrushDirection, FalloffCurve, Stamp};
 use glam::{Vec2, Vec3};
-use iced::widget::{button, column, container, row, slider, text, text_input};
+use iced::widget::{button, column, container, row, text, text_input};
 use iced::{Element, Length, Task};
 
 use super::Brokkr;
@@ -1077,166 +1077,134 @@ impl Brokkr {
     /// upstream's message.
     pub(super) fn profile_row(&self) -> Element<'_, Message> {
         let live = self.studio.profile(self.brush.falloff).shape;
-        let shapes = Shape::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, shape| {
-            let chosen = match shape.curve() {
-                Some(curve) => Message::FalloffChanged(curve),
-                None => Message::Studio(StudioMessage::RoundChosen),
-            };
-            assembled.push(
-                button(text(shape.label()).size(theme::CAPTION_SIZE).width(Length::Fill).center())
-                    .width(Length::Fill)
-                    .padding(iced::Padding { top: 5.0, bottom: 5.0, left: 2.0, right: 2.0 })
-                    .style(if shape == live {
-                        theme::tool_button_active
-                    } else {
-                        theme::tool_button
-                    })
-                    .on_press(chosen),
-            )
-        });
         column![
-            text("Profile").size(theme::TEXT_SIZE_SMALL).color(theme::TEXT_DIM),
-            shapes,
-            text(if self.studio.plateau > 0.0 {
-                format!("Flat middle  {:.2} of the radius", self.studio.plateau)
+            crate::ui::sub_label("Profile"),
+            crate::ui::segmented(Shape::ALL.map(|shape| (shape, shape.label())), live, |shape| {
+                match shape.curve() {
+                    Some(curve) => Message::FalloffChanged(curve),
+                    None => Message::Studio(StudioMessage::RoundChosen),
+                }
+            }),
+            crate::ui::number(
+                &self.drafts,
+                "studio.plateau",
+                "Flat middle",
+                self.studio.plateau,
+                PLATEAU_RANGE,
+                |share| Message::Studio(StudioMessage::PlateauChanged(share)),
+            )
+            .step(0.05)
+            .shown(if self.studio.plateau > 0.0 {
+                format!("{:.2}", self.studio.plateau)
             } else {
-                "Flat middle  none".to_string()
-            })
-            .size(theme::CAPTION_SIZE)
-            .color(theme::TEXT_DIM),
-            slider(PLATEAU_RANGE, self.studio.plateau, |share| {
-                Message::Studio(StudioMessage::PlateauChanged(share))
-            })
-            .step(0.05_f32),
+                "none".to_string()
+            }),
         ]
         .spacing(theme::S2)
         .into()
     }
 
-    /// What the brush in hand is made of, as a slider for each amount.
+    /// What the brush in hand is made of, as a number for each amount.
+    ///
+    /// Each signed amount is named by what its plus side does, and the
+    /// field shows the sign: a push of +0.30 pushes out, of -0.30 in.
     fn amounts_panel(&self, actions: Actions) -> Element<'_, Message> {
-        let reading = |label: String| text(label).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM);
-        let amount = |label: String,
+        let amount = |key: &'static str,
+                      label: &'static str,
                       range: std::ops::RangeInclusive<f32>,
                       value: f32,
                       with: fn(Actions, f32) -> Actions| {
-            column![
-                reading(label),
-                slider(range, value, move |amount| {
-                    Message::Studio(StudioMessage::ActionsChosen(with(actions, amount)))
-                })
-                .step(0.05_f32),
-            ]
-            .spacing(theme::S1)
+            let signed = *range.start() < 0.0;
+            crate::ui::number(&self.drafts, key, label, value, range, move |amount| {
+                Message::Studio(StudioMessage::ActionsChosen(with(actions, amount)))
+            })
+            .step(0.05)
+            .shown(if value == 0.0 {
+                "none".to_string()
+            } else if signed {
+                format!("{value:+.2}")
+            } else {
+                format!("{value:.2}")
+            })
         };
         // A stamp moves the surface a voxel at most, so the push and the
         // inflation share one: the one being moved takes what it is given
         // and the other gives way. `Actions::legal` would bring both down
         // in proportion, and a slider that stops short of the pointer
         // reads as a slider that is stuck.
-        let either = |amount: f32, more: &str, less: &str| {
-            if amount > 0.0 {
-                format!("{amount:.2} {more}")
-            } else if amount < 0.0 {
-                format!("{:.2} {less}", -amount)
-            } else {
-                "none".to_string()
-            }
-        };
-        let share =
-            |amount: f32| if amount > 0.0 { format!("{amount:.2}") } else { "none".to_string() };
         let mut amounts = column![
-            amount(
-                format!("Push  {}", either(actions.push, "out", "in")),
-                -1.0..=1.0,
-                actions.push,
-                |actions, push| Actions {
-                    push,
-                    inflate: actions.inflate.clamp(push.abs() - 1.0, 1.0 - push.abs()),
-                    ..actions
-                },
-            ),
-            amount(
-                format!("Inflate  {}", either(actions.inflate, "swelling", "shrinking")),
-                -1.0..=1.0,
-                actions.inflate,
-                |actions, inflate| Actions {
+            amount("amount.push", "Push out", -1.0..=1.0, actions.push, |actions, push| Actions {
+                push,
+                inflate: actions.inflate.clamp(push.abs() - 1.0, 1.0 - push.abs()),
+                ..actions
+            }),
+            amount("amount.inflate", "Inflate", -1.0..=1.0, actions.inflate, |actions, inflate| {
+                Actions {
                     inflate,
                     push: actions.push.clamp(inflate.abs() - 1.0, 1.0 - inflate.abs()),
                     ..actions
-                },
-            ),
+                }
+            },),
             amount(
-                format!("Gather  {}", either(actions.gather, "together", "apart")),
+                "amount.gather",
+                "Gather together",
                 -1.0..=1.0,
                 actions.gather,
                 |actions, gather| Actions { gather, ..actions },
             ),
             // Upstream's pinch, by what it does to what is under the
-            // brush and not by its name: see `Actions::pinch`.
-            amount(
-                format!("Pinch  {}", either(actions.pinch, "steeper sided", "worn down")),
-                -1.0..=1.0,
-                actions.pinch,
-                |actions, pinch| Actions { pinch, ..actions },
-            ),
-            amount(
-                format!("Smooth  {}", share(actions.smooth)),
-                0.0..=1.0,
-                actions.smooth,
-                |actions, smooth| Actions { smooth, ..actions },
-            ),
-            amount(
-                format!("Level  {}", share(actions.level)),
-                0.0..=1.0,
-                actions.level,
-                |actions, level| Actions { level, ..actions },
-            ),
+            // brush and not by its name: see `Actions::pinch`. Plus is
+            // steeper sided, minus worn down.
+            amount("amount.pinch", "Pinch steeper", -1.0..=1.0, actions.pinch, |actions, pinch| {
+                Actions { pinch, ..actions }
+            },),
+            amount("amount.smooth", "Smooth", 0.0..=1.0, actions.smooth, |actions, smooth| {
+                Actions { smooth, ..actions }
+            },),
+            amount("amount.level", "Level", 0.0..=1.0, actions.level, |actions, level| Actions {
+                level,
+                ..actions
+            }),
         ]
-        .spacing(theme::S1);
+        .spacing(theme::S2);
         // The plane is a setting of a brush that levels, and of no other.
         if actions.level > 0.0 {
-            let sides = Side::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, side| {
-                assembled.push(
-                    button(text(side.label()).size(theme::CAPTION_SIZE))
-                        .width(Length::Fill)
-                        .style(if side == actions.side {
-                            theme::tool_button_active
-                        } else {
-                            theme::tool_button
-                        })
-                        .on_press(Message::Studio(StudioMessage::ActionsChosen(Actions {
-                            side,
-                            ..actions
-                        }))),
-                )
-            });
             amounts = amounts
-                .push(amount(
-                    format!(
-                        "Level to a plane  {}",
-                        either(actions.plane, "radii proud", "radii under")
+                .push(
+                    amount(
+                        "amount.plane",
+                        "Plane, radii proud",
+                        -1.0..=1.0,
+                        actions.plane,
+                        |actions, plane| Actions { plane, ..actions },
                     )
-                    .replace("none", "at the surface"),
-                    -1.0..=1.0,
-                    actions.plane,
-                    |actions, plane| Actions { plane, ..actions },
+                    .shown(if actions.plane == 0.0 {
+                        "surface".to_string()
+                    } else {
+                        format!("{:+.2}", actions.plane)
+                    }),
+                )
+                .push(crate::ui::segmented(
+                    Side::ALL.map(|side| (side, side.label())),
+                    actions.side,
+                    move |side| {
+                        Message::Studio(StudioMessage::ActionsChosen(Actions { side, ..actions }))
+                    },
                 ))
-                .push(sides)
                 .push(
                     text(match actions.side {
                         Side::Both => "fills up to the plane and cuts down to it",
                         Side::Fill => "fills up to the plane and cuts nothing",
                         Side::Cut => "cuts down to the plane and fills nothing",
                     })
-                    .size(theme::CAPTION_SIZE)
+                    .size(theme::LABEL_SIZE)
                     .color(theme::TEXT_MUTE),
                 );
         }
         if actions.is_nothing() {
             amounts = amounts.push(
                 text("a brush of nothing does nothing")
-                    .size(theme::CAPTION_SIZE)
+                    .size(theme::LABEL_SIZE)
                     .color(theme::TEXT_MUTE),
             );
         }
@@ -1267,15 +1235,10 @@ impl Brokkr {
                 text_input("name this brush", &self.studio.preset_name)
                     .on_input(move |name| changed(StudioMessage::PresetNamed(name)))
                     .on_submit(changed(StudioMessage::PresetSaved))
-                    .padding(iced::Padding {
-                        top: 1.0,
-                        bottom: 1.0,
-                        left: theme::S1,
-                        right: theme::S1
-                    })
-                    .size(theme::TEXT_SIZE_SMALL)
+                    .padding(theme::PAD_FIELD)
+                    .size(theme::LABEL_SIZE)
                     .width(Length::Fill),
-                button(text("Keep").size(theme::CAPTION_SIZE))
+                button(text("Keep").size(theme::LABEL_SIZE))
                     .style(theme::tool_button)
                     .on_press(changed(StudioMessage::PresetSaved)),
             ]
@@ -1284,13 +1247,11 @@ impl Brokkr {
             // in, or read the directory again after putting some there by
             // hand.
             row![
-                button(
-                    text("Import\u{2026}").size(theme::CAPTION_SIZE).width(Length::Fill).center()
-                )
-                .width(Length::Fill)
-                .style(theme::tool_button)
-                .on_press(changed(StudioMessage::BrushImportRequested)),
-                button(text("Read again").size(theme::CAPTION_SIZE).width(Length::Fill).center())
+                button(text("Import\u{2026}").size(theme::LABEL_SIZE).width(Length::Fill).center())
+                    .width(Length::Fill)
+                    .style(theme::tool_button)
+                    .on_press(changed(StudioMessage::BrushImportRequested)),
+                button(text("Read again").size(theme::LABEL_SIZE).width(Length::Fill).center())
                     .width(Length::Fill)
                     .style(theme::tool_button)
                     .on_press(changed(StudioMessage::BrushesReloaded)),
@@ -1302,13 +1263,12 @@ impl Brokkr {
         // hand that is on a pen and not on the `b` key.
         // On a line of their own under the word: seen on a screen, the
         // panel is too narrow for the word and both buttons on one.
-        let small = iced::Padding { top: 2.0, bottom: 2.0, left: theme::S1, right: theme::S1 };
+        let small = theme::PAD_CHOICE;
         let heading = column![
-            text("BRUSHES").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
             row![
                 button(
                     text(if self.studio.adding { "Done adding" } else { "+ Add a brush" })
-                        .size(theme::CAPTION_SIZE)
+                        .size(theme::LABEL_SIZE)
                         .width(Length::Fill)
                         .center()
                 )
@@ -1321,10 +1281,7 @@ impl Brokkr {
                 })
                 .on_press(changed(StudioMessage::AddToggled)),
                 button(
-                    text("At the pointer  b")
-                        .size(theme::CAPTION_SIZE)
-                        .width(Length::Fill)
-                        .center()
+                    text("At the pointer  b").size(theme::LABEL_SIZE).width(Length::Fill).center()
                 )
                 .width(Length::Fill)
                 .padding(small)
@@ -1350,7 +1307,7 @@ impl Brokkr {
                         Place::Changed => "Restore the one that came with it",
                         _ => "Forget this brush",
                     })
-                    .size(theme::CAPTION_SIZE)
+                    .size(theme::LABEL_SIZE)
                     .width(Length::Fill)
                     .center(),
                 )
@@ -1387,11 +1344,9 @@ impl Brokkr {
                 .width(Length::Fill)
                 .height(Length::Fixed(SWATCH_HEIGHT))
                 .content_fit(iced::ContentFit::Contain);
-            let face = column![
-                picture,
-                text(name).size(theme::CAPTION_SIZE).width(Length::Fill).center(),
-            ]
-            .spacing(2.0);
+            let face =
+                column![picture, text(name).size(theme::LABEL_SIZE).width(Length::Fill).center(),]
+                    .spacing(2.0);
             button(face)
                 .width(Length::Fill)
                 .padding(iced::Padding { top: 3.0, bottom: 3.0, left: 2.0, right: 2.0 })
@@ -1417,7 +1372,7 @@ impl Brokkr {
             })
         };
         let heading =
-            |words: &'static str| text(words).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM);
+            |words: &'static str| text(words).size(theme::LABEL_SIZE).color(theme::TEXT_DIM);
         // The ones that come with the application under a heading for
         // each kind of work, and then the user's own.
         let mut grid = column![].spacing(theme::S1);
@@ -1466,7 +1421,7 @@ impl Brokkr {
     pub(super) fn palette_popup(&self) -> Option<Element<'_, Message>> {
         let corner = self.popup_corner(self.studio.popup?);
         let card = column![
-            text("BRUSHES").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
+            text("BRUSHES").size(theme::HEADING_SIZE).color(theme::TEXT_MUTE),
             self.brush_grid(POPUP_ACROSS, POPUP_ACROSS),
         ]
         .spacing(theme::S2);
@@ -1493,7 +1448,7 @@ impl Brokkr {
                 pictures.push(kinds.iter().fold(row![].spacing(theme::S1), |assembled, kind| {
                     let live = self.studio.built_in == Some(*kind);
                     assembled.push(
-                        button(text(kind.label()).size(theme::CAPTION_SIZE))
+                        button(text(kind.label()).size(theme::LABEL_SIZE))
                             .width(Length::Fill)
                             .style(if live {
                                 theme::tool_button_active
@@ -1513,7 +1468,7 @@ impl Brokkr {
                     } else {
                         "A picture…".to_string()
                     })
-                    .size(theme::CAPTION_SIZE),
+                    .size(theme::LABEL_SIZE),
                 )
                 .width(Length::Fill)
                 .style(if own { theme::tool_button_active } else { theme::tool_button })
@@ -1522,147 +1477,154 @@ impl Brokkr {
             .into()
     }
 
-    /// What the brush in hand is made of and how it is led: under the
-    /// classic brush's size and strength.
+    /// What the brush in hand is made of: under the classic brush's size
+    /// and strength, in the BRUSH section.
     pub(super) fn studio_panel(&self) -> Element<'_, Message> {
-        let reading = |label: String| text(label).size(theme::CAPTION_SIZE).color(theme::TEXT_DIM);
         let changed = |message: StudioMessage| Message::Studio(message);
-        let stamping = self.studio.stamp_on;
-        let mut stamp = column![
-            button(text("Stamp").size(theme::CAPTION_SIZE))
-                .width(Length::Fill)
-                .style(if stamping { theme::tool_button_active } else { theme::tool_button })
-                .on_press(changed(StudioMessage::StampToggled(!stamping))),
-        ]
-        .spacing(theme::S1);
-        if stamping {
-            stamp = stamp
-                .push(self.picture_picker())
-                .push(reading(format!("Height  {:.2} of its size", self.studio.stamp_height)))
-                .push(
-                    slider(HEIGHT_RANGE, self.studio.stamp_height, move |share| {
-                        changed(StudioMessage::StampHeightChanged(share))
-                    })
-                    .step(0.01_f32),
-                )
-                .push({
-                    // One stamp sized by the drag, or a row of them at the
-                    // brush's size: pressed again, the row is put away.
-                    let row = self.studio.stamp_along > 0.0;
-                    button(text("Along the stroke").size(theme::CAPTION_SIZE))
-                        .width(Length::Fill)
-                        .style(if row { theme::tool_button_active } else { theme::tool_button })
-                        .on_press(changed(StudioMessage::StampAlongChanged(if row {
-                            0.0
-                        } else {
-                            DEFAULT_ALONG
-                        })))
-                });
-            if self.studio.stamp_along > 0.0 {
-                stamp = stamp
-                    .push(reading(format!(
-                        "One every  {:.1} of its width",
-                        self.studio.stamp_along
-                    )))
-                    .push(
-                        slider(ALONG_RANGE, self.studio.stamp_along, move |widths| {
-                            changed(StudioMessage::StampAlongChanged(widths))
-                        })
-                        .step(0.1_f32),
-                    );
-            }
-            stamp = stamp.push(
-                text(if self.studio.stamp_along > 0.0 {
-                    "drag to lay a row, each the brush's size"
-                } else {
-                    "press where it goes, drag to size and turn it"
-                })
-                .size(theme::CAPTION_SIZE)
-                .color(theme::TEXT_MUTE),
-            );
-        }
         // What the brush is made of, for a brush on the field: put away
         // until it is asked for, because most strokes are made with a
         // brush as it came.
         let made_of = self.studio.custom.or_else(|| Actions::of(self.brush.kind));
-        let mut settings = column![].spacing(theme::S1);
-        if let Some(actions) = made_of.filter(|_| !stamping) {
+        let mut settings = column![].spacing(theme::S2);
+        if let Some(actions) = made_of.filter(|_| !self.studio.stamp_on) {
             // A picture across the tip: the one in hand, which is the one
             // the stamp presses.
             let tipped = self.studio.tip_on;
-            settings = settings.push(
-                button(text("Picture across the tip").size(theme::CAPTION_SIZE))
-                    .width(Length::Fill)
-                    .style(if tipped { theme::tool_button_active } else { theme::tool_button })
-                    .on_press(changed(StudioMessage::TipToggled(!tipped))),
-            );
+            settings = settings.push(crate::ui::toggle(
+                "Picture across the tip",
+                tipped,
+                changed(StudioMessage::TipToggled(!tipped)),
+            ));
             if tipped {
                 settings = settings.push(self.picture_picker()).push(
                     text("where the picture is bright the brush works, its top along the stroke")
-                        .size(theme::CAPTION_SIZE)
+                        .size(theme::LABEL_SIZE)
                         .color(theme::TEXT_MUTE),
                 );
             }
             // Whether a stroke builds on itself, and whether it is a line
             // or the brush set down every so often.
-            let builds = self.studio.build_up;
-            let way = |label: &'static str, on: bool| {
-                button(text(label).size(theme::CAPTION_SIZE).width(Length::Fill).center())
-                    .width(Length::Fill)
-                    .style(if builds == on {
-                        theme::tool_button_active
-                    } else {
-                        theme::tool_button
-                    })
-                    .on_press(changed(StudioMessage::BuildUpToggled(on)))
-            };
             settings = settings
-                .push(row![way("Builds up", true), way("One layer", false)].spacing(theme::S1))
-                .push(reading(if self.studio.dabs > 0.0 {
-                    format!("Set down every  {:.1} of its width", self.studio.dabs)
-                } else {
-                    "Set down  as a line".to_string()
-                }))
+                .push(crate::ui::segmented(
+                    [(true, "Builds up"), (false, "One layer")],
+                    self.studio.build_up,
+                    move |on| changed(StudioMessage::BuildUpToggled(on)),
+                ))
                 .push(
-                    slider(0.0..=*ALONG_RANGE.end(), self.studio.dabs, move |widths| {
-                        changed(StudioMessage::DabsChanged(widths))
-                    })
-                    .step(0.5_f32),
+                    crate::ui::number(
+                        &self.drafts,
+                        "studio.dabs",
+                        "Set down every",
+                        self.studio.dabs,
+                        0.0..=*ALONG_RANGE.end(),
+                        move |widths| changed(StudioMessage::DabsChanged(widths)),
+                    )
+                    .step(0.5)
+                    .shown(if self.studio.dabs > 0.0 {
+                        format!("{:.1} wide", self.studio.dabs)
+                    } else {
+                        "a line".to_string()
+                    }),
                 );
             let open = self.studio.open;
-            settings = settings.push(
-                button(
-                    text(if open { "What it does  \u{25be}" } else { "What it does  \u{25b8}" })
-                        .size(theme::CAPTION_SIZE),
-                )
-                .width(Length::Fill)
-                .style(if open { theme::tool_button_active } else { theme::tool_button })
-                .on_press(changed(StudioMessage::SettingsShown(!open))),
-            );
+            settings = settings.push(crate::ui::disclosure(
+                "What it does",
+                open,
+                changed(StudioMessage::SettingsShown(!open)),
+            ));
             if open {
                 settings = settings.push(self.amounts_panel(actions));
             }
         }
+        settings.into()
+    }
+
+    /// How the brush is led: the STROKE section.
+    pub(super) fn stroke_panel(&self) -> Element<'_, Message> {
+        let changed = |message: StudioMessage| Message::Studio(message);
+        let stamping = self.studio.stamp_on;
+        let mut stamp = column![crate::ui::toggle(
+            "Stamp",
+            stamping,
+            changed(StudioMessage::StampToggled(!stamping)),
+        )]
+        .spacing(theme::S2);
+        if stamping {
+            // One stamp sized by the drag, or a row of them at the brush's
+            // size: pressed again, the row is put away.
+            let along = self.studio.stamp_along > 0.0;
+            stamp = stamp
+                .push(self.picture_picker())
+                .push(
+                    crate::ui::number(
+                        &self.drafts,
+                        "studio.stamp_height",
+                        "Height, of its size",
+                        self.studio.stamp_height,
+                        HEIGHT_RANGE,
+                        move |share| changed(StudioMessage::StampHeightChanged(share)),
+                    )
+                    .step(0.01),
+                )
+                .push(crate::ui::toggle(
+                    "Along the stroke",
+                    along,
+                    changed(StudioMessage::StampAlongChanged(if along {
+                        0.0
+                    } else {
+                        DEFAULT_ALONG
+                    })),
+                ));
+            if along {
+                stamp = stamp.push(
+                    crate::ui::number(
+                        &self.drafts,
+                        "studio.stamp_along",
+                        "One every",
+                        self.studio.stamp_along,
+                        ALONG_RANGE,
+                        move |widths| changed(StudioMessage::StampAlongChanged(widths)),
+                    )
+                    .step(0.1)
+                    .shown(format!("{:.1} wide", self.studio.stamp_along)),
+                );
+            }
+            stamp = stamp.push(
+                text(if along {
+                    "drag to lay a row, each the brush's size"
+                } else {
+                    "press where it goes, drag to size and turn it"
+                })
+                .size(theme::LABEL_SIZE)
+                .color(theme::TEXT_MUTE),
+            );
+        }
         column![
-            settings,
-            text("STROKE").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
             stamp,
-            reading(if self.studio.lazy_px > 0.0 {
-                format!("Lazy  {:.0} px behind the pointer", self.studio.lazy_px)
+            crate::ui::number(
+                &self.drafts,
+                "studio.lazy",
+                "Lazy",
+                self.studio.lazy_px,
+                LAZY_RANGE,
+                move |pixels| changed(StudioMessage::LazyChanged(pixels)),
+            )
+            .step(1.0)
+            .shown(if self.studio.lazy_px > 0.0 {
+                format!("{:.0} px", self.studio.lazy_px)
             } else {
-                "Lazy  off".to_string()
+                "off".to_string()
             }),
-            slider(LAZY_RANGE, self.studio.lazy_px, move |pixels| {
-                changed(StudioMessage::LazyChanged(pixels))
-            })
-            .step(1.0_f32),
-            reading(format!("Size from pressure  {:.2}", self.studio.size_from_pressure)),
-            slider(SIZE_RANGE, self.studio.size_from_pressure, move |share| {
-                changed(StudioMessage::SizeFromPressureChanged(share))
-            })
-            .step(0.01_f32),
+            crate::ui::number(
+                &self.drafts,
+                "studio.size_from_pressure",
+                "Size from pressure",
+                self.studio.size_from_pressure,
+                SIZE_RANGE,
+                move |share| changed(StudioMessage::SizeFromPressureChanged(share)),
+            ),
         ]
-        .spacing(theme::S1)
+        .spacing(theme::S2)
         .into()
     }
 }
