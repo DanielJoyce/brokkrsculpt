@@ -634,8 +634,12 @@ pub struct Volume {
     /// mask's three plus the undo arithmetic that decided it.
     colour: ColourField,
     /// The body's paint: a colour and a coverage for each voxel of its
-    /// surface. See [`crate::paint::field`].
+    /// surface. See [`crate::paint::field`]. **The active layer's**: the
+    /// other layers of the stack are in `layers`. See
+    /// [`crate::paint::layers`].
     paint: PaintField,
+    /// The body's other layers of paint, and the composite of the stack.
+    layers: crate::paint::layers::Layers,
     scratch: EditScratch,
 }
 
@@ -659,6 +663,7 @@ impl Volume {
             mask_polarity: None,
             colour: ColourField::default(),
             paint: PaintField::default(),
+            layers: crate::paint::layers::Layers::default(),
             scratch: EditScratch::default(),
         }
     }
@@ -735,6 +740,213 @@ impl Volume {
     /// [`Volume::mark_brick_and_neighbours_dirty`], for the same file.
     pub(crate) fn paint_changed_in(&mut self, coord: BrickCoord) {
         self.mark_brick_and_neighbours_dirty(coord);
+    }
+
+    // ------------------------------------------------------------- layers
+
+    /// The body's layers of paint. See [`crate::paint::layers`].
+    #[inline]
+    pub fn layers(&self) -> &crate::paint::layers::Layers {
+        &self.layers
+    }
+
+    /// Every layer with what it is, bottom to top, the active one's paint
+    /// being [`Volume::paint`].
+    pub fn layer_stack(&self) -> Vec<(crate::paint::layers::LayerMeta, &PaintField)> {
+        self.layers.stack(&self.paint)
+    }
+
+    /// The paint as it is seen: the stack put together, which for one plain
+    /// layer is that layer. What the renderer, the exports and Pick from
+    /// model read.
+    #[inline]
+    pub fn display_paint(&self) -> &PaintField {
+        if self.layers.is_plain() { &self.paint } else { self.layers.composite() }
+    }
+
+    /// Put the composite together again in every dirty brick.
+    ///
+    /// Only where the stack is not one plain layer. A brick's crease is
+    /// asked of the field only when a shown layer's blend reads the shape.
+    fn put_the_layers_together(&mut self) {
+        if self.layers.is_plain() || self.dirty.is_empty() {
+            return;
+        }
+        let shaped = self.layers.reads_the_shape();
+        let coords: Vec<BrickCoord> = self.dirty.iter().copied().collect();
+        for coord in coords {
+            let creases = shaped.then(|| self.creases_in(coord));
+            let Volume { layers, paint, .. } = self;
+            layers.put_together(coord, paint, |voxel| {
+                creases.as_ref().map_or(0.0, |creases| creases[voxel])
+            });
+        }
+    }
+
+    /// How concave the surface is at each voxel of a brick, -1..=1, from
+    /// the field. See [`crate::paint::layers::crease_from`].
+    fn creases_in(&self, coord: BrickCoord) -> Vec<f32> {
+        let origin = coord.origin();
+        (0..crate::brick::BRICK_VOXELS)
+            .map(|index| {
+                let (x, y, z) = crate::paint::layers::voxel_of(index);
+                let at = origin + IVec3::new(x, y, z);
+                let sample = |offset: IVec3| self.sample_voxel(at + offset);
+                crate::paint::layers::crease_from(
+                    sample(IVec3::ZERO),
+                    [
+                        sample(IVec3::X),
+                        sample(-IVec3::X),
+                        sample(IVec3::Y),
+                        sample(-IVec3::Y),
+                        sample(IVec3::Z),
+                        sample(-IVec3::Z),
+                    ],
+                )
+            })
+            .collect()
+    }
+
+    /// Mark every brick any layer has paint in, so the composite and the
+    /// mesh follow a change to the stack itself.
+    fn layers_changed(&mut self) {
+        self.layers.forget_composite();
+        for coord in self.layers.painted_bricks(&self.paint) {
+            self.mark_brick_and_neighbours_dirty(coord);
+        }
+    }
+
+    /// Run `edit` once for each layer, with that layer swapped in as the
+    /// volume's paint field and its stroke record as the volume's: what an
+    /// operation that carries the paint with the surface does to carry all
+    /// of it. `edit` is given the layer's place in the stack.
+    pub fn edit_each_layer(&mut self, mut edit: impl FnMut(&mut Volume, usize)) {
+        if !self.layers.has_layers() {
+            edit(self, 0);
+            return;
+        }
+        let active = self.layers.active();
+        for index in 0..self.layers.len() {
+            if index == active {
+                edit(self, index);
+                continue;
+            }
+            let Volume { layers, paint, paint_recorder, .. } = self;
+            layers.swap_with(index, paint, paint_recorder);
+            edit(self, index);
+            let Volume { layers, paint, paint_recorder, .. } = self;
+            layers.swap_with(index, paint, paint_recorder);
+        }
+    }
+
+    /// Every layer's paint, bottom to top: what a pass that fills a rebuilt
+    /// body's layers reads from.
+    pub fn layer_fields(&self) -> Vec<&PaintField> {
+        (0..self.layers.len()).map(|index| self.layers.field(index, &self.paint)).collect()
+    }
+
+    /// The whole stack, for an undo entry or the file.
+    pub fn layer_state(&self) -> crate::paint::layers::LayerState {
+        self.layers.state(&self.paint)
+    }
+
+    /// Put a whole stack back, and hand out the one that was there.
+    pub fn restore_layers(
+        &mut self,
+        state: crate::paint::layers::LayerState,
+    ) -> crate::paint::layers::LayerState {
+        let previous = self.layer_state();
+        self.layers_changed();
+        self.paint = self.layers.restore(state);
+        self.layers_changed();
+        previous
+    }
+
+    /// A new layer above the active one, made active. `None` when the stack
+    /// is full.
+    pub fn add_layer(
+        &mut self,
+        name: impl Into<String>,
+        blend: crate::paint::layers::Blend,
+    ) -> Option<crate::paint::layers::LayerId> {
+        let id = self.layers.add(name, blend, &mut self.paint)?;
+        self.layers_changed();
+        Some(id)
+    }
+
+    /// A copy of the layer at `index` over it, made active. `None` when
+    /// the stack is full.
+    pub fn duplicate_layer(&mut self, index: usize) -> Option<crate::paint::layers::LayerId> {
+        let id = self.layers.duplicate(index, &mut self.paint)?;
+        self.layers_changed();
+        Some(id)
+    }
+
+    /// Make the layer at `index` the one strokes go to.
+    pub fn set_active_layer(&mut self, index: usize) {
+        self.layers.swap_active(index, &mut self.paint);
+    }
+
+    /// Change what a layer is: its name, blend, opacity, shown, locked.
+    pub fn set_layer_meta(&mut self, index: usize, meta: crate::paint::layers::LayerMeta) {
+        self.layers.set_meta(index, meta);
+        self.layers_changed();
+    }
+
+    /// Delete the layer at `index`; the last is emptied instead.
+    pub fn delete_layer(&mut self, index: usize) {
+        self.layers_changed();
+        self.layers.delete(index, &mut self.paint);
+        self.layers_changed();
+    }
+
+    /// Move a layer up or down the stack.
+    pub fn reorder_layer(&mut self, from: usize, to: usize) {
+        self.layers.reorder(from, to);
+        self.layers_changed();
+    }
+
+    /// Merge the layer at `index` into the one under it.
+    pub fn merge_layer_down(&mut self, index: usize) {
+        self.layers.merge_down(index, &mut self.paint);
+        self.layers_changed();
+    }
+
+    /// The whole stack into one layer.
+    pub fn flatten_layers(&mut self) {
+        self.layers_changed();
+        self.layers.flatten(&mut self.paint);
+        self.layers_changed();
+    }
+
+    /// The whole stack put together into one field, as a flatten would,
+    /// without changing the stack: what a merge brings into another body.
+    pub fn flattened_paint(&self) -> std::borrow::Cow<'_, PaintField> {
+        if self.layers.is_plain() {
+            return std::borrow::Cow::Borrowed(&self.paint);
+        }
+        let stack = self.layer_stack();
+        let metas: Vec<_> = stack.iter().map(|(meta, _)| meta.clone()).collect();
+        let fields: Vec<&PaintField> = stack.iter().map(|(_, field)| *field).collect();
+        std::borrow::Cow::Owned(crate::paint::layers::merge_fields(&metas, &fields))
+    }
+
+    /// Take every layer of `source` through `f` onto this body: for an
+    /// operation that rebuilds a body from another, a shift, a warp, a turn,
+    /// a resample.
+    pub(crate) fn carry_layers_from(
+        &mut self,
+        source: &Volume,
+        f: impl Fn(&PaintField) -> PaintField,
+    ) {
+        (self.layers, self.paint) = source.layers.mapped(&source.paint, f);
+    }
+
+    /// The same layers as `source`, every one empty, for a pass that then
+    /// fills each through [`Volume::edit_each_layer`].
+    pub(crate) fn take_empty_layers_of(&mut self, source: &Volume) {
+        self.layers = source.layers.emptied();
+        self.paint = PaintField::default();
     }
 
     /// Swap a whole mask onto this body and hand back the one that was there.
@@ -912,7 +1124,9 @@ impl Volume {
         // duplicate that arrived unpainted would print in one filament, and
         // nothing on screen but the paint itself says so.
         copy.colour = self.colour.translated(offset_bricks);
-        copy.paint = self.paint.translated(offset_bricks);
+        // Every layer of it, as the one.
+        (copy.layers, copy.paint) =
+            self.layers.mapped(&self.paint, |field| field.translated(offset_bricks));
         // A stroke in progress is NOT carried over. `recorder` holds the prior
         // contents of the bricks this volume's own gesture touched, and those
         // name an undo entry that belongs to the body being copied; a copy that
@@ -1116,7 +1330,9 @@ impl Volume {
         // The paint, after the cut and not before it: a midpoint the cut
         // made has a cell of its own, and is painted from it like any other
         // vertex. Free for a body with no paint, as the slots are.
-        self.paint.rgba_at_cells(coord, &out.cells, &mut out.paint);
+        // The stack put together, which for one plain layer is that layer.
+        // See `paint/layers.rs`.
+        self.display_paint().rgba_at_cells(coord, &out.cells, &mut out.paint);
         debug_assert_eq!(
             out.mask.len(),
             out.vertices.len(),
@@ -1309,6 +1525,10 @@ impl Volume {
     /// path, which is the one path in this engine that must never touch the
     /// allocator.
     pub fn drain_dirty(&mut self, mut visit: impl FnMut(BrickCoord)) {
+        // The composite of the paint, put together again in the bricks about
+        // to be meshed, which are the ones anything changed. See
+        // `paint/layers.rs`.
+        self.put_the_layers_together();
         for coord in self.dirty.drain() {
             visit(coord);
         }
@@ -2171,6 +2391,9 @@ impl Volume {
         self.mask_recorder = Some(FxHashMap::default());
         self.colour_recorder = Some(FxHashMap::default());
         self.paint_recorder = Some(FxHashMap::default());
+        // Every layer keeps a record of its own, since Move and Bulk carry
+        // them all. See `paint/layers.rs`.
+        self.layers.open_recorders();
         self.mask_polarity = None;
     }
 
@@ -2190,10 +2413,22 @@ impl Volume {
         self.mask.collapse();
         self.colour.collapse();
         self.paint.collapse();
+        self.layers.collapse_all();
+        // Each layer's record under its id, the active one's from the
+        // volume's own recorder. Taken before the field's, which returns
+        // early when no stroke was open.
+        let active = self.layers.active_id();
+        let mut paints: Vec<_> = self
+            .paint_recorder
+            .take()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(coord, brick)| (active, coord, brick))
+            .collect();
+        paints.extend(self.layers.take_records());
         let recorder = self.recorder.take()?;
         let masks = self.mask_recorder.take().unwrap_or_default();
         let colours = self.colour_recorder.take().unwrap_or_default();
-        let paints: Vec<_> = self.paint_recorder.take().unwrap_or_default().into_iter().collect();
         let edit = StrokeEdit::from_recording(recorder, masks, colours, self.mask_polarity.take());
         // A stroke that changed paint and nothing else is still a stroke.
         match edit {
@@ -2265,10 +2500,16 @@ impl Volume {
         // is baked into the vertices at mesh time.
         let paints = edit.take_paints();
         let mut paint_inverse = Vec::with_capacity(paints.len());
-        for (coord, brick) in paints {
-            let previous = self.paint.brick(coord).cloned();
-            self.paint.restore_brick(coord, brick);
-            paint_inverse.push((coord, previous));
+        for (layer, coord, brick) in paints {
+            // Into the layer it was recorded on, wherever that is in the
+            // stack now. One deleted since was put back by its own undo
+            // first, being later in the history.
+            let Some(field) = self.layers.field_mut(layer, &mut self.paint) else {
+                continue;
+            };
+            let previous = field.brick(coord).cloned();
+            field.restore_brick(coord, brick);
+            paint_inverse.push((layer, coord, previous));
             self.mark_brick_and_neighbours_dirty(coord);
         }
         let (bricks, masks, colours, polarity) = edit.into_parts();
@@ -2867,6 +3108,7 @@ impl Volume {
         // come to under-report a painted document by up to 25%.
         self.colour.add_to_stats(&mut stats);
         self.paint.add_to_stats(&mut stats);
+        self.layers.add_to_stats(&mut stats);
         stats
     }
 

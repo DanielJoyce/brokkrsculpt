@@ -407,6 +407,9 @@ impl Brokkr {
                 self.section(PanelSection::Detail, || self.detail_panel()),
             ],
             Workspace::Paint => vec![
+                // Always open, as the bodies are: which layer a stroke
+                // goes to is chosen here. See `app/layers.rs`.
+                self.layers_block(),
                 self.brush_section(),
                 self.section(PanelSection::Stroke, || self.stroke_panel()),
                 self.section(PanelSection::Filament, || self.filament_panel()),

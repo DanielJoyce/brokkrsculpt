@@ -72,6 +72,8 @@ pub(super) struct PaintingState {
     /// levels of 255.
     pub fill_like: u8,
     stroke: PaintStroke,
+    /// The layers block's gesture under way. See `app/layers.rs`.
+    pub layers: super::layers::LayersHeld,
 }
 
 impl Default for PaintingState {
@@ -85,6 +87,7 @@ impl Default for PaintingState {
             held_off: false,
             fill_like: USUAL_LIKENESS,
             stroke: PaintStroke::new(),
+            layers: Default::default(),
         }
     }
 }
@@ -163,7 +166,8 @@ impl Brokkr {
     fn pick_colour(&mut self, point: Vec3) {
         let volume = self.doc.active_volume();
         let voxel = (point / volume.voxel_size()).round().as_ivec3();
-        let paint = volume.paint().at(voxel);
+        // What is seen there, every layer put together.
+        let paint = volume.display_paint().at(voxel);
         if paint[3] == 0 {
             self.status = "nothing is painted there to take a colour from".to_string();
             return;
@@ -255,6 +259,9 @@ impl Brokkr {
         let Some((low, high)) = self.doc.active_volume().world_bounds() else {
             return;
         };
+        if self.layer_refuses_paint() {
+            return;
+        }
         let pigment = self.painting.pigment(BrushDirection::Add);
         self.arm_recorder();
         let volume = self.doc.active_volume_mut();

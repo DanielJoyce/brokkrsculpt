@@ -67,6 +67,10 @@ pub mod bake;
 pub mod field;
 pub mod file;
 pub mod fill;
+pub mod layer_file;
+#[cfg(test)]
+mod layer_tests;
+pub mod layers;
 #[cfg(test)]
 mod properties;
 pub mod remove;

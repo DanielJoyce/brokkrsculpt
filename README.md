@@ -401,6 +401,14 @@ true of it too, and what it adds is this.
   every export that carries colour: a colour a vertex in a PLY, the
   texture of an *OBJ+PNG* or a *GLB*, and in a 3MF the loaded filament
   nearest the colour, wherever the paint covers at least half.
+- **Layers of paint.** LAYERS, at the top of the Paint mode's settings:
+  up to sixteen a body, each with a name, a blend (*Normal*, *Multiply*,
+  *Screen*, *Glaze*, a *Wash* that pools in the creases, a *Contrast*
+  that tints by how light what is under it is), an opacity, an eye and a
+  lock. Strokes go on the active layer; new, duplicate, up, down, merge
+  down, flatten and delete are each an undo step. The layers are saved
+  with the project and go with the model when it is moved, bulked,
+  split or turned.
 - **Filaments and paints.** Behind *Filaments* on the paint brush is
   painting by filament slot, as upstream has it, and *Mix paints*, which
   swaps the slots for a rack of paints, each with a wash that pools in the

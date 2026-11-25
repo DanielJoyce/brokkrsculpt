@@ -339,6 +339,30 @@ pub enum PaintingMessage {
     Coated,
 }
 
+/// A change to the active body's layers of paint. See `app/layers.rs`.
+/// Each names a layer by its place in the stack, bottom being 0.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LayersMessage {
+    /// A new layer over the active one.
+    Added,
+    /// Paint on this one.
+    Chosen(usize),
+    Shown(usize),
+    Locked(usize),
+    Blended(usize, brokkr_core::paint::layers::Blend),
+    Opacity(usize, f32),
+    Renamed(usize, String),
+    /// One place up the stack, or down.
+    Raised(usize),
+    Lowered(usize),
+    /// A copy over it, made active.
+    Duplicated(usize),
+    MergedDown(usize),
+    Deleted(usize),
+    /// Every layer into one.
+    Flattened,
+}
+
 /// The overhang view. See `app/overhang.rs`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OverhangMessage {
@@ -1369,6 +1393,8 @@ pub enum Message {
     Overhang(OverhangMessage),
     /// The colour brush's panel.
     Painting(PaintingMessage),
+    /// The active body's layers of paint. See `app/layers.rs`.
+    Layers(LayersMessage),
     /// Which of the chosen paint's three coats the editor shows. View state.
     PaintCoatChosen(PaintCoat),
     /// How the paint brush touches the model: loaded, nearly dry, or a
