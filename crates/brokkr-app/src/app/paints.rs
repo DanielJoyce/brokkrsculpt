@@ -229,7 +229,7 @@ impl TouchState {
             // A fill lays no stamps, so this is never asked for one. A
             // loaded coat is the answer that does least if it ever is. And
             // a wash is the colour brush's, which reads the kind itself.
-            PaintTouch::Fill | PaintTouch::Wash => Touch::Loaded,
+            PaintTouch::Fill | PaintTouch::Wash | PaintTouch::Airbrush => Touch::Loaded,
         };
         let load = if self.load_mm.0 > 0.0 {
             (1.0 - self.travelled / self.load_mm.0).clamp(0.0, 1.0)
@@ -613,10 +613,8 @@ impl Brokkr {
         // A slot cannot take some of a wash, so painting by slot has no
         // such touch.
         let colour = self.painting_colour();
-        let offered: Vec<PaintTouch> = PaintTouch::ALL
-            .into_iter()
-            .filter(|kind| colour || *kind != PaintTouch::Wash)
-            .collect();
+        let offered: Vec<PaintTouch> =
+            PaintTouch::ALL.into_iter().filter(|kind| colour || kind.for_slots()).collect();
         // Four to a row and no more: five in one row, seen on a screen,
         // cut the end off "Loaded". Five are laid out as three and two.
         let a_row = if offered.len() > 4 { 3 } else { 4 };
@@ -646,6 +644,7 @@ impl Brokkr {
         match self.touch.kind {
             PaintTouch::Loaded => {}
             PaintTouch::Wash => {}
+            PaintTouch::Airbrush => picker = picker.push(self.airbrush_settings()),
             PaintTouch::Drybrush => {
                 let dry = self.touch.dry;
                 let load = self.touch.load_mm.0;

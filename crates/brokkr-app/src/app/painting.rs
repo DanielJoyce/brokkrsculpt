@@ -75,6 +75,8 @@ pub(super) struct PaintingState {
     pub layers: super::layers::LayersHeld,
     /// The racks of paints. See `app/rack.rs`.
     pub rack: super::rack::RackState,
+    /// The airbrush. See `app/airbrush.rs`.
+    pub airbrush: super::airbrush::AirbrushState,
 }
 
 impl Default for PaintingState {
@@ -90,6 +92,7 @@ impl Default for PaintingState {
             stroke: PaintStroke::new(),
             layers: Default::default(),
             rack: Default::default(),
+            airbrush: Default::default(),
         }
     }
 }
@@ -97,7 +100,7 @@ impl Default for PaintingState {
 impl PaintingState {
     /// What is on the brush, for a stroke in `direction`: the inverted
     /// direction takes paint off, whatever the mode.
-    fn pigment(&self, direction: BrushDirection) -> Pigment {
+    pub(super) fn pigment(&self, direction: BrushDirection) -> Pigment {
         let mode = match (direction, self.mode) {
             (BrushDirection::Subtract, _) | (_, PaintMode::Erase) => Mode::Erase,
             (_, PaintMode::Paint) => Mode::Paint,
@@ -122,8 +125,8 @@ impl Brokkr {
             PaintingMessage::Target(target) => {
                 self.painting.target = target;
                 self.painting.picking = false;
-                // A slot cannot take a wash.
-                if target == PaintTarget::Slots && self.touch.kind == PaintTouch::Wash {
+                // A slot cannot take a wash, nor a spray.
+                if target == PaintTarget::Slots && !self.touch.kind.for_slots() {
                     self.touch.kind = PaintTouch::Loaded;
                 }
             }
@@ -195,7 +198,8 @@ impl Brokkr {
             self.painting.stroke.begin();
         }
         let catch = match self.touch.kind {
-            PaintTouch::Loaded | PaintTouch::Fill => Catch::All,
+            // The airbrush lays no stamps: see `app/airbrush.rs`.
+            PaintTouch::Loaded | PaintTouch::Fill | PaintTouch::Airbrush => Catch::All,
             PaintTouch::Wash => Catch::Recesses,
             PaintTouch::Drybrush => Catch::Raised(self.touch.dry),
             PaintTouch::Sponge => Catch::Specks(self.touch.sponge),

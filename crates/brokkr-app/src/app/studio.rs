@@ -1484,9 +1484,13 @@ impl Brokkr {
             // `app/rack.rs`.
             crate::message::Workspace::Paint if self.painting_colour() => (
                 "PAINTS",
-                column![self.rack_swatches(POPUP_ACROSS + 2), self.touch_picker(false)]
-                    .spacing(theme::S2)
-                    .into(),
+                column![
+                    self.rack_swatches(POPUP_ACROSS + 2),
+                    self.touch_picker(false),
+                    self.paint_sizes()
+                ]
+                .spacing(theme::S2)
+                .into(),
             ),
             crate::message::Workspace::Paint => ("PAINTS", self.touch_picker(false)),
             crate::message::Workspace::Print => return None,

@@ -74,6 +74,7 @@ pub mod layers;
 #[cfg(test)]
 mod properties;
 pub mod remove;
+pub mod spray;
 pub mod stroke;
 pub mod touch;
 

@@ -373,6 +373,14 @@ pub enum SearchBy {
     Colour,
 }
 
+/// A change to the airbrush. See `app/airbrush.rs`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AirbrushMessage {
+    /// How much of a coat a second lays at the middle of the spot.
+    Flow(f32),
+    Overspray(bool),
+}
+
 /// A change to the racks of paints, or to the search that fills them.
 /// See `app/rack.rs`. A paint is named by its place on the rack in hand,
 /// or in the index.
@@ -442,16 +450,26 @@ pub enum PaintTouch {
     /// Into the recesses and off the edges, as a wash runs. For colour
     /// only: a slot has no "some of it".
     Wash,
+    /// Sprayed along the view while the button is held. For colour only.
+    /// See `app/airbrush.rs`.
+    Airbrush,
 }
 
 impl PaintTouch {
-    pub const ALL: [PaintTouch; 5] = [
+    pub const ALL: [PaintTouch; 6] = [
         PaintTouch::Loaded,
         PaintTouch::Wash,
         PaintTouch::Drybrush,
         PaintTouch::Sponge,
         PaintTouch::Fill,
+        PaintTouch::Airbrush,
     ];
+
+    /// Whether painting by filament slot has it: a slot has no "some of
+    /// it", so neither a wash nor a spray.
+    pub fn for_slots(self) -> bool {
+        !matches!(self, PaintTouch::Wash | PaintTouch::Airbrush)
+    }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -460,6 +478,7 @@ impl PaintTouch {
             PaintTouch::Drybrush => "Drybrush",
             PaintTouch::Sponge => "Sponge",
             PaintTouch::Fill => "Fill",
+            PaintTouch::Airbrush => "Airbrush",
         }
     }
 }
@@ -1440,6 +1459,8 @@ pub enum Message {
     Layers(LayersMessage),
     /// The racks of paints. See `app/rack.rs`.
     Rack(RackMessage),
+    /// The airbrush. See `app/airbrush.rs`.
+    Airbrush(AirbrushMessage),
     /// Which of the chosen paint's three coats the editor shows. View state.
     PaintCoatChosen(PaintCoat),
     /// How the paint brush touches the model: loaded, nearly dry, or a

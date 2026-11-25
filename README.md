@@ -392,7 +392,11 @@ true of it too, and what it adds is this.
   without hiding it, *Erase* takes paint off. Put on *Loaded*; as a *Wash*,
   which runs into the creases and off the edges; with a *Drybrush*, which
   catches only what stands up; with a *Sponge*; or as a *Fill*, which
-  runs over a panel until a crease, an edge or a different paint stops it.
+  runs over a panel until a crease, an edge or a different paint stops it;
+  or sprayed with the *Airbrush*, which builds up while it is held, by its
+  flow and the pen's pressure, sprays wider on what is further away, and
+  can be given a faint overspray. Five brush sizes, from *Detail* to
+  *Large*, and the drybrush's own three, set the radius in one press.
   A stroke is one coat however often it crosses itself, and a second
   stroke is a second coat. *Pick from model* takes a colour back off the
   surface, and the machine's own filaments are among the swatches: a
