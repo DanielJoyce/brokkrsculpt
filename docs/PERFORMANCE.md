@@ -120,6 +120,23 @@ it under callgrind, which counts instructions and not time: a count is exact
 and repeatable where a time on this machine is not, and it says nothing of
 cache misses.
 
+### A shape dragged out, for a profiler
+
+```bash
+cargo build --profile bench -p brokkr-core --example insert_profile
+target/release/examples/insert_profile ball 40 3 2
+RAYON_NUM_THREADS=1 valgrind --tool=callgrind target/release/examples/insert_profile ball 40 3 1
+```
+
+What a brush that adds does on every move of the pointer: the body put back
+as it was at the press and the shape joined to it at the size the drag now
+gives it, 48 moves to a drag, with a remesh after each. The form (ball, box,
+cylinder, cone, ring), how many voxels from its middle to its edge at the
+end of the drag, how many voxels soft the join is, how many drags, and
+`cut` to take the shape out. It prints milliseconds a move, and a sum of the
+field about the shape as the last move left it: the same sum before and
+after a change to the join is the same field, to the bit.
+
 ## Where a stroke's time goes, before any change
 
 `what_a_stroke_costs` at the commit that added it. 242 pointer events, two to a
@@ -550,6 +567,145 @@ Not done:
 - **The brush engine** (`brush/engine.rs`) is a voxel at a time. Nothing in
   the application stamps with it.
 - **On every core** the gain was not measured brush by brush.
+
+### A shape's set-down, profiled at last, and a crash it found
+
+The set-down of a shape being dragged out was the slowest thing measured
+here and had not been profiled since it was last changed. There is now a
+program to profile it with (`examples/insert_profile.rs`, in the instruments
+above), and what it showed first was that a soft join is everything: a ball
+of 40 voxels joined hard cost 7.2 ms a move on one core, joined 3 voxels soft
+29.7, and 8 voxels soft 59.8. Under callgrind 42% of the whole gesture's
+instructions were one function, `widen`, which works the body's distance out
+further than the field keeps it, on one core.
+
+What was done, in the order the profile asked for it:
+
+- **`widen` offers each point once.** A voxel is put on a front once for each
+  point of the surface it is ever handed, and when two of those fall in the
+  same half voxel it came round again holding what it held the first time and
+  offered it to its 26 neighbours again, to no effect: half of all the
+  offering there was. It is now marked as having offered what it holds.
+- **And asks its neighbours three at a time.** The three along x at each of
+  the nine places about a voxel, as four floats, with the operations every
+  x86-64 has, in the order they were asked one by one. A voxel on a front
+  carries where it is in y and z, which was three divisions to work out
+  each time it was taken off.
+- **The list of where to spread from** is a mark a voxel and not a set of
+  coordinates, the search for it looks at sixteen voxels at a time before it
+  looks at one, what each voxel is to hold is worked out a line at a time
+  and not through a call a voxel, and the write visits only the voxels that
+  change.
+- **A shape's box is the shape's.** Every form said it was inside the ball
+  round its box, 1.733 across where a ball is 1: five times the voxels,
+  copied and looked through on every move. A ball now says it is a ball, and
+  the others the box that holds their own box once it is turned.
+- **A voxel that cannot change is not asked.** Adding moves a voxel toward
+  solid and no other way, so a voxel that is solid already stays as it is
+  whatever the shape says, and a brick that is all solid is passed over: the
+  half of a shape that is inside the body it is set on was being made dense,
+  gone through and put back. Taking out, the same of empty.
+- **Nor is a block deep inside the shape.** Where the shape's own distance is
+  past the end of the band, the join comes to that end whatever the body
+  held. A big shape is mostly such blocks, and each of their voxels asked the
+  shape how far off it was to be told so.
+- **The voxel loop steps over a run of voxels it is not to visit** in one
+  step, where it took them one at a time. This is every edit's loop; for a
+  brush it came to a hundredth of a stroke's instructions or less (Inflate
+  4.213 thousand million to 4.188, Gather 5.557 to 5.491, Polish no change).
+
+Milliseconds a move, `insert_profile <form> <voxels> <soft> 1`, the join
+alone, on every core, single runs of one session:
+
+| | Before | After |
+|---|---|---|
+| Ball, 40 voxels, 3 soft | 18.7 | 8.8 |
+| Ball, 40 voxels, 8 soft | 48.3 | 20.8 |
+| Ball, 25 voxels, 2.5 soft | 11.0 | 5.2 |
+| Box, 30 voxels, 3 soft | 19.1 | 8.2 |
+| Cylinder, 30 voxels, 5 soft | 20.7 | 9.5 |
+| Cone, 30 voxels, 4 soft | 12.4 | 5.6 |
+| Ring, 30 voxels, 3 soft | 12.5 | 6.2 |
+| Ball taken out, 40 voxels, 3 soft | 18.5 | 8.2 |
+| Box taken out, 30 voxels, 6 soft | 27.7 | 12.5 |
+| Ring taken out, 30 voxels, 8 soft | 29.7 | 12.7 |
+| Ball, 70 voxels, 3 soft | 31.1 | 19.6 |
+
+On one core, two drags: the ball of 40 joined 3 soft 29.7 to 13.0, hard 7.2
+to 3.5, 8 soft 59.8 to 25.3; a box of 40 joined 3 soft 47.3 to 19.4. By
+instructions, the ball of 40 joined 3 soft for one drag with its remeshes:
+14.84 thousand million to 7.44.
+
+In the application (`what_setting_a_shape_down_costs`, a ball dragged out in
+48 moves, a move a frame), the edit phase a frame: median 31.7 ms to 16.6,
+and 1532 ms to 974 for the whole drag. The slowest frames are another
+matter, and the next paragraph is why: the worst was 63.4 ms before and 52.1
+and 74.5 in two runs after.
+
+**The last row of the table, and the slowest frames, are not like for
+like.** A soft join is given up, and the shape left joined 2 voxels soft,
+when the box it would be worked out in is over 12 million voxels. With every
+form's box the ball round its box, that was a ball past 57 voxels joined 3
+soft; with a ball's box a ball's it is past 98 (arithmetic, from the box and
+the room about it). So a ball between those sizes
+now gets the soft join it asked for where it was quietly joined hard, which
+is right and costs what a soft join costs. What it costs at that size is
+`widen` again, and not its arithmetic: the box the body's distance is
+worked out in is the box round a ring on the body's surface, nearly all of
+it nowhere near the ring, and it is filled, copied and gone through whole.
+
+**What the join writes.** Each change but one leaves the field as it was to
+the bit, held by tests: `widen` against itself as it was, kept in the tests,
+on 96 random fields in boxes of every shape, twice in the same working
+space; the join with its shortcuts and with every voxel asked, 160 random
+joins of every form, a cable's run and a lent body, added and taken out,
+with the same undo; and eleven drags of `insert_profile`, whose sum of the
+field is the same number before and after for every form but the ball. The
+one is the ball's box. The body's distance is worked out in a box of its
+own, in coordinates that begin where the box does, and a box that begins
+somewhere else rounds differently in the last place: a ball of 40 joined 3
+soft differs at 43 voxels of 11 million, by two millionths of a voxel at
+most (measured, by writing both fields out and comparing them).
+
+**The crash.** Profiling a big ball stopped the profile: a ball more than
+113 voxels from its middle to its edge had a box of more voxels than a copy
+of the field may hold, and the core answers that by panicking. That is not
+the profile's fault. At the voxel the application opens with that is a ball
+of 28 mm, and at the finest it has, 3.4 mm (arithmetic: 113 voxels of 0.25
+and of 0.03 mm). A test that drags a ball that far by pointer events, at
+half the opening voxel, took the application down on the code as it was. The join now copies the body
+a slab of the box at a time, each small enough, and what a voxel comes to
+hold does not depend on which slab it is in: held to the bit by a test that
+takes the same join in slabs a voxel deep, six deep and forty. With that and
+the shortcuts above, a ball of 200 voxels is 64 ms a move where one of 113
+could not be made.
+
+On a screen, under Xvfb: a ball dragged out of the starting ball to about a
+third of its width, and a box beside it. Both are set down with their soft
+joins and nothing in the log. The big ball at a fine voxel was not driven on
+the screen; the test that drags one by pointer events is what holds it.
+
+Not done:
+
+- **The soft join's box.** It should be the ring and not the box round the
+  ring: worked out in pieces, each a part of the ring with room about it.
+  That would also let it use every core, which `widen` does not, and move
+  the size at which a soft join is given up, which is a limit on time that
+  the time no longer justifies. The pieces would not round as the whole
+  does, so it is a change to what is written, in the last place.
+- **No limit on how big a shape can be dragged out.** It no longer panics,
+  and its cost grows with its size: a ball of 400 voxels is some eight
+  thousand bricks of solid, which is a gigabyte (arithmetic). A brush is held
+  to 100 voxels by upstream for this reason. A limit on a shape is a limit
+  on what can be made, and was left for the maintainer to set.
+- **A brick wholly inside a shape** is still made dense and written a voxel
+  at a time, to end as one value throughout. It could be made that value at
+  once.
+- **A shape's distance is asked a voxel at a time** through a call that
+  cannot be seen through, for the voxels near its surface. A line of them at
+  a time, as the brushes are now done, is the same idea and was not built.
+- **Only x86-64** has the three at a time. Elsewhere `widen` asks one
+  neighbour at a time, and still offers each point once.
 
 ## The renderer: looked at, and not built
 

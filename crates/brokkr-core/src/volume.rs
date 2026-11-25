@@ -483,8 +483,12 @@ where
             let mut wx = from;
             while wx <= to {
                 let across = wx - origin.x;
-                if rest >> across & 1 != 0 {
-                    wx += 1;
+                // Past every voxel from here that is not to be visited, in
+                // one step and not a voxel at a time: a line of a brick a
+                // solid is being joined to is mostly those.
+                let left = (rest >> across).trailing_ones() as i32;
+                if left != 0 {
+                    wx += left;
                     continue;
                 }
                 let voxel = IVec3::new(wx, wy, wz);
