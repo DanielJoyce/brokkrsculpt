@@ -12,6 +12,8 @@ mod keys;
 mod layers;
 // Racks of paints, and the index they are filled from. See `app/rack.rs`.
 mod rack;
+// The airbrush, and the Paint mode's brush sizes. See `app/airbrush.rs`.
+mod airbrush;
 mod rail;
 mod workspace;
 pub use adding::Insert;
@@ -5785,6 +5787,12 @@ impl Brokkr {
         if self.painting_colour() && self.layer_refuses_paint() {
             return;
         }
+        // The airbrush sprays by the frame, not by the stamp. See
+        // `app/airbrush.rs`.
+        if self.airbrushing() {
+            self.airbrush_to(pixel, direction, start);
+            return;
+        }
         self.arm_recorder();
 
         let started = Instant::now();
@@ -9868,6 +9876,9 @@ impl Brokkr {
                     self.fly_camera_to(&pose);
                 }
                 self.drive_from_spacemouse(elapsed_ms);
+                // The airbrush, held, sprays by the frame. See
+                // `app/airbrush.rs`.
+                self.airbrush_frame();
                 self.settle_an_orphaned_mask_grab();
                 let timed = self.phases.enter(phases::Phase::Save);
                 self.maybe_autosave();
@@ -10717,6 +10728,7 @@ impl Brokkr {
             Message::Painting(message) => self.painting_changed(message),
             Message::Layers(message) => self.layers_changed(message),
             Message::Rack(message) => self.rack_changed(message),
+            Message::Airbrush(message) => self.airbrush_changed(message),
             Message::PaintCoatChosen(coat) => self.paint_coat = coat,
             Message::PaintEdited(edit) => self.edit_paint(edit),
             Message::Studio(message) => return self.studio_changed(message),

@@ -1,8 +1,9 @@
 # The paint rack, and painting a figure
 
 A design, asked for by the maintainer on 2026-11-25. Stage 1, layers, is
-built ("Stage 1, as built" at the end of section 1), and stage 2, the
-index and racks ("Stage 2, as built" at the end of section 3); the rest
+built ("Stage 1, as built" at the end of section 1), stage 2, the index
+and racks ("Stage 2, as built" at the end of section 3), and stage 3,
+brush sizes and the airbrush ("Stage 3, as built" in section 5); the rest
 is not yet.
 It covers:
 
@@ -438,6 +439,56 @@ Paint sprayed rather than laid:
   camera's near plane, as moving an airbrush away widens its spray.
 - **Overspray**, a faint wide halo, can be turned off.
 - Respects the mask, so a stencil is the mask.
+
+### Stage 3, as built (2026-11-25)
+
+**Sizes.** A row under Radius in Paint's Brush section, and on the P
+palette: Detail 0.3, Fine 0.6, Standard 1.2, Base 2.5 and Large 5, and
+with the drybrush in hand its own Small 1.5, Medium 3 and Large 6. The
+numbers are the brush's **radius** in millimetres, the number the Radius
+control already shows, so a size and the slider agree. The one the radius
+is, is lit. A size sets the radius and nothing else: the falloff and
+flow kept with each, and sizes of the user's own, are not done.
+
+**The airbrush** is a sixth touch, beside Loaded, Wash, Drybrush, Sponge
+and Fill, in colour only (`crates/brokkr-core/src/paint/spray.rs`,
+`crates/brokkr-app/src/app/airbrush.rs`). The rail is not changed in this
+stage: the touches are where a way of laying paint is chosen today, and
+moving them all onto the rail is one change, not six.
+
+- Each frame the button is held, and at each move of the pointer, it
+  sprays for the time since it last did, at the pointer, along the view:
+  a Gaussian spot round the line from the camera through the pointer,
+  less where the surface turns away, nothing on a surface behind the one
+  it meets. So a spot held still fills in and a quick pass barely tints.
+  Between two moves further apart than half a spot, the time is shared
+  out along the way: sprayed only at each event, a quick sweep left a row
+  of dots on the screen.
+- **Flow**, in coats a second at the middle of the spot (0.1 to 4, 1 to
+  start), times the pen's pressure.
+- **Distance**: the spot is the brush's radius where the surface is as
+  far from the camera as the point the camera turns about, and wider in
+  proportion further away (a quarter to four times).
+- **Overspray**, on to start: a halo a twentieth as strong reaching twice
+  as far.
+- The mask holds it off, so a stencil is the mask; a hidden or locked
+  layer refuses it; the whole hold is one undo.
+
+**Tested.** Properties: the spot is strongest at its middle and never
+stronger further out. Worked: held still it lays more than a quick pass;
+the far side of a ball takes nothing; the mask is a stencil; overspray
+reaches further. The application by its messages: a press lays paint,
+held it builds, let go it stops, and the hold is one undo; the middle of
+a sweep wider than the spot takes paint; painting by slot has no
+airbrush; a size sets the radius. On the screen: a spot held two and a
+half seconds, a slow sweep, a quick one, and the size row.
+
+**Not done in this stage.** The rail of tools (Brush, Airbrush, Sponge,
+Decal, Fill); sizes of the user's own, with a falloff and a flow each;
+the airbrush's own spot shape beyond the Gaussian; a measured cost of a
+spray on a large spot (the build machine has no graphics card; by
+arithmetic a spot of radius r looks at a box of (2.5 r / voxel)³ voxels
+with overspray on, about 110,000 for a 3 mm spot at 0.25 mm voxels).
 
 ### Sponge, as a sponge works
 

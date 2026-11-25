@@ -446,6 +446,10 @@ impl Brokkr {
             Some(in_hand.into()),
             move || {
                 let mut block = column![self.radius_number(false)].spacing(theme::S3);
+                // A painter's brush sizes. See `app/airbrush.rs`.
+                if self.desk.now == Workspace::Paint && self.brush.kind == BrushKind::Paint {
+                    block = block.push(self.paint_sizes());
+                }
                 if let Some(weight) = self.weight_number(false) {
                     block = block.push(weight);
                 }
