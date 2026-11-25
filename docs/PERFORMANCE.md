@@ -707,6 +707,61 @@ Not done:
 - **Only x86-64** has the three at a time. Elsewhere `widen` asks one
   neighbour at a time, and still offers each point once.
 
+### A shape previewed coarse, and the airbrush and the layers across every core
+
+Asked for by the maintainer on 2026-11-25: inserting was slow, a large paint
+brush and above all the airbrush were slow, and could a gesture be tried
+against something coarser and applied to the real thing. Measured in release
+on the machine above, by two measurements run by hand:
+`what_a_move_of_an_insert_costs` (`app/adding.rs`) and `what_painting_costs`
+(`app/airbrush.rs`, with `BROKKR_LAYERED=1` for a stack of five layers, a
+spongechop over the paint). Both time the application's own handling of the
+messages, so they include the remesh's CPU half and not the GPU's.
+
+**A shape dragged out is previewed, and set down once.** Every move used to
+put the body back and join the shape again. Now a move samples the shape's
+own distance on a grid 40 cells across and meshes that into the overlay,
+translucent, and the join is done when the button comes up
+(`app/insert_preview.rs`). The preview does not show the soft join.
+
+| One move of a drag | Before | After |
+|---|---|---|
+| Ball, 15 voxels from its middle | 6.7 ms | 6.8 ms |
+| Ball, 42 voxels | 21.0 ms | 5.9 ms |
+| Ball, 81 voxels | 53.8 ms | 5.8 ms |
+| Box, 81 voxels | 48.6 ms | 4.8 ms |
+
+**The airbrush a brick at a time, across every core.** Its first version
+asked every voxel of the box round the spot, solid and empty space alike,
+and took the normal by the trilinear gradient. Now bricks that cannot hold
+paint are passed over whole, the normal is six lookups, and the bricks are
+worked out on every core (`paint/spray.rs`).
+
+| One frame of the airbrush | Before | After |
+|---|---|---|
+| 2 mm spot | 1.6 ms | 0.8 ms |
+| 5 mm spot | 7.6 ms | 1.9 ms |
+| 10 mm spot | 40.2 ms, then 36.8 and 35.1 on reruns | 6.4 ms |
+
+**The layers put together across every core.** Each dirty brick of the
+composite was put together one after another; now they are worked out in
+parallel and stored after (`Volume::put_the_layers_together`).
+
+| One move of a loaded brush, over five layers | Before | After |
+|---|---|---|
+| 2 mm | 3.8 ms | 2.4 ms |
+| 5 mm | 6.6 ms | 4.6 ms |
+| 10 mm | 15.6 ms | 10.3 ms |
+
+Over one plain layer the brush is 1.8, 3.7 and 7.7 ms at those sizes, and
+was not changed. What a graphics card adds to any of these, the upload and
+the draw of the bricks remeshed, was not measured: there is none here.
+
+**And a crash.** A drag toward the horizon of the surface pressed on asked
+for a shape with no end, and a test that dragged 3,000 pixels past the model
+was killed by the kernel for memory. A shape is now held to 160 voxels from
+its middle, twice the largest brush (`MAX_INSERT_VOXELS`).
+
 ## The renderer: looked at, and not built
 
 Nothing below was changed, because nothing below can be judged on a machine

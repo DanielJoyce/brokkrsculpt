@@ -296,6 +296,48 @@ mod tests {
         assert!(around > 0, "the middle of the sweep took no paint");
     }
 
+    /// What a frame of the airbrush and a move of a loaded brush cost, by
+    /// the brush's size. A measurement, run by hand in release: `cargo test
+    /// --release -p brokkr-app -- --ignored what_painting_costs --nocapture`.
+    #[test]
+    #[ignore = "a measurement, not a claim: run by hand, in release"]
+    fn what_painting_costs() {
+        for radius in [2.0, 5.0, 10.0] {
+            let mut app = app();
+            update(&mut app, Message::BrushRadiusChanged(radius));
+            press(&mut app);
+            let started = std::time::Instant::now();
+            for _ in 0..10 {
+                app.spray_for(0.016);
+            }
+            let spray = started.elapsed().as_secs_f64() * 100.0;
+            release(&mut app);
+
+            let mut app = app;
+            if std::env::var_os("BROKKR_LAYERED").is_some() {
+                update(&mut app, Message::Coats(crate::message::CoatsMessage::Spongechop));
+                update(&mut app, Message::Frame);
+            }
+            update(&mut app, Message::PaintTouchChosen(PaintTouch::Loaded));
+            press(&mut app);
+            let started = std::time::Instant::now();
+            for step in 1..=10 {
+                let to = Vector { x: CENTRE.x + step as f32 * 25.0, y: CENTRE.y };
+                update(
+                    &mut app,
+                    Message::Pointer(PointerEvent::Moved { position: to, size: SIZE }),
+                );
+                // Moves are held until the next frame. See `pointer_in`.
+                update(&mut app, Message::Frame);
+            }
+            let stroke = started.elapsed().as_secs_f64() * 100.0;
+            release(&mut app);
+            eprintln!(
+                "radius {radius} mm: airbrush {spray:.1} ms a frame, brush {stroke:.1} ms a move"
+            );
+        }
+    }
+
     /// Painting by filament slot has no airbrush; the sizes set the radius
     /// and light the one it is.
     #[test]

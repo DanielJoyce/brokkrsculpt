@@ -701,33 +701,57 @@ impl Layers {
         out
     }
 
-    /// Put one brick of the composite together from the stack.
+    /// One brick of the stack put together, the colour and the finish,
+    /// without storing either: what [`Layers::put_together`] stores, and
+    /// what the volume works out for many bricks across every core.
     ///
     /// `crease` gives how concave the surface is at a voxel of the brick
     /// (-1..=1), and is asked only where a blend reads the shape.
-    pub(crate) fn put_together(
-        &mut self,
+    pub(crate) fn composed(
+        &self,
         coord: BrickCoord,
         active_paint: &PaintField,
         crease: impl Fn(usize) -> f32,
-    ) {
-        if self.is_plain() {
-            return;
-        }
+    ) -> (Option<PaintBrick>, Option<PaintBrick>) {
         let metas = self.metas();
-        self.put_the_finish_together(coord, active_paint, &metas);
+        let field =
+            |index: usize| if index == self.active { active_paint } else { &self.fields[index] };
+
+        // The finish: the top shown varnish with half a coat or more.
+        let varnishes: Vec<&PaintBrick> = metas
+            .iter()
+            .enumerate()
+            .rev()
+            .filter(|(_, meta)| meta.visible && meta.blend == Blend::Varnish)
+            .filter_map(|(index, _)| field(index).brick(coord))
+            .collect();
+        let finish = (!varnishes.is_empty())
+            .then(|| {
+                let mut out = PaintBrick::dense_filled(BARE);
+                let data = out.make_dense();
+                let mut any = false;
+                for (voxel, slot) in data.iter_mut().enumerate() {
+                    if let Some(rgba) = varnishes
+                        .iter()
+                        .map(|brick| brick.rgba_at(voxel))
+                        .find(|rgba| rgba[3] >= 128)
+                    {
+                        *slot = [rgba[0], 0, 0, 255];
+                        any = true;
+                    }
+                }
+                any.then_some(out)
+            })
+            .flatten();
+
         let layers: Vec<(&LayerMeta, &PaintBrick)> = metas
             .iter()
             .enumerate()
-            .filter(|(_, meta)| meta.visible && meta.opacity > 0.0)
-            .filter_map(|(index, meta)| {
-                let field = if index == self.active { active_paint } else { &self.fields[index] };
-                field.brick(coord).map(|brick| (meta, brick))
-            })
+            .filter(|(_, meta)| meta.visible && meta.opacity > 0.0 && meta.blend != Blend::Varnish)
+            .filter_map(|(index, meta)| field(index).brick(coord).map(|brick| (meta, brick)))
             .collect();
         if layers.is_empty() {
-            self.composite.restore_brick(coord, None);
-            return;
+            return (None, finish);
         }
         let shaped = layers.iter().any(|(meta, _)| meta.blend.reads_the_shape());
         let mut out = PaintBrick::dense_filled(BARE);
@@ -742,43 +766,18 @@ impl Layers {
             any |= rgba[3] != 0;
             *slot = rgba;
         }
-        self.composite.restore_brick(coord, any.then_some(out));
+        (any.then_some(out), finish)
     }
 
-    /// Put one brick of the finish together: the top shown varnish with
-    /// at least half a coat over each voxel.
-    fn put_the_finish_together(
+    /// Store one brick of the stack put together.
+    pub(crate) fn store_composed(
         &mut self,
         coord: BrickCoord,
-        active_paint: &PaintField,
-        metas: &[LayerMeta],
+        colour: Option<PaintBrick>,
+        finish: Option<PaintBrick>,
     ) {
-        let varnishes: Vec<&PaintBrick> = metas
-            .iter()
-            .enumerate()
-            .rev()
-            .filter(|(_, meta)| meta.visible && meta.blend == Blend::Varnish)
-            .filter_map(|(index, _)| {
-                let field = if index == self.active { active_paint } else { &self.fields[index] };
-                field.brick(coord)
-            })
-            .collect();
-        if varnishes.is_empty() {
-            self.finish.restore_brick(coord, None);
-            return;
-        }
-        let mut out = PaintBrick::dense_filled(BARE);
-        let data = out.make_dense();
-        let mut any = false;
-        for (voxel, slot) in data.iter_mut().enumerate() {
-            if let Some(rgba) =
-                varnishes.iter().map(|brick| brick.rgba_at(voxel)).find(|rgba| rgba[3] >= 128)
-            {
-                *slot = [rgba[0], 0, 0, 255];
-                any = true;
-            }
-        }
-        self.finish.restore_brick(coord, any.then_some(out));
+        self.composite.restore_brick(coord, colour);
+        self.finish.restore_brick(coord, finish);
     }
 
     /// Swap the layer at `index` with the volume's paint field and its

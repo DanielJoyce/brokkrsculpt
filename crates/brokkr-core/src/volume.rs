@@ -788,12 +788,25 @@ impl Volume {
         }
         let shaped = self.layers.reads_the_shape();
         let coords: Vec<BrickCoord> = self.dirty.iter().copied().collect();
-        for coord in coords {
-            let creases = shaped.then(|| self.creases_in(coord));
-            let Volume { layers, paint, .. } = self;
-            layers.put_together(coord, paint, |voxel| {
-                creases.as_ref().map_or(0.0, |creases| creases[voxel])
-            });
+        // Each brick on its own and across every core, then stored: over
+        // five layers a 10 mm brush move took twice the time of one layer,
+        // a brick at a time. See `what_painting_costs` in the application.
+        let built: Vec<_> = {
+            use rayon::prelude::*;
+            let this = &*self;
+            coords
+                .par_iter()
+                .map(|coord| {
+                    let creases = shaped.then(|| this.creases_in(*coord));
+                    let (colour, finish) = this.layers.composed(*coord, &this.paint, |voxel| {
+                        creases.as_ref().map_or(0.0, |creases| creases[voxel])
+                    });
+                    (*coord, colour, finish)
+                })
+                .collect()
+        };
+        for (coord, colour, finish) in built {
+            self.layers.store_composed(coord, colour, finish);
         }
     }
 

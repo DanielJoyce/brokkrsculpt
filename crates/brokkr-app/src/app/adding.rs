@@ -68,6 +68,12 @@ pub(super) const DEFAULT_BLEND: f32 = 3.0;
 pub(super) const MAP: &str = "Map";
 
 /// How many straight runs a hung cable is made of.
+/// How far from its middle a shape set down by a drag may reach, in
+/// voxels: twice the largest brush ([`super::MAX_RADIUS_VOXELS`]). A shape
+/// that size is a few hundred bricks of surface; past it, a drag toward the
+/// surface's horizon asked for one with no end, and ran out of memory.
+pub(super) const MAX_INSERT_VOXELS: f32 = 160.0;
+
 const HUNG_RUNS: usize = 24;
 
 /// How far apart the points of a laid cable are, in its own radii: near
@@ -235,6 +241,9 @@ pub(super) struct AddState {
     pieces: Vec<Piece>,
     /// Whether the gesture in progress takes its shape out of the body.
     cut: bool,
+    /// A coarse mesh of what a drag holds, drawn until it is set down. See
+    /// `app/insert_preview.rs`.
+    pub(super) preview: Vec<[Vec3; 3]>,
 }
 
 impl Default for AddState {
@@ -257,6 +266,7 @@ impl Default for AddState {
             last: None,
             pieces: Vec::new(),
             cut: false,
+            preview: Vec::new(),
         }
     }
 }
@@ -522,24 +532,19 @@ impl Brokkr {
                     return;
                 }
                 let drag = origin + ray * ((centre - origin).dot(normal) / facing) - centre;
+                // No bigger than the largest an insert may be: a drag toward
+                // the horizon of the surface goes on for ever, and so did the
+                // memory a shape that size took.
+                let size = drag.length().min(MAX_INSERT_VOXELS * self.doc.voxel_size());
                 let seat = match what {
                     Insert::Shape(form) => {
-                        Placed::on(form, centre, normal, drag, drag.length(), self.inserts.lift)
+                        Placed::on(form, centre, normal, drag, size, self.inserts.lift)
                     }
                     // A map's square is in the plane of the surface at
                     // the press, and what it is draped on is measured
                     // from there.
-                    Insert::Map(_) => {
-                        Placed::on(Form::Ball, centre, normal, drag, drag.length(), 0.0)
-                    }
-                    _ => Placed::on(
-                        Form::Ball,
-                        centre,
-                        normal,
-                        drag,
-                        drag.length(),
-                        self.inserts.lift,
-                    ),
+                    Insert::Map(_) => Placed::on(Form::Ball, centre, normal, drag, size, 0.0),
+                    _ => Placed::on(Form::Ball, centre, normal, drag, size, self.inserts.lift),
                 };
                 self.inserts.pieces.clear();
                 if let Some(seat) = seat {
@@ -551,7 +556,9 @@ impl Brokkr {
                 }
                 match what {
                     Insert::Map(map) => self.set_map(map),
-                    _ => self.set_pieces(),
+                    // Drawn coarse, and set down once, on release. See
+                    // `app/insert_preview.rs`.
+                    _ => self.preview_pieces(),
                 }
             }
             Insert::Hung => {
@@ -577,7 +584,7 @@ impl Brokkr {
                         .filter_map(|(end, at, along)| end.piece(at, along, radius))
                         .map(Piece::Placed),
                 );
-                self.set_pieces();
+                self.preview_pieces();
             }
             Insert::Laid => {
                 let (Some(last), Some(here)) = (self.inserts.last, self.cable_point(pixel)) else {
@@ -636,6 +643,29 @@ impl Brokkr {
                     join(&lent);
                 }
             }
+        }
+    }
+
+    /// Draw what the gesture holds, coarse, without touching the body. See
+    /// `app/insert_preview.rs`.
+    fn preview_pieces(&mut self) {
+        let flips = flips(self.symmetry);
+        let AddState { lent, pieces, preview, .. } = &mut self.inserts;
+        *preview = with_solids(pieces, lent.as_ref(), &flips, |solids| {
+            super::insert_preview::coarse_mesh(solids)
+        });
+        self.refresh_overlay();
+    }
+
+    /// The preview over the model, translucent: the accent to add, red to
+    /// take away.
+    pub(super) fn add_insert_preview(&self, batch: &mut brokkr_gpu::OverlayBatch) {
+        if self.inserts.press.is_none() {
+            return;
+        }
+        let colour = if self.inserts.cut { [0.8, 0.12, 0.08, 0.35] } else { [1.0, 0.2, 0.05, 0.3] };
+        for [a, b, c] in &self.inserts.preview {
+            batch.push_triangle(*a, *b, *c, colour);
         }
     }
 
@@ -764,6 +794,17 @@ impl Brokkr {
         };
         if self.inserts.press.take().is_none() {
             return;
+        }
+        // What was previewed is set down now, once. See
+        // `app/insert_preview.rs`.
+        if !self.inserts.preview.is_empty()
+            || matches!(what, Insert::Shape(_) | Insert::Body(_) | Insert::Hung)
+        {
+            self.inserts.preview.clear();
+            if !self.inserts.separate && !matches!(what, Insert::Laid | Insert::Map(_)) {
+                self.set_pieces();
+            }
+            self.refresh_overlay();
         }
         if what == Insert::Laid
             && let Some(Piece::Step(last)) = self
@@ -1154,6 +1195,75 @@ mod tests {
         assert!(!solid_at(&app, point + out * (top * 0.5)), "the shape is still there");
     }
 
+    /// What one move of a drag costs, by the shape's size. A measurement,
+    /// run by hand in release: `cargo test --release -p brokkr-app --
+    /// --ignored what_a_move_of_an_insert_costs --nocapture`.
+    #[test]
+    #[ignore = "a measurement, not a claim: run by hand, in release"]
+    fn what_a_move_of_an_insert_costs() {
+        for form in [Form::Ball, Form::Box] {
+            for pixels in [40.0, 120.0, 240.0] {
+                let mut app = app();
+                choose(&mut app, Insert::Shape(form));
+                press(&mut app, MIDDLE);
+                move_to(&mut app, MIDDLE + Vec2::new(pixels * 0.5, 0.0));
+                let started = std::time::Instant::now();
+                let moves = 6;
+                for step in 0..moves {
+                    move_to(&mut app, MIDDLE + Vec2::new(pixels + step as f32, 0.0));
+                }
+                let each = started.elapsed().as_secs_f64() * 1000.0 / moves as f64;
+                let half = match app.inserts.pieces.first() {
+                    Some(Piece::Placed(seat)) => seat.half / app.doc.voxel_size(),
+                    _ => 0.0,
+                };
+                eprintln!("{form:?} {half:.0} voxels: {each:.1} ms a move");
+                release(&mut app);
+            }
+        }
+    }
+
+    /// A shape being dragged is previewed and the body in hand is not
+    /// touched until the button comes up; then it is set down once, and the
+    /// preview is gone.
+    #[test]
+    fn a_shape_is_previewed_while_dragged_and_set_down_on_release() {
+        let mut app = app();
+        choose(&mut app, Insert::Shape(Form::Box));
+        press(&mut app, MIDDLE);
+        move_to(&mut app, MIDDLE + Vec2::new(60.0, 0.0));
+        assert!(!app.inserts.preview.is_empty());
+        assert!(same_field(&app, &self::app()), "a move joined the shape");
+        release(&mut app);
+        assert!(app.inserts.preview.is_empty(), "the preview outlived the drag");
+        assert!(!same_field(&app, &self::app()), "nothing was set down");
+        update(&mut app, Message::Undo);
+        assert!(same_field(&app, &self::app()), "the set-down was not one undo");
+    }
+
+    /// A drag far past the model sets down a shape no bigger than the
+    /// largest an insert may be, of every form. Unbounded, a drag of three
+    /// thousand pixels asked for a ball hundreds of millimetres across, and
+    /// the memory it took down the application: reported by the maintainer.
+    #[test]
+    fn a_drag_far_past_the_model_is_held_to_the_largest_shape() {
+        for form in Form::ALL {
+            let mut app = app();
+            choose(&mut app, Insert::Shape(form));
+            press(&mut app, Vec2::new(400.0, 120.0));
+            move_to(&mut app, Vec2::new(-3000.0, 300.0));
+            let half = match app.inserts.pieces.first() {
+                Some(Piece::Placed(seat)) => seat.half,
+                _ => panic!("{form:?}: a shape is being dragged out"),
+            };
+            assert!(
+                half <= MAX_INSERT_VOXELS * app.doc.voxel_size() + 1e-3,
+                "{form:?} is {half} mm from its middle"
+            );
+            release(&mut app);
+        }
+    }
+
     /// Moves that arrive between two frames set a shape down once, where
     /// the last of them left the pointer, and it is the shape a move a frame
     /// leaves, to the bit.
@@ -1407,8 +1517,10 @@ mod tests {
         set(&mut app, AddMessage::SeparateToggled(true));
         press(&mut app, MIDDLE);
         move_to(&mut app, MIDDLE + Vec2::new(45.0, 10.0));
-        // While it is dragged it is shown on the body in hand.
-        assert!(!same_field(&app, &self::app()), "nothing was shown during the drag");
+        // While it is dragged it is shown, coarse, over the body in hand,
+        // which it does not touch. See `app/insert_preview.rs`.
+        assert!(!app.inserts.preview.is_empty(), "nothing was shown during the drag");
+        assert!(same_field(&app, &self::app()), "the drag changed the body in hand");
         release(&mut app);
         assert_eq!(app.doc.body_count(), 2);
         assert_eq!(app.doc.active(), first, "the body in hand changed");
