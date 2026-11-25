@@ -8,14 +8,21 @@ covers:
   tables;
 - racks: sets of paints a user chooses, swaps between and adds colours
   of their own to;
+- layers, from the start: every coat, decal and varnish on a layer the
+  user orders, hides, blends and redoes;
 - the tools for laying paint: brush sizes, an airbrush, a sponge that
-  works the way a sponge does, and stamps;
-- three one-click coats: a base coat, a zenithal, and a sponge chop;
-- varnish: gloss, satin and matte;
-- layers, later.
+  works the way a sponge does;
+- stamps and decals, dabbed on and then painted over or washed;
+- three one-click coats: a base coat, a zenithal, and a spongechop;
+- varnish: gloss, satin and matte.
 
-Each stage at the end is one pull request. Nothing here is decided until
-the maintainer has read it; the open questions are listed last.
+Each stage at the end is one pull request. The open questions are listed
+last.
+
+**Decided by the maintainer, 2026-11-25:** spongechop is the slapchop done
+with a sponge; layers are built first, properly, and everything else goes
+on them; stamps and decals are dabbed on and can then be painted over or
+washed.
 
 ## What there is today
 
@@ -38,7 +45,85 @@ design builds on them rather than beside them.
   is at a point) is computed for washes and for the creases view, and the
   normal for the overhang view. A one-click coat reads both.
 
-## 1. The paint index
+## 1. Layers
+
+Paint is in layers from the first stage, and everything else in this
+design is laid on one: a coat, a stroke, a decal, a varnish.
+
+### What a layer is
+
+A body has a stack of layers, bottom to top. Each layer has:
+
+- a **name** ("Zenithal", "Spongechop", "Contrast: Blood Angels Red",
+  "Decal: Aquila");
+- a **field**: four bytes a voxel through the narrow band, sRGB colour and
+  coverage, exactly the field `paint/field.rs` holds now. A layer is that
+  field, more than once;
+- a **blend**, which says how it lies over what is under it (below);
+- an **opacity**, 0 to 1, over the whole layer;
+- **visible** and **locked**.
+
+The **active layer** is where strokes and dabs go. A one-click coat makes
+a new layer above the active one, named for the coat, so it can be redone
+or hidden alone. A decal makes a decal layer.
+
+### Blends, and why the paint's kind lives on the layer
+
+The point of layers done properly is that a layer above reads what is
+under it at the moment it is drawn, not when it was painted. Change the
+spongechop and the contrast over it changes with it, as on a real model.
+So the blends that depend on what is under them are worked out when the
+stack is put together, not baked into the layer:
+
+| Blend | What it does | Used by |
+|---|---|---|
+| Normal | Covers what is under it by its coverage | Paint, metallic, primer, base coat, the zenithal, the spongechop's colours, a decal |
+| Multiply | Darkens what is under it by its colour | A wash's tint, shading |
+| Wash | Multiply, thicker in recesses and thinner on edges, by the cavity | Washes |
+| Contrast | Tints by the value of what is under it: strong over light, nearly gone over dark; pools in recesses, thins on edges | Contrast and speed paints |
+| Glaze | A thin, even tint over everything | Stains, inks, glazes |
+| Screen | Lightens | Glows, a highlight |
+
+A paint's kind (section 4) picks the layer's blend when a coat is made or
+a paint chosen, and the user can change it.
+
+### Putting the stack together
+
+The renderer and the exports keep reading one colour field, as they do
+now: the **composite**, which is the stack put together, brick by brick.
+A stroke or a change to a layer (its blend, opacity, visibility, order)
+marks the bricks it touched, and only those are put together again. So
+the renderer is unchanged, the frame cost of layers is the bricks a
+stroke touches, and an export bakes the composite as it bakes the one
+field today.
+
+### What comes with them
+
+- **Undo.** A stroke records the bricks of the layer it changed, as it
+  records the paint field's bricks now, with the layer named. Adding,
+  deleting, reordering, merging and a change of blend or opacity are
+  undo entries of their own.
+- **Sculpting under paint.** Every layer is carried as the paint field is
+  now: Move and Bulk carry every layer with the surface; a field brush
+  leaves every layer on its voxels. Issue 82 applies to all of them.
+- **The file.** The project file holds the stack. A document from before
+  opens with its paint as one layer, "Paint".
+- **Merging.** Merge down, and flatten (the whole stack into one layer),
+  which is also what makes a stack light again.
+- **Memory.** A layer costs what the paint field costs now, four bytes a
+  voxel in the band, only where it has paint. A figure with eight layers
+  has eight of those at most. The stack is limited (16 a body to start,
+  and a setting with the other limits of issue 74), and the panel says
+  how much a layer holds.
+
+### The layers panel
+
+In Paint's settings tab, always open: the stack, top first, each with its
+eye, its name (double click to rename), its blend and opacity, and a lock.
+Drag to reorder. Under it: new layer, duplicate, delete, merge down,
+flatten. Pressing a layer makes it active.
+
+## 2. The paint index
 
 ### The data
 
@@ -84,7 +169,7 @@ Two traps the first pass fell into, and the rules now avoid:
   three opaque paints a colour: Shade, Base and Light. Read as washes, 114
   opaque paints were misfiled. The index keeps Foundry's triad role as a
   flag instead, which is useful: it is a ready-made dark, middle and light
-  for a sponge chop or a zenithal.
+  for a spongechop or a zenithal.
 - **"(blue Shade)" is a pigment.** Golden's and Liquitex's "Phthalo Green
   (Blue Shade)" names a variant of the pigment, not a wash. Only "wash" in
   a name counts.
@@ -107,7 +192,7 @@ the user can change a paint's kind in their own rack. The classifier is
 - **Equivalents.** From any paint, its nearest equivalents in the other
   brands.
 
-## 2. Racks
+## 3. Racks
 
 A rack is a set of paints a user controls: a name, an ordered list of
 paints, and which of them are on the keys 1 to 8.
@@ -137,11 +222,10 @@ The slot recipes stay for filament printing. A rack paint can be turned
 into a recipe (base colour, and for a wash or contrast the wash
 settings) when a model is to be printed in filaments.
 
-## 3. How each kind of paint lays
+## 4. How each kind of paint lays
 
-The kind is not only a label: it decides how a paint goes on. Each is a
-setting of the touches and wash that exist, chosen when the paint is
-picked, which the user can still change.
+The kind is not only a label: it decides how a paint goes on, and which
+blend its layer takes (section 1). The user can still change either.
 
 | Kind | Coverage | Into recesses | Off edges | Finish |
 |---|---|---|---|---|
@@ -153,12 +237,12 @@ picked, which the user can still change.
 | Primer | Opaque, one coat | No | No | Matte |
 | Effect | As paint, flagged | | | As made |
 
-The contrast rule is what makes a sponge chop or a zenithal under it
+The contrast blend is what makes a spongechop or a zenithal under it
 worth doing: its colour multiplies the value of what is under it.
 
-## 4. Tools
+## 5. Tools
 
-The Paint mode's rail becomes: **Brush, Airbrush, Sponge, Stamp, Fill,
+The Paint mode's rail becomes: **Brush, Airbrush, Sponge, Decal, Fill,
 Mask, Measure**, with Brush the default (painting is still what Paint
 does when nothing else is chosen).
 
@@ -188,7 +272,7 @@ Paint sprayed rather than laid:
 
 Today's sponge lays specks over the brush's disc. A sponge on a figure
 does more than that, and the technique this design follows is the
-sponge version of the slapchop:
+spongechop, which is the slapchop done with a sponge:
 
 1. a dark undercoat everywhere;
 2. a mid value dabbed on with a torn foam sponge, blotted nearly dry, so
@@ -212,16 +296,35 @@ So the reworked sponge:
 - **Speck size and density** as now, and a pattern: fine foam, coarse
   foam, torn edge.
 
-### Stamps
+## 6. Stamps and decals
 
-A picture laid onto the surface in the paint in hand: eyes, numbers,
-hazard stripes, freehand patterns, runes, and any picture the user
-takes in. Placed the way Sculpt's stamps are (press where it goes, drag
-to size and turn it), projected along the view. The picture is a
-stencil: where it is dark, paint; where it is light, none; grey, part.
-It goes through the mask.
+A picture dabbed onto the model, as a waterslide decal or a stamp is on a
+real one, and then painted over or washed like anything else.
 
-## 5. One-click coats
+- **Dabbed on.** Press where it goes, drag to size and turn it, as
+  Sculpt's stamps are placed; it is projected along the view onto the
+  surface, and wraps the surface it lands on. Each dab is one undo entry.
+- **On a decal layer.** A dab goes on the active layer if it is a decal
+  layer, or makes one ("Decal: Aquila") above the active layer. Layers
+  above it paint over it; a wash layer above it runs into its recesses
+  and stains it; a varnish over it hides its edge, as matte varnish over
+  a glossy decal does.
+- **Two kinds of picture:**
+  - a **decal** keeps its own colours (a picture with transparency:
+    insignia, numbers, freehand, eyes, tattoos);
+  - a **stamp** is a stencil laid in the paint in hand: dark is paint,
+    light is none, grey is part (hazard stripes, camouflage, runes,
+    patterns).
+- **Its edge**: hard, as a decal's film; or soft, faded over a share of
+  its size.
+- **A decal has a finish**: a fresh decal is glossy, as a real one is,
+  until a varnish layer over it says otherwise.
+- **Where pictures come from**: a set that comes with the application, a
+  folder of the user's own, and any picture taken in, kept as the brushes
+  are.
+- **The mask** limits a dab, so a decal can be kept off a part.
+
+## 7. One-click coats
 
 Each is a small card (its few settings and a live preview on the model)
 with Apply, which is one undo entry. Each works on the active body, or on
@@ -230,7 +333,8 @@ the masked part of it, or on every visible body.
 ### Base coat
 
 The body, all of it, in one paint: what Coat the body does now, given a
-paint from the rack and the paint's kind (a primer is a primer).
+paint from the rack and the paint's kind (a primer is a primer), on a
+new layer "Base coat" at the bottom of the stack unless one is chosen.
 
 ### Zenithal
 
@@ -249,10 +353,10 @@ A primer value from a light direction:
 
 The value at a point is how much it faces the light, through the cone's
 falloff, times the shadow, through the dark, middle and light stops. It
-is laid as paint, so it can be painted over, and a contrast over it
-reads its value.
+is laid as its own layer, "Zenithal", so it can be painted over or
+redone, and a contrast layer over it reads its value.
 
-### Sponge chop
+### Spongechop
 
 The four steps of the sponge above, in one press:
 
@@ -268,15 +372,21 @@ The four steps of the sponge above, in one press:
   broken the way a real sponge leaves it.
 - **Then a contrast, optionally:** pick one from the rack and it goes on
   as the fourth step.
+- **On layers:** the dark, the middle and the light are a layer each
+  ("Spongechop: dark" and so on) and the contrast a layer of its own with
+  the contrast blend, so changing the light afterwards brightens the
+  contrast over it.
 
-## 6. Varnish
+## 8. Varnish
 
 A finish over paint: **gloss, satin or matte**, brushed on like paint or
 coated over the whole body in one click.
 
-- **A finish per voxel**, two bits beside the colour: matte, satin,
-  gloss, and metallic (which comes from a metallic paint and is not a
-  varnish). Varnish changes the finish; it does not change the colour.
+- **A varnish layer** holds a finish per voxel and no colour: matte,
+  satin or gloss. The finish of a point is the top visible varnish that
+  covers it; under no varnish it is the paint's own (matte for most,
+  metallic for a metallic, glossy for a fresh decal). A varnish layer can
+  be brushed, or coated over the whole body in one click.
 - **Drawn.** The viewport's shading takes a roughness from the finish (a
   wide, dim highlight for matte, a tight bright one for gloss) and a
   metalness for metallic. `Finish` is already saved on a slot recipe and
@@ -287,54 +397,46 @@ coated over the whole body in one click.
 - Typical use, which the defaults follow: matte over everything, gloss on
   eyes, gems, wet things and blood.
 
-## 7. Layers (later)
-
-Paint in layers the user orders, hides, and sets the opacity of:
-
-- each layer a colour field like today's (four bytes a voxel through the
-  band), on one body;
-- a blend per layer: normal, multiply (for a shade), screen (for a glow);
-- a layer per one-click coat by default ("Zenithal", "Sponge chop",
-  "Contrast"), so one can be redone without the rest;
-- merged down, or flattened for export and for printing.
-
-The cost is a colour field a layer; a figure with five layers is five
-times today's paint memory, which is why it waits and why layers can be
-merged.
-
-## 8. Where it goes in the window
+## 9. Where it goes in the window
 
 - **Paint's library tab** is the rack: the rack's name and a list to swap
   racks, its swatches (with the keys 1 to 8 on them), Add paints (which
   opens the index search), and New colour.
 - **P** brings the rack in hand up at the pointer.
-- **Paint's settings tab**: the tool in hand's settings (size preset,
-  flow, sponge pattern, airbrush spray), and the paint in hand (kind,
-  finish).
+- **Paint's settings tab**: the layers panel (section 1), always open at
+  the top; then the tool in hand's settings (size preset, flow, sponge
+  pattern, airbrush spray) and the paint in hand (kind, finish).
 - **The one-click coats** are buttons in a COATS section of the settings
-  tab, and in a Paint menu: Base coat, Zenithal, Sponge chop, Varnish.
-- **The rail**: Brush, Airbrush, Sponge, Stamp, Fill, Mask, Measure.
+  tab, and in a Paint menu: Base coat, Zenithal, Spongechop, Varnish.
+- **The rail**: Brush, Airbrush, Sponge, Decal, Fill, Mask, Measure.
 
-## 9. Stages
+## 10. Stages
 
-1. **Index and racks.** The generated index (with the classifier and the
+1. **Layers.** The stack on every body (name, blend, opacity, visible,
+   locked, active), the composite brick by brick, undo per layer, the file
+   (an old document opens as one layer), Move and Bulk carrying every
+   layer, the layers panel, merge down and flatten. Today's paint and
+   touches paint the active layer.
+2. **Index and racks.** The generated index (with the classifier and the
    override table), search by name and colour, racks (make, swap, add,
    reorder, files), custom paints, keys 1 to 8 on the rack, the kind
-   setting how a paint lays.
-2. **Brush sizes and the airbrush.**
-3. **The sponge reworked, and the one-click coats**: base coat, zenithal,
-   sponge chop.
-4. **Stamps.**
-5. **Varnish**: the finish field, drawn and exported.
-6. **Layers.**
+   choosing the blend.
+3. **Brush sizes and the airbrush.**
+4. **The sponge reworked, and the one-click coats**: base coat, zenithal,
+   spongechop, each on its own layers.
+5. **Stamps and decals**, on decal layers.
+6. **Varnish**: varnish layers, the finish drawn, and the exports'
+   roughness and metalness.
 
 How each is tested, as the rest of the studio is: properties where a
 rule holds for any input (a zenithal never makes a surface facing the
-light darker than one facing away; a sponge chop never puts more of the
+light darker than one facing away; a spongechop never puts more of the
 light in a recess than on the peak next to it; a search for a paint's
 exact name finds it first; the nearest paint to a paint's own colour is
-itself), the application driven by its messages, and a look on the
-screen.
+itself; a contrast layer over a lighter layer comes out lighter; moving
+a layer up and down and back leaves the composite as it was; a stack
+flattened is the composite), the application driven by its messages, and
+a look on the screen.
 
 ## Open questions
 
@@ -344,17 +446,16 @@ screen.
    reference, heavier)?
 3. **Zenithal shadowing**: a ray toward the light from every surface
    point costs time on a big model; on by default, or a box to tick?
-4. **"Sponge chop"**: no source found uses the term. This design reads it
-   as the slapchop done with a sponge (dark, then middle and light
-   sponged onto the raised and upward parts, then a contrast). Is that
-   what was meant?
-5. **Contrast paints**: is "multiplies the value under it, pools in
+4. **Contrast paints**: is "tints by the value under it, pools in
    recesses, thins on edges" close enough, or should a contrast's
    behaviour be measured from swatches of real ones?
-6. **Racks and filaments**: should a rack also say which filament each
-   paint prints in, for a printer that prints colour, as the slot
-   recipes do?
-7. **Stamps library**: which pictures come with the application?
+5. **Racks and filaments**: should a rack also say which filament each
+   paint prints in, for a printer that prints colour?
+6. **Decals that come with it**: which pictures?
+7. **Layers across bodies**: is a layer one body's, or can a layer
+   ("Varnish: matte") cover several bodies at once?
+8. **The slot recipes**: once layers are in, should painting by filament
+   slot become a layer kind too, or stay the separate field it is?
 
 ## Sources
 
