@@ -10,6 +10,8 @@ mod context;
 mod keys;
 // The active body's layers of paint. See `app/layers.rs`.
 mod layers;
+// Racks of paints, and the index they are filled from. See `app/rack.rs`.
+mod rack;
 mod rail;
 mod workspace;
 pub use adding::Insert;
@@ -10714,6 +10716,7 @@ impl Brokkr {
             Message::Overhang(message) => self.overhang_changed(message),
             Message::Painting(message) => self.painting_changed(message),
             Message::Layers(message) => self.layers_changed(message),
+            Message::Rack(message) => self.rack_changed(message),
             Message::PaintCoatChosen(coat) => self.paint_coat = coat,
             Message::PaintEdited(edit) => self.edit_paint(edit),
             Message::Studio(message) => return self.studio_changed(message),

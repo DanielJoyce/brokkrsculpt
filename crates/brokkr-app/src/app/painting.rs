@@ -33,7 +33,6 @@ use iced::widget::{button, checkbox, column, container, row, text};
 use iced::{Alignment, Element, Length};
 
 use super::Brokkr;
-use super::paints::RANGE;
 use crate::message::{Message, PaintMode, PaintTarget, PaintTouch, PaintingMessage};
 use crate::theme;
 
@@ -74,6 +73,8 @@ pub(super) struct PaintingState {
     stroke: PaintStroke,
     /// The layers block's gesture under way. See `app/layers.rs`.
     pub layers: super::layers::LayersHeld,
+    /// The racks of paints. See `app/rack.rs`.
+    pub rack: super::rack::RackState,
 }
 
 impl Default for PaintingState {
@@ -88,6 +89,7 @@ impl Default for PaintingState {
             fill_like: USUAL_LIKENESS,
             stroke: PaintStroke::new(),
             layers: Default::default(),
+            rack: Default::default(),
         }
     }
 }
@@ -298,6 +300,11 @@ impl Brokkr {
             PaintTarget::Colour => self.colour_picker(editing),
             PaintTarget::Slots => self.paint_picker(editing),
         };
+        // The rack in hand first, in colour and with room: the library is
+        // the rack. See `app/rack.rs`.
+        if editing && self.painting_colour() {
+            return column![targets, self.rack_panel(), chosen].spacing(theme::S3).into();
+        }
         column![targets, chosen].spacing(theme::S2).into()
     }
 
@@ -379,25 +386,6 @@ impl Brokkr {
         let spools =
             column![reading("The machine's filaments".to_string()), spools].spacing(theme::S1);
 
-        let mut range = column![].spacing(theme::S1);
-        for line in RANGE.chunks(SWATCHES_A_ROW) {
-            let mut swatches = row![].spacing(theme::S1);
-            for (_, each) in line {
-                let (style, _) = theme::tool_toggle(*each == colour);
-                swatches = swatches.push(
-                    button(
-                        container(text(""))
-                            .width(14)
-                            .height(14)
-                            .style(theme::swatch(swatch_colour(*each))),
-                    )
-                    .padding(2)
-                    .style(style)
-                    .on_press(Message::Painting(PaintingMessage::Colour(*each))),
-                );
-            }
-            range = range.push(swatches);
-        }
         let channels = [("paint.red", "Red"), ("paint.green", "Green"), ("paint.blue", "Blue")]
             .into_iter()
             .enumerate()
@@ -422,7 +410,6 @@ impl Brokkr {
             });
         picker = picker
             .push(spools)
-            .push(range)
             .push(channels)
             .push(
                 checkbox(self.flat_paint)

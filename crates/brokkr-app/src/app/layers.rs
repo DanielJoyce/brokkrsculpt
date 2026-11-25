@@ -174,6 +174,40 @@ impl Brokkr {
             going.map(|(body, layer, kind)| (body, layer, kind, self.history.revision()));
     }
 
+    /// Give the active layer `blend`, for a paint just chosen whose kind
+    /// wants it: an empty layer takes the blend, and one with paint on it
+    /// gets a new layer of that blend over it, named `name`. One undo
+    /// entry. Only painting in colour.
+    pub(super) fn suit_the_layer(&mut self, name: &str, blend: Blend) {
+        if !self.painting_colour() {
+            return;
+        }
+        let body = self.doc.active();
+        let volume = self.doc.active_volume();
+        let layers = volume.layers();
+        let meta = layers.metas()[layers.active()].clone();
+        if meta.blend == blend {
+            return;
+        }
+        let active = layers.active();
+        let empty = volume.paint().is_empty();
+        let before = volume.layer_state();
+        let volume = self.doc.active_volume_mut();
+        let said = if empty && !meta.locked {
+            volume.set_layer_meta(active, LayerMeta { blend, ..meta.clone() });
+            format!("layer {} is now {}", meta.name, blend.label())
+        } else if volume.add_layer(name, blend).is_some() {
+            format!("new layer {name}, {}", blend.label())
+        } else {
+            self.status =
+                format!("a body holds {} layers at most", brokkr_core::paint::layers::MAX_LAYERS);
+            return;
+        };
+        self.push_layers_entry(body, before, None);
+        self.remesh_dirty();
+        self.status = said;
+    }
+
     /// Whether the active layer refuses paint, being hidden or locked; and
     /// if so the status line says why. Asked before a stroke, a fill or a
     /// coat in colour.

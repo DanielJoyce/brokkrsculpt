@@ -363,6 +363,49 @@ pub enum LayersMessage {
     Flattened,
 }
 
+/// How the paint index is being searched. See `app/rack.rs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SearchBy {
+    /// By the words of a name, a brand, a line or a code.
+    #[default]
+    Name,
+    /// By the paints nearest the colour in hand.
+    Colour,
+}
+
+/// A change to the racks of paints, or to the search that fills them.
+/// See `app/rack.rs`. A paint is named by its place on the rack in hand,
+/// or in the index.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RackMessage {
+    /// Take this rack in hand.
+    Chosen(usize),
+    New,
+    Duplicated,
+    Deleted,
+    Renamed(String),
+    /// Take this paint of the rack into the brush.
+    Picked(usize),
+    Raised(usize),
+    Lowered(usize),
+    Removed(usize),
+    /// Open the index search, or shut it.
+    Searching,
+    Query(String),
+    By(SearchBy),
+    KindFilter(Option<crate::paint_index::Kind>),
+    BrandFilter(Option<&'static str>),
+    /// Take a paint of the index into the brush, without putting it on
+    /// the rack.
+    Tried(usize),
+    /// Put a paint of the index on the rack.
+    Added(usize),
+    CustomName(String),
+    CustomKind(crate::paint_index::Kind),
+    /// Put the colour in hand on the rack, by the name typed.
+    CustomAdded,
+}
+
 /// The overhang view. See `app/overhang.rs`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OverhangMessage {
@@ -1395,6 +1438,8 @@ pub enum Message {
     Painting(PaintingMessage),
     /// The active body's layers of paint. See `app/layers.rs`.
     Layers(LayersMessage),
+    /// The racks of paints. See `app/rack.rs`.
+    Rack(RackMessage),
     /// Which of the chosen paint's three coats the editor shows. View state.
     PaintCoatChosen(PaintCoat),
     /// How the paint brush touches the model: loaded, nearly dry, or a

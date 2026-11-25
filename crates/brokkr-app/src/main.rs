@@ -45,6 +45,7 @@ mod input_watch;
 mod logo;
 mod message;
 mod navcube;
+mod paint_index;
 mod palette;
 mod paths;
 mod printer;

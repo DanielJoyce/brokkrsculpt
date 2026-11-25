@@ -1480,6 +1480,14 @@ impl Brokkr {
             crate::message::Workspace::Transform => {
                 ("PARTS", self.brush_grid(POPUP_ACROSS, POPUP_ACROSS))
             }
+            // The rack in hand over the touches, painting in colour. See
+            // `app/rack.rs`.
+            crate::message::Workspace::Paint if self.painting_colour() => (
+                "PAINTS",
+                column![self.rack_swatches(POPUP_ACROSS + 2), self.touch_picker(false)]
+                    .spacing(theme::S2)
+                    .into(),
+            ),
             crate::message::Workspace::Paint => ("PAINTS", self.touch_picker(false)),
             crate::message::Workspace::Print => return None,
         };
