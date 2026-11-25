@@ -22,8 +22,7 @@ use iced::{Element, Length};
 
 use super::{Brokkr, Tool};
 use crate::message::{
-    AddMessage, DockTab, MeasureMessage, Message, PaintTouch, PanelSection, Rail, StudioMessage,
-    Workspace,
+    AddMessage, DockTab, MeasureMessage, Message, PanelSection, Rail, StudioMessage, Workspace,
 };
 use crate::theme;
 
@@ -239,16 +238,11 @@ impl Brokkr {
                 };
                 self.update(Message::Studio(StudioMessage::PresetChosen(place)))
             }
-            // In colour, the rack in hand's paints; by filament slot, the
-            // touches. See `app/rack.rs`.
-            Workspace::Paint if self.painting_colour() => {
+            // The rack in hand's paints. See `app/rack.rs`.
+            Workspace::Paint => {
                 self.rack_key(index);
                 iced::Task::none()
             }
-            Workspace::Paint => match PaintTouch::ALL.get(index) {
-                Some(touch) => self.update(Message::PaintTouchChosen(*touch)),
-                None => iced::Task::none(),
-            },
             Workspace::Print => iced::Task::none(),
         }
     }
@@ -420,7 +414,6 @@ impl Brokkr {
                 self.coats_block(),
                 self.brush_section(),
                 self.section(PanelSection::Stroke, || self.stroke_panel()),
-                self.section(PanelSection::Filament, || self.filament_panel()),
             ],
             Workspace::Print => vec![
                 self.section(PanelSection::Detail, || self.detail_panel()),
@@ -669,15 +662,6 @@ mod tests {
         update(&mut app, Message::WorkspaceChosen(Workspace::Paint));
         update(&mut app, Message::LibraryKey(2));
         assert_eq!(app.painting.colour, app.painting.rack.rack().paints[2].rgb);
-        // By filament slot, the keys are the touches.
-        update(
-            &mut app,
-            Message::Painting(crate::message::PaintingMessage::Target(
-                crate::message::PaintTarget::Slots,
-            )),
-        );
-        update(&mut app, Message::LibraryKey(2));
-        assert_eq!(app.touch.kind, PaintTouch::ALL[2]);
         update(&mut app, Message::WorkspaceChosen(Workspace::Transform));
         update(&mut app, Message::LibraryKey(2));
         let places =

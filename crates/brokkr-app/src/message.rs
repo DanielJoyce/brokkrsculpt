@@ -275,27 +275,6 @@ pub enum MeasureMessage {
     Cleared,
 }
 
-/// What the paint brush lays. See `app/painting.rs`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PaintTarget {
-    /// A colour, by an amount.
-    #[default]
-    Colour,
-    /// One of the machine's filaments, or a recipe mixed on the rack.
-    Slots,
-}
-
-impl PaintTarget {
-    pub const ALL: [PaintTarget; 2] = [PaintTarget::Colour, PaintTarget::Slots];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            PaintTarget::Colour => "Colour",
-            PaintTarget::Slots => "Filaments",
-        }
-    }
-}
-
 /// How a colour combines with what is under it. See
 /// [`brokkr_core::paint::stroke::Mode`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -321,8 +300,6 @@ impl PaintMode {
 /// The colour brush's panel. See `app/painting.rs`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PaintingMessage {
-    /// Paint in colour, or by filament slot.
-    Target(PaintTarget),
     /// The colour in hand, whole, as a swatch gives it.
     Colour([u8; 3]),
     /// One channel of it, as a slider gives it.
@@ -572,81 +549,6 @@ pub enum TouchSetting {
     FillStopsAtEdges(bool),
     /// How sharp a line has to be to stop one, as a share of a full crease.
     FillSharpness(f32),
-}
-
-/// One of a paint's three coats, in the order a painter lays them down.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PaintCoat {
-    /// The colour of the paint itself.
-    #[default]
-    Base,
-    /// The thin film that runs into the recesses.
-    Wash,
-    /// The lighter colour caught on the edges.
-    Highlight,
-}
-
-impl PaintCoat {
-    pub const ALL: [PaintCoat; 3] = [PaintCoat::Base, PaintCoat::Wash, PaintCoat::Highlight];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            PaintCoat::Base => "Base",
-            PaintCoat::Wash => "Wash",
-            PaintCoat::Highlight => "Highlight",
-        }
-    }
-}
-
-/// A wash as a painter would ask for one, before any slider is touched.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WashKind {
-    /// No wash.
-    None,
-    /// A dark film in the recesses that leaves the flats nearly clean.
-    Shade,
-    /// One coat that tints, shades and thins on the edges.
-    Contrast,
-}
-
-impl WashKind {
-    pub const ALL: [WashKind; 3] = [WashKind::None, WashKind::Shade, WashKind::Contrast];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            WashKind::None => "None",
-            WashKind::Shade => "Shade",
-            WashKind::Contrast => "Contrast",
-        }
-    }
-}
-
-/// One change to the chosen paint.
-///
-/// The colour goes to whichever coat the editor is showing, which is why it
-/// names no coat of its own: the swatches and the three sliders are one set
-/// of controls looking at one coat at a time.
-#[derive(Debug, Clone, PartialEq)]
-pub enum PaintEdit {
-    Name(String),
-    Finish(brokkr_core::paint::Finish),
-    /// The filament the paint prints in, 1-based, or 0 for the nearest.
-    Filament(u8),
-    /// The whole colour of the coat shown, sRGB.
-    Colour([u8; 3]),
-    /// One channel of it: 0 red, 1 green, 2 blue.
-    Channel(usize, u8),
-    /// Replace the wash with a ready-made one, in a colour worked out from
-    /// the base coat.
-    WashKind(WashKind),
-    WashStain(f32),
-    WashFlow(f32),
-    WashEdge(f32),
-    HighlightAmount(f32),
-    HighlightStart(f32),
-    /// How much of a zenithal undercoat shows through the base coat: lighter
-    /// from above, darker from below, 0..=1.
-    Zenith(f32),
 }
 
 /// One message with a payload, on [`SpaceMouseSetting`]'s pattern, so that
@@ -1460,9 +1362,6 @@ pub enum Message {
     /// key repeats while it is held, and a toggle would strobe.
     MaskPeekStarted,
     MaskPeekEnded,
-    /// Which filament slot the paint brush writes, 1-based. Clamped to the
-    /// palette on arrival.
-    PaintSlotChanged(u8),
     /// One of the studio brush controls. See `app/studio.rs`.
     Studio(StudioMessage),
     /// One of the form tools' controls. See `app/form.rs`.
@@ -1481,9 +1380,6 @@ pub enum Message {
     /// How many texels on a side a baked texture is: 1024, 2048 or 4096. A
     /// setting of the application, like the export detail.
     TextureSizeChanged(u32),
-    /// Coat the whole of the active body in the paint in hand, wherever the
-    /// mask leaves it free. One undo entry.
-    PaintAllApplied,
     /// Draw paint as its own colour with no light on it, or lit like the
     /// clay. View state: a wash is shading, and a painter has to be able to
     /// see it without the viewport's light on top.
@@ -1508,15 +1404,6 @@ pub enum Message {
     ExportDetailChanged(ExportDetail),
     /// Change the key the next parting uses. It changes no voxel.
     KeySettingChanged(KeySetting),
-    /// Start using paints in this document: one plain paint per filament
-    /// slot, in the filament's colour, so nothing already painted changes
-    /// colour. See [`brokkr_core::paint`] for what a paint is.
-    PaintsStarted,
-    /// Add one more paint to the rack and take it up.
-    PaintAdded,
-    /// Take the paint in hand out of the document: off the rack, and off
-    /// every body it is on. One undo step.
-    PaintRemoved,
     /// The overhang view's switch and its one setting.
     Overhang(OverhangMessage),
     /// The colour brush's panel.
@@ -1531,17 +1418,11 @@ pub enum Message {
     Coats(CoatsMessage),
     /// The Decal touch. See `app/decal.rs`.
     Decal(DecalMessage),
-    /// Which of the chosen paint's three coats the editor shows. View state.
-    PaintCoatChosen(PaintCoat),
     /// How the paint brush touches the model: loaded, nearly dry, or a
     /// sponge. A setting of the brush, not of the document.
     PaintTouchChosen(PaintTouch),
     /// One of the settings of the drybrush or the sponge.
     PaintTouchChanged(TouchSetting),
-    /// Change the chosen paint. It changes no voxel: every voxel already
-    /// painted with it is redrawn the new way, which is the point of a paint
-    /// being a recipe.
-    PaintEdited(PaintEdit),
     /// Put the camera back on the active body, keeping the angles.
     ///
     /// The recovery half of a free camera. A camera that can go anywhere can

@@ -228,9 +228,6 @@ impl Brokkr {
     /// gets a new layer of that blend over it, named `name`. One undo
     /// entry. Only painting in colour.
     pub(super) fn suit_the_layer(&mut self, name: &str, blend: Blend) {
-        if !self.painting_colour() {
-            return;
-        }
         let body = self.doc.active();
         let volume = self.doc.active_volume();
         let layers = volume.layers();

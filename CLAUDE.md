@@ -24,8 +24,9 @@ What it does not cover, and still wants asking:
 - Anything on `main`, or on the upstream repository.
 - Force pushes, history rewrites, deleting branches or files that are not
   this work's own.
-- Removing a feature the maintainer has said to keep. Filament painting
-  and its recipes stay (said on 2026-11-23).
+- Removing a feature the maintainer has said to keep. (Filament painting
+  was one, said on 2026-11-23; on 2026-11-25 the maintainer asked for it
+  to be removed: *"Remove the filament painting, we don't need it."*)
 
 ## How the work goes in
 

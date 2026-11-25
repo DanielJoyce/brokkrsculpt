@@ -52,9 +52,6 @@ impl Brokkr {
     /// painting by filament slot, where a stroke has no half.
     pub(super) fn weight_number(&self, inline: bool) -> Option<Element<'_, Message>> {
         let number = if self.painting_now() {
-            if !self.painting_colour() {
-                return None;
-            }
             crate::ui::number(
                 &self.drafts,
                 "paint.opacity",
@@ -84,9 +81,6 @@ impl Brokkr {
     /// brush on the field, upstream's four curves for the mask and for a
     /// colour, and nothing for a filament slot, which has no edge.
     pub(super) fn falloff_choice(&self) -> Option<Element<'_, Message>> {
-        if self.painting_now() && !self.painting_colour() {
-            return None;
-        }
         if self.painting_now() || self.tool == Tool::Mask {
             return Some(crate::ui::segmented(
                 FalloffCurve::ALL.map(|curve| (curve, curve.label())),
@@ -257,13 +251,8 @@ mod tests {
         // Paint, by colour: an opacity and a falloff.
         drop(app.update(Message::BrushKindChanged(BrushKind::Paint)));
         assert!(app.painting_now());
-        if app.painting_colour() {
-            assert!(app.weight_number(false).is_some());
-            assert!(app.falloff_choice().is_some());
-        } else {
-            assert!(app.weight_number(false).is_none());
-            assert!(app.falloff_choice().is_none());
-        }
+        assert!(app.weight_number(false).is_some());
+        assert!(app.falloff_choice().is_some());
         let _ = app.context_bar();
     }
 }

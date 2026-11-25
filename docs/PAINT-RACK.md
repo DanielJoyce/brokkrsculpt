@@ -857,8 +857,9 @@ a look on the screen.
 6. **Decals that come with it**: which pictures?
 7. **Layers across bodies**: is a layer one body's, or can a layer
    ("Varnish: matte") cover several bodies at once?
-8. **The slot recipes**: once layers are in, should painting by filament
-   slot become a layer kind too, or stay the separate field it is?
+8. **The slot recipes**: answered by the maintainer on 2026-11-25:
+   painting by filament slot is removed. An old document's slots are laid
+   into its colour paint when it opens (`paint/old_slots.rs`).
 
 ## Sources
 

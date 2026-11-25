@@ -76,7 +76,7 @@ impl Brokkr {
 
     /// Whether a drag of the paint brush is the airbrush's.
     pub(super) fn airbrushing(&self) -> bool {
-        self.painting_colour() && self.touch.kind == PaintTouch::Airbrush
+        self.touch.kind == PaintTouch::Airbrush
     }
 
     /// A press or a move of the airbrush: spray where it is now for the
@@ -338,18 +338,10 @@ mod tests {
         }
     }
 
-    /// Painting by filament slot has no airbrush; the sizes set the radius
-    /// and light the one it is.
+    /// The sizes set the radius and light the one it is.
     #[test]
-    fn the_sizes_set_the_radius_and_slots_have_no_airbrush() {
+    fn the_sizes_set_the_radius() {
         let mut app = app();
-        update(
-            &mut app,
-            Message::Painting(crate::message::PaintingMessage::Target(
-                crate::message::PaintTarget::Slots,
-            )),
-        );
-        assert_eq!(app.touch.kind, PaintTouch::Loaded);
         update(&mut app, Message::BrushRadiusChanged(SIZES[1].1));
         assert_eq!(app.brush.radius, 0.6);
         drop(app.paint_sizes());

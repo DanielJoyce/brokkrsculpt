@@ -7,15 +7,6 @@
 //! [`brokkr_core::paint::stroke`] is the brush. This is what the panel
 //! offers of it and what a drag of the pointer does with it.
 //!
-//! # Beside the rack, for now
-//!
-//! Painting by filament slot is still here, behind the second of two
-//! buttons at the top of the paint brush's block. It goes when the exports
-//! read the paint and an old document's slots are laid into it (stages P4
-//! and P5 of the plan). Until then a document painted the old way can still
-//! be worked on the old way, and nothing of the rack's has been touched to
-//! make room: this module is the new brush and a switch.
-//!
 //! # What a drag does
 //!
 //! A press starts a stroke, and the stroke lays one coat however many times
@@ -33,7 +24,7 @@ use iced::widget::{button, checkbox, column, container, row, text};
 use iced::{Alignment, Element, Length};
 
 use super::Brokkr;
-use crate::message::{Message, PaintMode, PaintTarget, PaintTouch, PaintingMessage};
+use crate::message::{Message, PaintMode, PaintTouch, PaintingMessage};
 use crate::theme;
 
 /// How little and how much of itself a full touch of the brush may lay.
@@ -56,7 +47,6 @@ const FIRST_COLOUR: [u8; 3] = [178, 34, 34];
 /// and not the document's: nothing here is saved with a file.
 #[derive(Debug)]
 pub(super) struct PaintingState {
-    pub target: PaintTarget,
     /// sRGB.
     pub colour: [u8; 3],
     pub opacity: f32,
@@ -86,7 +76,6 @@ pub(super) struct PaintingState {
 impl Default for PaintingState {
     fn default() -> Self {
         Self {
-            target: PaintTarget::default(),
             colour: FIRST_COLOUR,
             opacity: 1.0,
             mode: PaintMode::default(),
@@ -121,21 +110,18 @@ fn swatch_colour(colour: [u8; 3]) -> iced::Color {
 }
 
 impl Brokkr {
-    /// Whether the paint brush is laying colour and not filament slots.
-    pub(super) fn painting_colour(&self) -> bool {
-        self.painting.target == PaintTarget::Colour
+    /// A document painted by filament slot, from before slot painting was
+    /// taken out, laid into colour paint as the colours its slots showed.
+    /// See `brokkr_core::paint::old_slots`.
+    pub(super) fn lay_old_slots(&mut self) {
+        let filaments = self.filament_colours();
+        if self.doc.lay_slots_into_paint(&filaments) {
+            self.status = format!("{} (its filament paint is now colour paint)", self.status);
+        }
     }
 
     pub(super) fn painting_changed(&mut self, message: PaintingMessage) {
         match message {
-            PaintingMessage::Target(target) => {
-                self.painting.target = target;
-                self.painting.picking = false;
-                // A slot cannot take a wash, nor a spray.
-                if target == PaintTarget::Slots && !self.touch.kind.for_slots() {
-                    self.touch.kind = PaintTouch::Loaded;
-                }
-            }
             PaintingMessage::Colour(colour) => self.painting.colour = colour,
             PaintingMessage::Channel(channel, level) => {
                 if let Some(slot) = self.painting.colour.get_mut(channel) {
@@ -159,9 +145,6 @@ impl Brokkr {
     /// Asked before the stroke is armed, so that taking a colour is not an
     /// entry in the undo history.
     pub(super) fn eyedropper_takes(&mut self, point: Vec3, start: bool) -> bool {
-        if !self.painting_colour() {
-            return false;
-        }
         if start {
             self.painting.held_off = false;
         }
@@ -295,29 +278,13 @@ impl Brokkr {
     /// `editing` is whether there is room for everything. The panel has it
     /// and the pop-up menu does not.
     pub(super) fn painting_picker(&self, editing: bool) -> Element<'_, Message> {
-        let targets =
-            PaintTarget::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, target| {
-                assembled.push(
-                    button(text(target.label()).size(theme::LABEL_SIZE))
-                        .width(Length::Fill)
-                        .style(if target == self.painting.target {
-                            theme::tool_button_active
-                        } else {
-                            theme::tool_button
-                        })
-                        .on_press(Message::Painting(PaintingMessage::Target(target))),
-                )
-            });
-        let chosen: Element<'_, Message> = match self.painting.target {
-            PaintTarget::Colour => self.colour_picker(editing),
-            PaintTarget::Slots => self.paint_picker(editing),
-        };
-        // The rack in hand first, in colour and with room: the library is
-        // the rack. See `app/rack.rs`.
-        if editing && self.painting_colour() {
-            return column![targets, self.rack_panel(), chosen].spacing(theme::S3).into();
+        let chosen = self.colour_picker(editing);
+        // The rack in hand first, with room: the library is the rack. See
+        // `app/rack.rs`.
+        if editing {
+            return column![self.rack_panel(), chosen].spacing(theme::S3).into();
         }
-        column![targets, chosen].spacing(theme::S2).into()
+        chosen
     }
 
     /// The colour brush: what it does, how it touches, the colour, and how
@@ -740,26 +707,23 @@ mod tests {
         assert!(green > 100_000, "a fill over anything painted {green} voxels");
     }
 
-    /// The other way of painting is one button away and is what it was,
-    /// and drops the one touch it has not got.
+    /// A document painted by filament slot, from before slot painting was
+    /// taken out, comes in with its slots as colour paint in the machine's
+    /// filament colours, and its slots let go.
     #[test]
-    fn filaments_are_painted_as_before_behind_their_button() {
+    fn old_slot_paint_comes_in_as_colour() {
         let mut app = app();
-        assert!(app.painting_colour());
-        set(&mut app, PaintingMessage::Target(PaintTarget::Slots));
-        stroke(&mut app);
-        assert!(painted(&app).is_empty(), "a slot stroke laid colour");
-        assert!(app.doc.active_volume().stats().colour_bricks > 0, "a slot stroke painted no slot");
-
-        update(&mut app, Message::PaintTouchChosen(PaintTouch::Fill));
-        set(&mut app, PaintingMessage::Target(PaintTarget::Colour));
-        assert_eq!(app.touch.kind, PaintTouch::Fill, "both ways of painting have a fill");
-        update(&mut app, Message::PaintTouchChosen(PaintTouch::Wash));
-        set(&mut app, PaintingMessage::Target(PaintTarget::Slots));
-        assert_eq!(app.touch.kind, PaintTouch::Loaded, "a slot cannot take a wash");
-        update(&mut app, Message::PaintTouchChosen(PaintTouch::Sponge));
-        set(&mut app, PaintingMessage::Target(PaintTarget::Colour));
-        assert_eq!(app.touch.kind, PaintTouch::Sponge, "a touch both have was dropped");
+        let volume = app.doc.active_volume_mut();
+        let (low, high) = volume.world_bounds().expect("a body");
+        let (lo, hi) = volume.voxel_bounds(low, high);
+        volume.edit_colour(lo, hi, |_, _, _, _| 2);
+        app.lay_old_slots();
+        let volume = app.doc.active_volume();
+        assert!(volume.colour().is_empty(), "the slots were kept");
+        let second = app.palette.slots[1].swatch().into_rgba8();
+        let laid = painted(&app);
+        assert!(!laid.is_empty(), "nothing was laid");
+        assert!(laid.iter().all(|rgba| rgba[..3] == second[..3] && rgba[3] == 255));
     }
 
     fn scratch(name: &str) -> std::path::PathBuf {
@@ -880,19 +844,15 @@ mod tests {
         set(&mut app, PaintingMessage::Channel(9, 77));
         assert_eq!(app.painting.colour, [1, 200, 3]);
 
-        for target in PaintTarget::ALL {
-            set(&mut app, PaintingMessage::Target(target));
-            for mode in PaintMode::ALL {
-                set(&mut app, PaintingMessage::Mode(mode));
-                for touch in PaintTouch::ALL {
-                    update(&mut app, Message::PaintTouchChosen(touch));
-                    drop(app.painting_picker(true));
-                    drop(app.painting_picker(false));
-                }
+        for mode in PaintMode::ALL {
+            set(&mut app, PaintingMessage::Mode(mode));
+            for touch in PaintTouch::ALL {
+                update(&mut app, Message::PaintTouchChosen(touch));
+                drop(app.painting_picker(true));
+                drop(app.painting_picker(false));
             }
         }
         // The whole window, with the colour brush up.
-        set(&mut app, PaintingMessage::Target(PaintTarget::Colour));
         drop(app.view());
     }
 }

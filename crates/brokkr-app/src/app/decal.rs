@@ -181,7 +181,7 @@ impl Brokkr {
 
     /// Whether a drag of the paint brush is a decal's.
     pub(super) fn dabbing(&self) -> bool {
-        self.painting_colour() && self.touch.kind == PaintTouch::Decal
+        self.touch.kind == PaintTouch::Decal
     }
 
     /// A press or a move of the Decal touch.

@@ -938,12 +938,6 @@ pub struct Brokkr {
     /// tint it replaces. Revisit on the first report of a stroke that "did
     /// nothing" while the tint was off.
     show_mask: bool,
-    /// Which filament slot the paint brush writes, 1-based.
-    ///
-    /// The brush's own state lives on the application and not on
-    /// [`Brush`], the way the mask's operation does: it is what the interface
-    /// has chosen, threaded into every stamp by [`Brokkr::paint_to`].
-    paint_slot: u8,
     /// Whether painted slots are drawn in their filament colours.
     ///
     /// View state: see [`brokkr_gpu::Uniforms::paint_shown`]. Nothing about it
@@ -964,8 +958,6 @@ pub struct Brokkr {
     /// The key a parting puts between two parts: its kind, its size, and the
     /// clearance, which belongs to the printer. See `brokkr_core::part`.
     key_spec: brokkr_core::part::KeySpec,
-    /// Which coat of the paint in hand the editor shows. View state.
-    paint_coat: crate::message::PaintCoat,
     /// How the paint brush touches the model, its settings, and where the
     /// stroke in progress has got to. See `app/paints.rs`.
     touch: paints::TouchState,
@@ -2255,12 +2247,10 @@ impl Brokkr {
             // switch in the panel covers the heavy import.
             thumbnails: true,
             show_mask: true,
-            paint_slot: 1,
             show_paint: true,
             show_cavity: false,
             export_detail: ExportDetail::default(),
             key_spec: brokkr_core::part::KeySpec::peg(),
-            paint_coat: crate::message::PaintCoat::default(),
             touch: paints::TouchState::default(),
             flat_paint: false,
             studio: studio::StudioState::default(),
@@ -5792,7 +5782,7 @@ impl Brokkr {
             return;
         }
         // A hidden or locked layer takes no paint. See `app/layers.rs`.
-        if self.painting_colour() && self.layer_refuses_paint() {
+        if self.layer_refuses_paint() {
             return;
         }
         // The airbrush sprays by the frame, not by the stamp. See
@@ -5817,18 +5807,10 @@ impl Brokkr {
             self.stroke.advance(point, spacing, &mut self.stamp_centres);
         }
 
-        let slot = match direction {
-            BrushDirection::Add => self.paint_slot,
-            BrushDirection::Subtract => brokkr_core::colour::UNPAINTED,
-        };
         // A fill is not a stroke: the paint is poured where the pointer is.
-        // See `app/paints.rs`.
+        // See `app/painting.rs`.
         if self.touch.kind == crate::message::PaintTouch::Fill {
-            if self.painting_colour() {
-                self.pour_colour(point, direction);
-            } else {
-                self.pour(point, slot);
-            }
+            self.pour_colour(point, direction);
             self.remesh_dirty();
             return;
         }
@@ -5849,21 +5831,8 @@ impl Brokkr {
             // a drybrush or a sponge is the same stamp asked one more
             // question per voxel. See `app/paints.rs`.
             let coat = self.coat_for(centre, start && index == 0);
-            // In colour, the same stamp is a stamp of the colour brush.
-            // See `app/painting.rs`.
-            if self.painting_colour() {
-                self.lay_colour(&brush, &stamp, coat, direction, start && index == 0);
-                continue;
-            }
-            coat.apply_symmetric(
-                &brush,
-                self.doc.active_volume_mut(),
-                &stamp,
-                slot,
-                self.symmetry,
-                MIRROR_CENTRE,
-                &mut self.touch.scratch,
-            );
+            // A stamp of the colour brush. See `app/painting.rs`.
+            self.lay_colour(&brush, &stamp, coat, direction, start && index == 0);
         }
 
         self.perf.stamps = self.stamp_centres.len();
@@ -6892,7 +6861,6 @@ impl Brokkr {
         volume.seed_sphere(Vec3::ZERO, MODEL_RADIUS_MM);
         volume.mark_everything_dirty();
         self.doc = Document::from_volume(volume);
-        self.forget_paints();
         // History refers to bricks of the volume that just went away, so keeping
         // it would let undo splice pieces of the discarded model into this one.
         self.history.clear();
@@ -7294,8 +7262,10 @@ impl Brokkr {
         self.apply_view(&state.view);
         self.timeline.adopt(state.keys);
         self.doc.replace_paints(state.paints);
-        self.forget_paints();
-        self.paint_slot = self.paint_slot.clamp(1, self.last_paint_slot());
+        // Painted by filament slot, from before slot painting was taken
+        // out: its slots laid into its colour paint. See
+        // `brokkr_core::paint::old_slots`.
+        self.lay_old_slots();
 
         // History belongs to the model that just went away.
         self.history.clear();
@@ -7328,7 +7298,6 @@ impl Brokkr {
     /// plus padding and the camera sits visibly too far back.
     fn adopt_import(&mut self, imported: crate::message::Imported) {
         self.doc = Document::from_volume(imported.volume);
-        self.forget_paints();
         self.camera = OrbitCamera::framing(Vec3::ZERO, MODEL_RADIUS_MM);
         // `framing` leaves the default lattice behind, and the floor is a
         // number of voxels, so it has to be told the real one.
@@ -9132,9 +9101,6 @@ impl Brokkr {
             self.doc.mark_everything_dirty();
         }
 
-        // The step may have changed the paints. See `app/paints.rs`.
-        self.paints_stepped();
-
         self.history_stats = self.history.stats();
         self.unsaved = true;
         self.remesh_dirty();
@@ -10705,14 +10671,6 @@ impl Brokkr {
             Message::CameraFramedOnActive => self.frame_active(),
             Message::MaskPeekStarted => self.mask_peek = true,
             Message::MaskPeekEnded => self.mask_peek = false,
-            // Clamped rather than trusted, for the reason the radius is: a
-            // message can arrive from anything, and a slot past the machine's
-            // heads would paint a filament that does not exist. The palette
-            // only grows in a session -- `sync_from_printer` never removes a
-            // slot -- so a chosen slot cannot be orphaned after the fact.
-            Message::PaintSlotChanged(slot) => {
-                self.paint_slot = slot.clamp(1, self.last_paint_slot());
-            }
             Message::ShowPaintToggled => self.show_paint = !self.show_paint,
             // A remesh of everything, because the signal travels in the mesh:
             // on, every brick has to be measured, and off, every brick has to
@@ -10737,9 +10695,6 @@ impl Brokkr {
                     self.remesh_dirty();
                 }
             }
-            Message::PaintsStarted => self.start_paints(),
-            Message::PaintAdded => self.add_paint(),
-            Message::PaintRemoved => self.remove_paint(),
             Message::Overhang(message) => self.overhang_changed(message),
             Message::Painting(message) => self.painting_changed(message),
             Message::Layers(message) => self.layers_changed(message),
@@ -10747,8 +10702,6 @@ impl Brokkr {
             Message::Airbrush(message) => self.airbrush_changed(message),
             Message::Coats(message) => self.coats_changed(message),
             Message::Decal(message) => return self.decal_changed(message),
-            Message::PaintCoatChosen(coat) => self.paint_coat = coat,
-            Message::PaintEdited(edit) => self.edit_paint(edit),
             Message::Studio(message) => return self.studio_changed(message),
             Message::Form(message) => self.form_changed(message),
             Message::Measure(message) => self.measure_changed(message),
@@ -10763,7 +10716,6 @@ impl Brokkr {
                 }
             }
             Message::FlatPaintToggled => self.flat_paint = !self.flat_paint,
-            Message::PaintAllApplied => self.coat_the_body(),
             Message::PaintTouchChosen(touch) => self.touch.kind = touch,
             Message::PaintTouchChanged(setting) => self.touch.set(setting),
             // And the verbs, which DO change protection and all of which are
@@ -22085,17 +22037,11 @@ mod paint_brush_tests {
         drop(app.update(message));
     }
 
-    /// The paint brush in hand, painting by filament slot, which is what
-    /// these tests are of. The colour brush's are in `app/painting.rs`.
+    /// The paint brush in hand. The colour brush's own tests are in
+    /// `app/painting.rs`.
     fn app() -> Brokkr {
         let mut app = Brokkr::with_tablet(crate::tablet::Tablet::inert());
         update(&mut app, Message::BrushKindChanged(BrushKind::Paint));
-        update(
-            &mut app,
-            Message::Painting(crate::message::PaintingMessage::Target(
-                crate::message::PaintTarget::Slots,
-            )),
-        );
         app
     }
 
@@ -22131,55 +22077,10 @@ mod paint_brush_tests {
         release(app);
     }
 
-    /// How many painted colour bricks the active body carries.
-    fn painted_bricks(app: &Brokkr) -> usize {
-        app.doc.active_volume().stats().colour_bricks
-    }
-
-    #[test]
-    fn a_paint_drag_paints_the_active_body_with_the_chosen_slot_and_is_undoable() {
-        let mut app = app();
-        update(&mut app, Message::PaintSlotChanged(3));
-        assert_eq!(painted_bricks(&app), 0);
-        let field_before = app.doc.active_volume().stats().dense_bricks;
-
-        paint_drag(&mut app);
-        assert!(painted_bricks(&app) > 0, "the drag painted nothing");
-        assert!(app.unsaved, "a paint stroke did not mark the document unsaved");
-        assert_eq!(
-            app.doc.active_volume().stats().dense_bricks,
-            field_before,
-            "a paint stroke changed the field's own allocation"
-        );
-        // The slot that was chosen, and not slot 1, somewhere on the body.
-        let volume = app.doc.active_volume();
-        let painted = volume.brick_coords().any(|coord| {
-            let origin = coord.origin();
-            (0..32 * 32 * 32).any(|index| {
-                let cell = origin + glam::IVec3::new(index % 32, (index / 32) % 32, index / 1024);
-                volume.colour().at(cell) == 3
-            })
-        });
-        assert!(painted, "no voxel carries slot 3");
-
-        assert!(app.history.can_undo(), "a paint stroke pushed no history entry");
-        update(&mut app, Message::Undo);
-        assert_eq!(painted_bricks(&app), 0, "undo left the paint on the body");
-        update(&mut app, Message::Redo);
-        assert!(painted_bricks(&app) > 0, "redo did not put the paint back");
-    }
-
-    #[test]
-    fn ctrl_drag_erases_the_paint() {
-        let mut app = app();
-        paint_drag(&mut app);
-        assert!(painted_bricks(&app) > 0, "the fixture painted nothing");
-
-        app.control = true;
-        for _ in 0..3 {
-            paint_drag(&mut app);
-        }
-        assert_eq!(painted_bricks(&app), 0, "the eraser left painted bricks behind");
+    /// Which change of the active body's paint it is on: what a view toggle
+    /// must not move.
+    fn painted_bricks(app: &Brokkr) -> u64 {
+        app.doc.active_volume().paint().revision()
     }
 
     #[test]
@@ -22252,16 +22153,6 @@ mod paint_brush_tests {
         }];
         update(&mut app, Message::PaletteSynced(Ok(Some(reported))));
         assert!(app.thumbs.stale_count() > 0, "a palette change left the thumbnails as they were");
-    }
-
-    #[test]
-    fn the_slot_is_clamped_to_the_palette() {
-        let mut app = app();
-        let last = app.palette.slots.len() as u8;
-        update(&mut app, Message::PaintSlotChanged(0));
-        assert_eq!(app.paint_slot, 1, "slot 0 is unpainted and cannot be chosen");
-        update(&mut app, Message::PaintSlotChanged(200));
-        assert_eq!(app.paint_slot, last, "a slot past the palette was accepted");
     }
 
     /// The toggle reaches the shader and touches nothing else: no brick dirty,
