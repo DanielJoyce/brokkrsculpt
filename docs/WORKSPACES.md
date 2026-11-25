@@ -80,7 +80,7 @@ One pull request each, into `feature/studio`.
 |---|---|---|
 | U1 The kit | **Done**, 2026-11-25 | `ui.rs`: a folding section, a number, a choice of a few, a button, a tooltip. Every panel block under a heading that folds; every slider a number; every icon-only button named on hover; Inter shipped |
 | U2 Menus, status bar, Preferences | **Done**, 2026-11-25 | Edit and View menus, a status bar at the foot, a Preferences card (the pen, the SpaceMouse, updates), a Keyboard shortcuts card on `?`, and every grey caption out of the panel |
-| U3 Context bar and one popup | Not begun | The bar over the viewport and the right-click card from one function; a rail of tool kinds; keys 1 to 8 from the library |
+| U3 Context bar and one popup | **Done**, 2026-11-25 | The bar over the viewport and the right-click card from the same functions; a rail of tool kinds; keys 1 to 8 pick the palette's first eight, numbered on their tiles |
 | U4 Workspaces | Not begun | The switcher, a library and inspector for each, what each remembers |
 | U5 Each workspace its own | Not begun | Paint's filaments, Kitbash's placement (issue 77), Print, a drawn falloff (issue 78) and pressure curve (issue 76) |
 
@@ -193,3 +193,62 @@ Not done in U2:
   lays the word out.
 - The scale bar's "at the middle of the view" stays: it says what the
   reading is of, not how to use it.
+
+### U3: the context bar, one popup, the rail
+
+- **The context bar** (`app/context.rs`), over the viewport: the tool's
+  name, its radius, its strength (or a colour's opacity), its falloff (a
+  profile's five shapes for a brush on the field, upstream's four curves
+  for the mask and for a colour, nothing for a filament slot), and the
+  mirror planes. The cut and the gizmo show their name and the mirror
+  planes only. A number on the bar is the kit's number laid on one line:
+  label, a short slider, the field. The row wraps when the window is
+  narrower than it.
+- **The right-click menu** is built from the same functions: the same
+  radius and strength numbers (the same drafts: typing in one shows in
+  the other), the same falloff choice. Its own typed fields, which moved
+  the value on every keystroke that parsed, are gone; like every number
+  now, the value moves on enter. Before this the menu offered four
+  falloffs where the panel offered five shapes and a flat middle.
+- **The rail** (`app/rail.rs`) replaced the strip of brushes: Brush (the
+  palette's brush in hand; its icon is that brush's kind), Move and Paint
+  (upstream's two that are not brushes of the palette), Mask, Transform,
+  Cut. Each keeps a word under its icon, and for the three modes it is a
+  state, as on the strip: "armed", "blur", "free". Brush, after Move or
+  Paint, brings back the palette's brush that was in hand.
+- **Keys 1 to 8** pick the palette's first eight, which carry their
+  number in a corner of their picture. The palette's Sculpt group starts
+  with upstream's six in upstream's order, so 1 to 6 pick what they
+  always picked.
+
+**Where this is not what was decided.** The decision was that the keys
+pick the library's first eight and that in Sculpt the order starts with
+today's eight. Today's seventh and eighth were Move and Paint, and
+neither is a brush of the palette: the palette holds brushes on the
+field, with a picture of a stroke and a profile, and Move and Paint are
+neither. So 7 and 8 pick Gather and Spread now, and Move and Paint are
+on the rail. Making Move a brush of the palette is a change to the
+brush model and was not made.
+
+Tests: `each_rail_button_lights_itself_and_brush_comes_back` (every pair
+of rail buttons, and a mode pressed twice lights the brush under it);
+`the_falloff_offered_follows_the_tool`;
+`the_digits_select_the_first_eight_brushes_of_the_palette`;
+`the_first_six_keys_are_upstreams_six`;
+`a_typed_radius_arrives_on_enter_and_still_clamps`, which replaces the
+menu's own field test. A test of the studio typed a strength through the
+menu's field and now sends what the field sends.
+
+On a screen: the bar with Draw, with the mask and with Paint; the rail;
+the numbered tiles; the right-click menu with Paint. The bar wrapped the
+mirror planes onto a second line at 1280 wide, and was tightened until
+it did not.
+
+Not done in U3:
+
+- The palette cannot be reordered, so the keys cannot be re-pointed.
+- The WORKBENCH is not on the bar (the design had it there).
+- The panel's BRUSH block still has the radius and strength as well as
+  the bar; the inspector of U4 decides what stays.
+- While shift is held the rail's Brush button says "smooth", but the
+  palette does not light Smooth as the strip did.

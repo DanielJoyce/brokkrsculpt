@@ -773,14 +773,20 @@ pub(super) const GROUPS: [(&str, &[&str]); 3] = [
     (
         "Sculpt",
         &[
+            // The first eight are what the keys 1 to 8 pick (`viewport.rs`),
+            // and the first six are upstream's six in the order its 1 to 6
+            // had them, so those six keys mean what they always meant.
+            // Upstream's 7 and 8 were Move and Paint, which are not brushes
+            // on the field and are on the tool rail. See
+            // `docs/WORKSPACES.md`.
             "Draw",
             "Clay",
+            "Smooth",
             "Inflate",
             "Pinch",
+            "Flatten",
             "Gather",
             "Spread",
-            "Smooth",
-            "Flatten",
             "Scrape",
             "Fill",
             "Polish",
@@ -1191,6 +1197,27 @@ mod tests {
         for came in core() {
             assert_eq!(Presets::parse(&came.line()).list, vec![came.clone()], "{}", came.name);
         }
+    }
+
+    /// The keys 1 to 6 still pick what upstream's 1 to 6 picked: the
+    /// first six of the palette are upstream's six, each as nothing but
+    /// itself, in upstream's order. See `docs/WORKSPACES.md`.
+    #[test]
+    fn the_first_six_keys_are_upstreams_six() {
+        let came = core();
+        let upstream = [
+            BrushKind::Draw,
+            BrushKind::Clay,
+            BrushKind::Smooth,
+            BrushKind::Inflate,
+            BrushKind::Pinch,
+            BrushKind::Flatten,
+        ];
+        for (index, kind) in upstream.into_iter().enumerate() {
+            assert_eq!(came[index].kind, kind, "key {} is not {kind:?}", index + 1);
+            assert!(came[index].custom.is_none(), "key {} is not plain {kind:?}", index + 1);
+        }
+        assert!(crate::viewport::KEYED_BRUSHES <= came.len());
     }
 
     /// The brushes that come with the application: each is settled, is a

@@ -36,6 +36,9 @@ pub type Drafts = HashMap<&'static str, String>;
 /// The width of a number's typed field.
 const FIELD_WIDTH: f32 = 68.0;
 
+/// The width of an inline number's slider.
+const INLINE_SLIDER: f32 = 76.0;
+
 /// A label inside a section, above a group of controls.
 pub fn sub_label<'a>(label: impl text::IntoFragment<'a>) -> iced::widget::Text<'a> {
     text(label).size(theme::LABEL_SIZE).color(theme::TEXT_MUTE)
@@ -189,6 +192,7 @@ pub struct Number<'a> {
     trailing: Option<Element<'a, Message>>,
     on_release: Option<Message>,
     tip: Option<&'static str>,
+    inline: bool,
     on_change: Box<dyn Fn(f32) -> Message + 'a>,
 }
 
@@ -212,6 +216,7 @@ pub fn number<'a>(
         trailing: None,
         on_release: None,
         tip: None,
+        inline: false,
         on_change: Box::new(on_change),
     }
 }
@@ -241,6 +246,13 @@ impl<'a> Number<'a> {
     /// viewport, or what it works on.
     pub fn tip(mut self, tip: &'static str) -> Self {
         self.tip = Some(tip);
+        self
+    }
+
+    /// Label, a short slider and the field on one line, for the context
+    /// bar over the viewport, where there is width and no height.
+    pub fn inline(mut self) -> Self {
+        self.inline = true;
         self
     }
 
@@ -280,6 +292,7 @@ impl<'a> From<Number<'a>> for Element<'a, Message> {
             trailing,
             on_release,
             tip: hover,
+            inline,
             on_change,
         } = number;
         let shown = shown.unwrap_or_else(|| format!("{value:.2}"));
@@ -298,17 +311,26 @@ impl<'a> From<Number<'a>> for Element<'a, Message> {
                 None => label.into(),
             }
         };
-        let mut top = row![label, Space::new().width(Length::Fill), field]
-            .align_y(Alignment::Center)
-            .spacing(theme::S2);
-        if let Some(trailing) = trailing {
-            top = top.push(trailing);
-        }
         let mut slide =
             slider(range, value, move |moved| Message::FieldSet(key, Box::new(on_change(moved))))
                 .step(step);
         if let Some(released) = on_release {
             slide = slide.on_release(released);
+        }
+        if inline {
+            let mut line = row![label, slide.width(Length::Fixed(INLINE_SLIDER)), field]
+                .spacing(theme::S2)
+                .align_y(Alignment::Center);
+            if let Some(trailing) = trailing {
+                line = line.push(trailing);
+            }
+            return line.into();
+        }
+        let mut top = row![label, Space::new().width(Length::Fill), field]
+            .align_y(Alignment::Center)
+            .spacing(theme::S2);
+        if let Some(trailing) = trailing {
+            top = top.push(trailing);
         }
         column![top, slide].spacing(theme::S1).into()
     }

@@ -362,6 +362,16 @@ pub fn danger_button(
     }
 }
 
+/// The key a brush tile is picked by, in its corner: a small chip of the
+/// hot accent.
+pub fn key_badge(_theme: &iced::Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(Color { a: 0.9, ..ACCENT_HOT }.into()),
+        border: iced::Border { radius: 3.0.into(), ..Default::default() },
+        ..Default::default()
+    }
+}
+
 /// The dimming layer behind a modal prompt.
 ///
 /// Dark but translucent: the question is about the sculpt, so the sculpt has to
