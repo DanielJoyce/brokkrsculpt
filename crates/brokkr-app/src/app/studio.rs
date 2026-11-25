@@ -610,7 +610,15 @@ impl Brokkr {
         palette
             .iter()
             .enumerate()
-            .filter(|(_, (preset, _))| preset.is(now))
+            // Baked in or a body of its own is the mode's to say and not the
+            // brush's (`app/workspace.rs`), so it is not asked about.
+            .filter(|(_, (preset, _))| {
+                let mut asked = (*preset).clone();
+                if let (Some(add), Some(held)) = (asked.add.as_mut(), now.add.as_ref()) {
+                    add.separate = held.separate;
+                }
+                asked.is(now)
+            })
             .max_by_key(|(index, (preset, _))| (says(preset), std::cmp::Reverse(*index)))
             .map(|(index, _)| index)
     }
@@ -1365,15 +1373,20 @@ impl Brokkr {
         // each kind of work, and then the user's own.
         // The open workspace's groups: Kitbash's library is the brushes that
         // add, Sculpt's the rest. See `app/workspace.rs`.
-        let kitbash = self.desk.now == crate::message::Workspace::Kitbash;
+        // The open mode's groups: Transform's are the parts, which are the
+        // shapes that add, set down as bodies of their own; Sculpt's are
+        // every group, the shapes among them baked in. See
+        // `app/workspace.rs`.
+        let parts = self.desk.now == crate::message::Workspace::Transform;
         let mut grid = column![].spacing(theme::S1);
         for (group, places) in super::presets::groups() {
-            if (group == "Add") != kitbash {
+            if parts && group != "Add" {
                 continue;
             }
-            grid = grid.push(heading(group)).push(rows(places.start, places.end, across));
+            let heading_words = if group == "Add" && !parts { "Add, baked in" } else { group };
+            grid = grid.push(heading(heading_words)).push(rows(places.start, places.end, across));
         }
-        if palette.len() > came && !kitbash {
+        if palette.len() > came && !parts {
             grid = grid.push(heading("Yours")).push(rows(came, palette.len(), own_across));
         }
         grid.into()
@@ -1414,11 +1427,20 @@ impl Brokkr {
     /// so does a press anywhere else, Escape, or `b` again.
     pub(super) fn palette_popup(&self) -> Option<Element<'_, Message>> {
         let corner = self.popup_corner(self.studio.popup?);
-        let card = column![
-            text("BRUSHES").size(theme::HEADING_SIZE).color(theme::TEXT_MUTE),
-            self.brush_grid(POPUP_ACROSS, POPUP_ACROSS),
-        ]
-        .spacing(theme::S2);
+        // The open mode's palette: brushes, parts, the paint's touches.
+        // Print has none. See `app/workspace.rs`.
+        let (title, body): (&str, Element<'_, Message>) = match self.desk.now {
+            crate::message::Workspace::Sculpt => {
+                ("BRUSHES", self.brush_grid(POPUP_ACROSS, POPUP_ACROSS))
+            }
+            crate::message::Workspace::Transform => {
+                ("PARTS", self.brush_grid(POPUP_ACROSS, POPUP_ACROSS))
+            }
+            crate::message::Workspace::Paint => ("PAINTS", self.touch_picker(false)),
+            crate::message::Workspace::Print => return None,
+        };
+        let card = column![text(title).size(theme::HEADING_SIZE).color(theme::TEXT_MUTE), body]
+            .spacing(theme::S2);
         Some(
             container(
                 container(card)
@@ -3270,7 +3292,7 @@ mod tests {
     #[test]
     fn the_palette_comes_to_the_pointer_and_goes_when_it_has_been_used() {
         let toggle = Message::Studio(StudioMessage::PaletteToggled);
-        for key in ["b", "B"] {
+        for key in ["p", "P"] {
             let means = crate::viewport::shortcut(key, false, key == "B", false);
             assert!(
                 matches!(means, Some(Message::Studio(StudioMessage::PaletteToggled))),

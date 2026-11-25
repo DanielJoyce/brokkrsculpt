@@ -2368,7 +2368,7 @@ impl Brokkr {
     /// Nothing here is computed or formatted: the name is borrowed straight out
     /// of the document, and the whole badge is skipped by an `Option` when solo
     /// is off.
-    fn solo_badge(&self, which: PanelSection) -> Option<Element<'_, Message>> {
+    pub(super) fn solo_badge(&self, which: PanelSection) -> Option<Element<'_, Message>> {
         if which != PanelSection::Bodies {
             return None;
         }
@@ -2609,11 +2609,18 @@ impl Brokkr {
             // settings. They are session state and do not dirty the
             // document.
             scrollable(rows).height(Length::Fixed(row_h * visible_rows)),
-            verbs,
         ]
         .spacing(theme::S2);
+        // Choosing a body, its eye and solo work in every mode; adding,
+        // deleting, duplicating, merging and splitting bodies are
+        // Transform's, which is where the hierarchy is managed. See
+        // `docs/WORKSPACES.md`.
+        let managing = self.desk.now == crate::message::Workspace::Transform;
+        if managing {
+            stacked = stacked.push(verbs);
+        }
 
-        if self.adding {
+        if self.adding && managing {
             // As TEXT and not icons. Three glyphs that are not drawn, and a cube
             // at 11 px is a smudge -- the words are shorter to read than the
             // pictures would be to learn.

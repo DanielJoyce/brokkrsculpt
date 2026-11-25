@@ -37,8 +37,14 @@ impl Brokkr {
         if self.measure.armed {
             return Rail::Measure;
         }
+        // A part to add is Transform's Place; a shape baked in is a brush
+        // of Sculpt's palette.
         if self.tool == Tool::Sculpt && self.inserting() {
-            return Rail::Place;
+            return if self.desk.now == crate::message::Workspace::Transform {
+                Rail::Place
+            } else {
+                Rail::Brush
+            };
         }
         match self.tool {
             Tool::Mask => Rail::Mask,
@@ -110,7 +116,17 @@ impl Brokkr {
                 iced::Task::batch([task, self.update(Message::BrushKindChanged(kind))])
             }
             Rail::Mask => self.update(Message::ToolChanged(Tool::Mask)),
-            Rail::Transform => self.update(Message::ToolChanged(Tool::Transform)),
+            Rail::Transform => {
+                // The part in hand is put down for the gizmo, and kept for
+                // Place to take up again.
+                let mut put_down = iced::Task::none();
+                if self.inserting() {
+                    self.desk.memory[crate::message::Workspace::Transform as usize].insert =
+                        self.inserts.what;
+                    put_down = self.update(Message::Add(crate::message::AddMessage::Chosen(None)));
+                }
+                iced::Task::batch([put_down, self.update(Message::ToolChanged(Tool::Transform))])
+            }
             Rail::Cut => self.update(Message::ToolChanged(Tool::Cut)),
         };
         iced::Task::batch([measuring, task])
@@ -157,7 +173,7 @@ impl Brokkr {
                     match (on, smoothing) {
                         (true, true) => "free",
                         (true, false) => "snap",
-                        (false, _) => "Transform",
+                        (false, _) => "Gizmo",
                     },
                     "Move, turn and scale the body  W",
                 ),

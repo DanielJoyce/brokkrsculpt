@@ -361,3 +361,57 @@ Not done in U5, and so not done in this design:
   body (issue 82).
 - The palette cannot be reordered; scroll positions are not kept per
   workspace; the `b` palette in Paint and Print shows Sculpt's groups.
+
+## R1: four modes, each its own (2026-11-25)
+
+The maintainer looked at U4 and changed the design: the modes are to be
+separated more fully, with a palette each and shortcuts that change by
+mode. Decided in conversation on 2026-11-25:
+
+- **Sculpt, Transform, Paint, Print** (Ctrl and 1 to 4). Kitbash is
+  Transform: the bodies, the hierarchy and the parts, and moving them.
+- **P** brings up the open mode's palette at the pointer: Sculpt's
+  brushes, Transform's parts, Paint's touches; Print has none. It was
+  `b` for the one palette there was.
+- **Shapes split by result**: a shape added in Sculpt is baked into the
+  body and is a brush of Sculpt's palette (its group is "Add, baked in");
+  the same shape in Transform is a part, a body of its own. The mode
+  says which, whichever way it was chosen, and the Baked in / Its own
+  body toggle is gone.
+- **The cut splits**: a cut in Sculpt cuts material away, and never
+  parts; Print's cut parts the body in two with keys, Alt or not.
+- **The bodies list always shows**, at the foot of every mode's dock,
+  with no fold, so which part a stroke, a coat, a move or a cut goes to
+  is chosen in any mode. Adding, deleting, duplicating, merging and
+  splitting bodies are Transform's.
+- **Move stays on Sculpt's rail. Paint has no Paint button**: painting
+  is what Paint does when neither the mask nor a measurement is up.
+- **Keys by mode**: M masks in Sculpt and Paint; C cuts in Sculpt and
+  parts in Print; W is Transform's gizmo; Ctrl G groups in Transform. A
+  key that means nothing in the open mode does nothing.
+
+| Mode | Rail | Palette and library | Settings |
+|---|---|---|---|
+| Sculpt | Brush, Move, Mask, Cut, Measure | Sculpt, Lines and stamps, Add (baked in), the user's own | BRUSH, STROKE, PATTERN, FORM, WORKBENCH, DETAIL; with a shape in hand, ADD and DETAIL |
+| Transform | Gizmo, Place, Measure | Parts: the Add group, a copy of a body, maps taken in | ADD, DETAIL |
+| Paint | Mask, Measure | The paint: modes, touches, colour, filaments | BRUSH, STROKE, FILAMENT |
+| Print | Cut, Measure | Export, parting keys, fit test | DETAIL, FILAMENT |
+
+Transform opens on the gizmo, and Place takes up the part last in hand
+(a ball the first time). A part taken up from the palette or by a key
+puts the gizmo down so the drag sets it down; the gizmo puts the part
+down and Place takes the same one up again. In Transform and Print a
+drag never strokes the field: when their tool puts itself down (a cut is
+one shot, the gizmo can be refused) the mode's first tool is taken up,
+or measuring.
+
+Tests: `transform_holds_its_part_and_only_there`,
+`the_mode_says_baked_in_or_its_own_body`, `keys_and_the_cut_follow_the_mode`,
+and the property `no_switch_changes_the_document` now holds the lit tool
+to the mode's tools. The three parting tests run in Print. The palette
+test presses P. A kept brush that adds, taken up in Sculpt, is baked in
+whatever it was kept as, and its test says so.
+
+Not done in R1: the paint rack (to be designed); remapping keys 1 to 8
+(R2); dragging rows of the bodies list is not limited to Transform, only
+its verb row is.

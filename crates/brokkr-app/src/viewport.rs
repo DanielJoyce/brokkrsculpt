@@ -902,7 +902,9 @@ pub(crate) fn shortcut(character: &str, command: bool, shift: bool, alt: bool) -
         // The palette of brushes, at the pointer. ZBrush's own key for its
         // brush palette, taken for the reason the others here were. See
         // `app/studio.rs`.
-        "b" => Some(Message::Studio(crate::message::StudioMessage::PaletteToggled)),
+        // The open mode's palette at the pointer. It was `b`; P for palette
+        // since the modes each have one (`docs/WORKSPACES.md`).
+        "p" => Some(Message::Studio(crate::message::StudioMessage::PaletteToggled)),
         "h" => Some(Message::MaskPeekStarted),
         // Blender's and Nomad's own key for this, taken rather than invented.
         // It is the one keystroke that recovers ANY camera, however lost, and

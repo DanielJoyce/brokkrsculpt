@@ -370,6 +370,9 @@ impl Brokkr {
         self.add_changed(AddMessage::Chosen(Some(what)));
         let state = &mut self.inserts;
         (state.separate, state.blend, state.lift) = (setup.separate, setup.blend, setup.lift);
+        // Baked in or a body of its own is the mode's to say: see
+        // `app/workspace.rs`.
+        state.separate = self.desk.now == crate::message::Workspace::Transform;
         if setup.what.is_cable() {
             (state.start, state.end) = (setup.start, setup.end);
         }
@@ -411,6 +414,9 @@ impl Brokkr {
                     return;
                 }
                 state.what = Some(what);
+                // Baked in in Sculpt, a body of its own in Transform: the
+                // mode says, whichever way it was chosen.
+                state.separate = self.desk.now == crate::message::Workspace::Transform;
                 // One thing in hand at a time: the stamp and a brush's own
                 // amounts are put away, as they put each other away.
                 self.studio.put_away();
@@ -924,19 +930,10 @@ impl Brokkr {
         let Some(what) = state.what else {
             return panel.into();
         };
-        let way = |label: &'static str, separate: bool| {
-            button(text(label).size(theme::LABEL_SIZE).width(Length::Fill).center())
-                .width(Length::Fill)
-                .style(if state.separate == separate {
-                    theme::tool_button_active
-                } else {
-                    theme::tool_button
-                })
-                .on_press(changed(AddMessage::SeparateToggled(separate)))
-        };
         let voxel_size = self.doc.voxel_size();
-        panel =
-            panel.push(row![way("Baked in", false), way("Its own body", true)].spacing(theme::S1));
+        // Baked in or a body of its own is the mode's to say, not a toggle:
+        // a shape added in Sculpt is baked in, a part added in Transform is
+        // its own body. See `app/workspace.rs`.
         // A map has no join to soften and nothing to be held off by: it
         // meets the surface where its displacement comes to nothing.
         if matches!(what, Insert::Map(_)) {
@@ -1675,7 +1672,9 @@ mod tests {
         take(&mut app, "Washing line");
         let state = &app.inserts;
         assert_eq!(state.what, Some(Insert::Hung));
-        assert_eq!((state.sag, state.separate), (0.4, true));
+        // Kept and taken up again in Sculpt, where what is added is baked
+        // in whatever the brush was kept as: the mode says.
+        assert_eq!((state.sag, state.separate), (0.4, false));
         assert_eq!((state.start, state.end), (End::Ball, End::Collar));
         assert_eq!(app.brush.radius, 1.25, "the cable's thickness was not kept");
         assert_eq!(app.live_brush_name(), "WASHING LINE");
