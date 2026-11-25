@@ -1110,6 +1110,42 @@ mod tests {
         app.doc.active_volume().sample_world(point) < 0.0
     }
 
+    /// A shape dragged out bigger than a copy of the body may hold is set
+    /// down all the same. It took the application down: the join copied the
+    /// whole of the shape's box, and past 113 voxels from the shape's
+    /// middle to its edge that was more than a copy holds, which the core
+    /// answers by panicking. At half the voxel size the application opens
+    /// with, that is a ball of 14 mm, on a ball of 20.
+    #[test]
+    fn a_shape_dragged_out_past_any_size_is_set_down() {
+        let mut app = app();
+        update(&mut app, Message::Resample(super::super::VOXEL_SIZE_MM / 2.0));
+        choose(&mut app, Insert::Shape(Form::Ball));
+        press(&mut app, MIDDLE);
+        for step in 1..=4 {
+            move_to(&mut app, MIDDLE + Vec2::new(70.0, 20.0) * step as f32);
+        }
+        let voxels = match app.inserts.pieces.first() {
+            Some(Piece::Placed(seat)) => seat.half / app.doc.voxel_size(),
+            _ => panic!("a shape is being dragged out"),
+        };
+        assert!(voxels > 125.0, "the drag made a ball of only {voxels} voxels");
+        let (point, out) = match app.inserts.press {
+            Some(press) => press,
+            None => panic!("the press found the ball"),
+        };
+        release(&mut app);
+        // Solid a good way out from where the ball's surface was, and one
+        // stroke: undone, the ball is as it was.
+        let half = voxels * app.doc.voxel_size();
+        // Its middle is lifted off the surface by a share of its size.
+        let top = half * (app.inserts.lift + 1.0);
+        assert!(solid_at(&app, point + out * (top * 0.9)), "nothing was set down");
+        assert!(!solid_at(&app, point + out * (top * 1.1)), "what was set down is too big");
+        update(&mut app, Message::Undo);
+        assert!(!solid_at(&app, point + out * (top * 0.5)), "the shape is still there");
+    }
+
     /// Moves that arrive between two frames set a shape down once, where
     /// the last of them left the pointer, and it is the shape a move a frame
     /// leaves, to the bit.

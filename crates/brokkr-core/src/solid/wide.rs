@@ -64,7 +64,7 @@ use rayon::prelude::*;
 use rustc_hash::FxHashSet;
 
 use super::{Join, Solid, nearer, taken_out};
-use crate::brick::{BrickCoord, INSIDE, OUTSIDE};
+use crate::brick::{BRICK_DIM, BrickCoord, INSIDE, OUTSIDE};
 use crate::mask::PROTECTED;
 use crate::region::FieldRegion;
 use crate::volume::{BrickPreview, BrickVerdict, Volume};
@@ -103,6 +103,23 @@ fn near_enough(width: f32) -> f32 {
     2.0 * OUTSIDE + width * 1.5
 }
 
+/// What [`widen`] works in, kept from one join to the next: a shape being
+/// dragged out is widened on every move of the pointer, over a box of some
+/// hundreds of thousands of voxels each time.
+#[derive(Debug, Default)]
+pub(super) struct Spread {
+    /// The point of the surface each voxel holds. Read only for a voxel
+    /// that has been given one, so what is left from the last time is never
+    /// looked at.
+    point: Vec<[f32; 3]>,
+    /// Whether a voxel has offered the point it now holds to its
+    /// neighbours.
+    offered: Vec<u8>,
+    /// The voxels with a point to offer, by how far from it they are: each
+    /// its place in the box, and where that is in y and in z.
+    fronts: Vec<Vec<[u32; 3]>>,
+}
+
 /// Distances further out than `raw` knows them: `raw` is a field over a
 /// box of `size`, in voxels, right within `seed` of its surface and a
 /// clamp or an underestimate past that, with its sign right everywhere.
@@ -123,6 +140,7 @@ pub(super) fn widen(
     seed: f32,
     most: (f32, f32),
     from: impl Fn(usize) -> bool,
+    spread: &mut Spread,
 ) -> Vec<f32> {
     let count = raw.len();
     debug_assert_eq!(count as i64, size.as_i64vec3().element_product());
@@ -156,58 +174,194 @@ pub(super) fn widen(
     // knob of the cost test below, a front taken a round at a time
     // offered from twice as many voxels as it reached.
     let mut near = vec![f32::INFINITY; count];
-    let mut point = vec![[0.0_f32; 3]; count];
+    let Spread { point, offered, fronts } = spread;
+    if point.len() < count {
+        point.resize(count, [0.0; 3]);
+    }
+    offered.clear();
+    offered.resize(count, 0);
     let order = |distance: f32| (distance * 2.0) as usize;
     let last = order(most.0.max(most.1) + 1.0) + 1;
-    let mut fronts: Vec<Vec<u32>> = vec![Vec::new(); last + 1];
-    for index in 0..count {
-        if raw[index].abs() <= seed
-            && from(index)
-            && let Some(surface) = surface_by(index)
-        {
-            near[index] = raw[index].abs();
-            point[index] = surface;
-            fronts[order(near[index]).min(last)].push(index as u32);
-        }
+    fronts.iter_mut().for_each(Vec::clear);
+    if fronts.len() < last + 1 {
+        fronts.resize_with(last + 1, Vec::new);
     }
-    let mut beside = Vec::with_capacity(26);
-    for dz in -1..=1_i32 {
-        for dy in -1..=1_i32 {
-            for dx in -1..=1_i32 {
-                if (dx, dy, dz) != (0, 0, 0) {
-                    let step =
-                        dx as isize + dy as isize * row as isize + dz as isize * plane as isize;
-                    beside.push((dx, dy, dz, step));
+    // A voxel on a front goes with where it is in y and z, so that taking
+    // it off again is not three divisions to find out.
+    let mut index = 0;
+    for z in 0..size.z as u32 {
+        for y in 0..size.y as u32 {
+            for _ in 0..size.x {
+                if raw[index].abs() <= seed
+                    && from(index)
+                    && let Some(surface) = surface_by(index)
+                {
+                    near[index] = raw[index].abs();
+                    point[index] = surface;
+                    fronts[order(near[index]).min(last)].push([index as u32, y, z]);
                 }
+                index += 1;
             }
         }
     }
+    // How far a point may be from a voxel that takes it: inside the
+    // surface, and outside it.
+    let limits = (most.0 + 1.0, most.1 + 1.0);
     for now in 0..=last {
         let mut taken = 0;
         while taken < fronts[now].len() {
-            let index = fronts[now][taken] as usize;
+            let [index, y, z] = fronts[now][taken];
+            let (index, y, z) = (index as usize, y as i32, z as i32);
             taken += 1;
             // Since it was put here it has been handed a nearer point,
             // and was put on an earlier front for that.
             if order(near[index]).min(last) < now {
                 continue;
             }
-            let (x, y, z) =
-                ((index % row) as i32, ((index % plane) / row) as i32, (index / plane) as i32);
+            // It has offered the point it holds already: it is on a front
+            // once for each point it was ever handed, and when two of
+            // those fall in the same half voxel it comes round again
+            // holding what it held the first time. Offering that again
+            // changes nothing, since no neighbour that refused it has got
+            // further from it since. Counted on a ball dragged out of a
+            // ball, this was half of all the offering there was.
+            if offered[index] != 0 {
+                continue;
+            }
+            offered[index] = 1;
+            let x = (index - y as usize * row - z as usize * plane) as i32;
             let held = point[index];
-            for &(dx, dy, dz, step) in &beside {
-                let (nx, ny, nz) = (x + dx, y + dy, z + dz);
-                if nx < 0 || ny < 0 || nz < 0 || nx >= size.x || ny >= size.y || nz >= size.z {
-                    continue;
-                }
-                let other = (index as isize + step) as usize;
-                let limit = if raw[other] < 0.0 { most.0 } else { most.1 };
-                let (ox, oy, oz) = (nx as f32 - held[0], ny as f32 - held[1], nz as f32 - held[2]);
-                let away = (ox * ox + oy * oy + oz * oz).sqrt();
-                if away <= limit + 1.0 && away + 1.0e-4 < near[other] {
+            // A neighbour that takes the point: what it now holds, that it
+            // has not offered it, and the front it joins.
+            macro_rules! give {
+                ($other:expr, $away:expr, $y:expr, $z:expr) => {{
+                    let (other, away): (usize, f32) = ($other, $away);
                     near[other] = away;
                     point[other] = held;
-                    fronts[order(away).min(last).max(now)].push(other as u32);
+                    offered[other] = 0;
+                    fronts[order(away).min(last).max(now)].push([
+                        other as u32,
+                        $y as u32,
+                        $z as u32,
+                    ]);
+                }};
+            }
+            // The neighbours a line of three at a time: the three along x
+            // at each of the nine places about the voxel in y and z, in
+            // the order they were taken one by one, which is the order
+            // they join a front in.
+            //
+            // Away from the faces of the box, which is nearly every voxel,
+            // each line is asked as four: the three and the one after
+            // them, which is read and not asked.
+            #[cfg(target_arch = "x86_64")]
+            if x >= 1 && x + 2 < size.x && y >= 1 && y + 1 < size.y && z >= 1 && z + 1 < size.z {
+                use std::arch::x86_64::*;
+                // What is beside the voxel in y, and in z, and how far
+                // each is from the point, squared.
+                let beside = |at: i32, held: f32| {
+                    [(at - 1) as f32 - held, at as f32 - held, (at + 1) as f32 - held]
+                        .map(|off| off * off)
+                };
+                let (wide, deep) = (beside(y, held[1]), beside(z, held[2]));
+                // The first of the four of the line one less in y and z.
+                let corner = index - row - plane - 1;
+                // SAFETY: every intrinsic here is SSE2, which is part of
+                // x86-64. Each load is of four floats of `raw` or of
+                // `near`, which are both `count` long, beginning at the
+                // voxel one less in x of a neighbour in y and z. The test
+                // above is that those four are in the box: the voxel is
+                // not on its first line or plane or its last, and has one
+                // before it on its line and two after. The store is to an
+                // array of four.
+                unsafe {
+                    let ox = _mm_sub_ps(
+                        _mm_setr_ps((x - 1) as f32, x as f32, (x + 1) as f32, (x + 2) as f32),
+                        _mm_set1_ps(held[0]),
+                    );
+                    let across = _mm_mul_ps(ox, ox);
+                    let (inner, outer) = (_mm_set1_ps(limits.0), _mm_set1_ps(limits.1));
+                    // One line of the nine, written out for each and not
+                    // gone round: going round an array of three inside an
+                    // array of three cost as much as the asking did.
+                    macro_rules! line {
+                        ($dy:literal, $dz:literal) => {{
+                            let first = corner + $dy * row + $dz * plane;
+                            debug_assert!(first + 4 <= count);
+                            let field = _mm_loadu_ps(raw.as_ptr().add(first));
+                            let has = _mm_loadu_ps(near.as_ptr().add(first));
+                            // `(ox * ox + oy * oy + oz * oz).sqrt()`
+                            let away = _mm_sqrt_ps(_mm_add_ps(
+                                _mm_add_ps(across, _mm_set1_ps(wide[$dy])),
+                                _mm_set1_ps(deep[$dz]),
+                            ));
+                            // `if raw[other] < 0.0 { most.0 } else { most.1 }`,
+                            // and one.
+                            let inside = _mm_cmplt_ps(field, _mm_setzero_ps());
+                            let limit =
+                                _mm_or_ps(_mm_and_ps(inside, inner), _mm_andnot_ps(inside, outer));
+                            // `away <= limit + 1.0 && away + 1.0e-4 <
+                            // near[other]`
+                            let takes = _mm_and_ps(
+                                _mm_cmple_ps(away, limit),
+                                _mm_cmplt_ps(_mm_add_ps(away, _mm_set1_ps(1.0e-4)), has),
+                            );
+                            // Not the voxel itself, and not the fourth.
+                            let asked = if ($dy, $dz) == (1, 1) { 0b101 } else { 0b111 };
+                            let taken_by = _mm_movemask_ps(takes) & asked;
+                            if taken_by != 0 {
+                                let mut far = [0.0_f32; 4];
+                                _mm_storeu_ps(far.as_mut_ptr(), away);
+                                for lane in 0..3 {
+                                    if taken_by >> lane & 1 != 0 {
+                                        give!(first + lane, far[lane], y + $dy - 1, z + $dz - 1);
+                                    }
+                                }
+                            }
+                        }};
+                    }
+                    line!(0, 0);
+                    line!(1, 0);
+                    line!(2, 0);
+                    line!(0, 1);
+                    line!(1, 1);
+                    line!(2, 1);
+                    line!(0, 2);
+                    line!(1, 2);
+                    line!(2, 2);
+                }
+                continue;
+            }
+            // At a face of the box, and anywhere on a machine that is not
+            // x86-64: one neighbour at a time, those that are in the box.
+            for dz in -1..=1_i32 {
+                let nz = z + dz;
+                if nz < 0 || nz >= size.z {
+                    continue;
+                }
+                let oz = nz as f32 - held[2];
+                for dy in -1..=1_i32 {
+                    let ny = y + dy;
+                    if ny < 0 || ny >= size.y {
+                        continue;
+                    }
+                    let oy = ny as f32 - held[1];
+                    let middle = (index as isize
+                        + dy as isize * row as isize
+                        + dz as isize * plane as isize) as usize;
+                    for dx in -1..=1_i32 {
+                        let nx = x + dx;
+                        if nx < 0 || nx >= size.x || (dx, dy, dz) == (0, 0, 0) {
+                            continue;
+                        }
+                        let other = (middle as isize + dx as isize) as usize;
+                        let limit = if raw[other] < 0.0 { limits.0 } else { limits.1 };
+                        let ox = nx as f32 - held[0];
+                        let away = (ox * ox + oy * oy + oz * oz).sqrt();
+                        if away <= limit && away + 1.0e-4 < near[other] {
+                            give!(other, away, ny, nz);
+                        }
+                    }
                 }
             }
         }
@@ -249,7 +403,7 @@ impl Join {
         // The body's surface, as it was, near the solid: the voxels the
         // body's distance is spread from. See `near_enough`.
         let near_enough = near_enough(width);
-        let starts: FxHashSet<IVec3> = (lo.z..=hi.z)
+        let starts: Vec<IVec3> = (lo.z..=hi.z)
             .into_par_iter()
             .flat_map_iter(|z| {
                 // A line of the copy at a time: all but a few voxels of the
@@ -258,14 +412,23 @@ impl Join {
                 // set-down to find that out (`docs/PERFORMANCE.md`).
                 let mut found = Vec::new();
                 for y in lo.y..=hi.y {
-                    for (step, value) in region.row(lo.x, hi.x, y, z).iter().enumerate() {
-                        if value.abs() > SEED {
+                    // Sixteen at a time first: written so that it is one
+                    // comparison of sixteen and not sixteen of one.
+                    for (part, values) in region.row(lo.x, hi.x, y, z).chunks(16).enumerate() {
+                        let any =
+                            values.iter().fold(false, |any, value| any | (value.abs() <= SEED));
+                        if !any {
                             continue;
                         }
-                        let voxel = IVec3::new(lo.x + step as i32, y, z);
-                        let off = solid.distance(voxel.as_vec3() * voxel_size) / voxel_size;
-                        if off.abs() <= near_enough {
-                            found.push(voxel);
+                        for (step, value) in values.iter().enumerate() {
+                            if value.abs() > SEED {
+                                continue;
+                            }
+                            let voxel = IVec3::new(lo.x + (part * 16 + step) as i32, y, z);
+                            let off = solid.distance(voxel.as_vec3() * voxel_size) / voxel_size;
+                            if off.abs() <= near_enough {
+                                found.push(voxel);
+                            }
                         }
                     }
                 }
@@ -296,6 +459,14 @@ impl Join {
                 )
         };
         let count = size.element_product() as usize;
+        // Which voxels of the box the body's distance is spread from. It
+        // was a set of their coordinates, asked of every voxel near the
+        // surface.
+        let mut picked = vec![false; count];
+        for voxel in &starts {
+            let local = *voxel - work_lo;
+            picked[local.x as usize + local.y as usize * row + local.z as usize * plane] = true;
+        }
 
         let mut raw = vec![0.0_f32; count];
         raw.par_chunks_mut(row).enumerate().for_each(|(line, values)| {
@@ -309,13 +480,13 @@ impl Join {
         // band-deep and no deeper.
         let shallow = OUTSIDE + 0.5;
         let sides = if cut { (far, shallow) } else { (shallow, far) };
-        let body = widen(&raw, size, SEED, sides, |index| starts.contains(&voxel_at(index)));
+        let body = widen(&raw, size, SEED, sides, |index| picked[index], &mut self.spread);
 
         let lent = (sure < far).then(|| {
             raw.par_iter_mut().enumerate().for_each(|(index, value)| {
                 *value = solid.distance(voxel_at(index).as_vec3() * voxel_size) / voxel_size;
             });
-            widen(&raw, size, (sure * 0.8).min(SEED), (far, far), |_| true)
+            widen(&raw, size, (sure * 0.8).min(SEED), (far, far), |_| true, &mut self.spread)
         });
 
         // What each voxel is to hold, worked out from the body as it now
@@ -324,37 +495,52 @@ impl Join {
         // recorded.
         let mut now = FieldRegion::new();
         volume.snapshot(work_lo, work_hi, &mut now);
+        // A line of the box at a time and not a voxel at a time: nearly
+        // all of the box is past the first question, and asked through a
+        // call a voxel it was a twentieth of a shape's set-down to hear
+        // "no" (`docs/PERFORMANCE.md`).
         let mut wanted = raw;
-        wanted.par_iter_mut().enumerate().for_each(|(index, wanted)| {
-            *wanted = f32::NAN;
-            let before = body[index];
-            if before.abs() >= far {
-                return;
-            }
-            let voxel = voxel_at(index);
-            let off = match &lent {
-                Some(lent) => lent[index],
-                None => solid.distance(voxel.as_vec3() * voxel_size) / voxel_size,
-            };
-            if off.abs() >= far || off.is_nan() {
-                return;
-            }
-            let value = now.get(voxel);
-            let joined = if cut {
-                taken_out(value, before, off, width)
-            } else {
-                value.min(nearer(before, off, width))
-            }
-            .clamp(INSIDE, OUTSIDE);
-            if joined != value {
-                *wanted = joined;
-            }
-        });
         let changed: FxHashSet<BrickCoord> = wanted
-            .par_iter()
+            .par_chunks_mut(row)
             .enumerate()
-            .filter(|(_, wanted)| !wanted.is_nan())
-            .map(|(index, _)| BrickCoord::containing(voxel_at(index)))
+            .flat_map_iter(|(line, wanted)| {
+                let y = work_lo.y + (line % size.y as usize) as i32;
+                let z = work_lo.z + (line / size.y as usize) as i32;
+                let first = line * row;
+                let body = &body[first..first + row];
+                let now = now.row(work_lo.x, work_hi.x, y, z);
+                let mut bricks: Vec<BrickCoord> = Vec::new();
+                for (step, wanted) in wanted.iter_mut().enumerate() {
+                    *wanted = f32::NAN;
+                    let before = body[step];
+                    if before.abs() >= far {
+                        continue;
+                    }
+                    let voxel = IVec3::new(work_lo.x + step as i32, y, z);
+                    let off = match &lent {
+                        Some(lent) => lent[first + step],
+                        None => solid.distance(voxel.as_vec3() * voxel_size) / voxel_size,
+                    };
+                    if off.abs() >= far || off.is_nan() {
+                        continue;
+                    }
+                    let value = now[step];
+                    let joined = if cut {
+                        taken_out(value, before, off, width)
+                    } else {
+                        value.min(nearer(before, off, width))
+                    }
+                    .clamp(INSIDE, OUTSIDE);
+                    if joined != value {
+                        *wanted = joined;
+                        let coord = BrickCoord::containing(voxel);
+                        if bricks.last() != Some(&coord) {
+                            bricks.push(coord);
+                        }
+                    }
+                }
+                bricks
+            })
             .collect();
         if changed.is_empty() {
             return;
@@ -366,13 +552,36 @@ impl Join {
                 BrickVerdict::Whole
             }
         };
-        volume.edit_voxels_where(
+        // Which voxels of a brick are not to be visited: all that are to
+        // hold what they hold. A brick the join changes has a few hundred
+        // such voxels in its thirty-two thousand, and visiting them all to
+        // find that out was a twentieth of a set-down.
+        let leave = |coord: BrickCoord, lines: &mut [u32; BRICK_DIM * BRICK_DIM]| {
+            let local = coord.origin() - work_lo;
+            for (index, line) in lines.iter_mut().enumerate() {
+                let y = local.y + (index % BRICK_DIM) as i32;
+                let z = local.z + (index / BRICK_DIM) as i32;
+                if y < 0 || y >= size.y || z < 0 || z >= size.z {
+                    *line = u32::MAX;
+                    continue;
+                }
+                let first = y as usize * row + z as usize * plane;
+                let mut left = 0_u32;
+                for across in 0..BRICK_DIM as i32 {
+                    let x = local.x + across;
+                    if x < 0 || x >= size.x || wanted[first + x as usize].is_nan() {
+                        left |= 1 << across;
+                    }
+                }
+                *line = left;
+            }
+        };
+        volume.edit_voxels_leaving(
             work_lo,
             work_hi,
-            0,
             true,
-            crate::Settled::NONE,
             decide,
+            leave,
             |voxel, _, value, free| {
                 let local = voxel - work_lo;
                 let wanted =
@@ -495,7 +704,7 @@ mod tests {
         let raw: Vec<f32> =
             (0..72 * 72 * 72).map(|index| exact(index).clamp(INSIDE, OUTSIDE)).collect();
         let most = 13.0;
-        let wide = widen(&raw, size, SEED, (most, most), |_| true);
+        let wide = widen(&raw, size, SEED, (most, most), |_| true, &mut Spread::default());
         let mut worst = 0.0_f32;
         for (index, found) in wide.iter().enumerate() {
             let exact = exact(index);
@@ -722,6 +931,186 @@ mod tests {
         // a join read from a clamp does.
         assert!((surface(&as_lent, Vec3::X) - RADIUS).abs() < 0.05);
         assert!((surface(&as_lent, -Vec3::Y) - RADIUS).abs() < 0.05);
+    }
+
+    /// [`widen`] as it was before it took its neighbours three at a time
+    /// and stopped offering a point twice: one voxel, one neighbour, and a
+    /// voxel offering again every time it comes round. What the one that
+    /// is used has to give back, to the bit.
+    fn widen_one_by_one(
+        raw: &[f32],
+        size: IVec3,
+        seed: f32,
+        most: (f32, f32),
+        from: impl Fn(usize) -> bool,
+    ) -> Vec<f32> {
+        let count = raw.len();
+        debug_assert_eq!(count as i64, size.as_i64vec3().element_product());
+        let (row, plane) = (size.x as usize, (size.x * size.y) as usize);
+        let at = |x: i32, y: i32, z: i32| x as usize + y as usize * row + z as usize * plane;
+        let place = |index: usize| {
+            IVec3::new((index % row) as i32, ((index % plane) / row) as i32, (index / plane) as i32)
+        };
+        // Where the surface is, by a voxel that is within `seed` of it:
+        // itself, less its distance along its gradient.
+        let surface_by = |index: usize| {
+            let IVec3 { x, y, z } = place(index);
+            let read = |x: i32, y: i32, z: i32| {
+                raw[at(x.clamp(0, size.x - 1), y.clamp(0, size.y - 1), z.clamp(0, size.z - 1))]
+            };
+            let slope = Vec3::new(
+                read(x + 1, y, z) - read(x - 1, y, z),
+                read(x, y + 1, z) - read(x, y - 1, z),
+                read(x, y, z + 1) - read(x, y, z - 1),
+            );
+            let normal = slope.try_normalize()?;
+            Some((Vec3::new(x as f32, y as f32, z as f32) - normal * raw[index]).to_array())
+        };
+
+        // A front that moves out from the surface: each voxel on it offers
+        // the point of the surface it holds to its neighbours, and a
+        // neighbour that is nearer to that point than to the one it has
+        // takes it and joins the front. The front is kept in order of
+        // distance, by half voxels, so that a voxel has nearly always got
+        // its nearest point by the time it offers one on: counted on the
+        // knob of the cost test below, a front taken a round at a time
+        // offered from twice as many voxels as it reached.
+        let mut near = vec![f32::INFINITY; count];
+        let mut point = vec![[0.0_f32; 3]; count];
+        let order = |distance: f32| (distance * 2.0) as usize;
+        let last = order(most.0.max(most.1) + 1.0) + 1;
+        let mut fronts: Vec<Vec<u32>> = vec![Vec::new(); last + 1];
+        for index in 0..count {
+            if raw[index].abs() <= seed
+                && from(index)
+                && let Some(surface) = surface_by(index)
+            {
+                near[index] = raw[index].abs();
+                point[index] = surface;
+                fronts[order(near[index]).min(last)].push(index as u32);
+            }
+        }
+        let mut beside = Vec::with_capacity(26);
+        for dz in -1..=1_i32 {
+            for dy in -1..=1_i32 {
+                for dx in -1..=1_i32 {
+                    if (dx, dy, dz) != (0, 0, 0) {
+                        let step =
+                            dx as isize + dy as isize * row as isize + dz as isize * plane as isize;
+                        beside.push((dx, dy, dz, step));
+                    }
+                }
+            }
+        }
+        for now in 0..=last {
+            let mut taken = 0;
+            while taken < fronts[now].len() {
+                let index = fronts[now][taken] as usize;
+                taken += 1;
+                // Since it was put here it has been handed a nearer point,
+                // and was put on an earlier front for that.
+                if order(near[index]).min(last) < now {
+                    continue;
+                }
+                let (x, y, z) =
+                    ((index % row) as i32, ((index % plane) / row) as i32, (index / plane) as i32);
+                let held = point[index];
+                for &(dx, dy, dz, step) in &beside {
+                    let (nx, ny, nz) = (x + dx, y + dy, z + dz);
+                    if nx < 0 || ny < 0 || nz < 0 || nx >= size.x || ny >= size.y || nz >= size.z {
+                        continue;
+                    }
+                    let other = (index as isize + step) as usize;
+                    let limit = if raw[other] < 0.0 { most.0 } else { most.1 };
+                    let (ox, oy, oz) =
+                        (nx as f32 - held[0], ny as f32 - held[1], nz as f32 - held[2]);
+                    let away = (ox * ox + oy * oy + oz * oz).sqrt();
+                    if away <= limit + 1.0 && away + 1.0e-4 < near[other] {
+                        near[other] = away;
+                        point[other] = held;
+                        fronts[order(away).min(last).max(now)].push(other as u32);
+                    }
+                }
+            }
+        }
+
+        for (distance, value) in near.iter_mut().zip(raw) {
+            if *value < 0.0 {
+                *distance = -*distance;
+            }
+        }
+        near
+    }
+
+    /// A field over a box to widen: one or two balls and sometimes a flat
+    /// floor, kept to the band as a body's is, from a seed.
+    fn a_field(seed: u64, size: IVec3) -> Vec<f32> {
+        let mut noise = crate::testing::Noise::seeded(seed);
+        let mut unit = || noise.below(10_000) as f32 / 10_000.0;
+        let extent = size.as_vec3();
+        let balls: Vec<(Vec3, f32)> = (0..2)
+            .map(|_| {
+                let centre = Vec3::new(unit(), unit(), unit()) * extent;
+                (centre, 1.0 + unit() * extent.min_element() * 0.6)
+            })
+            .collect();
+        let floor = (unit() < 0.5).then(|| unit() * extent.z);
+        let two = unit() < 0.6;
+        let mut raw = Vec::with_capacity(size.element_product() as usize);
+        for z in 0..size.z {
+            for y in 0..size.y {
+                for x in 0..size.x {
+                    let at = Vec3::new(x as f32, y as f32, z as f32);
+                    let mut distance = at.distance(balls[0].0) - balls[0].1;
+                    if two {
+                        distance = distance.min(at.distance(balls[1].0) - balls[1].1);
+                    }
+                    if let Some(floor) = floor {
+                        distance = distance.min(at.z - floor);
+                    }
+                    raw.push(distance.clamp(INSIDE, OUTSIDE));
+                }
+            }
+        }
+        raw
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(96))]
+
+        /// Whatever the field, the box, how far it is spread and which of
+        /// its surface it is spread from: three neighbours at a time and
+        /// each point offered once, it is what it was one neighbour at a
+        /// time, to the bit. Twice in the same working space, so that what
+        /// one widening leaves there is seen not to reach the next.
+        #[test]
+        fn widening_is_what_it_was_one_neighbour_at_a_time(
+            seed in any::<u64>(),
+            size in (1..28_i32, 1..22_i32, 1..22_i32),
+            most in (3.5_f32..12.0, 3.5_f32..12.0),
+            near_seed in prop_oneof![Just(SEED), 0.4_f32..2.5],
+            some in any::<bool>(),
+        ) {
+            let size = IVec3::new(size.0, size.1, size.2);
+            let mut spread = Spread::default();
+            for round in 0..2_u64 {
+                let raw = a_field(seed.wrapping_add(round), size);
+                // All of the surface, or all of it but a part.
+                let from =
+                    |index: usize| !some || !(index as u64 ^ seed ^ round).is_multiple_of(5);
+                let one_by_one = widen_one_by_one(&raw, size, near_seed, most, from);
+                let by_threes = widen(&raw, size, near_seed, most, from, &mut spread);
+                prop_assert_eq!(one_by_one.len(), by_threes.len());
+                for (index, (one, three)) in one_by_one.iter().zip(&by_threes).enumerate() {
+                    prop_assert_eq!(
+                        one.to_bits(),
+                        three.to_bits(),
+                        "voxel {} of a box of {}: {} one by one and {} by threes",
+                        index, size, one, three
+                    );
+                }
+            }
+        }
     }
 
     proptest! {

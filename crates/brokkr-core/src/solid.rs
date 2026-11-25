@@ -239,8 +239,27 @@ impl Solid for Placed {
     }
 
     fn bounds(&self) -> (Vec3, Vec3) {
-        // Whichever way it is turned, it is inside the ball round its box.
-        let reach = Vec3::splat(self.half * 1.733);
+        // A ball is a ball whichever way it is turned. Any other form fits
+        // a box from -1 to 1, a cylinder as deep as it is set to be, and
+        // the box that holds that box once it is turned is as far along
+        // each axis of the world as its three edges reach along it.
+        //
+        // It was the ball round the box for every form, which is 1.733
+        // across where a ball is 1: five times the voxels, all of them
+        // copied and looked through on every move of a ball being dragged
+        // out (`docs/PERFORMANCE.md`).
+        let reach = match self.form {
+            Form::Ball => Vec3::ONE,
+            _ => {
+                let deep = match self.form {
+                    Form::Cylinder => self.deep.abs().max(1.0),
+                    _ => 1.0,
+                };
+                self.frame.x_axis.abs() + self.frame.y_axis.abs() + self.frame.z_axis.abs() * deep
+            }
+        };
+        // A hair over, for the rounding of the frame.
+        let reach = reach * (self.half * 1.0001);
         (self.centre - reach, self.centre + reach)
     }
 }
@@ -496,6 +515,28 @@ pub fn hang(from: Vec3, to: Vec3, sag: f32, down: Vec3, steps: usize) -> Vec<Vec
         .collect()
 }
 
+/// The most voxels of a body that are copied at once to join a solid to it:
+/// a slab of the solid's box. An eighth of what a copy may hold, which is
+/// thirty-two megabytes of it.
+const SLAB_VOXELS: i64 = crate::region::MAX_SAMPLES / 8;
+
+#[cfg(test)]
+thread_local! {
+    /// A test's own depth of slab, in layers of voxels, so that a join
+    /// small enough to test is taken in many.
+    static SLAB: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };
+}
+
+/// How many layers of voxels deep a slab is, of a box with `layer` voxels
+/// to a layer of its copy. It may come to less than one, and one is taken.
+fn slab_depth(layer: i64) -> i64 {
+    #[cfg(test)]
+    if let Some(layers) = SLAB.get() {
+        return layers;
+    }
+    SLAB_VOXELS / layer - 2
+}
+
 /// How a solid is joined to a body.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct How {
@@ -564,6 +605,8 @@ pub struct Join {
     /// The boxes the stroke has written, to put back.
     boxes: Vec<(IVec3, IVec3)>,
     region: FieldRegion,
+    /// What a wide join spreads the body's distance in. See `wide.rs`.
+    spread: wide::Spread,
 }
 
 impl Join {
@@ -641,10 +684,75 @@ impl Join {
         }
         let pad = Vec3::splat((reach + 1.0) * voxel_size);
         let (lo, hi) = volume.voxel_bounds(low - pad, high + pad);
+        // **A slab of the box at a time.** Each voxel is joined to the body
+        // as it was before the stroke, so the body as it was is copied
+        // first, and a copy may hold only so much (`region::MAX_SAMPLES`):
+        // asked for more it panics. The box used to be copied whole, and a
+        // ball dragged out past 113 voxels from its middle to its edge was
+        // more than that. Found with `examples/insert_profile.rs`, and
+        // reached in the application by dragging far enough at a fine
+        // voxel. So the box is taken in slabs along z, each small enough
+        // to copy and, where it can be, whole bricks deep, so that no brick
+        // is gone through twice. What a voxel comes to hold does not depend
+        // on which slab it is in.
+        let across = (hi - lo + IVec3::ONE).as_i64vec3();
+        // A copy is a voxel bigger on every side than what it is of.
+        let layer = (across.x + 2) * (across.y + 2);
+        // As deep as a copy may be at all, at the most.
+        let most = (crate::region::MAX_SAMPLES / layer - 2).min(i64::from(i32::MAX));
+        if most < 1 {
+            // One layer of it is more than a copy holds: more than four
+            // thousand voxels across. Nothing that big is joined.
+            return;
+        }
+        let mut deep = slab_depth(layer).clamp(1, most) as i32;
+        let brick = BRICK_DIM as i32;
+        if deep >= brick {
+            deep -= deep % brick;
+        }
+        let mut from = lo.z;
+        while from <= hi.z {
+            let mut to = (from + deep - 1).min(hi.z);
+            // Ending where a brick ends, where the slab is deep enough to.
+            let edge = (to + 1).div_euclid(brick) * brick;
+            if to < hi.z && edge > from {
+                to = edge - 1;
+            }
+            let (lo, hi) = (lo.with_z(from), hi.with_z(to));
+            from = to + 1;
+            self.join_slab(volume, solid, how, lo, hi);
+        }
+        self.boxes.push((lo, hi));
+    }
+
+    /// One slab of [`Join::add_narrow`]: the voxels from `lo` to `hi`,
+    /// which are few enough to copy.
+    fn join_slab(
+        &mut self,
+        volume: &mut Volume,
+        solid: &dyn Solid,
+        how: How,
+        lo: IVec3,
+        hi: IVec3,
+    ) {
+        let voxel_size = volume.voxel_size();
+        let blend = width_of(how).min(wide::NARROW);
+        let reach = OUTSIDE + blend;
         volume.snapshot_before(lo, hi, &mut self.region);
         let region = &self.region;
+        // The end of the band a join can only move a voxel toward: solid
+        // for a solid added, empty for one taken out. A voxel there already
+        // is left as it is whatever the solid says, since the nearer of two
+        // distances is no further than either, and the band ends there.
+        let end = if how.cut { OUTSIDE } else { INSIDE };
+        // With a test's shortcuts off, every voxel in reach of a brick the
+        // solid is near is asked, which is what the shortcuts are held to.
+        let plain = crate::volume::shortcuts_off();
         let decide = |preview: &BrickPreview| {
-            if preview.mask == Some(PROTECTED) {
+            // A brick that is all at that end has nothing to gain. Without
+            // this the half of a shape that is inside the body it is set on
+            // was made dense, gone through voxel by voxel and put back.
+            if preview.mask == Some(PROTECTED) || (!plain && preview.uniform == Some(end)) {
                 return BrickVerdict::Skip;
             }
             let middle = (preview.coord.origin().as_vec3()
@@ -659,24 +767,35 @@ impl Join {
         // enough from the solid that none of it is in reach. That leaves the
         // bricks near the solid, and in those the same is true of most of
         // their voxels: the reach is a few voxels and a brick is thirty-two.
-        // So each brick is taken as 512 blocks of four voxels a side, and a
-        // block whose middle puts all of it out of reach is passed over
-        // whole. A profile of a ball being dragged out had the solid asked of
-        // every voxel at a quarter of the gesture (`docs/PERFORMANCE.md`).
+        // So the slab is taken as blocks of four voxels a side, and a block
+        // whose middle puts all of it out of reach is passed over whole. A
+        // profile of a ball being dragged out had the solid asked of every
+        // voxel at a quarter of the gesture (`docs/PERFORMANCE.md`).
         //
         // Passing over a voxel is right exactly when the edit below would
         // have returned at `off >= reach`, and that is what a block's middle
         // promises of a solid that is `steady`. One that is not is asked of
         // every voxel, as before.
+        //
+        // **And a block deep inside the solid is not asked either.** Where
+        // the solid's own distance is past the end of the band, the join
+        // comes to that end whatever the body held: the nearer of the two
+        // distances is no further than the solid's. A ball a hundred voxels
+        // across is mostly such blocks, and each of their voxels used to
+        // ask the solid how far off it was, and the copy of the body what
+        // it held, to be told so.
+        let blocks =
+            (solid.steady() && !plain).then(|| Blocks::of(solid, voxel_size, reach, lo, hi));
+        let blocks = blocks.as_ref();
         let leave = |coord: BrickCoord, lines: &mut [u32; BRICK_DIM * BRICK_DIM]| {
-            let origin = coord.origin().as_vec3();
+            let Some(blocks) = blocks else {
+                return;
+            };
+            let first = coord.origin() >> BLOCK_SHIFT;
             for index in 0..BLOCKS * BLOCKS * BLOCKS {
                 let block = [index % BLOCKS, index / BLOCKS % BLOCKS, index / (BLOCKS * BLOCKS)];
-                let middle = origin
-                    + Vec3::new(block[0] as f32, block[1] as f32, block[2] as f32) * BLOCK as f32
-                    + Vec3::splat(BLOCK as f32 * 0.5 - 0.5);
-                let nearest = solid.distance(middle * voxel_size) / voxel_size - BLOCK_REACH;
-                if nearest < reach {
+                let at = first + IVec3::new(block[0] as i32, block[1] as i32, block[2] as i32);
+                if blocks.class(at) != FAR {
                     continue;
                 }
                 let bits = ((1u32 << BLOCK) - 1) << (block[0] * BLOCK);
@@ -688,8 +807,13 @@ impl Join {
             }
         };
         let edit = move |voxel: IVec3, position: Vec3, value: f32, free: f32| {
-            if free <= 0.0 {
+            if free <= 0.0 || (!plain && value == end) {
                 return value;
+            }
+            if let Some(blocks) = blocks
+                && blocks.class(voxel >> BLOCK_SHIFT) == SUNK
+            {
+                return value + (end - value) * free;
             }
             let off = solid.distance(position) / voxel_size;
             if off >= reach {
@@ -708,7 +832,64 @@ impl Join {
         } else {
             volume.edit_voxels_where(lo, hi, 0, true, crate::Settled::NONE, decide, edit);
         }
-        self.boxes.push((lo, hi));
+    }
+}
+
+/// What a block of voxels is to a solid being joined: all of it out of the
+/// solid's reach, all of it so deep in the solid that the join comes to the
+/// end of the band, or neither, and each voxel of it to be asked.
+const NEAR: u8 = 0;
+const FAR: u8 = 1;
+const SUNK: u8 = 2;
+
+/// A block is `1 << BLOCK_SHIFT` voxels a side.
+const BLOCK_SHIFT: i32 = BLOCK.trailing_zeros() as i32;
+
+/// What each block of a box is to a solid, asked once of the block's
+/// middle. See `Join::join_slab`.
+struct Blocks {
+    low: IVec3,
+    size: IVec3,
+    class: Vec<u8>,
+}
+
+impl Blocks {
+    /// The blocks that the voxels from `lo` to `hi` are in. `reach` is how
+    /// far from the solid a voxel can be and still change, in voxels.
+    fn of(solid: &dyn Solid, voxel_size: f32, reach: f32, lo: IVec3, hi: IVec3) -> Self {
+        use rayon::prelude::*;
+        let low = lo >> BLOCK_SHIFT;
+        let size = (hi >> BLOCK_SHIFT) - low + IVec3::ONE;
+        let layer = (size.x * size.y) as usize;
+        let mut class = vec![NEAR; layer * size.z as usize];
+        class.par_chunks_mut(layer).enumerate().for_each(|(z, class)| {
+            for (index, class) in class.iter_mut().enumerate() {
+                let block =
+                    low + IVec3::new(index as i32 % size.x, index as i32 / size.x, z as i32);
+                let middle =
+                    (block << BLOCK_SHIFT).as_vec3() + Vec3::splat(BLOCK as f32 * 0.5 - 0.5);
+                let nearest = solid.distance(middle * voxel_size) / voxel_size;
+                *class = if nearest - BLOCK_REACH >= reach {
+                    FAR
+                } else if nearest + BLOCK_REACH <= INSIDE {
+                    SUNK
+                } else {
+                    NEAR
+                };
+            }
+        });
+        Self { low, size, class }
+    }
+
+    /// What the block at `block` is. A block outside the box is far: none
+    /// of its voxels is one the join visits.
+    #[inline]
+    fn class(&self, block: IVec3) -> u8 {
+        let local = block - self.low;
+        if local.cmplt(IVec3::ZERO).any() || local.cmpge(self.size).any() {
+            return FAR;
+        }
+        self.class[(local.x + local.y * self.size.x + local.z * self.size.x * self.size.y) as usize]
     }
 }
 
@@ -780,6 +961,10 @@ mod tests {
     /// bit, and the same undo: every form at sizes from a few voxels to more
     /// than a brick, turned any way, added and cut, soft and hard, with a
     /// run of cable, a body lent at three sizes, and each in a mirror.
+    ///
+    /// The same holds, and is held here, of the other things a join does
+    /// not ask: a block deep inside the solid, a voxel already at the end
+    /// of the band the join moves toward, and a brick that is all there.
     #[test]
     fn asking_a_block_first_leaves_what_asking_every_voxel_leaves() {
         use crate::testing::Noise;
@@ -835,6 +1020,71 @@ mod tests {
             }
         }
         assert!(differing > 60, "only {differing} of the joins changed the ball at all");
+    }
+
+    /// A join taken a slab of its box at a time is the join taken whole, to
+    /// the bit, with the same undo: slabs a voxel deep, a few deep and
+    /// deeper than a brick, every form, added and cut, soft and hard.
+    #[test]
+    fn a_join_a_slab_at_a_time_is_the_join() {
+        for (round, form) in Form::ALL.into_iter().enumerate() {
+            let towards = Vec3::new(0.3, 0.5 + round as f32 * 0.1, 0.81).normalize();
+            let at = CENTRE + towards * (RADIUS - 2.0);
+            let placed = Placed::on(form, at, towards, Vec3::X, 17.0 + round as f32, 0.3)
+                .expect("a form set down");
+            let how = How { cut: round % 2 == 1, blend: [0.0, 2.0, 3.5][round % 3] };
+            let run = |slab: Option<i64>| {
+                SLAB.set(slab);
+                let mut volume = ball();
+                volume.begin_stroke();
+                Join::new().add(&mut volume, &placed, how);
+                SLAB.set(None);
+                let undo = volume.end_stroke().map(|edit| (edit.len(), edit.bytes()));
+                (volume, undo)
+            };
+            let (whole, whole_undo) = run(None);
+            assert!(!same_values(&whole, &ball()), "{form:?}: the join changed nothing");
+            for layers in [1, 6, 40] {
+                let (slabs, slabs_undo) = run(Some(layers));
+                let what = format!("{form:?} in slabs of {layers}");
+                crate::testing::assert_same_bits(&whole, &slabs, &what);
+                assert_eq!(whole_undo, slabs_undo, "{what}: the undo entry differs");
+            }
+        }
+    }
+
+    /// A shape with more voxels in its box than a copy of the body may hold
+    /// is joined all the same. It was a panic: a ball more than 113 voxels
+    /// from its middle to its edge, which at the voxel the application opens
+    /// with is a ball of 28 mm and at its finest one of 3.4 (arithmetic).
+    #[test]
+    fn a_shape_too_big_to_copy_whole_is_joined() {
+        let mut volume = ball();
+        let half = 125.0;
+        let towards = Vec3::new(0.3, 0.5, 0.81).normalize();
+        let at = CENTRE + towards * RADIUS;
+        let placed = Placed::on(Form::Ball, at, towards, Vec3::X, half, 1.0).expect("a ball");
+        let (low, high) = placed.bounds();
+        let voxels = ((high - low) + Vec3::splat(12.0)).as_i64vec3().element_product();
+        assert!(voxels > crate::region::MAX_SAMPLES / 4, "the fixture is big: {voxels} voxels");
+        volume.begin_stroke();
+        let mut join = Join::new();
+        join.set(&mut volume, &[&placed], How { cut: false, blend: 3.0 });
+        // Solid at its middle and well inside it, and nothing where it is
+        // not.
+        let middle = placed.centre;
+        for off in [Vec3::ZERO, Vec3::X * 100.0, Vec3::Y * -110.0, Vec3::Z * 118.0] {
+            let value = volume.sample_world(middle + off);
+            assert_eq!(value, INSIDE, "{off} from the middle holds {value}");
+        }
+        for off in [Vec3::X * 131.0, Vec3::Y * -140.0, Vec3::Z * 135.0] {
+            let value = volume.sample_world(middle + off);
+            assert_eq!(value, OUTSIDE, "{off} from the middle holds {value}");
+        }
+        // And all of it goes when the stroke is put back.
+        join.clear(&mut volume);
+        assert!(same_values(&volume, &ball()), "the body is not as it was");
+        drop(volume.end_stroke());
     }
 
     /// Each form is solid in its middle, is where it says it is, and
