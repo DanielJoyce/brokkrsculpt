@@ -230,13 +230,14 @@ impl Brokkr {
     pub(super) fn library_key(&mut self, index: usize) -> iced::Task<Message> {
         match self.desk.now {
             Workspace::Sculpt | Workspace::Transform => {
-                let Some(places) = self.desk.now.palette_places() else {
+                // The brush the user put on this key, or the palette's own
+                // in that place; found on the palette by its name, so a
+                // brush added before it does not move the key. See
+                // `app/keys.rs`.
+                let Some(place) = self.keyed_place(index) else {
                     return iced::Task::none();
                 };
-                if index >= places.len() {
-                    return iced::Task::none();
-                }
-                self.update(Message::Studio(StudioMessage::PresetChosen(places.start + index)))
+                self.update(Message::Studio(StudioMessage::PresetChosen(place)))
             }
             Workspace::Paint => match PaintTouch::ALL.get(index) {
                 Some(touch) => self.update(Message::PaintTouchChosen(*touch)),
@@ -244,6 +245,56 @@ impl Brokkr {
             },
             Workspace::Print => iced::Task::none(),
         }
+    }
+
+    /// The name of the palette's brush in the open mode's place `key`,
+    /// which is what a key nobody has set picks.
+    fn default_key_name(&self, key: usize) -> Option<String> {
+        let places = self.desk.now.palette_places()?;
+        if key >= places.len() {
+            return None;
+        }
+        let palette = self.studio.presets.palette();
+        palette.get(places.start + key).map(|(preset, _)| preset.name.clone())
+    }
+
+    /// The names of the open mode's palette places 1 to 8, for the keys.
+    fn default_key_names(&self) -> Vec<Option<String>> {
+        (0..super::keys::KEYS).map(|key| self.default_key_name(key)).collect()
+    }
+
+    /// Where on the palette the brush on `key` is, in the open mode.
+    pub(super) fn keyed_place(&self, key: usize) -> Option<usize> {
+        let defaults = self.default_key_names();
+        let name = self.keys.name(self.desk.now, key, |at| defaults.get(at).cloned().flatten())?;
+        let palette = self.studio.presets.palette();
+        palette.iter().position(|(preset, _)| preset.name == name)
+    }
+
+    /// Which key picks the palette's brush at `place` in the open mode.
+    pub(super) fn key_of_place(&self, place: usize) -> Option<usize> {
+        let palette = self.studio.presets.palette();
+        let name = palette.get(place)?.0.name.clone();
+        let defaults = self.default_key_names();
+        self.keys.key_of(self.desk.now, &name, |at| defaults.get(at).cloned().flatten())
+    }
+
+    /// Put the brush whose key row is up on `key`, and keep the keys.
+    pub(super) fn put_on_key(&mut self, key: usize) {
+        let Some(place) = self.key_menu.take() else {
+            return;
+        };
+        let palette = self.studio.presets.palette();
+        let Some(name) = palette.get(place).map(|(preset, _)| preset.name.clone()) else {
+            return;
+        };
+        let defaults = self.default_key_names();
+        let mode = self.desk.now;
+        self.keys.put(mode, key, &name, |at| defaults.get(at).cloned().flatten());
+        self.status = match self.keys.save() {
+            Ok(()) => format!("{name} is on the key {}", key + 1),
+            Err(why) => format!("{name} is on the key {} until you quit: {why}", key + 1),
+        };
     }
 
     /// The switcher in the title bar.
@@ -634,6 +685,35 @@ mod tests {
         update(&mut app, Message::ShortcutsOpened);
         update(&mut app, tab);
         assert_eq!(app.desk.now, Workspace::Paint, "Tab went past a card");
+    }
+
+    /// A brush right clicked and put on a key is what that key picks,
+    /// in that mode only, and the tile shows its number; two keyed brushes
+    /// put on each other's keys swap.
+    #[test]
+    fn a_brush_put_on_a_key_is_picked_by_it() {
+        let mut app = app();
+        let place_of = |app: &Brokkr, name: &str| {
+            app.studio.presets.palette().iter().position(|(preset, _)| preset.name == name)
+        };
+        let strips = place_of(&app, "Clay strips").expect("Clay strips is on the palette");
+        update(&mut app, Message::KeyMenuOpened(strips));
+        update(&mut app, Message::KeyPut(0));
+        assert!(app.key_menu.is_none(), "the key row stayed up");
+        assert_eq!(app.key_of_place(strips), Some(0));
+        update(&mut app, Message::LibraryKey(0));
+        let now = app.preset_now(String::new());
+        let palette = app.studio.presets.palette();
+        assert_eq!(Brokkr::lit(&palette, &now), Some(strips), "the key 1 did not pick it");
+        // Clay is on 2; put it on 1 and Clay strips goes to 2.
+        let clay = place_of(&app, "Clay").expect("Clay");
+        update(&mut app, Message::KeyMenuOpened(clay));
+        update(&mut app, Message::KeyPut(0));
+        assert_eq!(app.key_of_place(clay), Some(0));
+        assert_eq!(app.key_of_place(strips), Some(1));
+        // Transform's keys are its own.
+        update(&mut app, Message::WorkspaceChosen(Workspace::Transform));
+        assert_eq!(app.key_of_place(clay), None);
     }
 
     /// Ctrl with 1 to 4 picks a workspace; the bare digits stay the

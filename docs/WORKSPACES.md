@@ -412,6 +412,35 @@ to the mode's tools. The three parting tests run in Print. The palette
 test presses P. A kept brush that adds, taken up in Sculpt, is baked in
 whatever it was kept as, and its test says so.
 
-Not done in R1: the paint rack (to be designed); remapping keys 1 to 8
-(R2); dragging rows of the bodies list is not limited to Transform, only
-its verb row is.
+Not done in R1: the paint rack (to be designed); dragging rows of the
+bodies list is not limited to Transform, only its verb row is.
+
+## R2: the keys 1 to 8 are the user's (2026-11-25)
+
+`app/keys.rs`. Right click a tile of Sculpt's or Transform's palette and
+a row comes up over it: "Put Clay strips on a key", the keys 1 to 8 (the
+one it is on lit) and a way out. Press a key and the brush is on it, in
+that mode only; the tile shows the number. A brush is on one key at
+most: one already on a key and put on another swaps with the brush that
+was there; one on no key takes the key from the one there, which stays
+on the palette. A key nobody has set picks the palette's own place, so
+nothing changes until someone sets one.
+
+A key names its brush rather than its place, so a brush added before it
+on the palette does not move a key. The keys are kept in `keys.conf` in
+the settings directory, a line a key: `sculpt.2 = Clay strips`. A line
+that cannot be read is left out and its key is the palette's.
+
+Tests: `unset_keys_are_the_palettes_places`; the property
+`a_brush_is_on_one_key_and_the_keys_keep` (any run of puts leaves each
+brush on one key at most and the last put on each key, and the file
+reads back as written); `a_bad_line_is_left_out`; and through the
+application `a_brush_put_on_a_key_is_picked_by_it` (the key picks it,
+two keyed brushes swap, Transform's keys are its own).
+
+On a screen: the row over the palette on a right click, a brush put on
+2, its badge and the status line, and `keys.conf` as written.
+
+Not done: Paint's keys are its five touches and cannot be set; a brush
+of the user's renamed or forgotten leaves its key to the palette's
+place.
