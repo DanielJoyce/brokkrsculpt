@@ -2188,6 +2188,16 @@ the same place twice in one stroke changes nothing. Going over it in a second
 stroke adds a second coat. That is how a real brush with one load of paint
 behaves, and it is how every painting program worth using does it.
 
+*Changed 2026-11-25.* The most alone left a paler seam between a pass and
+a return laid beside it, and a pale wedge inside a turn, seen by the
+maintainer: each is reached only by the brush's soft edges, and the most of
+two soft edges is less than either middle. The coverage is now the larger
+of the most and what the stroke has deposited as it travelled (each stamp
+its reach times the distance moved, a straight pass's middle line being one
+coat), held to one coat. A click is still the falloff; going back over
+paint in the same stroke still never passes a coat, and now fills the soft
+edges where the passes overlap. See `paint/stroke.rs`.
+
 The blend is done in linear light and stored back as sRGB: red over green at
 half coverage is the olive it would be on a palette, not the brown that
 averaging the bytes gives.

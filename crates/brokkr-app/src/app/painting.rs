@@ -834,4 +834,72 @@ mod tests {
         // The whole window, with the colour brush up.
         drop(app.view());
     }
+
+    /// A wash laid in one stroke out and back beside itself, the way a
+    /// painter goes back over a stroke, by pointer moves that come several
+    /// to a frame: no voxel of what is seen is lighter after the return
+    /// than before it. The maintainer saw a paler seam between the two
+    /// passes, 2026-11-25. See `brokkr_core::paint::stroke`.
+    #[test]
+    fn going_back_beside_a_wash_never_lightens_it() {
+        use crate::message::RackMessage;
+        let mut app = app();
+        update(&mut app, Message::WorkspaceChosen(crate::message::Workspace::Paint));
+        set(&mut app, PaintingMessage::Colour([220, 220, 220]));
+        set(&mut app, PaintingMessage::Coated);
+        let wash = app
+            .painting
+            .rack
+            .rack()
+            .paints
+            .iter()
+            .position(|paint| paint.kind == crate::paint_index::Kind::Wash)
+            .expect("the starter rack has a wash");
+        update(&mut app, Message::Rack(RackMessage::Picked(wash)));
+        let seen = |app: &Brokkr| {
+            let volume = app.doc.active_volume();
+            let mut seen = std::collections::HashMap::new();
+            for coord in volume.brick_coords() {
+                for index in 0..32 * 32 * 32 {
+                    let cell =
+                        coord.origin() + IVec3::new(index % 32, (index / 32) % 32, index / 1024);
+                    let rgba = volume.display_paint().at(cell);
+                    if rgba[3] != 0 {
+                        seen.insert(cell, rgba);
+                    }
+                }
+            }
+            seen
+        };
+        press(&mut app, Vector::new(300.0, 300.0));
+        for step in 1..=20 {
+            drag_to(&mut app, Vector::new(300.0 + step as f32 * 10.0, 300.0));
+            if step % 4 == 0 {
+                update(&mut app, Message::Frame);
+            }
+        }
+        update(&mut app, Message::Frame);
+        let out = seen(&app);
+        for step in 1..=40 {
+            drag_to(&mut app, Vector::new(500.0 - step as f32 * 5.0, 315.0));
+            if step % 3 == 0 {
+                update(&mut app, Message::Frame);
+            }
+        }
+        update(&mut app, Message::Frame);
+        let back = seen(&app);
+        release(&mut app);
+        let lightness = |rgba: Rgba| u32::from(rgba[0]) + u32::from(rgba[1]) + u32::from(rgba[2]);
+        let lighter = out
+            .iter()
+            .filter(|(cell, was)| {
+                back.get(*cell).is_some_and(|now| lightness(*now) > lightness(**was))
+            })
+            .count();
+        assert_eq!(lighter, 0, "{lighter} voxels lighter after going back");
+        assert!(
+            out.iter().any(|(cell, was)| back.get(cell) != Some(was)),
+            "going back laid nothing"
+        );
+    }
 }

@@ -757,6 +757,22 @@ Over one plain layer the brush is 1.8, 3.7 and 7.7 ms at those sizes, and
 was not changed. What a graphics card adds to any of these, the upload and
 the draw of the bricks remeshed, was not measured: there is none here.
 
+**What a stroke deposits (2026-11-25), a cost and not a gain.** A stroke
+now keeps two numbers a voxel, the most any stamp gave and what it has
+deposited, so that its passes add up where they overlap
+(`paint/stroke.rs`). One move of a loaded brush over one plain layer, two
+runs of each build back to back, on a machine whose runs of one build
+differed by up to 2 ms:
+
+| One move of a loaded brush, one layer | Before | After |
+|---|---|---|
+| 2 mm | 2.2, 3.2 ms | 2.8, 3.8 ms |
+| 5 mm | 5.3, 6.3 ms | 6.5, 5.5 ms |
+| 10 mm | 10.8, 12.9 ms | 13.9, 15.4 ms |
+
+About a fifth more at 10 mm, by the means of the two. The airbrush does
+not take this path and was not changed.
+
 **And a crash.** A drag toward the horizon of the surface pressed on asked
 for a shape with no end, and a test that dragged 3,000 pixels past the model
 was killed by the kernel for memory. A shape is now held to 160 voxels from

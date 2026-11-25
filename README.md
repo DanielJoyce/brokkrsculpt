@@ -397,8 +397,9 @@ true of it too, and what it adds is this.
   flow and the pen's pressure, sprays wider on what is further away, and
   can be given a faint overspray. Five brush sizes, from *Detail* to
   *Large*, and the drybrush's own three, set the radius in one press.
-  A stroke is one coat however often it crosses itself, and a second
-  stroke is a second coat. *Pick from model* takes a colour back off the
+  A stroke is at most one coat however often it crosses itself (where
+  it overlaps itself the soft edges add up to a coat, with no paler
+  seam), and a second stroke is a second coat. *Pick from model* takes a colour back off the
   surface. The paint is
   saved with the project, follows the model through every edit, and is in
   every export that carries colour: a colour a vertex in a PLY, the
