@@ -31,6 +31,7 @@ mod breadcrumbs;
 mod camera;
 mod crash;
 mod cursor;
+mod curve;
 mod cut;
 mod cut_preview;
 mod gizmo;

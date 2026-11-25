@@ -301,10 +301,21 @@ impl Brokkr {
                         .on_toggle(Message::DynamicRadiusToggled)
                         .text_size(theme::LABEL_SIZE),
                 );
+                // The edge drawn, as a cross-section from rim to rim: the
+                // weight a stamp gives at each distance from its middle.
+                // See `curve.rs` and issue 78.
+                let profile = if field_brush {
+                    self.studio.profile(self.brush.falloff)
+                } else {
+                    brokkr_core::brush::compound::Profile::of(self.brush.falloff)
+                };
+                let edge = crate::curve::curve(crate::curve::cross_section(move |distance| {
+                    profile.weight(distance)
+                }));
                 if field_brush {
-                    block = block.push(self.profile_row()).push(self.studio_panel());
+                    block = block.push(edge).push(self.profile_row()).push(self.studio_panel());
                 } else if let Some(falloff) = self.falloff_choice() {
-                    block = block.push(crate::ui::sub_label("Falloff")).push(falloff);
+                    block = block.push(crate::ui::sub_label("Falloff")).push(edge).push(falloff);
                 }
                 block.into()
             },

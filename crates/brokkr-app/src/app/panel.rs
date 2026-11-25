@@ -3536,6 +3536,12 @@ impl Brokkr {
             )
             .step(0.05)
             .shown(format!("{:.2}", self.pressure_curve)),
+            // What the curve does to a press, drawn: pressure along, the
+            // strength a stroke is given up. See `curve.rs` and issue 76.
+            crate::curve::curve(crate::curve::response(|raw| crate::tablet::shape(
+                raw,
+                self.pressure_curve
+            ))),
             checkbox(self.tilt_enabled)
                 .label("Tilt steers stroke")
                 .on_toggle(Message::TiltToggled)

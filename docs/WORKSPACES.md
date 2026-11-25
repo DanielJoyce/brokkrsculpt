@@ -82,7 +82,7 @@ One pull request each, into `feature/studio`.
 | U2 Menus, status bar, Preferences | **Done**, 2026-11-25 | Edit and View menus, a status bar at the foot, a Preferences card (the pen, the SpaceMouse, updates), a Keyboard shortcuts card on `?`, and every grey caption out of the panel |
 | U3 Context bar and one popup | **Done**, 2026-11-25 | The bar over the viewport and the right-click card from the same functions; a rail of tool kinds; keys 1 to 8 pick the palette's first eight, numbered on their tiles |
 | U4 Workspaces | **Done**, 2026-11-25 | The switcher in the title bar, Ctrl and 1 to 4, Tab back; for each workspace a rail, a bar, a library and settings; what each remembers |
-| U5 Each workspace its own | Not begun | Paint's filaments, Kitbash's placement (issue 77), Print, a drawn falloff (issue 78) and pressure curve (issue 76) |
+| U5 Each workspace its own | **Part done**, 2026-11-25 | A drawn falloff (issue 78) and a drawn pressure curve (issue 76); what the core does to paint under a sculpt stroke, written up (issue 82). Kitbash's placement (issue 77) is not done |
 
 ### U1: the kit
 
@@ -313,3 +313,51 @@ Not done in U4:
 - Each workspace's scroll position is not kept.
 - Tab cannot be seen working under Xvfb, which passes no keys; it is
   tested through the key message.
+
+### U5: drawn curves, and paint under a sculpt stroke
+
+- **The falloff, drawn** (`curve.rs`), in BRUSH's settings: a
+  cross-section from rim to rim, the weight a stamp gives at each
+  distance from its middle, worked out by `Profile::weight`, the
+  function the brush itself uses. It follows the five shapes and the
+  flat middle as they are changed. For the mask and for a colour it is
+  upstream's curve. This is the second of issue 78's three asks; the
+  first (a cross-section of a surface before and after a stamp, which is
+  what tells Clay from Draw) and the third (a curve that can be edited)
+  are not done.
+- **The pressure curve, drawn**, in Preferences under the pen: pressure
+  along, the strength a stroke is given up, by `tablet::shape`, the
+  pen's own function. The first of issue 76's asks is a curve that can
+  be drawn; this one can only be looked at, and it is still one curve
+  for every brush.
+- **A map's caption** in Kitbash's settings is the status bar's prompt
+  now, like the shapes'.
+
+Tests: `a_cross_section_is_the_same_either_side` (a property over the
+five shapes and any flat middle: the drawing is symmetric, full in the
+middle and nothing at the rims) and `a_pressure_curve_is_the_pens` (a
+property: what is drawn at each pressure is what the pen gives).
+
+**Paint under a sculpt stroke**, the question the maintainer left to be
+found out (decision 5 above). Both kinds of paint are stored per voxel,
+through the narrow band. A field brush, an insert and detail gain leave
+the paint on its voxels; Move and Bulk carry it with the surface. So a
+surface that moves less than about three voxels keeps its colour,
+surface grown further out is bare, paint carved away stays buried and
+shows again if the surface comes back to it, and undo restores paint
+with the field. That is kept as it is, and issue 82 has the details,
+the file and line of each, and what wants changing (new surface taking
+the paint it grew from, buried paint not coming back).
+
+Not done in U5, and so not done in this design:
+
+- Kitbash's placement (issue 77): a height set during the drag, a
+  preview, a lent mesh seated by its underside, the lift in millimetres.
+  Seating by the underside needs a decision on which way is down for a
+  body that is copied and turned.
+- An editable falloff curve and a per-brush pressure curve (issues 78
+  and 76), and the before-and-after cross-section of 78.
+- A status bar warning when a stroke grows bare surface on a painted
+  body (issue 82).
+- The palette cannot be reordered; scroll positions are not kept per
+  workspace; the `b` palette in Paint and Print shows Sculpt's groups.

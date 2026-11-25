@@ -940,17 +940,7 @@ impl Brokkr {
         // A map has no join to soften and nothing to be held off by: it
         // meets the surface where its displacement comes to nothing.
         if matches!(what, Insert::Map(_)) {
-            return panel
-                .push(
-                    text(if state.separate {
-                        "press where it goes, drag to size and turn it"
-                    } else {
-                        "press, drag to size and turn. ctrl or alt turns it inside out"
-                    })
-                    .size(theme::LABEL_SIZE)
-                    .color(theme::TEXT_MUTE),
-                )
-                .into();
+            return panel.into();
         }
         panel = panel
             .push(
@@ -1036,6 +1026,9 @@ impl Brokkr {
         let what = self.inserts.what?;
         Some(match (what, self.inserts.separate) {
             (Insert::Laid, _) => "Drag along the model; the brush's radius is its thickness",
+            (Insert::Map(_), false) => {
+                "Press, drag to size and turn; Ctrl or Alt turns it inside out"
+            }
             (Insert::Hung, _) => "Press at one end, drag to the other",
             (_, true) => "Press where it goes, drag to size and turn it",
             (_, false) => "Press, drag to size and turn; Ctrl or Alt takes it out",
