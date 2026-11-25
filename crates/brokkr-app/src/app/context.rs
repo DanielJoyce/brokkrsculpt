@@ -248,10 +248,12 @@ mod tests {
         // numbers in place of a brush's.
         drop(app.update(Message::RailChosen(Rail::Measure)));
         assert!(!app.sized_now());
+        drop(app.update(Message::RailChosen(Rail::Measure)));
+        drop(app.update(Message::WorkspaceChosen(crate::message::Workspace::Transform)));
         drop(app.update(Message::RailChosen(Rail::Place)));
         assert!(!app.sized_now());
         assert_eq!(app.placing_numbers().len(), 2);
-        drop(app.update(Message::RailChosen(Rail::Brush)));
+        drop(app.update(Message::WorkspaceChosen(crate::message::Workspace::Sculpt)));
         // Paint, by colour: an opacity and a falloff.
         drop(app.update(Message::BrushKindChanged(BrushKind::Paint)));
         assert!(app.painting_now());

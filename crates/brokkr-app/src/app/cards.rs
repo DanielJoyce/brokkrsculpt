@@ -20,7 +20,7 @@ use crate::theme;
 
 /// Every key and held modifier, as the shortcuts card lists them: the key,
 /// and what it does. In the order a user meets them.
-pub(super) const SHORTCUTS: [(&str, &str); 24] = [
+pub(super) const SHORTCUTS: [(&str, &str); 25] = [
     ("Left drag", "Sculpt, paint or mask with the tool in hand"),
     ("Ctrl or Alt, held", "Carve instead of add; erase paint; unmask"),
     ("Shift, held", "Smooth while held"),
@@ -29,20 +29,21 @@ pub(super) const SHORTCUTS: [(&str, &str); 24] = [
     ("Wheel", "Zoom about the surface under the pointer"),
     ("Right click", "The tool's settings at the pointer"),
     ("1 to 8", "Pick a brush"),
-    ("B", "Every brush, at the pointer"),
+    ("P", "The mode's palette, at the pointer"),
     ("S, held and dragged", "Brush size"),
     ("U, held and dragged", "Brush strength"),
     ("[ and ]", "Brush size, a step at a time"),
     ("X, Y, Z", "Mirror across a plane"),
-    ("M", "Mask, to protect what you have"),
+    ("M", "Mask, in Sculpt and Paint"),
     ("H, held", "Show the mask"),
     ("Ctrl, cut drag or loop", "Mask by the cut"),
-    ("C", "Cut"),
-    ("Alt, cut drag", "Part the body, with keys"),
-    ("W", "Move, turn and scale a body"),
+    ("C", "Cut in Sculpt; in Print, part the body with keys"),
+    ("W", "Move, turn and scale a body, in Transform"),
     ("F", "Frame the body"),
     ("Ctrl Z, Ctrl Shift Z", "Undo, redo"),
-    ("Ctrl G, Ctrl Shift G", "Group bodies, ungroup them"),
+    ("Ctrl G, Ctrl Shift G", "Group bodies, ungroup them, in Transform"),
+    ("Ctrl 1 to 4", "Sculpt, Transform, Paint, Print"),
+    ("Tab", "Back to the mode before"),
     ("Ctrl comma", "Hide the body; with Alt, show every body"),
     ("?", "These keys"),
 ];

@@ -761,6 +761,9 @@ pub struct Brokkr {
     /// The open workspace and what each remembers. See
     /// `app/workspace.rs`.
     desk: workspace::Desk,
+    /// Set while `keep_to_the_mode` runs, so the messages it sends do not
+    /// run it again.
+    keeping: bool,
     /// The keyboard shortcuts card is up.
     shortcuts: bool,
     /// Whether it opens by itself next time.
@@ -2186,6 +2189,7 @@ impl Brokkr {
             preferences: false,
             rail_last_brush: None,
             desk: workspace::Desk::default(),
+            keeping: false,
             shortcuts: false,
             welcome_on_startup: true,
             palette: crate::palette::Palette::default(),
@@ -5430,7 +5434,7 @@ impl Brokkr {
             // Alt keeps both sides, and the card says so WHILE it is held,
             // for the reason shift's preview is live: a verb read from a key
             // at the release has to be visible before the release.
-            (Tool::Cut, _) if self.alt => "PART — KEEP BOTH".to_string(),
+            (Tool::Cut, _) if self.parting_cut() => "PART — KEEP BOTH".to_string(),
             (Tool::Cut, _) => self.live_cut_shape().label().to_string(),
             (Tool::Transform, _) => "MOVE".to_string(),
             (Tool::Sculpt, _) => self.effective_brush().kind.label().to_uppercase(),
@@ -6464,7 +6468,7 @@ impl Brokkr {
         // the body becomes two that register on each other. Before the depth
         // cap and the mirror, because a parting is one whole plane through one
         // body and neither applies to it.
-        if self.alt {
+        if self.parting_cut() {
             self.part_along(&planes, gesture.shape);
             // One shot per arming, as the cut and the mask are.
             self.tool = Tool::Sculpt;
@@ -9237,6 +9241,12 @@ impl Brokkr {
                 ) else {
                     return Task::none();
                 };
+                // A key that means nothing in the open mode does nothing: W
+                // is Transform's, C is Sculpt's and Print's. See
+                // `app/workspace.rs`.
+                if !self.desk.now.allows(&message) {
+                    return Task::none();
+                }
                 // One level of recursion and never more: `shortcut` returns
                 // ordinary messages and cannot return another `KeyPressed`.
                 self.update(message)
@@ -9772,6 +9782,9 @@ impl Brokkr {
             self.disarm_gizmo(true);
         }
         let task = self.dispatch(message);
+        // What the open mode does with a drag is the mode's: see
+        // `app/workspace.rs`.
+        let task = Task::batch([task, self.keep_to_the_mode()]);
         // **Visibility is published BEFORE the re-arm, and the order is load
         // bearing.** `arm_gizmo` refuses a body that is not drawn, and it asks
         // `active_is_drawn`, which indexes `self.shown` by the node's position
@@ -13381,6 +13394,9 @@ mod tests {
     #[test]
     fn alt_parts_the_body_in_two_with_keys_and_one_undo_puts_it_back() {
         let mut app = app();
+        // Parting is Print's cut (`docs/WORKSPACES.md`); in Sculpt a cut
+        // only cuts.
+        app.desk.now = crate::message::Workspace::Print;
         app.camera.yaw = 0.0;
         app.camera.pitch = 0.0;
         app.publish_camera();
@@ -13462,6 +13478,8 @@ mod tests {
         use brokkr_core::part::KeyKind;
 
         let part = |app: &mut Brokkr| {
+            // Parting is Print's cut (`docs/WORKSPACES.md`).
+            app.desk.now = crate::message::Workspace::Print;
             app.camera.yaw = 0.0;
             app.camera.pitch = 0.0;
             app.publish_camera();
@@ -13531,6 +13549,9 @@ mod tests {
     #[test]
     fn alt_over_a_lasso_parts_nothing_and_cuts_nothing() {
         let mut app = app();
+        // Parting is Print's cut (`docs/WORKSPACES.md`); in Sculpt a cut
+        // only cuts.
+        app.desk.now = crate::message::Workspace::Print;
         app.camera.yaw = 0.0;
         app.camera.pitch = 0.0;
         app.publish_camera();

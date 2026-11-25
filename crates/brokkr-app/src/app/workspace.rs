@@ -59,27 +59,54 @@ pub(super) struct Desk {
 }
 
 impl Workspace {
-    /// The rail's buttons in this workspace, in order.
+    /// The rail's buttons in this mode, in order. Paint has no button
+    /// for painting: painting is what Paint does when neither the mask nor
+    /// a measurement is up.
     pub(super) fn rail(self) -> &'static [Rail] {
         match self {
-            Workspace::Sculpt => {
-                &[Rail::Brush, Rail::Move, Rail::Mask, Rail::Transform, Rail::Cut, Rail::Measure]
-            }
-            Workspace::Kitbash => &[Rail::Place, Rail::Transform, Rail::Cut, Rail::Measure],
-            Workspace::Paint => &[Rail::Paint, Rail::Mask, Rail::Measure],
-            Workspace::Print => &[Rail::Measure, Rail::Cut, Rail::Transform],
+            Workspace::Sculpt => &[Rail::Brush, Rail::Move, Rail::Mask, Rail::Cut, Rail::Measure],
+            Workspace::Transform => &[Rail::Transform, Rail::Place, Rail::Measure],
+            Workspace::Paint => &[Rail::Mask, Rail::Measure],
+            Workspace::Print => &[Rail::Cut, Rail::Measure],
         }
     }
 
-    /// The tool a workspace opens with the first time.
+    /// Every tool the mode may have lit: its rail's, and Paint's painting,
+    /// which has no button.
+    pub(super) fn tools(self) -> &'static [Rail] {
+        match self {
+            Workspace::Paint => &[Rail::Paint, Rail::Mask, Rail::Measure],
+            other => other.rail(),
+        }
+    }
+
+    /// The tool a mode opens with the first time, and falls back to when
+    /// what is lit is none of its own.
     fn first_tool(self) -> Rail {
         match self {
             Workspace::Sculpt => Rail::Brush,
-            Workspace::Kitbash => Rail::Place,
+            Workspace::Transform => Rail::Transform,
             Workspace::Paint => Rail::Paint,
             // Print is for looking, measuring and cutting, and a drag that
             // sculpted there would be a surprise: it opens measuring.
             Workspace::Print => Rail::Measure,
+        }
+    }
+
+    /// Whether a key's message belongs to this mode. W is Transform's; C
+    /// is Sculpt's and Print's; M is Sculpt's and Paint's; grouping bodies
+    /// is Transform's. Anything else goes everywhere.
+    pub(super) fn allows(self, message: &Message) -> bool {
+        match message {
+            Message::ToolChanged(Tool::Transform) => self == Workspace::Transform,
+            Message::ToolChanged(Tool::Cut) => {
+                matches!(self, Workspace::Sculpt | Workspace::Print)
+            }
+            Message::ToolChanged(Tool::Mask) => {
+                matches!(self, Workspace::Sculpt | Workspace::Paint)
+            }
+            Message::BodyGrouped | Message::BodyUngrouped => self == Workspace::Transform,
+            _ => true,
         }
     }
 
@@ -92,7 +119,7 @@ impl Workspace {
         };
         match self {
             Workspace::Sculpt => named("Sculpt"),
-            Workspace::Kitbash => named("Add"),
+            Workspace::Transform => named("Add"),
             Workspace::Paint | Workspace::Print => None,
         }
     }
@@ -111,7 +138,7 @@ impl Brokkr {
         let leaving = &mut self.desk.memory[from as usize];
         leaving.rail = Some(rail);
         leaving.expanded = expanded;
-        if from == Workspace::Kitbash {
+        if from == Workspace::Transform {
             leaving.insert = insert;
         }
         self.desk.last = from;
@@ -130,11 +157,55 @@ impl Brokkr {
         }
         let tool = self.desk.memory[to as usize]
             .rail
-            .filter(|rail| to.rail().contains(rail))
+            .filter(|rail| to.tools().contains(rail))
             .unwrap_or(to.first_tool());
         tasks.push(self.rail_chosen_in(tool));
         self.status = format!("{} workspace", to.label());
         iced::Task::batch(tasks)
+    }
+
+    /// Whether the cut, released, parts the body in two with keys rather
+    /// than cutting material away: always in Print, never in Sculpt, and
+    /// with Alt held anywhere else the cut can be had.
+    pub(super) fn parting_cut(&self) -> bool {
+        match self.desk.now {
+            Workspace::Print => true,
+            Workspace::Sculpt => false,
+            _ => self.alt,
+        }
+    }
+
+    /// After every message: what the open mode does with a drag stays the
+    /// mode's.
+    ///
+    /// - A part taken up in Transform puts the gizmo down, so a drag sets
+    ///   it down.
+    /// - In Transform and in Print a drag never strokes the field: when a
+    ///   tool of theirs puts itself down (a cut is one shot, the gizmo can
+    ///   be refused) and the brush would be what is left, the mode's own
+    ///   first tool is taken up, or measuring if that is refused.
+    pub(super) fn keep_to_the_mode(&mut self) -> iced::Task<Message> {
+        if self.keeping {
+            return iced::Task::none();
+        }
+        self.keeping = true;
+        let now = self.desk.now;
+        let mut task = iced::Task::none();
+        // A part taken up in Transform, from its palette or by a key, is
+        // set down by a drag: the gizmo goes down so the drag reaches it.
+        if now == Workspace::Transform && self.inserting() && self.tool != Tool::Sculpt {
+            task = self.update(Message::ToolChanged(Tool::Sculpt));
+        }
+        if matches!(now, Workspace::Transform | Workspace::Print)
+            && !now.tools().contains(&self.rail_lit())
+        {
+            task = iced::Task::batch([task, self.rail_chosen_in(now.first_tool())]);
+            if !now.tools().contains(&self.rail_lit()) {
+                task = iced::Task::batch([task, self.rail_chosen_in(Rail::Measure)]);
+            }
+        }
+        self.keeping = false;
+        task
     }
 
     /// A rail button, pressed by the workspace on the way in rather than
@@ -149,7 +220,7 @@ impl Brokkr {
     /// The thing to add that Kitbash's Place button takes up: the one in
     /// hand when Kitbash was left, or a ball.
     pub(super) fn kitbash_insert(&self) -> super::Insert {
-        self.desk.memory[Workspace::Kitbash as usize]
+        self.desk.memory[Workspace::Transform as usize]
             .insert
             .unwrap_or(super::Insert::Shape(brokkr_core::solid::Form::Ball))
     }
@@ -158,7 +229,7 @@ impl Brokkr {
     /// place, if it has one.
     pub(super) fn library_key(&mut self, index: usize) -> iced::Task<Message> {
         match self.desk.now {
-            Workspace::Sculpt | Workspace::Kitbash => {
+            Workspace::Sculpt | Workspace::Transform => {
                 let Some(places) = self.desk.now.palette_places() else {
                     return iced::Task::none();
                 };
@@ -223,7 +294,10 @@ impl Brokkr {
                         .padding(iced::Padding { right: theme::S4, ..iced::Padding::ZERO })
                 )
                 .height(Length::Fill),
-                self.section(PanelSection::Bodies, || self.bodies_panel()),
+                // The bodies, always: which part a stroke, a coat, a move
+                // or a cut goes to is chosen here in every mode, so it does
+                // not fold away. See `docs/WORKSPACES.md`.
+                self.bodies_block(),
             ]
             .spacing(theme::S3),
         )
@@ -234,11 +308,25 @@ impl Brokkr {
         .into()
     }
 
+    /// The bodies list at the foot of every mode's dock: a heading that
+    /// does not fold, the SOLO badge beside it, and the list.
+    fn bodies_block(&self) -> Element<'_, Message> {
+        let mut heading = row![
+            text(PanelSection::Bodies.title()).size(theme::HEADING_SIZE).color(theme::TEXT_MUTE)
+        ]
+        .spacing(theme::S2)
+        .align_y(iced::Alignment::Center);
+        if let Some(badge) = self.solo_badge(PanelSection::Bodies) {
+            heading = heading.push(badge);
+        }
+        column![heading, self.bodies_panel()].spacing(theme::S2).into()
+    }
+
     /// What a workspace offers to pick from.
     fn library(&self, now: Workspace) -> Element<'_, Message> {
         match now {
             Workspace::Sculpt => self.palette_panel(),
-            Workspace::Kitbash => {
+            Workspace::Transform => {
                 column![self.palette_panel(), self.adding_library(),].spacing(theme::S3).into()
             }
             Workspace::Paint => self.painting_picker(true),
@@ -249,6 +337,12 @@ impl Brokkr {
     /// The settings of what is in hand, in sections that fold.
     fn inspector(&self, now: Workspace) -> Element<'_, Message> {
         let sections: Vec<Element<'_, Message>> = match now {
+            // A shape baked into the body is a Sculpt brush, and how it
+            // meets the surface is its setting there.
+            Workspace::Sculpt if self.inserting() => vec![
+                self.section(PanelSection::Add, || self.adding_settings()),
+                self.section(PanelSection::Detail, || self.detail_panel()),
+            ],
             Workspace::Sculpt => vec![
                 self.brush_section(),
                 self.section(PanelSection::Stroke, || self.stroke_panel()),
@@ -257,7 +351,7 @@ impl Brokkr {
                 self.section(PanelSection::Workbench, || self.workbench_panel()),
                 self.section(PanelSection::Detail, || self.detail_panel()),
             ],
-            Workspace::Kitbash => vec![
+            Workspace::Transform => vec![
                 self.section(PanelSection::Add, || self.adding_settings()),
                 self.section(PanelSection::Detail, || self.detail_panel()),
             ],
@@ -372,7 +466,7 @@ mod tests {
     fn workspace() -> impl Strategy<Value = Option<Workspace>> {
         prop_oneof![
             Just(Some(Workspace::Sculpt)),
-            Just(Some(Workspace::Kitbash)),
+            Just(Some(Workspace::Transform)),
             Just(Some(Workspace::Paint)),
             Just(Some(Workspace::Print)),
             // Tab: back to the one before.
@@ -398,7 +492,7 @@ mod tests {
                     None => Message::WorkspaceBack,
                 });
                 prop_assert_eq!(&kept(&app), &before);
-                prop_assert!(app.desk.now.rail().contains(&app.rail_lit()),
+                prop_assert!(app.desk.now.tools().contains(&app.rail_lit()),
                     "{:?} lit {:?}, which it does not have", app.desk.now, app.rail_lit());
             }
         }
@@ -431,18 +525,70 @@ mod tests {
     /// on the way out, so a drag in Sculpt is a stroke again; going back
     /// takes the same thing up.
     #[test]
-    fn kitbash_holds_what_it_adds_and_only_there() {
+    fn transform_holds_its_part_and_only_there() {
         let mut app = app();
         assert!(!app.inserting());
-        update(&mut app, Message::WorkspaceChosen(Workspace::Kitbash));
-        assert!(app.inserting(), "Kitbash opened with nothing to add in hand");
+        // Transform opens on the gizmo, and Place takes a part up as a body
+        // of its own.
+        update(&mut app, Message::WorkspaceChosen(Workspace::Transform));
+        assert_eq!(app.rail_lit(), Rail::Transform);
+        update(&mut app, Message::RailChosen(Rail::Place));
+        assert!(app.inserting(), "Place took nothing up");
+        assert!(app.inserts.separate, "a part in Transform was baked in");
         assert_eq!(app.rail_lit(), Rail::Place);
         let box_ = super::super::Insert::Shape(brokkr_core::solid::Form::Box);
         update(&mut app, Message::Add(AddMessage::Chosen(Some(box_))));
         update(&mut app, Message::WorkspaceChosen(Workspace::Sculpt));
-        assert!(!app.inserting(), "Sculpt kept Kitbash's shape in hand");
-        update(&mut app, Message::WorkspaceChosen(Workspace::Kitbash));
+        assert!(!app.inserting(), "Sculpt kept Transform's part in hand");
+        update(&mut app, Message::WorkspaceChosen(Workspace::Transform));
         assert_eq!(app.inserts.what, Some(box_));
+        // The gizmo puts the part down and Place takes the same one up.
+        update(&mut app, Message::RailChosen(Rail::Transform));
+        assert!(!app.inserting());
+        update(&mut app, Message::RailChosen(Rail::Place));
+        assert_eq!(app.inserts.what, Some(box_));
+    }
+
+    /// A shape chosen in Sculpt is baked into the body, and the same shape
+    /// chosen in Transform is a body of its own.
+    #[test]
+    fn the_mode_says_baked_in_or_its_own_body() {
+        let mut app = app();
+        let ball = super::super::Insert::Shape(brokkr_core::solid::Form::Ball);
+        update(&mut app, Message::Add(AddMessage::Chosen(Some(ball))));
+        assert!(!app.inserts.separate, "a shape in Sculpt is not baked in");
+        assert_eq!(app.rail_lit(), Rail::Brush);
+        update(&mut app, Message::WorkspaceChosen(Workspace::Transform));
+        update(&mut app, Message::Add(AddMessage::Chosen(Some(ball))));
+        assert!(app.inserts.separate, "a part in Transform is baked in");
+        assert_eq!(app.rail_lit(), Rail::Place, "a part taken up left the gizmo up");
+    }
+
+    /// The keys that belong to one mode do nothing in another, and a cut
+    /// parts the body in Print and never in Sculpt.
+    #[test]
+    fn keys_and_the_cut_follow_the_mode() {
+        let key = |character: &str| Message::KeyPressed {
+            key: iced::keyboard::Key::Character(character.into()),
+            modifiers: iced::keyboard::Modifiers::default(),
+        };
+        let mut app = app();
+        update(&mut app, key("w"));
+        assert_ne!(app.tool, Tool::Transform, "W raised the gizmo in Sculpt");
+        update(&mut app, Message::WorkspaceChosen(Workspace::Transform));
+        update(&mut app, key("m"));
+        assert_ne!(app.tool, Tool::Mask, "M masked in Transform");
+        update(&mut app, Message::WorkspaceChosen(Workspace::Paint));
+        update(&mut app, key("c"));
+        assert_ne!(app.tool, Tool::Cut, "C armed the cut in Paint");
+        app.alt = true;
+        update(&mut app, Message::WorkspaceChosen(Workspace::Sculpt));
+        assert!(!app.parting_cut(), "Alt parts in Sculpt");
+        update(&mut app, Message::WorkspaceChosen(Workspace::Print));
+        app.alt = false;
+        assert!(app.parting_cut(), "a cut in Print does not part");
+        // And in Print a drag never strokes: what is lit is Print's.
+        assert!(Workspace::Print.tools().contains(&app.rail_lit()));
     }
 
     /// The keys 1 to 8 pick from the open workspace's library: the
@@ -457,10 +603,10 @@ mod tests {
         update(&mut app, Message::WorkspaceChosen(Workspace::Paint));
         update(&mut app, Message::LibraryKey(2));
         assert_eq!(app.touch.kind, PaintTouch::ALL[2]);
-        update(&mut app, Message::WorkspaceChosen(Workspace::Kitbash));
+        update(&mut app, Message::WorkspaceChosen(Workspace::Transform));
         update(&mut app, Message::LibraryKey(2));
         let places =
-            Workspace::Kitbash.palette_places().expect("Kitbash's library is the palette's");
+            Workspace::Transform.palette_places().expect("Kitbash's library is the palette's");
         let now = app.preset_now(String::new());
         let palette = app.studio.presets.palette();
         assert_eq!(Brokkr::lit(&palette, &now), Some(places.start + 2));

@@ -582,7 +582,8 @@ impl TopMenu {
 pub enum Rail {
     /// Whichever brush of the palette is in hand.
     Brush,
-    /// Kitbash's: something to add is in hand, and a drag sets it down.
+    /// Transform's: a part to add is in hand, and a drag sets it down as a
+    /// body of its own.
     Place,
     /// A click on the model is a point of a measurement.
     Measure,
@@ -614,19 +615,19 @@ impl Rail {
 pub enum Workspace {
     #[default]
     Sculpt,
-    Kitbash,
+    Transform,
     Paint,
     Print,
 }
 
 impl Workspace {
     pub const ALL: [Workspace; 4] =
-        [Workspace::Sculpt, Workspace::Kitbash, Workspace::Paint, Workspace::Print];
+        [Workspace::Sculpt, Workspace::Transform, Workspace::Paint, Workspace::Print];
 
     pub fn label(self) -> &'static str {
         match self {
             Workspace::Sculpt => "Sculpt",
-            Workspace::Kitbash => "Kitbash",
+            Workspace::Transform => "Transform",
             Workspace::Paint => "Paint",
             Workspace::Print => "Print",
         }
@@ -636,7 +637,7 @@ impl Workspace {
     pub fn key(self) -> &'static str {
         match self {
             Workspace::Sculpt => "Ctrl 1",
-            Workspace::Kitbash => "Ctrl 2",
+            Workspace::Transform => "Ctrl 2",
             Workspace::Paint => "Ctrl 3",
             Workspace::Print => "Ctrl 4",
         }
@@ -660,7 +661,7 @@ impl DockTab {
         match (self, workspace) {
             (DockTab::Inspector, _) => "Settings",
             (DockTab::Library, Workspace::Sculpt) => "Brushes",
-            (DockTab::Library, Workspace::Kitbash) => "Parts",
+            (DockTab::Library, Workspace::Transform) => "Parts",
             (DockTab::Library, Workspace::Paint) => "Paints",
             (DockTab::Library, Workspace::Print) => "Export",
         }
