@@ -838,6 +838,40 @@ spread of light from its darkest to its brightest at more than half as
 much again as the same gold as paint, with a highlight that is gold and
 not white.
 
+### After use: pooling as strong as you want it (2026-11-25)
+
+The maintainer found the pooling too faint for a contrast or a speed
+paint to work: they "pull in and around details", and a wash does not
+cover high spots as well as a speed paint. Asked for: an occlusion
+intensity slider for the paint engine.
+
+**Pooling**, a number in the LAYERS block from 0 to 3, is how strongly a
+Wash or Contrast layer pools by the occlusion: the occlusion is
+multiplied by it before it is a crease (`occlusion::crease_of`). It is on
+every body (`Volume::set_pooling`, which puts the pooling layers together
+again), a body made later is given it on the next frame, and it is kept
+as a setting, `paint.conf`, when the slider is let go
+(`app/pooling.rs`). It was 1 before; it is 1.5 unless set.
+
+**Deeper in a recess.** Pooled paint is more paint: a wash or a contrast
+in a crease is now darker by up to seven tenths of a second coat of
+itself, by how shut in it is, as well as covering more. A wash still
+leaves about a third of itself on a flat and a contrast nine tenths.
+
+The paint pictures follow the pooling in hand, to a tenth.
+
+Tests: with more pooling a wash is darker along the line from the neck
+between two balls to the top of one, at none only the edge of the top
+tells them apart (`pooling_more_darkens_the_recess_more`); a wash and a
+contrast are deeper in a crease and a plain paint is not; the slider sets
+every body, and a body added after is given it on the next frame. On
+the screen: *Pooling* under the layer's opacity; a strip of a wash and a
+contrast at 0, 1.5 and 3.
+
+Not done: the reach of the occlusion (four steps out to 4 mm) is not on
+the slider; pooling is not kept in the project file, so a document
+exported on two machines with different settings differs.
+
 ### After use: the paint designer, and a picture of each paint (2026-11-25)
 
 Asked for by the maintainer: a paint should be shown as a brush is, on a

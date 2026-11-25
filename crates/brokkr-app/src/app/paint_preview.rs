@@ -49,7 +49,10 @@ const LIGHT_FROM: Vec3 = Vec3::new(-0.4, 0.7, 0.6);
 #[derive(Debug, Clone, Copy)]
 struct Seen {
     normal: Vec3,
-    crease: f32,
+    /// How shut in it is, and how much of an edge: the crease is made of
+    /// these by the pooling in hand.
+    occlusion: f32,
+    edge: f32,
     under: [u8; 3],
 }
 
@@ -113,7 +116,12 @@ fn ball(size: usize) -> Vec<Option<Seen>> {
             seen.push(hit.map(|point| {
                 let normal = body.gradient_world(point).normalize_or(Vec3::Z);
                 let cell = (point / voxel).round().as_ivec3();
-                let crease = body.crease_at(cell);
+                let (occlusion, edge) = (body.occlusion_at(cell), body.edge_at(cell));
+                let crease = brokkr_core::paint::occlusion::crease_of(
+                    occlusion,
+                    edge,
+                    brokkr_core::paint::occlusion::POOLING,
+                );
                 // The slapchop: a dark coat everywhere, and the light dabbed
                 // on where the surface faces up and stands out of a recess.
                 let up = (normal.y + 1.0) * 0.5;
@@ -125,7 +133,7 @@ fn ball(size: usize) -> Vec<Option<Seen>> {
                 let under = std::array::from_fn(|c| {
                     (f32::from(DARK[c]) + (f32::from(LIGHT[c]) - f32::from(DARK[c])) * t) as u8
                 });
-                Seen { normal, crease, under }
+                Seen { normal, occlusion, edge, under }
             }));
         }
     }
@@ -142,8 +150,9 @@ fn looked_at(size: usize) -> Looked {
     kept.entry(size).or_insert_with(|| std::sync::Arc::new(ball(size))).clone()
 }
 
-/// The picture's pixels: red, green, blue and alpha, `size` by `size`.
-pub(super) fn pixels(colour: [u8; 3], kind: Kind, size: usize) -> Vec<u8> {
+/// The picture's pixels: red, green, blue and alpha, `size` by `size`, the
+/// paint pooled as strongly as `pooling` says.
+pub(super) fn pixels(colour: [u8; 3], kind: Kind, size: usize, pooling: f32) -> Vec<u8> {
     let seen = looked_at(size);
     let light = LIGHT_FROM.normalize();
     let toward_eye = Vec3::Z;
@@ -159,7 +168,7 @@ pub(super) fn pixels(colour: [u8; 3], kind: Kind, size: usize) -> Vec<u8> {
             seen.under,
             colour,
             kind.blend(),
-            seen.crease,
+            brokkr_core::paint::occlusion::crease_of(seen.occlusion, seen.edge, pooling),
         );
         let albedo = laid.map(|c| f32::from(c) / 255.0);
         let facing = seen.normal.dot(light).max(0.0);
@@ -183,22 +192,29 @@ pub(super) fn pixels(colour: [u8; 3], kind: Kind, size: usize) -> Vec<u8> {
     out
 }
 
-/// A picture made: its colour, its kind and its size.
-type Made = ([u8; 3], Kind, usize);
+/// A picture made: its colour, its kind, its size and the pooling, by its
+/// bits.
+type Made = ([u8; 3], Kind, usize, u32);
 
 /// The picture of a paint, `size` pixels across, as something to draw:
 /// made the first time it is asked for and kept.
-pub(super) fn handle(colour: [u8; 3], kind: Kind, size: usize) -> Handle {
+pub(super) fn handle(colour: [u8; 3], kind: Kind, size: usize, pooling: f32) -> Handle {
     static KEPT: LazyLock<Mutex<HashMap<Made, Handle>>> = LazyLock::new(Mutex::default);
+    // To a tenth: a drag of the slider would otherwise make a picture of
+    // every paint at every step of it, and keep them all.
+    let pooling = (pooling * 10.0).round() / 10.0;
     let mut kept = KEPT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    kept.entry((colour, kind, size))
-        .or_insert_with(|| Handle::from_rgba(size as u32, size as u32, pixels(colour, kind, size)))
+    kept.entry((colour, kind, size, pooling.to_bits()))
+        .or_insert_with(|| {
+            Handle::from_rgba(size as u32, size as u32, pixels(colour, kind, size, pooling))
+        })
         .clone()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use brokkr_core::paint::occlusion::POOLING;
 
     fn lightness(pixels: &[u8]) -> Vec<u32> {
         pixels
@@ -223,7 +239,7 @@ mod tests {
             .collect();
         assert!(unders.iter().any(|value| *value < 250), "no dark recess");
         assert!(unders.iter().any(|value| *value > 600), "no near white highlight");
-        assert!(seen.iter().flatten().any(|seen| seen.crease > 0.2), "nothing is shut in");
+        assert!(seen.iter().flatten().any(|seen| seen.occlusion > 0.1), "nothing is shut in");
     }
 
     /// A paint covers; a wash leaves the highlights lighter than the
@@ -237,14 +253,14 @@ mod tests {
             sorted[sorted.len() * 98 / 100] - sorted[sorted.len() * 2 / 100]
         };
         let blue = [30, 60, 160];
-        let paint = lightness(&pixels(blue, Kind::Paint, 48));
-        let wash = lightness(&pixels(blue, Kind::Wash, 48));
+        let paint = lightness(&pixels(blue, Kind::Paint, 48, POOLING));
+        let wash = lightness(&pixels(blue, Kind::Wash, 48, POOLING));
         assert!(spread(&wash) > spread(&paint), "a wash did not keep the slapchop showing");
         let gold = [200, 160, 50];
-        let flat = lightness(&pixels(gold, Kind::Paint, 48));
-        let metal = lightness(&pixels(gold, Kind::Metallic, 48));
+        let flat = lightness(&pixels(gold, Kind::Paint, 48, POOLING));
+        let metal = lightness(&pixels(gold, Kind::Metallic, 48, POOLING));
         assert!(spread(&metal) > spread(&flat), "a metal is no livelier than paint");
-        assert_eq!(pixels(blue, Kind::Paint, 48).len(), 48 * 48 * 4);
+        assert_eq!(pixels(blue, Kind::Paint, 48, POOLING).len(), 48 * 48 * 4);
     }
 
     /// A strip of every kind, written where `BROKKR_DUMP_FRAMES` says: to
@@ -265,13 +281,37 @@ mod tests {
         ];
         let mut strip = vec![0u8; size * size * 4 * kinds.len()];
         for (at, (colour, kind)) in kinds.iter().enumerate() {
-            let one = pixels(*colour, *kind, size);
+            let one = pixels(*colour, *kind, size, POOLING);
             for y in 0..size {
                 let from = &one[y * size * 4..(y + 1) * size * 4];
                 let to = (y * size * kinds.len() + at * size) * 4;
                 strip[to..to + size * 4].copy_from_slice(from);
             }
         }
+        // A wash and a contrast at no pooling, the usual and the most.
+        let poolings = [0.0, POOLING, 3.0];
+        let pooled = [([30, 25, 20], Kind::Wash), ([150, 20, 25], Kind::Contrast)];
+        let across = poolings.len() * pooled.len();
+        let mut grid = vec![0u8; size * size * 4 * across];
+        for (at, ((colour, kind), pooling)) in pooled
+            .iter()
+            .flat_map(|paint| poolings.iter().map(move |pooling| (paint, pooling)))
+            .enumerate()
+        {
+            let one = pixels(*colour, *kind, size, *pooling);
+            for y in 0..size {
+                let to = (y * size * across + at * size) * 4;
+                grid[to..to + size * 4].copy_from_slice(&one[y * size * 4..(y + 1) * size * 4]);
+            }
+        }
+        image::save_buffer(
+            std::path::Path::new(&directory).join("paint-pooling.png"),
+            &grid,
+            (size * across) as u32,
+            size as u32,
+            image::ColorType::Rgba8,
+        )
+        .expect("written");
         image::save_buffer(
             std::path::Path::new(&directory).join("paint-previews.png"),
             &strip,

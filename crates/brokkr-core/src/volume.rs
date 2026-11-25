@@ -640,6 +640,9 @@ pub struct Volume {
     paint: PaintField,
     /// The body's other layers of paint, and the composite of the stack.
     layers: crate::paint::layers::Layers,
+    /// How strongly a wash or a contrast pools by the occlusion. See
+    /// [`crate::paint::occlusion`].
+    pub(crate) pooling: f32,
     scratch: EditScratch,
 }
 
@@ -664,6 +667,7 @@ impl Volume {
             colour: ColourField::default(),
             paint: PaintField::default(),
             layers: crate::paint::layers::Layers::default(),
+            pooling: crate::paint::occlusion::POOLING,
             scratch: EditScratch::default(),
         }
     }
@@ -815,6 +819,16 @@ impl Volume {
         for (coord, colour, finish) in built {
             self.layers.store_composed(coord, colour, finish);
         }
+    }
+
+    /// Whether a shown layer pools by the shape of the surface.
+    pub(crate) fn layers_read_the_shape(&self) -> bool {
+        !self.layers.is_plain() && self.layers.reads_the_shape()
+    }
+
+    /// Put the whole stack together again. See [`Self::set_pooling`].
+    pub(crate) fn restack(&mut self) {
+        self.layers_changed();
     }
 
     /// Mark every brick any layer has paint in, so the composite and the

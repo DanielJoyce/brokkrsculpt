@@ -529,9 +529,14 @@ impl Brokkr {
                 };
                 swatches = swatches.push(crate::ui::tip(
                     button(
-                        image(super::paint_preview::handle(paint.rgb, paint.kind, PICTURE))
-                            .width(Length::Fixed(PICTURE as f32))
-                            .height(Length::Fixed(PICTURE as f32)),
+                        image(super::paint_preview::handle(
+                            paint.rgb,
+                            paint.kind,
+                            PICTURE,
+                            self.painting.pooling,
+                        ))
+                        .width(Length::Fixed(PICTURE as f32))
+                        .height(Length::Fixed(PICTURE as f32)),
                     )
                     .padding(1)
                     .style(style)
@@ -603,9 +608,14 @@ impl Brokkr {
             };
             block = block.push(
                 row![
-                    image(super::paint_preview::handle(paint.rgb, paint.kind, PICTURE))
-                        .width(Length::Fixed(PICTURE as f32))
-                        .height(Length::Fixed(PICTURE as f32)),
+                    image(super::paint_preview::handle(
+                        paint.rgb,
+                        paint.kind,
+                        PICTURE,
+                        self.painting.pooling
+                    ))
+                    .width(Length::Fixed(PICTURE as f32))
+                    .height(Length::Fixed(PICTURE as f32)),
                     text(paint.title())
                         .size(theme::LABEL_SIZE)
                         .color(theme::TEXT_DIM)
