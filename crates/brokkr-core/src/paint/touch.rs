@@ -646,6 +646,78 @@ impl<'a> Curvatures<'a> {
     }
 }
 
+/// A point of the surface a drybrush would catch, and how much it would
+/// take there: what the application draws under the brush so that what a
+/// stroke will hit is seen before it is made.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Caught {
+    /// On the surface, world units.
+    pub at: Vec3,
+    /// Out of the surface.
+    pub normal: Vec3,
+    /// Of a full touch, 0..=1.
+    pub amount: f32,
+}
+
+impl Volume {
+    /// Where on the surface within `radius` of `centre` a drybrush would
+    /// leave paint, asked as a stroke asks it ([`Drybrush::amount`]), with
+    /// a full load, no direction of travel and the bristles' middle: what
+    /// the brush catches whichever way it is drawn. One point a voxel of
+    /// the surface's own layer.
+    ///
+    /// Asked for by the maintainer on 2026-11-25: "dry brushes need to show
+    /// how high you are above a surface so you can see what parts you are
+    /// gonna hit."
+    pub fn drybrush_would_catch(
+        &self,
+        centre: Vec3,
+        radius: f32,
+        dry: Drybrush,
+        crease_gain: f32,
+        scratch: &mut TouchScratch,
+    ) -> Vec<Caught> {
+        let voxel_size = self.voxel_size();
+        if radius <= 0.0 {
+            return Vec::new();
+        }
+        let (lo, hi) =
+            self.voxel_bounds(centre - Vec3::splat(radius), centre + Vec3::splat(radius));
+        let reach = IVec3::splat(NARROW_BAND.ceil() as i32 + 3);
+        self.snapshot(lo - reach, hi + reach, &mut scratch.region);
+        let curvatures = Curvatures::over(&scratch.region, &mut scratch.cavity);
+        let region = &scratch.region;
+        let mut caught = Vec::new();
+        for z in lo.z..=hi.z {
+            for y in lo.y..=hi.y {
+                for x in lo.x..=hi.x {
+                    let voxel = IVec3::new(x, y, z);
+                    let distance = region.get(voxel);
+                    // The surface's own layer: one point a column of the band.
+                    if !(-0.5..0.5).contains(&distance) {
+                        continue;
+                    }
+                    let normal = gradient_at(region, voxel).normalize_or_zero();
+                    if normal == Vec3::ZERO {
+                        continue;
+                    }
+                    let on_surface = voxel.as_vec3() - normal * distance;
+                    let at = on_surface * voxel_size;
+                    if at.distance_squared(centre) > radius * radius {
+                        continue;
+                    }
+                    let raised = curvatures.relief(on_surface, crease_gain).max(0.0);
+                    let amount = dry.amount(raised, 0.5, 0.5, 1.0);
+                    if amount > 0.0 {
+                        caught.push(Caught { at, normal, amount });
+                    }
+                }
+            }
+        }
+        caught
+    }
+}
+
 /// The gradient of the stored field at a voxel, by central differences.
 pub(super) fn gradient_at(region: &FieldRegion, voxel: IVec3) -> Vec3 {
     Vec3::new(
@@ -806,6 +878,32 @@ mod tests {
 
     /// An edge is raised and a crease is not: what stands up is the upper
     /// half of the relief, and a crease's is all in the lower.
+    /// A drybrush shows the edge of a cube and not the middle of its face,
+    /// and given more catch it never shows less.
+    #[test]
+    fn a_drybrush_shows_what_it_would_catch() {
+        let volume = cube();
+        let mut scratch = TouchScratch::new();
+        let gain = 4.0;
+        let at_edge = Vec3::new(HALF, HALF, 0.0);
+        let mid_face = Vec3::new(0.0, HALF, 0.0);
+        let light = Drybrush { catch: 0.4, ..Drybrush::default() };
+        let edge = volume.drybrush_would_catch(at_edge, 2.0, light, gain, &mut scratch);
+        let face = volume.drybrush_would_catch(mid_face, 2.0, light, gain, &mut scratch);
+        assert!(edge.len() > 5, "the edge caught {} points", edge.len());
+        assert!(face.is_empty(), "the middle of a face caught {} points", face.len());
+        let mut last = 0;
+        for catch in [0.2, 0.4, 0.6, 0.8, 1.0] {
+            let dry = Drybrush { catch, ..Drybrush::default() };
+            let shown = volume.drybrush_would_catch(at_edge, 3.0, dry, gain, &mut scratch).len();
+            assert!(shown >= last, "catch {catch} showed {shown}, less than {last}");
+            last = shown;
+        }
+        for point in edge {
+            assert!((0.0..=1.0).contains(&point.amount) && point.at.distance(at_edge) <= 2.0);
+        }
+    }
+
     #[test]
     fn a_crease_is_not_raised() {
         // The cube with a square slot cut across its top face: creases

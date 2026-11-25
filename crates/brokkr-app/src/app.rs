@@ -20,6 +20,8 @@ mod coats;
 mod decal;
 // The card a paint is made or changed in. See `app/designer.rs`.
 mod designer;
+// What a drybrush would catch, under the ring. See `app/dry_preview.rs`.
+mod dry_preview;
 // The coarse preview of a shape being dragged out. See `app/insert_preview.rs`.
 mod insert_preview;
 // A paint shown on a slapchopped ball. See `app/paint_preview.rs`.
@@ -986,6 +988,8 @@ pub struct Brokkr {
     overhang: overhang::OverhangState,
     /// The paint brush, painting in colour. See `app/painting.rs`.
     painting: painting::PaintingState,
+    /// What a drybrush would catch, under the ring. See `app/dry_preview.rs`.
+    dry_preview: dry_preview::DryPreview,
     /// How many texels on a side a baked texture is. See `app/paints.rs`.
     texture_size: u32,
     /// How strong the tint is when it is shown at all, 0..1.
@@ -2266,6 +2270,7 @@ impl Brokkr {
             form: form::FormState::default(),
             overhang: overhang::OverhangState::default(),
             painting: painting::PaintingState::default(),
+            dry_preview: dry_preview::DryPreview::default(),
             texture_size: paints::TEXTURE_SIZES[1],
             mask_tint: DEFAULT_MASK_TINT,
             mask_peek: false,
@@ -5041,6 +5046,8 @@ impl Brokkr {
         self.add_insert_preview(&mut batch);
         // The decal being dragged. See `app/decal.rs`.
         self.add_decal_preview(&mut batch);
+        // What a drybrush would catch. See `app/dry_preview.rs`.
+        self.add_drybrush_preview(&mut batch);
         self.shared.swap_overlay(&mut batch);
         self.overlay = batch;
     }
@@ -10747,7 +10754,12 @@ impl Brokkr {
                     _ => {}
                 }
             }
-            Message::PaintTouchChanged(setting) => self.touch.set(setting),
+            Message::PaintTouchChanged(setting) => {
+                self.touch.set(setting);
+                // What a drybrush catches follows its Catch. See
+                // `app/dry_preview.rs`.
+                self.refresh_overlay();
+            }
             // And the verbs, which DO change protection and all of which are
             // undoable in one entry apiece.
             Message::MaskCleared => self.clear_mask(),

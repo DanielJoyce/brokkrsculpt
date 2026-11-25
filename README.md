@@ -391,7 +391,8 @@ true of it too, and what it adds is this.
   opacity, with a soft edge. *Paint* covers, *Glaze* tints what is under it
   without hiding it, *Erase* takes paint off. Put on *Loaded*; as a *Wash*,
   which runs into the creases and off the edges; with a *Drybrush*, which
-  catches only what stands up; with a *Sponge*; or as a *Fill*, which
+  catches only what stands up, and tints what it would catch under the
+  brush before you press; with a *Sponge*; or as a *Fill*, which
   runs over a panel until a crease, an edge or a different paint stops it;
   or sprayed with the *Airbrush*, which builds up while it is held, by its
   flow and the pen's pressure, sprays wider on what is further away, and
