@@ -411,8 +411,9 @@ true of it too, and what it adds is this.
   highlight as tight as the finish is glossy, and a GLB export carries
   it as the model's roughness.
 - **Decals and stamps.** The *Decal* touch presses a picture onto the
-  model along the view: drag to size it and turn it, and it wraps the
-  surface it lands on. As a decal it keeps its own colours; as a stamp
+  model along the view: drag to size it and turn it, seeing it drawn
+  on the model as you go, and it is pressed on, wrapping the surface it
+  lands on, when you let go. As a decal it keeps its own colours; as a stamp
   it is a stencil in the paint in hand. It goes on a decal layer of its
   own, so you can paint over it or wash it. Six pictures come with the
   application, and *Picture…* takes in any PNG or JPEG and keeps it.

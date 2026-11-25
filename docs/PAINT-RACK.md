@@ -600,6 +600,47 @@ a name; the pictures shown as pictures on their buttons; removing a
 picture taken in, except from the directory; turning by a second press
 rather than the drag's direction.
 
+### After use: a decal previewed while it is dragged (2026-11-25)
+
+The maintainer found a decal slow as it grew, and asked whether it could
+be drawn as a decal before it is pressed into the layer. It was dabbed
+again at every move of the drag, and a dab asked every voxel of the cube
+round the picture, solid and empty alike, with the trilinear gradient:
+the cost grew with the cube of its size.
+
+**Drawn, then laid.** While the button is down the dab is drawn over the
+model and not laid: a grid of 48 by 48 over the picture, each corner cast
+along the view onto the surface and lifted a voxel toward the eye, each
+cell in the colour the dab would lay there (`Brokkr::decal_preview`).
+When the button comes up it is laid once, on its decal layer, in the
+stroke whose entry the layer joins (`Brokkr::set_the_decal_down`, called
+from the end of a stroke).
+
+**A dab a brick at a time.** `Volume::dab` passes over a brick that holds
+no surface whole, works out the rest across every core, and takes the
+normal by six lookups, as the airbrush does.
+
+| A decal across | One move, before | One move, after | Laid on release, after |
+|---|---|---|---|
+| 4.5 mm | 3.4 ms | 2.8 ms | 4.9 ms |
+| 11 mm | 15.0 ms | 7.3 ms | 9.1 ms |
+| 21 mm | 57.6 ms | 10.8 ms | 12.9 ms |
+| 41 mm | 261 ms | 15.5 ms | 27.4 ms |
+
+Measured by `what_a_decal_costs` (application, release build, ignored),
+on the build machine, which has no graphics card: what one adds to draw
+the preview was not measured.
+
+Tests: the dab and its layer are still one undo, and a dab dragged three
+times as far is larger; a point of the picture put on the plane comes
+back as the same point (a property, which the preview is laid out by).
+On the screen: a star dragged out, drawn while the button was held and
+laid when it came up, its points within a few pixels of the preview's.
+
+Not done: the preview is drawn on the surface as it is, so it does not
+show a soft edge's fade or what the mask holds off; it is coarser than
+the dab, 48 cells across whatever its size.
+
 ## 7. One-click coats
 
 Each is a small card (its few settings and a live preview on the model)

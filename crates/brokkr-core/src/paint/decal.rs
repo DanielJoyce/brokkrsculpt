@@ -20,10 +20,12 @@
 //! `app/decal.rs`.
 
 use glam::{IVec3, Vec2, Vec3};
-use rustc_hash::FxHashMap;
+use rayon::prelude::*;
+use rustc_hash::FxHashSet;
 
-use super::field::PaintField;
+use super::field::{PaintField, bricks_between};
 use super::stroke::{Mode, Pigment, laid};
+use crate::brick::{BRICK_VOXELS, Brick, BrickCoord, brick_index};
 use crate::mask::PROTECTED;
 use crate::volume::Volume;
 
@@ -124,6 +126,55 @@ impl Dab {
         (nearest / self.soft.min(0.5)).clamp(0.0, 1.0)
     }
 
+    /// The colour a point of the picture at `uv` lays, and how much of it,
+    /// where the surface faces the view `facing` squarely (0..=1).
+    fn take(&self, picture: &Picture, uv: Vec2, facing: f32) -> ([u8; 3], f32) {
+        let [r, g, b, a] = picture.sample(uv.x, uv.y);
+        let edge = self.edge(uv) * facing;
+        match self.stamp {
+            // Dark is paint: the picture's darkness, where it is not
+            // see-through.
+            Some(pigment) => {
+                let light = if a > 0.0 {
+                    (0.2126 * r + 0.7152 * g + 0.0722 * b) / (255.0 * a)
+                } else {
+                    1.0
+                };
+                (pigment.colour, (1.0 - light).clamp(0.0, 1.0) * a * edge)
+            }
+            None => {
+                let colour = if a > 0.0 {
+                    [r / a, g / a, b / a].map(|c| c.round().clamp(0.0, 255.0) as u8)
+                } else {
+                    [0, 0, 0]
+                };
+                (colour, a * edge)
+            }
+        }
+    }
+
+    /// The colour a point of the picture at `uv` shows and how much of it,
+    /// face on: what a preview of the dab draws there. See `app/decal.rs`.
+    pub fn shows(&self, picture: &Picture, uv: Vec2) -> ([u8; 3], f32) {
+        self.take(picture, uv, 1.0)
+    }
+
+    /// Where on the picture a point `offset` from the point aimed at is,
+    /// or `None` off it: what a preview of the dab is laid out by.
+    pub fn picture_at(&self, picture: &Picture, offset: Vec3) -> Option<Vec2> {
+        self.uv(picture, offset)
+    }
+
+    /// The point `uv` of the picture on the plane through the point aimed
+    /// at, square to the view: the inverse of [`Self::picture_at`] on it.
+    pub fn on_plane(&self, picture: &Picture, uv: Vec2) -> Vec3 {
+        let height = self.size * picture.aspect();
+        let turned = Vec2::new((uv.x - 0.5) * self.size, (0.5 - uv.y) * height);
+        let (sin, cos) = self.turn.sin_cos();
+        let flat = Vec2::new(turned.x * cos - turned.y * sin, turned.x * sin + turned.y * cos);
+        self.at + self.right * flat.x + self.up * flat.y
+    }
+
     /// The box of voxels it can reach.
     pub fn reach(&self, picture: &Picture, voxel_size: f32) -> (IVec3, IVec3) {
         let half = self.size * 0.5 * (1.0 + picture.aspect()).max(1.0);
@@ -132,6 +183,9 @@ impl Dab {
         (lo, hi)
     }
 }
+
+/// What each voxel of a brick takes of a dab: a colour, and how much.
+type BrickTakes = Vec<([u8; 3], f32)>;
 
 impl Volume {
     /// Dab `picture` as `dab` says, over the paint as it was before the
@@ -148,72 +202,120 @@ impl Volume {
         let along = dab.along.normalize_or_zero();
         let (lo, hi) = dab.reach(picture, voxel_size);
 
-        // What each voxel the picture reaches takes, worked out first: the
-        // facing reads the field, which the edit below holds.
-        let mut takes: FxHashMap<IVec3, ([u8; 3], f32)> = FxHashMap::default();
-        if along != Vec3::ZERO && dab.size > 0.0 {
-            for z in lo.z..=hi.z {
-                for y in lo.y..=hi.y {
-                    for x in lo.x..=hi.x {
-                        let voxel = IVec3::new(x, y, z);
-                        let position = voxel.as_vec3() * voxel_size;
-                        let offset = position - dab.at;
-                        if offset.dot(along).abs() > dab.size * 0.5 {
-                            continue;
-                        }
-                        let Some(uv) = dab.uv(picture, offset) else {
-                            continue;
-                        };
-                        if !PaintField::paintable(self.sample_voxel(voxel)) {
-                            continue;
-                        }
-                        let normal = self.gradient_world(position).normalize_or_zero();
-                        let facing = ((-normal.dot(along) - 0.05) / 0.25).clamp(0.0, 1.0);
-                        if facing <= 0.0 {
-                            continue;
-                        }
-                        let [r, g, b, a] = picture.sample(uv.x, uv.y);
-                        let edge = dab.edge(uv) * facing;
-                        let take = match dab.stamp {
-                            // Dark is paint: the picture's darkness, where it
-                            // is not see-through.
-                            Some(pigment) => {
-                                let light = if a > 0.0 {
-                                    (0.2126 * r + 0.7152 * g + 0.0722 * b) / (255.0 * a)
-                                } else {
-                                    1.0
+        // What each voxel the picture reaches takes, worked out first, a
+        // brick at a time and the bricks across every core: the facing
+        // reads the field, which the edit below holds. A brick that is empty
+        // space, or solid or empty throughout, holds no paint and is passed
+        // over whole. The first version asked every voxel of the box round
+        // the picture, solid and empty alike, with the trilinear gradient:
+        // 50 ms for one move of a decal 21 mm across, measured by
+        // `what_a_decal_costs` in the application.
+        let coords: Vec<BrickCoord> =
+            bricks_between(BrickCoord::containing(lo).0, BrickCoord::containing(hi).0).collect();
+        let takes: Vec<(BrickCoord, BrickTakes)> = if along == Vec3::ZERO || dab.size <= 0.0 {
+            Vec::new()
+        } else {
+            let this = &*self;
+            coords
+                .into_par_iter()
+                .filter_map(|coord| {
+                    let values = match this.brick(coord)? {
+                        Brick::Uniform(value) if !PaintField::paintable(*value) => return None,
+                        brick => brick,
+                    };
+                    let origin = coord.origin();
+                    let (from, to) = (lo.max(origin), hi.min(coord.max_voxel()));
+                    if from.cmpgt(to).any() {
+                        return None;
+                    }
+                    let mut take = vec![([0_u8; 3], 0.0_f32); BRICK_VOXELS];
+                    let mut any = false;
+                    for z in from.z..=to.z {
+                        for y in from.y..=to.y {
+                            for x in from.x..=to.x {
+                                let voxel = IVec3::new(x, y, z);
+                                let local = voxel - origin;
+                                let index = brick_index(
+                                    local.x as usize,
+                                    local.y as usize,
+                                    local.z as usize,
+                                );
+                                let distance = match values {
+                                    Brick::Uniform(value) => *value,
+                                    Brick::Dense(data) => data[index],
                                 };
-                                (pigment.colour, (1.0 - light).clamp(0.0, 1.0) * a * edge)
-                            }
-                            None => {
-                                let colour = if a > 0.0 {
-                                    [r / a, g / a, b / a].map(|c| c.round().clamp(0.0, 255.0) as u8)
-                                } else {
-                                    [0, 0, 0]
+                                if !PaintField::paintable(distance) {
+                                    continue;
+                                }
+                                let offset = voxel.as_vec3() * voxel_size - dab.at;
+                                if offset.dot(along).abs() > dab.size * 0.5 {
+                                    continue;
+                                }
+                                let Some(uv) = dab.uv(picture, offset) else {
+                                    continue;
                                 };
-                                (colour, a * edge)
+                                // The normal by central differences of the
+                                // stored field: six lookups, where the
+                                // trilinear gradient is forty-eight.
+                                let sample = |step: IVec3| this.sample_voxel(voxel + step);
+                                let normal = Vec3::new(
+                                    sample(IVec3::X) - sample(-IVec3::X),
+                                    sample(IVec3::Y) - sample(-IVec3::Y),
+                                    sample(IVec3::Z) - sample(-IVec3::Z),
+                                )
+                                .normalize_or_zero();
+                                let facing = ((-normal.dot(along) - 0.05) / 0.25).clamp(0.0, 1.0);
+                                if facing <= 0.0 {
+                                    continue;
+                                }
+                                let laid_here = dab.take(picture, uv, facing);
+                                if laid_here.1 > 1e-3 {
+                                    take[index] = laid_here;
+                                    any = true;
+                                }
                             }
-                        };
-                        if take.1 > 1e-3 {
-                            takes.insert(voxel, take);
                         }
                     }
-                }
-            }
-        }
-        let (lo_all, hi_all) = match also {
-            Some((was_lo, was_hi)) => (lo.min(was_lo), hi.max(was_hi)),
-            None => (lo, hi),
+                    any.then_some((coord, take))
+                })
+                .collect()
         };
         let opacity = dab.stamp.map_or(1.0, |pigment| pigment.opacity);
         let mode = dab.stamp.map_or(Mode::Paint, |pigment| pigment.mode);
-        self.edit_paint_over(lo_all, hi_all, |voxel, _, _, before, protection| {
-            let Some((colour, take)) = takes.get(&voxel) else {
-                return before;
-            };
-            let free = 1.0 - f32::from(protection) / f32::from(PROTECTED);
-            laid(before, Pigment { colour: *colour, opacity, mode }, (take * free).clamp(0.0, 1.0))
-        });
+        let mut done: FxHashSet<BrickCoord> = FxHashSet::default();
+        for (coord, take) in &takes {
+            let origin = coord.origin();
+            let (from, to) = (lo.max(origin), hi.min(coord.max_voxel()));
+            self.edit_paint_over(from, to, |voxel, _, _, before, protection| {
+                let local = voxel - origin;
+                let (colour, take) =
+                    take[brick_index(local.x as usize, local.y as usize, local.z as usize)];
+                if take <= 0.0 {
+                    return before;
+                }
+                let free = 1.0 - f32::from(protection) / f32::from(PROTECTED);
+                laid(before, Pigment { colour, opacity, mode }, (take * free).clamp(0.0, 1.0))
+            });
+            done.insert(*coord);
+        }
+        // What the last dab of the gesture reached and this one does not is
+        // given its paint back, as is the rest of a brick this one is in.
+        if let Some((was_lo, was_hi)) = also {
+            let (lo_all, hi_all) = (lo.min(was_lo), hi.max(was_hi));
+            for coord in
+                bricks_between(BrickCoord::containing(lo_all).0, BrickCoord::containing(hi_all).0)
+            {
+                if done.contains(&coord) {
+                    continue;
+                }
+                let origin = coord.origin();
+                let (from, to) = (lo_all.max(origin), hi_all.min(coord.max_voxel()));
+                if from.cmpgt(to).any() {
+                    continue;
+                }
+                self.edit_paint_over(from, to, |_, _, _, before, _| before);
+            }
+        }
         (lo, hi)
     }
 }
@@ -468,6 +570,20 @@ mod tests {
         }
 
         /// Turning a dab a full turn lands every point where it was.
+        #[test]
+        fn a_point_of_the_picture_on_the_plane_is_that_point(
+            u in 0.01f32..0.99,
+            v in 0.01f32..0.99,
+            turn in -3.0f32..3.0,
+            size in 0.5f32..20.0,
+        ) {
+            let picture = Picture::from_fn(8, 4, |_, _| [255, 0, 0, 255]);
+            let dab = Dab { turn, size, ..front(4.0, None) };
+            let point = dab.on_plane(&picture, Vec2::new(u, v));
+            let back = dab.picture_at(&picture, point - dab.at).expect("on the picture");
+            prop_assert!((back - Vec2::new(u, v)).length() < 1e-3, "{:?} came back {:?}", (u, v), back);
+        }
+
         #[test]
         fn a_full_turn_is_no_turn(x in -2.0f32..2.0, y in -2.0f32..2.0, turn in -3.0f32..3.0) {
             let picture = red_square();
