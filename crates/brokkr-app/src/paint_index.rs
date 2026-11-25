@@ -90,6 +90,19 @@ impl Kind {
         Kind::ALL.into_iter().find(|kind| kind.code() == code)
     }
 
+    /// The touch this kind of paint is put on with, where it has one of
+    /// its own. The user may choose another after.
+    pub(crate) fn touch(self) -> Option<crate::message::PaintTouch> {
+        use crate::message::PaintTouch;
+        match self {
+            Kind::Wash => Some(PaintTouch::Wash),
+            Kind::Contrast => Some(PaintTouch::Contrast),
+            Kind::Air | Kind::Spray => Some(PaintTouch::Airbrush),
+            Kind::Dry => Some(PaintTouch::Drybrush),
+            _ => None,
+        }
+    }
+
     /// The blend a layer of this kind of paint takes: a wash pools, a
     /// stain glazes, a contrast tints by what is under it, and the rest
     /// cover.

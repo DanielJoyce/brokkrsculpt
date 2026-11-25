@@ -73,6 +73,7 @@ pub mod layer_file;
 #[cfg(test)]
 mod layer_tests;
 pub mod layers;
+pub mod occlusion;
 pub mod old_slots;
 #[cfg(test)]
 mod properties;

@@ -223,16 +223,16 @@ impl Brokkr {
             going.map(|(body, layer, kind)| (body, layer, kind, self.history.revision()));
     }
 
-    /// Give the active layer `blend`, for a paint just chosen whose kind
-    /// wants it: an empty layer takes the blend, and one with paint on it
-    /// gets a new layer of that blend over it, named `name`. One undo
-    /// entry. Only painting in colour.
-    pub(super) fn suit_the_layer(&mut self, name: &str, blend: Blend) {
+    /// Give the active layer `blend`, and metal or not, for a paint or a
+    /// touch just chosen that wants it: an empty layer takes them, and one
+    /// with paint on it gets a new layer over it that has them, named
+    /// `name`. One undo entry.
+    pub(super) fn suit_the_layer(&mut self, name: &str, blend: Blend, metal: bool) {
         let body = self.doc.active();
         let volume = self.doc.active_volume();
         let layers = volume.layers();
         let meta = layers.metas()[layers.active()].clone();
-        if meta.blend == blend {
+        if meta.blend == blend && meta.metal == metal {
             return;
         }
         let active = layers.active();
@@ -245,9 +245,13 @@ impl Brokkr {
         };
         let volume = self.doc.active_volume_mut();
         let said = if empty && !meta.locked {
-            volume.set_layer_meta(active, LayerMeta { blend, ..meta.clone() });
+            volume.set_layer_meta(active, LayerMeta { blend, metal, ..meta.clone() });
             format!("layer {} is now {}", meta.name, blend.label())
-        } else if volume.add_layer(name, blend).is_some() {
+        } else if let Some(id) = volume.add_layer(name, blend) {
+            if metal && let Some(at) = volume.layers().index_of(id) {
+                let meta = volume.layers().metas()[at].clone();
+                volume.set_layer_meta(at, LayerMeta { metal: true, ..meta });
+            }
             format!("new layer {name}, {}", blend.label())
         } else {
             self.status =

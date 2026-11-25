@@ -415,3 +415,36 @@ proptest! {
         }
     }
 }
+
+/// A metal layer's paint has the metallic finish where it is on top: a
+/// plain coat over it takes the finish away, and a varnish over that gives
+/// its own. The flag goes through the file.
+#[test]
+fn a_metal_layer_is_metallic_where_it_is_on_top() {
+    use crate::paint::Finish;
+    let mut volume = ball();
+    coat(&mut volume, RED);
+    volume.add_layer("Gold", Blend::Normal).expect("room");
+    let meta = volume.layers().metas()[1].clone();
+    volume.set_layer_meta(1, LayerMeta { metal: true, ..meta });
+    coat(&mut volume, [200, 160, 40, 255]);
+    drained(&mut volume);
+    assert_eq!(volume.finish_at(ON), Finish::Metallic.code());
+
+    volume.add_layer("Over", Blend::Normal).expect("room");
+    coat(&mut volume, [20, 40, 210, 100]);
+    drained(&mut volume);
+    assert_eq!(volume.finish_at(ON), Finish::Metallic.code(), "less than half a coat over it");
+    coat(&mut volume, [20, 40, 210, 255]);
+    drained(&mut volume);
+    assert_eq!(volume.finish_at(ON), 0, "a full coat over the metal left it metallic");
+
+    volume.add_layer("Varnish", Blend::Varnish).expect("room");
+    coat(&mut volume, [Finish::Gloss.code(), 0, 0, 255]);
+    drained(&mut volume);
+    assert_eq!(volume.finish_at(ON), Finish::Gloss.code());
+
+    let bytes = super::layer_file::encode(&[Some(volume.layer_state())]).expect("a section");
+    let back = super::layer_file::decode(&bytes, 1).expect("it reads");
+    assert!(back[0].as_ref().expect("a stack").metas[1].metal, "the metal flag was lost");
+}

@@ -797,9 +797,16 @@ impl Volume {
             coords
                 .par_iter()
                 .map(|coord| {
-                    let creases = shaped.then(|| this.creases_in(*coord));
+                    // How much of a crease each voxel is, by its occlusion,
+                    // asked only of a voxel a pooling layer has paint at.
+                    // See `paint/occlusion.rs`.
+                    let origin = coord.origin();
                     let (colour, finish) = this.layers.composed(*coord, &this.paint, |voxel| {
-                        creases.as_ref().map_or(0.0, |creases| creases[voxel])
+                        if !shaped {
+                            return 0.0;
+                        }
+                        let (x, y, z) = crate::paint::layers::voxel_of(voxel);
+                        this.crease_at(origin + IVec3::new(x, y, z))
                     });
                     (*coord, colour, finish)
                 })
@@ -808,30 +815,6 @@ impl Volume {
         for (coord, colour, finish) in built {
             self.layers.store_composed(coord, colour, finish);
         }
-    }
-
-    /// How concave the surface is at each voxel of a brick, -1..=1, from
-    /// the field. See [`crate::paint::layers::crease_from`].
-    fn creases_in(&self, coord: BrickCoord) -> Vec<f32> {
-        let origin = coord.origin();
-        (0..crate::brick::BRICK_VOXELS)
-            .map(|index| {
-                let (x, y, z) = crate::paint::layers::voxel_of(index);
-                let at = origin + IVec3::new(x, y, z);
-                let sample = |offset: IVec3| self.sample_voxel(at + offset);
-                crate::paint::layers::crease_from(
-                    sample(IVec3::ZERO),
-                    [
-                        sample(IVec3::X),
-                        sample(-IVec3::X),
-                        sample(IVec3::Y),
-                        sample(-IVec3::Y),
-                        sample(IVec3::Z),
-                        sample(-IVec3::Z),
-                    ],
-                )
-            })
-            .collect()
     }
 
     /// Mark every brick any layer has paint in, so the composite and the

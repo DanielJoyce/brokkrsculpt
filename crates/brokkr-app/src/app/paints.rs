@@ -158,9 +158,11 @@ impl TouchState {
             // A fill lays no stamps, so this is never asked for one. A
             // loaded coat is the answer that does least if it ever is. And
             // a wash is the colour brush's, which reads the kind itself.
-            PaintTouch::Fill | PaintTouch::Wash | PaintTouch::Airbrush | PaintTouch::Decal => {
-                Touch::Loaded
-            }
+            PaintTouch::Fill
+            | PaintTouch::Wash
+            | PaintTouch::Contrast
+            | PaintTouch::Airbrush
+            | PaintTouch::Decal => Touch::Loaded,
         };
         let load = if self.load_mm.0 > 0.0 {
             (1.0 - self.travelled / self.load_mm.0).clamp(0.0, 1.0)
@@ -458,12 +460,10 @@ impl Brokkr {
         let offered: Vec<PaintTouch> = PaintTouch::ALL.to_vec();
         // Four to a row and no more: five in one row, seen on a screen,
         // cut the end off "Loaded". Five are laid out as three and two.
-        // Seven, with the airbrush and the decal, are three, two and two:
-        // four in a row clipped "Wash", and three, three and one left the
-        // decal alone on a line. Both seen on a screen.
+        // Eight are three, three and two: four in a row clipped "Wash",
+        // seen on a screen.
         let rows: Vec<&[PaintTouch]> = match offered.len() {
             0..=4 => vec![&offered[..]],
-            7 => vec![&offered[..3], &offered[3..5], &offered[5..]],
             _ => offered.chunks(3).collect(),
         };
         let mut picker = column![].spacing(theme::S1);
@@ -491,7 +491,7 @@ impl Brokkr {
         let changed = |setting: TouchSetting| Message::PaintTouchChanged(setting);
         match self.touch.kind {
             PaintTouch::Loaded => {}
-            PaintTouch::Wash => {}
+            PaintTouch::Wash | PaintTouch::Contrast => {}
             PaintTouch::Airbrush => picker = picker.push(self.airbrush_settings()),
             PaintTouch::Decal => picker = picker.push(self.decal_settings()),
             PaintTouch::Drybrush => {

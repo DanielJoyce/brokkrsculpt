@@ -3392,3 +3392,64 @@ fn a_gloss_varnish_is_drawn_with_a_highlight() {
         bare_flat.iter().zip(&glossy_flat).filter(|(one, other)| one.abs_diff(**other) > 2).count();
     assert_eq!(moved, 0, "drawn flat, a varnish changed {moved} channels");
 }
+
+/// A metallic paint is drawn as metal: far more between its darkest and
+/// its brightest than the same colour with no finish, the bright end tinted
+/// by the paint and not white.
+#[test]
+fn a_metal_layer_is_drawn_with_far_more_contrast_than_paint() {
+    use brokkr_core::paint::layers::{Blend, LayerMeta};
+
+    let Some(harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the metal render test");
+        return;
+    };
+    let distance = MODEL_RADIUS * 3.0;
+    let gold = [200, 160, 50, 255];
+    let frame = |metal: bool| {
+        let mut renderer = SculptRenderer::new(&harness.device, &harness.queue, TARGET_FORMAT);
+        renderer.resize(&harness.device, WIDTH, HEIGHT);
+        renderer.write_uniforms(&harness.queue, &uniforms(distance));
+        let mut volume = Volume::new(VOXEL_SIZE);
+        volume.seed_sphere(Vec3::ZERO, MODEL_RADIUS);
+        volume.add_layer("Gold", Blend::Normal).expect("room");
+        let meta = volume.layers().metas()[1].clone();
+        volume.set_layer_meta(1, LayerMeta { metal, ..meta });
+        let reach = (MODEL_RADIUS / VOXEL_SIZE) as i32 + 4;
+        volume.edit_paint(IVec3::splat(-reach), IVec3::splat(reach), |_, _, _, _| gold);
+        upload_all(&mut renderer, &harness.device, &harness.queue, &mut volume);
+        harness.frame(&renderer)
+    };
+    let spread = |pixels: &[u8]| {
+        let drawn = mask(pixels);
+        let lumas: Vec<u32> = pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(&drawn)
+            .filter(|(_, drawn)| **drawn)
+            .map(|(pixel, _)| {
+                u32::from(pixel[0]) * 2 + u32::from(pixel[1]) * 7 + u32::from(pixel[2])
+            })
+            .collect();
+        let mut sorted = lumas.clone();
+        sorted.sort_unstable();
+        let at = |share: f32| sorted[((sorted.len() - 1) as f32 * share) as usize];
+        (at(0.05), at(0.98))
+    };
+    let (paint_low, paint_high) = spread(&frame(false));
+    let metal = frame(true);
+    dump("metal-gold", &metal);
+    let (metal_low, metal_high) = spread(&metal);
+    assert!(
+        metal_high - metal_low > (paint_high - paint_low) * 3 / 2,
+        "metal spans {metal_low} to {metal_high}, paint {paint_low} to {paint_high}"
+    );
+    let brightest = metal
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .max_by_key(|pixel| u32::from(pixel[0]) + u32::from(pixel[1]) + u32::from(pixel[2]))
+        .expect("pixels");
+    assert!(brightest[0] > brightest[2] + 20, "the metal's highlight is white, {brightest:?}");
+}
