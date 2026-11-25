@@ -36,9 +36,6 @@ pub(super) const OPACITY_RANGE: std::ops::RangeInclusive<f32> = 0.05..=1.0;
 /// another.
 const USUAL_LIKENESS: u8 = 32;
 
-/// How many swatches of the range go on a line of the panel.
-const SWATCHES_A_ROW: usize = 8;
-
 /// The colour the brush starts with: a red a miniature painter would know,
 /// and not a grey that could be taken for the clay.
 const FIRST_COLOUR: [u8; 3] = [178, 34, 34];
@@ -71,6 +68,8 @@ pub(super) struct PaintingState {
     pub coats: super::coats::CoatsState,
     /// The Decal touch. See `app/decal.rs`.
     pub decal: super::decal::DecalState,
+    /// The paint designer, when it is open. See `app/designer.rs`.
+    pub designer: Option<super::designer::Designer>,
 }
 
 impl Default for PaintingState {
@@ -88,6 +87,7 @@ impl Default for PaintingState {
             airbrush: Default::default(),
             coats: Default::default(),
             decal: Default::default(),
+            designer: None,
         }
     }
 }
@@ -316,7 +316,18 @@ impl Brokkr {
         // its own width, beside three three-digit numbers, its label broke
         // onto a second line. Seen on a screen.
         let in_hand = row![
-            container(text("")).width(28).height(18).style(theme::swatch(swatch_colour(colour))),
+            crate::ui::tip(
+                button(
+                    container(text(""))
+                        .width(28)
+                        .height(18)
+                        .style(theme::swatch(swatch_colour(colour))),
+                )
+                .padding(2)
+                .style(theme::tool_button)
+                .on_press(Message::Designer(crate::message::DesignerMessage::New)),
+                "New paint from this colour",
+            ),
             reading(format!("{:3} {:3} {:3}", colour[0], colour[1], colour[2])),
             button(text("Pick from model").size(theme::LABEL_SIZE))
                 .width(Length::Fill)
@@ -349,51 +360,9 @@ impl Brokkr {
             return picker.into();
         }
 
-        // The machine's own filaments first. A colour painted at full
-        // strength in one of these prints in exactly that filament: the
-        // nearest filament to a filament's colour is itself.
-        let mut spools = row![].spacing(theme::S1);
-        for slot in self.palette.slots.iter().take(SWATCHES_A_ROW) {
-            let swatch = slot.swatch().into_rgba8();
-            let each = [swatch[0], swatch[1], swatch[2]];
-            let (style, _) = theme::tool_toggle(each == colour);
-            spools = spools.push(
-                button(
-                    container(text("")).width(14).height(14).style(theme::swatch(slot.swatch())),
-                )
-                .padding(2)
-                .style(style)
-                .on_press(Message::Painting(PaintingMessage::Colour(each))),
-            );
-        }
-        let spools =
-            column![reading("The machine's filaments".to_string()), spools].spacing(theme::S1);
-
-        let channels = [("paint.red", "Red"), ("paint.green", "Green"), ("paint.blue", "Blue")]
-            .into_iter()
-            .enumerate()
-            .fold(column![].spacing(theme::S2), |assembled, (channel, (key, label))| {
-                assembled.push(
-                    crate::ui::number(
-                        &self.drafts,
-                        key,
-                        label,
-                        f32::from(colour[channel]),
-                        0.0..=255.0,
-                        move |level| {
-                            Message::Painting(PaintingMessage::Channel(
-                                channel,
-                                level.round() as u8,
-                            ))
-                        },
-                    )
-                    .step(1.0)
-                    .shown(colour[channel].to_string()),
-                )
-            });
+        // The colour's sliders, the filaments and the mixer are in the
+        // paint designer (`app/designer.rs`), opened from the rack.
         picker = picker
-            .push(spools)
-            .push(channels)
             .push(
                 checkbox(self.flat_paint)
                     .label("flat colour, no light")

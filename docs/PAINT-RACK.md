@@ -350,7 +350,8 @@ duplicated, deleted and swapped at the top of Paint's library, which is
 now the rack: its swatches (the first eight with their key on the
 tooltip), the chosen paint with Up, Down and take off, Add paints (the
 search, each result tried by pressing its name and put on by its plus),
-and New colour (the colour in hand, a name and a kind). Each rack is a
+and New colour (the colour in hand, a name and a kind; since moved into
+the paint designer, below). Each rack is a
 file, `racks/<name>.rack` in the data directory; which is in hand is
 `rack.conf` in the settings. A first run has a Starter rack of twelve
 Citadel paints, a wash and a contrast among them. The fixed range of
@@ -837,11 +838,67 @@ spread of light from its darkest to its brightest at more than half as
 much again as the same gold as paint, with a highlight that is gold and
 not white.
 
+### After use: the paint designer, and a picture of each paint (2026-11-25)
+
+Asked for by the maintainer: a paint should be shown as a brush is, on a
+textured ball slapchopped dark in its recesses and near white on its
+highlights, and the colour's sliders, a mixer and the paint's effect
+should be in a designer card, as a brush has its block.
+
+**A paint's picture** (`app/paint_preview.rs`). The ball is a real body:
+a sphere with twenty-two shallow bumps of varied size joined over the
+face it shows, laid on a spiral so they are even. It is ray-marched once
+a size, and each pixel keeps the way it faces and how shut in it is (the
+same `crease_at` a Wash or Contrast layer pools by). Its undercoat is a
+slapchop of those: a dark grey coat, and near white where the surface
+faces up, faces the light and stands out of a recess. A paint's picture
+is each pixel's undercoat with the paint laid over it by its kind's
+blend, by the stack's own arithmetic (`layers::over_undercoat`), and lit;
+a metal is lit as the viewport lights one. So a wash is seen pooling in
+the recesses and leaving the highlights, a contrast taking its light from
+what is under it, a metal reflecting. Each paint's picture is made the
+first time it is drawn and kept. They are the rack's swatches, the chosen
+paint's, and the designer's large one. Eight big bumps, the first ball,
+read as a cluster of berries at the rack's size.
+
+**Contrast, stronger on a flat.** A contrast layer laid three quarters
+of a coat on a flat; over the near white of the picture's highlights that
+read as a pastel. It is now nine tenths on a flat, a little more in a
+recess and less on an edge.
+
+**The designer** (`app/designer.rs`). A card over the window, opened by
+*New paint* under the rack (from the colour in hand), by *Edit* on the
+chosen paint, or by pressing the colour in hand's swatch. It holds the
+picture and the touch the kind puts it on with; the paint's name and
+kind; its colour as a swatch, a hex field and three channels; the
+machine's filament colours to start from; and a mixer: one of the rack's
+paints mixed in, in linear light, by as much as is set. *Save* puts the
+paint on the rack, in place of the one it was opened on or at the end,
+and takes it up, which chooses its touch and suits the layer. The panel
+keeps what is used while painting: the rack, the touches, the colour in
+hand with *Pick from model*, the opacity. The three channels and the
+filaments that were on it are in the designer, and *New colour* under the
+rack is gone into it.
+
+Tests: a paint designed from the colour in hand goes on the rack by its
+name, kind and colour and is taken up (a contrast with the Contrast
+touch); one with no name is refused; a rack paint changed is changed in
+its place; a mix lies between its two colours, for any two (a property);
+the ball covers about a disc, has a dark recess and a near white
+highlight; a wash's picture spreads more light than a paint's, and a
+metal's more than the same colour as paint.
+
+Not done: a finish (matte, satin, gloss) of a paint's own, which is
+still a varnish layer's; mixing more than two; a paint made from an index
+paint ("like this one, but warmer") other than by trying it and pressing
+the swatch in hand; a hue and saturation picker.
+
 ## 9. Where it goes in the window
 
 - **Paint's library tab** is the rack: the rack's name and a list to swap
-  racks, its swatches (with the keys 1 to 8 on them), Add paints (which
-  opens the index search), and New colour.
+  racks, its swatches (each a picture of the paint on a slapchopped
+  ball, with the keys 1 to 8 on them), Add paints (which opens the index
+  search), and New paint, which opens the paint designer.
 - **P** brings the rack in hand up at the pointer.
 - **Paint's settings tab**: the layers panel (section 1), always open at
   the top; then the tool in hand's settings (size preset, flow, sponge

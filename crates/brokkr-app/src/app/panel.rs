@@ -241,6 +241,10 @@ impl Brokkr {
         if self.preferences {
             return stack![body, self.preferences_card(), self.resize_frame()].into();
         }
+        // The paint designer. See `app/designer.rs`.
+        if let Some(card) = self.designer_card() {
+            return stack![body, card, self.resize_frame()].into();
+        }
 
         // The unsaved-work prompt outranks an open menu: it is modal, and a
         // menu drawn over it would be reachable while the prompt is not.
