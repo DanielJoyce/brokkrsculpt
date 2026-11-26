@@ -44,6 +44,8 @@ have to repair it before a print.
 - [Getting around](help:getting-around): the workspaces, the panels and the
   keys.
 - [How it works](help:how-it-works): what happens underneath, in broad terms.
+- [The source](https://github.com/DanielJoyce/hanisculpt), on GitHub: the code,
+  the releases, and where to report a problem.
 
 HaniSculpt began as a fork of BrokkrSculpt, by MakerViking, and grew from
 there. Its mascot is Haniko, a little terracotta figure who wandered in from a

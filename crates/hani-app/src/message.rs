@@ -156,6 +156,55 @@ pub enum HelpMessage {
     Closed,
 }
 
+/// Saving in a browser: the card of what it keeps, a save, an open, a
+/// download, a delete, and the browser's answers. See `app/shelf.rs`.
+#[derive(Debug, Clone)]
+pub enum ShelfMessage {
+    Opened,
+    Closed,
+    Listed(Result<Vec<crate::web::Stored>, String>),
+    NameTyped(String),
+    /// Keep the sculpt under the name typed.
+    SaveHere,
+    Saved {
+        name: String,
+        result: Result<(), String>,
+        then: AfterSave,
+    },
+    /// Open a kept sculpt, asking first if there is work to lose.
+    Open(String),
+    /// A kept sculpt to the computer.
+    Download(String),
+    Fetched {
+        name: String,
+        result: Result<Option<std::sync::Arc<Vec<u8>>>, String>,
+        then: AfterFetch,
+    },
+    /// Asked once, which arms it; asked again, which carries it out.
+    Delete(String),
+    Deleted {
+        name: String,
+        result: Result<(), String>,
+    },
+    /// The sculpt open now, to the computer as a `.hani` download.
+    ToComputer,
+}
+
+/// What follows a save in the browser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterSave {
+    Stay,
+    /// The unsaved-work prompt asked, and its action goes ahead.
+    Continue,
+}
+
+/// What a kept sculpt was fetched for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterFetch {
+    Open,
+    Download,
+}
+
 /// The revolve's controls. See `app/revolve.rs`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RevolveMessage {
@@ -1160,6 +1209,8 @@ pub enum Message {
     /// Help: opened, a page, a search, a link in a page, closed. See
     /// `app/help.rs`.
     Help(HelpMessage),
+    /// Saving in a browser. See `app/shelf.rs`.
+    Shelf(ShelfMessage),
     PressureToggled(bool),
     PressureCurveChanged(f32),
     TiltToggled(bool),

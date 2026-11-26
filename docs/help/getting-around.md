@@ -65,5 +65,8 @@ beside it shows only the active body.
   mask, the paint and its layers, the timeline. Older `.brokkr` files open too.
 - Your work is saved aside now and then while you sculpt, so a crash costs
   little.
+- In a browser, **Save** keeps the sculpt in the browser, and *Save to
+  computer* downloads it. The browser asks before you leave with work not
+  saved.
 
 **?** on the keyboard shows every key on one card.

@@ -247,6 +247,10 @@ impl Hani {
         if self.help.open {
             return stack![body, self.help_card(), self.resize_frame()].into();
         }
+        // The sculpts a browser keeps. See `app/shelf.rs`.
+        if self.shelf.open {
+            return stack![body, self.shelf_card(), self.resize_frame()].into();
+        }
         if self.preferences {
             return stack![body, self.preferences_card(), self.resize_frame()].into();
         }
@@ -574,6 +578,15 @@ impl Hani {
         ]
         .spacing(theme::S2)
         .width(Length::Fixed(220.0));
+        // In a browser, the sculpts it keeps. See `app/shelf.rs`.
+        #[cfg(target_arch = "wasm32")]
+        {
+            left = left.push(action(
+                "Sculpts in this browser…",
+                Message::Shelf(crate::message::ShelfMessage::Opened),
+                theme::tool_button,
+            ));
+        }
 
         // The recent list, exactly as SindriCAD presents it: the file name
         // first and the directory under it, because the name is what anyone
@@ -626,6 +639,15 @@ impl Hani {
             text("A sculpting tool for people who print what they make.")
                 .size(theme::TEXT_SIZE)
                 .color(theme::TEXT_DIM),
+            // The repository, asked for on 2026-11-26. See `links.rs`.
+            button(
+                text("github.com/DanielJoyce/hanisculpt")
+                    .size(theme::TEXT_SIZE_SMALL)
+                    .color(theme::ACCENT)
+            )
+            .padding(0)
+            .style(theme::section_heading)
+            .on_press(Message::LinkOpened(crate::links::REPOSITORY.to_string())),
         ]
         .spacing(theme::S1);
 
@@ -1007,15 +1029,30 @@ impl Hani {
                     items = items.push(recent);
                     items = items.push(separator());
                 }
-                items
+                let items = items
                     .push(entry("Save", Message::SaveRequested))
-                    .push(entry("Save As…", Message::SaveAsRequested))
-                    .push(separator())
-                    .push(exports)
-                    // Below the exports, because it IS an export -- of a file
-                    // the user does not have to name or find afterwards.
+                    .push(entry("Save As…", Message::SaveAsRequested));
+                // In a browser, Save keeps the sculpt there; these list what
+                // it keeps and download one. See `app/shelf.rs`.
+                #[cfg(target_arch = "wasm32")]
+                let items = items
+                    .push(entry(
+                        "Sculpts in this browser…",
+                        Message::Shelf(crate::message::ShelfMessage::Opened),
+                    ))
+                    .push(entry(
+                        "Save to computer",
+                        Message::Shelf(crate::message::ShelfMessage::ToComputer),
+                    ));
+                let items = items.push(separator()).push(exports);
+                // Below the exports, because it IS an export -- of a file
+                // the user does not have to name or find afterwards. Not in a
+                // browser, which can start no slicer and reach no printer.
+                #[cfg(not(target_arch = "wasm32"))]
+                let items = items
                     .push(entry("Open in OrcaSlicer", Message::OpenInSlicer))
-                    .push(entry("Check the printer", Message::PrinterChecked))
+                    .push(entry("Check the printer", Message::PrinterChecked));
+                items
             }
             TopMenu::Edit => column![
                 keyed("Undo", "Ctrl Z", self.history.can_undo().then_some(Message::Undo)),

@@ -86,27 +86,46 @@ pub const MESH_EXTENSIONS: [&str; 3] = ["stl", "obj", "3mf"];
 /// plain text -- and because a user who renamed a file is better served by a
 /// clear "that is not an STL" than by a parser guessing.
 pub fn read_path(path: &Path) -> Result<ExportMesh, ImportError> {
-    let extension =
-        path.extension().map(|raw| raw.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    refuse_by_name(path)?;
+    let size = std::fs::metadata(path)?.len();
+    if size > MAX_INPUT_BYTES {
+        return Err(ImportError::TooLarge { bytes: size });
+    }
+    let bytes = std::fs::read(path)?;
+    read_named(path, &bytes)
+}
 
-    if extension == "sindri" {
+/// The extension of a name, lower case, or nothing.
+fn extension_of(name: &Path) -> String {
+    name.extension().map(|raw| raw.to_string_lossy().to_ascii_lowercase()).unwrap_or_default()
+}
+
+/// Refuse a file by its name alone, before its bytes are read.
+fn refuse_by_name(name: &Path) -> Result<(), ImportError> {
+    if extension_of(name) == "sindri" {
         return Err(ImportError::Unsupported(
             "a .sindri file holds a CAD feature tree, not a mesh -- export STL from SindriCAD \
              and import that"
                 .to_string(),
         ));
     }
+    Ok(())
+}
 
-    let size = std::fs::metadata(path)?.len();
-    if size > MAX_INPUT_BYTES {
-        return Err(ImportError::TooLarge { bytes: size });
+/// Read a mesh already in memory, choosing the parser by the extension of
+/// `name`, which is the name the file had. A browser hands a picked file
+/// over as its name and its bytes, with no path. [`read_path`] is this after
+/// reading the file.
+pub fn read_named(name: &Path, bytes: &[u8]) -> Result<ExportMesh, ImportError> {
+    refuse_by_name(name)?;
+    if bytes.len() as u64 > MAX_INPUT_BYTES {
+        return Err(ImportError::TooLarge { bytes: bytes.len() as u64 });
     }
-    let bytes = std::fs::read(path)?;
-
+    let extension = extension_of(name);
     let mut mesh = match extension.as_str() {
-        "stl" => stl::read(&bytes)?,
-        "obj" => obj::read(&bytes)?,
-        "3mf" => threemf::read(&bytes)?,
+        "stl" => stl::read(bytes)?,
+        "obj" => obj::read(bytes)?,
+        "3mf" => threemf::read(bytes)?,
         other => {
             return Err(ImportError::Unsupported(format!(
                 "there is no reader for a .{other} file"
@@ -270,6 +289,12 @@ mod round_trip_tests {
             std::fs::write(&path, &bytes).unwrap();
 
             let back = read_path(&path).unwrap_or_else(|error| panic!("{name}: {error}"));
+            // The same bytes handed over by name, as a browser hands a picked
+            // file, come back as the same mesh.
+            let named = read_named(Path::new(name), &bytes)
+                .unwrap_or_else(|error| panic!("{name} by name: {error}"));
+            assert_eq!(named.positions, back.positions, "{name}");
+            assert_eq!(named.triangles, back.triangles, "{name}");
             let (back_low, back_high) = tallest(&back);
 
             // The rotation guarantee, which is what this test exists for, and
@@ -305,6 +330,15 @@ mod round_trip_tests {
         }
 
         std::fs::remove_dir_all(&directory).ok();
+    }
+
+    /// A name with no reader is refused by its name, whatever the bytes.
+    #[test]
+    fn a_file_by_name_is_refused_by_its_extension() {
+        let refused = |name: &str| read_named(Path::new(name), b"solid x\nendsolid x\n");
+        assert!(matches!(refused("part.sindri"), Err(ImportError::Unsupported(_))));
+        assert!(matches!(refused("part.step"), Err(ImportError::Unsupported(_))));
+        assert!(matches!(refused("part"), Err(ImportError::Unsupported(_))));
     }
 
     /// And the file itself really is Z-up, so a slicer stands it upright. The

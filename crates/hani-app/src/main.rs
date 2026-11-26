@@ -34,6 +34,7 @@ mod curve;
 mod cut;
 mod cut_preview;
 mod desktop_entry;
+mod files;
 mod gizmo;
 mod icon;
 mod links;
@@ -194,6 +195,9 @@ fn main() -> iced::Result {
         // The licence is beside the files, in `assets/fonts`.
         .font(include_bytes!("../../../assets/fonts/Inter-Regular.otf").as_slice())
         .font(include_bytes!("../../../assets/fonts/Inter-SemiBold.otf").as_slice())
+        // For emphasis in the help pages. In a browser there is no other
+        // face to fall back on, and shaping an italic with none panicked.
+        .font(include_bytes!("../../../assets/fonts/Inter-Italic.otf").as_slice())
         .default_font(theme::FONT)
         .antialiasing(true)
         // The close button must not end the process on its own: unsaved work

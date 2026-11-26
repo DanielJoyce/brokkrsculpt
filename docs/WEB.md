@@ -58,8 +58,10 @@ when the browser has no WebGPU.
   `None` for every folder there, so a setting is not kept and nothing is
   looked for, as on a machine with no home directory.
 - **No paths for picked files.** `rfd`'s dialogs work in a browser, but a file
-  picked there has no path, and every reader here takes one. `web.rs` gives
-  it an empty path, which every reader turns into "could not read".
+  picked there has no path, and every reader here takes one. Opening,
+  importing and exporting go through `files.rs` instead, below. The other
+  pickers (decal and stamp pictures, brush files, maps, the fit test) still
+  give an empty path there, which their readers turn into "could not read".
 - **No clock in `std`.** `std::time::Instant::now()` panics on
   `wasm32-unknown-unknown`. Every `Instant` in the three crates is now
   `web_time::Instant`, which is the standard library's own on every other
@@ -90,6 +92,60 @@ so it is not started there; a panic printed only "unreachable" until `web.rs`
 sent its message to the console; and the overlay's line pipeline had a depth
 bias, which WebGPU refuses on lines, so it has none there.
 
+## Opening and saving
+
+Asked for by the maintainer on 2026-11-26: *"we need to figure out load and
+save so people can save their work to their computer. Initially it could
+just be to the browser storage but letting them load and save from their PC
+is critical too."* Both are there.
+
+- **From the computer.** *Open…* and *Import and replace…* open the
+  browser's own file chooser (rfd clicks a hidden file input while the press
+  that asked still counts as the user's, and shows its own small card when
+  it no longer does). The picked file's bytes are held under its name in
+  `files.rs`, and the name goes on as the path, so `open_project` and the
+  import read them as they read a file on disk. A mesh is read by
+  `hani_core::import::read_named`, which is `read_path` without the disk.
+- **To the computer.** *Save to computer* in the File menu, and *Download*
+  on a kept sculpt, hand the `.hani` bytes to the browser as a download. So
+  does every export: `files::create` is, in a browser, a writer that
+  collects the bytes and downloads them under the file's name when it is
+  flushed. An OBJ with a texture is three downloads, the OBJ, its material
+  file and its picture.
+- **In the browser.** *Save* keeps the sculpt in the browser's IndexedDB
+  under its name, and *Save As…* and *Sculpts in this browser…* bring up a
+  card that names it and lists what is kept, newest first, with its date and
+  size, to Open, Download or Delete (a second press deletes). IndexedDB and
+  not `localStorage`, which holds a few megabytes of text: the starting ball
+  is 40 MB. Names and sizes are in one object store and the bytes in
+  another, so the list does not read the bytes. The JavaScript is compiled
+  into the module (`web.rs`), so the page needs nothing of its own.
+- **The unsaved-work prompt's Save** keeps the sculpt in the browser, under
+  the date and time if it has no name yet, and goes on to what was asked
+  only when the browser says it has the bytes. A refusal (a full disk, a
+  private window) leaves the work unsaved and the prompt up.
+- **Leaving the page** with work not saved makes the browser ask first.
+
+Seen in headless Chromium on 2026-11-26, the site from
+`scripts/web-build.sh`: the starting ball kept (41,948,819 bytes in
+IndexedDB), listed, opened again, downloaded from the list and by *Save to
+computer* (the same 41,948,819 bytes), exported as an STL (27,127,884
+bytes, "watertight"), that `.hani` opened through *Open…* and that STL
+imported through *Import and replace…* (542,556 triangles, 5.6 s on one
+core), and the browser asking before the page was left after a stroke and
+not before it.
+
+## Fonts
+
+A browser has no system fonts: there are only the faces the application
+bundles. Shaping text in a family or a style with no face in it panics in
+cosmic-text ("no default font found"), which is how switching Help to a
+page with an italic in it stopped the web version (reported by the
+maintainer on 2026-11-26; seen in headless Chromium, and found by cutting
+the page down until it stopped). The help pages now draw in Inter
+throughout, Inter Italic is bundled for their emphasis, and in a browser
+`theme::MONO` is Inter, which also brought back the scale bar's label.
+
 ## A browser with WebGPU and no adapter
 
 Reported by the maintainer on 2026-11-26 from the published page: Chrome
@@ -114,19 +170,18 @@ code on that target only; natively every item in them is used.
 
 ## Not done
 
-- **Opening, saving, importing and exporting files do not work** in the
-  browser: the dialogs open, and what is picked cannot be read or written by
-  path. Reading the picked file's bytes and saving by download is the next
-  step.
+- **Pictures, brush files, maps and the fit test** are not read or written
+  in a browser yet: their pickers give no bytes.
+- **No autosave** in a browser, and no settings kept between visits. The
+  warning on leaving is what there is.
 - **One core.** Threads in a browser need `SharedArrayBuffer`, which needs
   the page served with cross-origin isolation headers, which GitHub Pages
   cannot set, and a nightly compiler for the atomics. Strokes on a large
   model will be slower than on the desktop.
 - **WebGPU only.** There is no WebGL fallback: the renderer's storage buffers
   and limits are WebGPU's.
-- **No settings kept** between visits, and no autosave.
-- **The scale bar's label is missing**: it is drawn in a monospace face the
-  application does not ship, and a browser offers it none.
+- **Numbers in a browser are in Inter**, not monospace, so a changing
+  column of them can shift by a pixel.
 - **Lines on the surface have no depth bias** in a browser (see above), so a
   ring lying exactly on the surface may break into dashes.
 - *Check for updates* is shown and does nothing there.
