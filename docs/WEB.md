@@ -14,8 +14,9 @@ and the panels are the same code as on the desktop.
 
 The `pages` branch is the trigger. Whatever is merged or pushed into it is
 built by `.github/workflows/pages.yml` and published to the repository's
-GitHub Pages site. To publish what is on `feature/studio`, open a pull
-request from `feature/studio` into `pages` and merge it.
+GitHub Pages site. To publish what is on `main`, fast-forward `pages` to
+it (`git push origin origin/main:refs/heads/pages`), or open a pull
+request from `main` into `pages` and merge it.
 
 **One setting, once, by someone with admin rights on the repository:**
 Settings, Pages, *Build and deployment*, Source: **GitHub Actions**. Until
