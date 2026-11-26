@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 
-# BrokkrSculpt: the Studio plan
+# HaniSculpt: the Studio plan
 
 Status: **proposed, 2026-11-22.** Nothing in here is built. This is the design
 for the long-lived `feature/studio` branch, written before any code, in the
@@ -30,7 +30,7 @@ was built and what was measured.
 | Paint rack | **Done**, all six stages (layers; the index and racks; brush sizes and the airbrush; the sponge and the one-click coats; stamps and decals; varnish), 2026-11-25: [`PAINT-RACK.md`](PAINT-RACK.md) | *Varnish*, matte, satin or gloss, coated over a body or brushed on a Varnish layer, drawn as a highlight in the viewport and exported as a GLB's roughness. A *Decal* touch: a picture pressed on, dragged to size and turned, as a decal in its own colours or a stamp in the paint in hand, on a decal layer, from six that come with the application or any picture taken in. COATS: a *Base coat*, a *Zenithal* (from a light set once, two or three primers, a cone, shadows) and a *Spongechop* (dark, middle, light and a contrast) in one press each, on layers of their own; a sponge that keeps out of recesses and can prefer the light, in fine, coarse or torn foam. An *Airbrush* touch that builds while held, with flow, overspray and a spot that widens with distance; brush sizes from Detail to Large. Racks of paints in Paint's library, filled from an index of 9,909 hobby paints from 34 brands searched by name or by nearest colour, colours of the user's own made in a paint designer (name, kind, hex, channels, a mixer), each paint shown on a slapchopped ball, the first eight on the keys; a paint chosen chooses its touch, and a wash, stain or contrast gets a layer of its blend. LAYERS in the Paint mode: up to sixteen a body, each with a name, a blend (Normal, Multiply, Screen, Glaze, Wash, Contrast), an opacity, an eye and a lock; new, duplicate, move, merge down, flatten, delete, every one an undo; kept in the project file; carried by Move, Bulk, a split and every transform. |
 | Ring cut | **Done**, all four stages, 2026-11-26: [`CUT-RING.md`](CUT-RING.md), issue 105 | Drag a ring round what to cut; a cut proposed across it, drawn as a band on the surface; *Split in two* makes that piece a body and leaves the rest alone. Handles slide, tilt and size the cut, the band following, and the rest of the model goes see-through while it is adjusted. *Part with pegs* keys the two, the pegs draggable on the cut face. Eight points on the band drag up or down the part and the cut bends through them, a collar's line; *Flat* puts it back. *Line* is the cut through everything |
 | Modelling tools | **Done**, 2026-11-26: [`MODELLING-TOOLS.md`](MODELLING-TOOLS.md). Not in the first plan; asked for by the maintainer | *Shell* in FORM: a body hollowed to a wall. EXTRACT: the masked surface thickened into a body of its own, with a thickness, a share inward and an offset. DEFORM in Transform: *Twist*, *Bend* or *Taper* along X, Y or Z. REVOLVE in Transform: a line drawn beside an upright axis on the screen, spun round it into a new body |
-| Name and welcome screen | **Done**, 2026-11-26, at the maintainer's word: *Eitri Sculpt* first, then **HaniSculpt** with Haniko the same day ([`HANIKO.md`](HANIKO.md)) | The application is *HaniSculpt* in its title bar, wordmark (Haniko's badge beside it, and as the window's icon), About line, dialogs and messages (crate names, the binary, the file extension and the settings folders are unchanged, so nothing a user has saved moves). The welcome screen opens with the HaniSculpt lockup and has no links to TinkerAtlas: its articles, its sign-in and its Join and Visit buttons are gone, and with them the requests they made; the keys took their place |
+| Name and welcome screen | **Done**, 2026-11-26, at the maintainer's word: *Eitri Sculpt* first, then **HaniSculpt** with Haniko the same day ([`HANIKO.md`](HANIKO.md)) | The application is *HaniSculpt* in its title bar, wordmark (Haniko's badge beside it, and as the window's icon), About line, dialogs and messages (and, from the same day's second pass, everywhere else: the crates are `hani-core`, `hani-gpu` and `hani-app`, the binary is `hanisculpt`, a sculpt is saved as `.hani` with new magic bytes while a `.brokkr` file still opens, and the settings, brushes and autosave folders move to `hanisculpt` on first start). The welcome screen opens with the HaniSculpt lockup and has no links to TinkerAtlas: its articles, its sign-in and its Join and Visit buttons are gone, and with them the requests they made; the keys took their place |
 | Web version | **Runs**, 2026-11-26: [`WEB.md`](WEB.md). Not in the first plan; asked for by the maintainer | The application in a browser on WebGPU, sculpting included, published to GitHub Pages by merging into the `pages` branch. Files cannot be opened or saved there yet, and it runs on one core |
 | Performance | **Under way**, since 2026-11-24. Not a milestone of this plan: its tickets, its measurements and what each change did are in [`PERFORMANCE.md`](PERFORMANCE.md) | Two lines of phase timings behind the Info toggle, and a stroke that can be recorded and replayed for a table of what it cost |
 
@@ -43,7 +43,7 @@ milestone starts with the measurement that replaces them.
 
 ## 1. The ask
 
-Extend BrokkrSculpt from "a sculpting tool for people who print what they make"
+Extend HaniSculpt from "a sculpting tool for people who print what they make"
 into a full sculpt and paint application in the ZBrush mould. Six things were
 named:
 
@@ -285,7 +285,7 @@ flowchart TB
 ```
 
 The crate boundary does not move. Everything above except `VIEW` lives in
-`brokkr-core`, which stays free of UI, windowing and GPU dependencies.
+`hani-core`, which stays free of UI, windowing and GPU dependencies.
 
 ---
 
@@ -519,7 +519,7 @@ break them:
 | Gates | Cavity range, occlusion range, facing, slot filter | Built in S0 with the signals; the paint brushes of S2 are the first customers |
 | Operator | Paint operators (section 8) | S2 |
 | Operator | Crease (pinch plus inverted draw in one warp) | **Built** (S3.1). Scrape and Fill were listed here too and are not needed: upstream's Clay blends toward a plane held just off the surface and keeps only the half that adds, and inverted it is a plane just under the surface keeping only the half that removes. That is a fill and a scrape already |
-| Tip | Alpha image: a greyscale stamp, bilinear sampled in the stamp frame | The image type and its reading are **built** (S3.2), decoded in `brokkr-app` and handed to core as heights. As a tip on ordinary strokes it is not wired yet |
+| Tip | Alpha image: a greyscale stamp, bilinear sampled in the stamp frame | The image type and its reading are **built** (S3.2), decoded in `hani-app` and handed to core as heights. As a tip on ordinary strokes it is not wired yet |
 | Stroke | Drag rect: one stamp placed at the press, sized and turned by the drag | **Built** (S3.2), as a gesture |
 | Operator | Displace: draw whose depth is the alpha's value | **Built** (S3.2), inside the gesture and not as a kernel: a kernel is held to one voxel a stamp |
 | Dynamics | Curves from pressure, tilt, speed and stroke distance to radius, strength, rotation | Pressure to radius **built** (S3.1), as one share. Pressure to strength and tilt to lean were upstream's already. The rest follows the alpha, which is what rotation is for |
@@ -577,7 +577,7 @@ five starting presets became brushes that come with the application, the
 one file became a file a brush, and Crease became a brush like the rest.
 What follows is what was built first.*
 
-`brokkr-app/src/app/presets.rs`, and a PRESETS block above the STUDIO one:
+`hani-app/src/app/presets.rs`, and a PRESETS block above the STUDIO one:
 a button for each brush kept, a small one beside it that forgets it, and a
 box to name the brush in hand and keep it.
 
@@ -618,7 +618,7 @@ the paint brush's touch, which belongs to the paint rack.
 
 #### Built, 2026-11-23 (S3.2): the stamp
 
-`brokkr-core/src/brush/alpha.rs` and `brush/stamp.rs`. A *Stamp* button in
+`hani-core/src/brush/alpha.rs` and `brush/stamp.rs`. A *Stamp* button in
 the STUDIO block. With it up, a drag on the model presses one image into the
 surface: press where it goes, drag to size it and to turn it, let go. The
 top of the image points along the drag. Inverted, it engraves. Six images
@@ -762,7 +762,7 @@ back to accumulated quadric error and **the report says "estimated" instead of
   this failure from SindriCAD's history (`BUILD-SPEC.md:177`) and the
   post-decimation `validate` is the gate that proves it did not recur.
 
-**Build or depend.** In house, in `brokkr-core/src/export/decimate.rs`,
+**Build or depend.** In house, in `hani-core/src/export/decimate.rs`,
 **estimated at 800 to 1,200 lines with tests.** The algorithm is thirty years
 old and well documented; the two things that make this version worth having
 (the field oracle and the slot constraint) are not available in any library's
@@ -780,7 +780,7 @@ locked, then run one global pass over what is left.
 
 #### Built, 2026-11-22, and what building it found
 
-`brokkr-core/src/export/decimate.rs`, and a *Detail* choice in the export
+`hani-core/src/export/decimate.rs`, and a *Detail* choice in the export
 panel: **Full** (every triangle, the default, and byte for byte what an export
 was), **Fine** (0.01 mm), **Standard** (0.03 mm), **Draft** (0.1 mm).
 
@@ -909,7 +909,7 @@ category as the mask tint.
 
 #### Built, 2026-11-22
 
-`brokkr-core/src/part.rs`, and one gesture: **the cut tool with alt held**.
+`hani-core/src/part.rs`, and one gesture: **the cut tool with alt held**.
 The same straight drag as a cut, read at the release like ctrl and shift.
 Instead of a side going, the active body becomes two bodies named A and B,
 with pegs on the first and sockets in the second. The tool card reads
@@ -998,7 +998,7 @@ leans further and faces down is drawn in a red-orange nothing else in the
 viewport is. With the view on, an export also says how much of what it
 wrote overhangs.
 
-**The rule** is `brokkr_core::overhang`: a surface leaning `a` from upright
+**The rule** is `hani_core::overhang`: a surface leaning `a` from upright
 and facing down has a normal whose downward part is `sin(a)`, so the test
 is one comparison, and it is the same comparison in the shader, which is
 handed the sine and not the angle. Up is +Y, as it stands in the viewport
@@ -1070,7 +1070,7 @@ that field in mind. Three things were against it.
   resampling, warping, merging, splitting, the Move brush, undo and the
   project file each carry it, and each has a test that fails without it:
   about 350 mentions across 17 files (counted with `grep` over
-  `crates/brokkr-core/src`). A second field is that sweep again, in
+  `crates/hani-core/src`). A second field is that sweep again, in
   upstream's hottest files, on a fork that has to keep merging them. It is
   the opposite of D6.
 - **It doubles the memory of a painted model.** +100% of the field
@@ -1080,7 +1080,7 @@ that field in mind. Three things were against it.
   the surface as it was. Sculpt a fold deeper afterwards and the shadow stays
   where the old fold used to be.
 
-What was built instead is in `brokkr-core/src/paint.rs`:
+What was built instead is in `hani-core/src/paint.rs`:
 
 ```mermaid
 flowchart LR
@@ -1298,7 +1298,7 @@ to come back together.
 **Why removing a paint touches the model.** A voxel names its paint by
 number. Take paint 2 out of a table and paint 3 is paint 2, so every voxel
 that said 3 has to say 2, on every body, hidden ones too, or the model
-changes colour from that paint on. `brokkr_core::paint::remove` does both
+changes colour from that paint on. `hani_core::paint::remove` does both
 halves: the voxels of the paint removed are bare, the voxels of every
 later paint are a number down, and a number past the end of the table,
 which is a filament slot and never was a paint, is left alone. The table
@@ -1334,7 +1334,7 @@ undoing a stroke on that body would be.
 
 #### Built, 2026-11-22 (S2.4): fill, coat, and the flat view
 
-`brokkr-core/src/paint/fill.rs`. A fourth touch beside Loaded, Drybrush and
+`hani-core/src/paint/fill.rs`. A fourth touch beside Loaded, Drybrush and
 Sponge: **Fill** pours the paint in hand where the pointer is, and it runs
 until one of the model's own lines stops it. Two checkboxes say which lines
 count, creases and edges, and a slider says how sharp a line has to be.
@@ -1390,7 +1390,7 @@ slider, the mask, or a brush. *Show creases* shows the lines it will read.
 
 A paint is worked out on screen and stored nowhere, and a file has to hold
 something. There are two things it can hold, for two kinds of machine, and
-`brokkr-core/src/paint/bake.rs` makes both for one export and throws them
+`hani-core/src/paint/bake.rs` makes both for one export and throws them
 away. Neither changes the document.
 
 ```mermaid
@@ -1429,7 +1429,7 @@ the machine has four colours.
 
 #### Built, 2026-11-22 (S2.2): drybrush and sponge
 
-`brokkr-core/src/paint/touch.rs`. Three buttons over the rack: *Loaded*,
+`hani-core/src/paint/touch.rs`. Three buttons over the rack: *Loaded*,
 *Drybrush*, *Sponge*, each of the last two with its sliders. They work on
 filament slots too, without any paints mixed.
 
@@ -1474,15 +1474,15 @@ path, per voxel, single threaded, and has not been optimised.
 
 #### Built, 2026-11-22 (S2.1)
 
-- `brokkr-core/src/paint.rs`: `Paint`, `Wash`, `Highlight`, `PaintTable`,
+- `hani-core/src/paint.rs`: `Paint`, `Wash`, `Highlight`, `PaintTable`,
   `Paint::shade`, the table's byte format and its reader.
-- `brokkr-core/src/project.rs`: the optional `BRKPAINT` trailer. All 71
+- `hani-core/src/project.rs`: the optional `BRKPAINT` trailer. All 71
   project tests pass unchanged apart from eight fixtures that gained
   `..ProjectState::default()`.
-- `brokkr-gpu/src/paints.rs`: `PaintBlock`, the table as the shader reads it.
+- `hani-gpu/src/paints.rs`: `PaintBlock`, the table as the shader reads it.
   The uniform grew by 4,096 bytes.
 - `sculpt.wgsl`: 14 lines in the paint branch.
-- `brokkr-app/src/app/paints.rs`: the rack, the editor, the handlers. Upstream
+- `hani-app/src/app/paints.rs`: the rack, the editor, the handlers. Upstream
   files received two fields, four message arms, two call sites and three
   one-line hooks.
 
@@ -1498,7 +1498,7 @@ a highlight reaches the edge and neither the flat nor the crease.
 ## 9. Volume with detail preserved (milestone S4)
 
 > *"Some way to adjust volumes while preserving fine details (is this possible
-> with Brokkr's engine?)"*
+> with Hani's engine?)"*
 
 **Yes.** And the reason is already written in `brush.rs`.
 
@@ -1594,7 +1594,7 @@ table above as a record of what the form pyramid could carry, and no more.
 
 #### Built, 2026-11-23 (S4.1): bulk the body, and the detail gain
 
-`brokkr-core/src/form.rs`, and a FORM block on the panel: a detail size in
+`hani-core/src/form.rs`, and a FORM block on the panel: a detail size in
 millimetres, a *Bulk* amount with its Apply, and a *Detail* multiplier with
 its Apply. Both work on the whole of the active body, less what the mask
 protects, and each is one undo entry.
@@ -1749,7 +1749,7 @@ with a slicer.
 
 ### 10.4 Built, 2026-11-23 (S5.1): unwrap, base colour, and an OBJ with a picture
 
-`brokkr-core/src/export/unwrap.rs`, `export/texture.rs` and
+`hani-core/src/export/unwrap.rs`, `export/texture.rs` and
 `export/textured.rs`, and a fifth format on the export panel, *OBJ+PNG*, with
 a texture size of 1024, 2048 or 4096. It writes `model.obj`, `model.mtl`
 beside it, and a PNG for each body.
@@ -1806,7 +1806,7 @@ flattening, the maps other than base colour, and GLB, which is 10.5.
 
 ### 10.5 Built, 2026-11-23 (S5.2): GLB
 
-`brokkr-core/src/export/glb.rs`, and a sixth format on the export panel.
+`hani-core/src/export/glb.rs`, and a sixth format on the export panel.
 The textured formats now sit in a row of their own under the texture size,
 since six buttons were one row too wide and the size only means anything
 to two of them.
@@ -1877,7 +1877,7 @@ needs tangents written beside the normals. Built in 10.7.
 
 ### 10.7 Built, 2026-11-26: the normal map
 
-`brokkr-core/src/export/normal_map.rs`. A GLB's third picture is the
+`hani-core/src/export/normal_map.rs`. A GLB's third picture is the
 sculpt's surface direction in the frame of the triangle under each texel,
 so that a mesh thinned to a few thousand triangles is lit as the model is.
 
@@ -2134,14 +2134,14 @@ this is how, for whoever next works on it from a machine with no screen:
 
 ```text
 Xvfb :99 -screen 0 1500x950x24 &
-DISPLAY=:99 WAYLAND_DISPLAY= HOME=<a scratch directory> ./target/debug/brokkrsculpt &
+DISPLAY=:99 WAYLAND_DISPLAY= HOME=<a scratch directory> ./target/debug/hanisculpt &
 DISPLAY=:99 xdotool mousemove 935 388 click 1        # press a button
 DISPLAY=:99 import -window root shot.png              # look
 ```
 
 It wants `libxkbcommon-x11` installed (winit panics without it), a software
 Vulkan (lavapipe), and `show_on_startup = false` in the scratch home's
-`brokkrsculpt/welcome.conf` to get past the welcome screen. A scratch
+`hanisculpt/welcome.conf` to get past the welcome screen. A scratch
 `HOME` keeps it off anybody's real config. Keys do not arrive, there being
 no window manager to give the window focus; the pointer and the wheel do.
 File dialogs do not open, so export was not driven this way.
@@ -2855,7 +2855,7 @@ the `dir_spec` crate:
 | Data | Brushes | `~/.local/share` | `~/Library/Application Support` | `%APPDATA%` |
 | State | The autosave, the recent files | `~/.local/state` | `~/Library/Application Support` | `%LOCALAPPDATA%` |
 
-each in a `brokkrsculpt` directory. A brush is data and not a setting: it
+each in a `hanisculpt` directory. A brush is data and not a setting: it
 is made, and it is worth handing to somebody else.
 
 ### 16.6 The stages
@@ -3158,7 +3158,7 @@ screen:
    lean, and a second pass was then steered by the first. What is right
    is for the application, which knows where the pointer is, to aim the
    stamp along the pointer's own ray at the surface as it was and to face
-   it the way that faces (`Brokkr::layer_aim`, `Brokkr::stamp_facing`,
+   it the way that faces (`Hani::layer_aim`, `Hani::stamp_facing`,
    two changed lines in upstream's stroke). The core still puts back
    along its normal a stamp that is off that surface, which is all it can
    do without the pointer.
@@ -3325,7 +3325,7 @@ overhang set into the surface and blended, is what an insert brush does
 was a separate thing and was not planned when this was written: they
 are 32-bit EXR, and the `image` crate's EXR reader is one of the
 dependencies this project turned down by name
-(`crates/brokkr-app/Cargo.toml`). It is built now: stage C10, below.
+(`crates/hani-app/Cargo.toml`). It is built now: stage C10, below.
 
 **Materials.** There is no library of them. A document's paints are in
 its paint rack and saved with it (section 8), and the machine's
@@ -3372,7 +3372,7 @@ not under test: it reads the directory of whoever runs the tests.
 
 #### Built, 2026-11-24 (C2 and C3): brushes that add
 
-`brokkr-core/src/solid.rs` and `brokkr-app/src/app/adding.rs`. An ADD
+`hani-core/src/solid.rs` and `hani-app/src/app/adding.rs`. An ADD
 block on the panel, under the palette.
 
 A body here is a field of distances, so a shape that can say how far any
@@ -3469,7 +3469,7 @@ the mirror adds on both sides; and one thing is in hand at a time.
 
 #### Built, 2026-11-24 (C4): the workbench
 
-`brokkr-app/src/app/workbench.rs`. A WORKBENCH block on the panel:
+`hani-app/src/app/workbench.rs`. A WORKBENCH block on the panel:
 *Try on a ball*, or *On a copy of this*.
 
 A brush is made by changing its settings and seeing what a stroke of it
@@ -3590,7 +3590,7 @@ The pictures that were not done here are stage C7, below.
 
 #### Built, 2026-11-24 (C7): a picture of its stroke on each brush
 
-`brokkr-app/src/app/swatch.rs`. Every button on the palette, on the panel
+`hani-app/src/app/swatch.rs`. Every button on the palette, on the panel
 and at the pointer, has a picture of a stroke of its brush over its name.
 
 **The picture is made by the brush.** Not drawn by hand and not a diagram
@@ -3743,7 +3743,7 @@ stroke of the Smooth brush by hand.
 **The Soft join slider goes to eight voxels**, and a fillet of three is
 what a brush that adds has until it is set otherwise (it was one). The
 shapes, a copy of a body, and both cables have it; a brush file's
-`join:` takes it. `brokkr-core/src/solid/wide.rs`.
+`join:` takes it. `hani-core/src/solid/wide.rs`.
 
 **Why it stopped at two, and what is different.** A soft join is a
 smooth minimum of two distances, the body's and the shape's. The body's
@@ -3848,8 +3848,8 @@ leaves no trace of where it was dragged, and is one undo.
 #### Built, 2026-11-24 (C10): vector displacement brushes
 
 Asked for by the maintainer three times, the last: *"Vector displacement
-brushes would be good to."* `brokkr-core/src/solid/relief.rs` and
-`brokkr-app/src/app/maps.rs`.
+brushes would be good to."* `hani-core/src/solid/relief.rs` and
+`hani-app/src/app/maps.rs`.
 
 A stamp image is a height at each point of a square. A vector
 displacement map is three numbers at each point: the surface there goes

@@ -6,17 +6,17 @@
 
 Please use GitHub's private reporting: the **Report a vulnerability** button
 under the repository's
-[Security tab](https://github.com/MakerViking/brokkrsculpt/security/advisories/new).
+[Security tab](https://github.com/DanielJoyce/brokkrsculpt/security/advisories/new).
 Do not open a public issue for anything security-sensitive.
 
-BrokkrSculpt is a solo project. I read every report, and I aim to acknowledge
+HaniSculpt is a solo project. I read every report, and I aim to acknowledge
 within a few days. If a report is valid, the fix lands on `main` and the
 advisory is credited to you (unless you prefer otherwise).
 
 ## Supported versions
 
 There is a **public open beta** on Linux, Windows and macOS: the rolling
-[`beta` release](https://github.com/MakerViking/brokkrsculpt/releases), rebuilt
+[`beta` release](https://github.com/DanielJoyce/brokkrsculpt/releases), rebuilt
 and republished on every push to `main`. So there is exactly one supported
 version and it is whatever `beta` currently points at. Fixes land on `main` and
 reach that release on the next push; there is nothing older to backport to.
@@ -31,9 +31,9 @@ source remains supported and is the same code.
 
 In scope:
 
-- the desktop application: `brokkr-app` (iced shell, input), `brokkr-gpu`
-  (wgpu renderer), `brokkr-core` (engine, file formats)
-- **parsing untrusted files** — `.brokkr` project containers and imported
+- the desktop application: `hani-app` (iced shell, input), `hani-gpu`
+  (wgpu renderer), `hani-core` (engine, file formats)
+- **parsing untrusted files** — `.hani` project containers and imported
   STL, OBJ and 3MF. This is the largest attack surface here: a 3MF is a ZIP of
   XML, and a project file is raw binary that describes its own allocations.
   The readers are mutation-fuzzed and the growth paths are bounded, but a file
@@ -55,13 +55,13 @@ In scope:
   **If one names a newer build and you accept it, the payload is downloaded,
   its SHA-256 checked against the signed manifest, and the application replaced
   with it** — the executable on Linux and Windows, the whole `.app` on macOS.
-  Nothing is made executable before the digest matches. `BROKKR_NO_SELF_UPDATE=1`
+  Nothing is made executable before the digest matches. `HANI_NO_SELF_UPDATE=1`
   downloads and verifies without installing.
 
   It has **its own switch**, on the welcome screen and in the Help menu, and it
   is on by default. Two surfaces on purpose: the default is to check on every
   launch, so a control reachable only from a screen you can turn off would not
-  be a control. Setting `BROKKR_UPDATE_EXPLANATION` — the packager kill switch
+  be a control. Setting `HANI_UPDATE_EXPLANATION` — the packager kill switch
   — suppresses the check as well as the interface.
 
   It is skipped entirely for a build made from a dirty tree, made outside a
@@ -75,7 +75,7 @@ In scope:
   update check that simply stopped working with nothing said. Asset URLs have
   no such limit. See **Updates, signing and trust** below. Worth stating
   plainly either way, because it is a third
-  party: GitHub learns that an address is running BrokkrSculpt, and the
+  party: GitHub learns that an address is running HaniSculpt, and the
   request names the application in its user agent rather than disguising
   itself.
 - the read-only Moonraker query to a printer you configure on your own LAN.
@@ -110,14 +110,14 @@ channel; they reach the same person.
 updates on launch, downloads them, verifies them, and — on Linux and Windows —
 replaces its own executable; on macOS it replaces the whole `.app` bundle. The
 check has a tick on the welcome screen and in the Help menu and is on by
-default. `BROKKR_NO_SELF_UPDATE=1` downloads and verifies without installing,
+default. `HANI_NO_SELF_UPDATE=1` downloads and verifies without installing,
 and `check_for_updates = never` in `update.conf` stops it entirely.
 
 One thing to weigh, stated here rather than buried: **the swap itself has only
 been performed for real on Linux.** Windows and macOS share the same signed
 manifest, the same download and the same digest check; what has not been
 exercised on real hardware is the replacement step. Both keep the build they
-replaced and write a `RECOVER-BROKKRSCULPT.txt` beside the application saying
+replaced and write a `RECOVER-HANISCULPT.txt` beside the application saying
 how to restore it. The full reasoning, with what was measured and what was
 assumed, is in `docs/AUTOUPDATE-PLAN.md`.
 

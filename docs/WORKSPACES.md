@@ -3,7 +3,7 @@
 The design for the window's panels, menus and controls, and for moving
 between sculpting, kitbashing, painting and getting a print ready. Written
 from a review of the application as it stood on 2026-11-25: screenshots of
-the running window under Xvfb and an inventory of `crates/brokkr-app/src`.
+the running window under Xvfb and an inventory of `crates/hani-app/src`.
 
 ## What was found
 
@@ -86,7 +86,7 @@ One pull request each, into `feature/studio`.
 
 ### U1: the kit
 
-`crates/brokkr-app/src/ui.rs` holds one function a kind of control.
+`crates/hani-app/src/ui.rs` holds one function a kind of control.
 
 - **`section` and `heading`**: a caret and a title in capitals, which
   folds. Every block of the panel is one now. BRUSHES, WORKBENCH, ADD,
@@ -98,7 +98,7 @@ One pull request each, into `feature/studio`.
   names, until enter; enter sends what the slider would have sent for
   that number, held to the slider's range, and a draft that is not a
   number is let go. Both the slider and enter send `Message::FieldSet`,
-  which `Brokkr::update` unwraps before anything else, so the guards that
+  which `Hani::update` unwraps before anything else, so the guards that
   look at a message (the rename, the gizmo, the workbench, the welcome
   card) meet the message it carries and never the wrapper. Every slider
   in the panel is one of these; the right-click menu's radius and
@@ -452,7 +452,7 @@ button which seperates all the parts temporarily to make it easier to pick
 on ( unexplode on pick ) and a quick button to hide / show all parts but
 the current active one."*
 
-`app/explode.rs`, and `brokkr_gpu::spread`. Two buttons over the bodies
+`app/explode.rs`, and `hani_gpu::spread`. Two buttons over the bodies
 list, in every mode, each lit while on.
 
 **Explode** draws every drawn body apart. The largest, by the volume of

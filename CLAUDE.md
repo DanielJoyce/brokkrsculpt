@@ -59,10 +59,10 @@ README current in the same pull request as the code.
 
 - `cargo fmt --all -- --check`
 - `RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets`
-- `cargo test -p brokkr-core` (the dev profile, where contracts and debug
-  assertions are live), and `cargo test --release -p brokkr-core --lib`
-- `cargo test -p brokkr-gpu`
-- `cargo test -p brokkr-app` (about four and a half minutes)
+- `cargo test -p hani-core` (the dev profile, where contracts and debug
+  assertions are live), and `cargo test --release -p hani-core --lib`
+- `cargo test -p hani-gpu`
+- `cargo test -p hani-app` (about four and a half minutes)
 
 Two `update::apply` tests in the application fail when the tests are run
 as root, which a cloud container does. They are not this work's.

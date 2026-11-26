@@ -65,26 +65,26 @@ jobs:
       # and the guard has to cover it without anyone remembering to widen this.
       - name: Confirm the offscreen render tests really ran
         run: |
-          output=$(cargo test -p brokkr-gpu --test offscreen -- --nocapture 2>&1)
+          output=$(cargo test -p hani-gpu --test offscreen -- --nocapture 2>&1)
           echo "$output"
           if echo "$output" | grep -qE "skipping the .* test"; then
             echo "No Vulkan adapter was available, so the end to end tests did not run."
             exit 1
           fi
 
-      # brokkr-core must stay free of UI, windowing and GPU dependencies. That
+      # hani-core must stay free of UI, windowing and GPU dependencies. That
       # is what keeps the shell choice reversible: swapping Iced for something
-      # else has to touch brokkr-app only. Checked rather than trusted, because
+      # else has to touch hani-app only. Checked rather than trusted, because
       # a stray `use` in a hurry is exactly how this rots.
       - name: Engine has no UI dependencies
         run: |
-          tree=$(cargo tree -p brokkr-core -e normal --prefix none --no-dedupe)
+          tree=$(cargo tree -p hani-core -e normal --prefix none --no-dedupe)
           if echo "$tree" | grep -qiE '^(iced|winit|wgpu|egui|tauri|raw-window-handle)\b'; then
-            echo "brokkr-core picked up a UI or GPU dependency:"
+            echo "hani-core picked up a UI or GPU dependency:"
             echo "$tree" | grep -iE '^(iced|winit|wgpu|egui|tauri|raw-window-handle)\b'
             exit 1
           fi
-          echo "brokkr-core is clean"
+          echo "hani-core is clean"
 
   # **A survey, not a gate.** The open beta ships on three platforms and this
   # workspace has only ever been compiled on one, so the `cfg(not(linux))`
@@ -163,4 +163,4 @@ jobs:
       # every figure in `handoff.md` was measured.
       - name: Sculpt budget (informational, shared runners are far slower)
         continue-on-error: true
-        run: cargo bench -p brokkr-core
+        run: cargo bench -p hani-core

@@ -20,11 +20,11 @@ if [ "$have" != "$wanted" ]; then
   exit 1
 fi
 
-cargo build --release -p brokkr-app --target wasm32-unknown-unknown
+cargo build --release -p hani-app --target wasm32-unknown-unknown
 rm -rf "$out"
 mkdir -p "$out"
 wasm-bindgen --target web --no-typescript --out-dir "$out" \
-  "$target/wasm32-unknown-unknown/release/brokkrsculpt.wasm"
+  "$target/wasm32-unknown-unknown/release/hanisculpt.wasm"
 cp web/index.html "$out/index.html"
 cp assets/brand/haniko/hanisculpt-icon-256.png "$out/icon.png"
 # A Pages site built from a branch runs Jekyll unless told not to; one

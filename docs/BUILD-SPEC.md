@@ -1,4 +1,4 @@
-# BrokkrSculpt — build spec
+# HaniSculpt — build spec
 
 > Commit this as `docs/BUILD-SPEC.md`. The `/goal` condition is deliberately short and points here for the detail.
 
@@ -6,7 +6,7 @@
 
 ## LOCKED DECISIONS
 
-1. **Name.** Product name **BrokkrSculpt**, short name **Brokkr**. Parallel construction to SindriCAD (Sindri plus CAD). Brokkr is Sindri's brother in the myth; the two of them forged Mjolnir together. Crates are prefixed `brokkr-`. Canonical URL will be `tinkeratlas.com/brokkrsculpt`, matching `tinkeratlas.com/sindricad`.
+1. **Name.** Product name **HaniSculpt**, short name **Hani**. Parallel construction to SindriCAD (Sindri plus CAD). Hani is Sindri's brother in the myth; the two of them forged Mjolnir together. Crates are prefixed `hani-`. Canonical URL will be `tinkeratlas.com/hanisculpt`, matching `tinkeratlas.com/sindricad`.
 2. **License.** AGPL, matching SindriCAD. Not open-core. Add `LICENSE` and SPDX headers from the first commit.
 3. **Repo.** New standalone private repo. Not a SindriCAD subfolder, and no shared code between them. See "Repo visibility" below for when this has to change.
 4. **UI shell.** **Iced**, themed to match SindriCAD. See "UI and design" below.
@@ -64,7 +64,7 @@ enough to the new work to be misread as forbidding it:
   time, not an RGB value per vertex.
 
 The plan those decisions live in is the maintainer's local note
-`~/.claude/plans/brokkr-bodies-and-primitives.md`, which will not resolve for a
+`~/.claude/plans/hani-bodies-and-primitives.md`, which will not resolve for a
 visitor; everything load-bearing from it that constrains this repository is
 restated in `handoff.md`.
 
@@ -129,18 +129,18 @@ One stroke equals one undo entry. On the first modification of a brick within a 
 
 ```
 crates/
-  brokkr-core/   # volume, bricks, brushes, meshing. NO UI, NO winit, NO iced deps.
-  brokkr-gpu/    # wgpu device, compute pipelines, buffer pools
-  brokkr-app/    # iced shell, input, tools, viewport
+  hani-core/   # volume, bricks, brushes, meshing. NO UI, NO winit, NO iced deps.
+  hani-gpu/    # wgpu device, compute pipelines, buffer pools
+  hani-app/    # iced shell, input, tools, viewport
 ```
 
-`brokkr-core` must stay free of UI and windowing dependencies. This is what keeps the UI shell decision reversible. Iced is Elm-style and retained-mode, which means more boilerplate than an immediate-mode toolkit, and transient tool state (brush popups, gizmos, drag handles) is genuinely quicker to build in immediate mode. If Iced turns out to be fighting us by the end of M1, swapping to `egui` touches only `brokkr-app` and leaves the engine untouched. Flag it if that starts happening rather than pushing through.
+`hani-core` must stay free of UI and windowing dependencies. This is what keeps the UI shell decision reversible. Iced is Elm-style and retained-mode, which means more boilerplate than an immediate-mode toolkit, and transient tool state (brush popups, gizmos, drag handles) is genuinely quicker to build in immediate mode. If Iced turns out to be fighting us by the end of M1, swapping to `egui` touches only `hani-app` and leaves the engine untouched. Flag it if that starts happening rather than pushing through.
 
 ## UI and design
 
 Match SindriCAD's design, not its stack. SindriCAD is Tauri with a web frontend; the sculpt loop cannot route through a webview at the framerates this needs, so the stacks diverge on purpose.
 
-Before building any panels, extract SindriCAD's design tokens (color palette, spacing scale, typography, corner radii, icon set) into a single `theme.rs` in `brokkr-app`, and build every widget from those tokens. The goal is family resemblance, not a pixel-perfect match. Do not hand-tune colors per widget.
+Before building any panels, extract SindriCAD's design tokens (color palette, spacing scale, typography, corner radii, icon set) into a single `theme.rs` in `hani-app`, and build every widget from those tokens. The goal is family resemblance, not a pixel-perfect match. Do not hand-tune colors per widget.
 
 ## Milestones
 

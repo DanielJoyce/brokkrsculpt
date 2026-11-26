@@ -103,7 +103,7 @@ screen.
 
 ## Stage 1, as built (2026-11-26)
 
-**The engine** (`brokkr-core/src/sever.rs`). `Volume::disc_across` takes
+**The engine** (`hani-core/src/sever.rs`). `Volume::disc_across` takes
 the point under the ring's middle, the view's direction and the ring's
 radius, walks the view's line through the solid to its far side, samples
 the solid within the radius of the middle on a grid of about forty a
@@ -223,7 +223,7 @@ new ring. A drag moves the handle by how far the pointer went along the
 way the handle moves on the screen, measured from where it was taken, so
 the result does not depend on how many pointer events arrived.
 
-**See-through** (`brokkr-gpu`, `sculpt.wgsl`). Three new vectors in the
+**See-through** (`hani-gpu`, `sculpt.wgsl`). Three new vectors in the
 uniforms: a plane, a sphere, and an amount. A fragment in front of the
 plane and within the sphere is drawn as it always was; any other has that
 share of its pixels screened away by a 4x4 ordered dither. No sorting, the

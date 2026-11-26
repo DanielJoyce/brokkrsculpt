@@ -30,6 +30,6 @@ install -Dm644 assets/brand/haniko/hanisculpt-icon-32.png ~/.local/share/icons/h
 update-desktop-database ~/.local/share/applications 2>/dev/null; gtk-update-icon-cache -f -t ~/.local/share/icons/hicolor 2>/dev/null; true
 ```
 
-`Exec=brokkrsculpt` assumes the binary is on `PATH`. Running it from
+`Exec=hanisculpt` assumes the binary is on `PATH`. Running it from
 `target/release` instead is fine — the icon matches on `StartupWMClass`, not on
 the command.

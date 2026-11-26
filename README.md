@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MakerViking/brokkrsculpt/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/MakerViking/brokkrsculpt/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/DanielJoyce/brokkrsculpt/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/DanielJoyce/brokkrsculpt/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Licence: AGPL-3.0-only" src="https://img.shields.io/badge/licence-AGPL--3.0--only-blue">
   <img alt="Platforms: Linux, Windows, macOS" src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-informational">
   <img alt="Built with Rust" src="https://img.shields.io/badge/built%20with-Rust-orange">
@@ -42,10 +42,10 @@ It is free, open source, and **honestly not finished**. It is being built in the
 open by one person.
 
 <p align="center">
-  <strong><a href="https://github.com/MakerViking/brokkrsculpt/releases/tag/beta">⬇ Download the open beta</a></strong><br>
-  <a href="https://github.com/MakerViking/brokkrsculpt/releases/download/beta/BrokkrSculpt-Linux-x86_64.tar.gz">Linux</a> ·
-  <a href="https://github.com/MakerViking/brokkrsculpt/releases/download/beta/BrokkrSculpt-Windows-x86_64.zip">Windows</a> ·
-  <a href="https://github.com/MakerViking/brokkrsculpt/releases/download/beta/BrokkrSculpt-macOS-arm64.zip">macOS</a><br>
+  <strong><a href="https://github.com/DanielJoyce/brokkrsculpt/releases/tag/beta">⬇ Download the open beta</a></strong><br>
+  <a href="https://github.com/DanielJoyce/brokkrsculpt/releases/download/beta/HaniSculpt-Linux-x86_64.tar.gz">Linux</a> ·
+  <a href="https://github.com/DanielJoyce/brokkrsculpt/releases/download/beta/HaniSculpt-Windows-x86_64.zip">Windows</a> ·
+  <a href="https://github.com/DanielJoyce/brokkrsculpt/releases/download/beta/HaniSculpt-macOS-arm64.zip">macOS</a><br>
   <sub>Free, no account. Nothing is signed yet, so Windows and macOS will both
   warn you about it: <a href="#get-it">Get it</a> says exactly what to do.
   <a href="#what-works-on-which-platform">What works on which platform</a> says
@@ -60,7 +60,7 @@ open by one person.
 > BrokkrSculpt, and Eitri Sculpt for a day, before it was HaniSculpt.
 
 <p align="center">
-  <img alt="Brokkr the dwarven smith, carving a dragon's head from a block of stone" src="docs/images/brokkr-dwarf.png" width="330">
+  <img alt="A dwarven smith, carving a dragon's head from a block of stone" src="docs/images/dwarf.png" width="330">
 </p>
 
 ## Why solid material matters
@@ -141,14 +141,14 @@ without a menu of every combination.
 
 | Platform | Download |
 |---|---|
-| **Windows** (64-bit) | [BrokkrSculpt-Windows-x86_64.zip](https://github.com/MakerViking/brokkrsculpt/releases/download/beta/BrokkrSculpt-Windows-x86_64.zip) |
-| **macOS** (Apple silicon) | [BrokkrSculpt-macOS-arm64.zip](https://github.com/MakerViking/brokkrsculpt/releases/download/beta/BrokkrSculpt-macOS-arm64.zip) |
-| **Linux** (64-bit) | [BrokkrSculpt-Linux-x86_64.tar.gz](https://github.com/MakerViking/brokkrsculpt/releases/download/beta/BrokkrSculpt-Linux-x86_64.tar.gz) |
+| **Windows** (64-bit) | [HaniSculpt-Windows-x86_64.zip](https://github.com/DanielJoyce/brokkrsculpt/releases/download/beta/HaniSculpt-Windows-x86_64.zip) |
+| **macOS** (Apple silicon) | [HaniSculpt-macOS-arm64.zip](https://github.com/DanielJoyce/brokkrsculpt/releases/download/beta/HaniSculpt-macOS-arm64.zip) |
+| **Linux** (64-bit) | [HaniSculpt-Linux-x86_64.tar.gz](https://github.com/DanielJoyce/brokkrsculpt/releases/download/beta/HaniSculpt-Linux-x86_64.tar.gz) |
 
 Those links always point at the newest build, which is rebuilt from `main` on
 every change. The app updates itself after that, so this is a one-time
 download. If you would rather see the whole release, it is
-[here](https://github.com/MakerViking/brokkrsculpt/releases/tag/beta) — the
+[here](https://github.com/DanielJoyce/brokkrsculpt/releases/tag/beta) — the
 files named `update-…` there are what the built-in updater fetches, and you
 never need one by hand.
 
@@ -166,9 +166,9 @@ Or build it, which is what Linux development does anyway. You need a
 `rust-version` in the workspace manifest.
 
 ```fish
-git clone https://github.com/MakerViking/brokkrsculpt
-cd brokkrsculpt
-cargo run --release -p brokkr-app
+git clone https://github.com/DanielJoyce/brokkrsculpt
+cd hanisculpt
+cargo run --release -p hani-app
 ```
 
 Two things worth knowing on the way in:
@@ -234,7 +234,7 @@ the things that do.
   a banded model opens with its bands on filaments 1 to 4.
 - **Check your printer.** A read-only Moonraker query against a Snapmaker U1 on
   your own network. Put `host = 192.0.2.46` in
-  `$XDG_CONFIG_HOME/brokkrsculpt/printer.conf`. Verified against real hardware
+  `$XDG_CONFIG_HOME/hanisculpt/printer.conf`. Verified against real hardware
   on firmware 1.3.0.168.
 
 Nothing paints those slots by hand yet — that part is designed and not built.
@@ -314,9 +314,9 @@ should have to discover for themselves.
   SHA-256 check, and that half has been exercised end to end. What differs is
   the last step: Linux and Windows replace the executable, macOS replaces the
   whole `.app`. Only the Linux one has actually been performed. Both of the
-  others keep the build they replaced and write a `RECOVER-BROKKRSCULPT.txt`
+  others keep the build they replaced and write a `RECOVER-HANISCULPT.txt`
   beside the application saying how to put it back, and
-  `BROKKR_NO_SELF_UPDATE=1` downloads and verifies without installing — which
+  `HANI_NO_SELF_UPDATE=1` downloads and verifies without installing — which
   is what to set if you would rather not be the first.
 - **Stylus and SpaceMouse on Windows and macOS are written but have never met
   the hardware.** Windows reads them through Raw Input, macOS through IOKit,
@@ -340,7 +340,7 @@ should have to discover for themselves.
   to Applications, then in Terminal:
 
   ```
-  xattr -dr com.apple.quarantine /Applications/BrokkrSculpt.app
+  xattr -dr com.apple.quarantine /Applications/HaniSculpt.app
   ```
 
   The Terminal command rather than the usual advice, deliberately. Control+click
@@ -400,6 +400,10 @@ true of it too, and what it adds is this.
   everything comes back together (escape does that too). Nothing moves
   but the picture. Beside it, *Show only the active body*. See
   [`docs/WORKSPACES.md`](docs/WORKSPACES.md).
+- **Your sculpts are `.hani` files.** One file holds the whole document:
+  every body, the mask, the paint and its layers, the timeline. A sculpt
+  saved as `.brokkr` before the rename still opens, and your settings,
+  brushes and autosave move across by themselves on the first start.
 - **In a browser.** The same application builds for the web and runs on
   WebGPU: merging into the `pages` branch publishes it to this
   repository's GitHub Pages site. Files cannot be opened or saved there
@@ -503,7 +507,7 @@ true of it too, and what it adds is this.
   layer* however long you scrub, set it down as a line or in separate
   dabs. Then *+ Add a brush*, at the top of the palette, and *Keep* it
   under a name. A brush you keep is one small
-  file in your data directory (`~/.local/share/brokkrsculpt/brushes` on
+  file in your data directory (`~/.local/share/hanisculpt/brushes` on
   Linux), so a brush can be handed to somebody else, and *Import*, behind
   the same button, takes one in. Press **b** for the palette under the
   pointer.
@@ -644,18 +648,18 @@ trilinear interpolation, which is honest work rather than waste.
 | render, all 5435 bricks drawn | 1.13 ms | 16 ms |
 | volume plus mesh | 1027 MB | well under 3 GB |
 
-`cargo bench -p brokkr-core` is a **gate, not a report** — it exits non-zero when
+`cargo bench -p hani-core` is a **gate, not a report** — it exits non-zero when
 a budget is blown, and the build fails with it. Measure on an idle machine: the
 fast-drag row sits close enough to its budget that a busy desktop decides it.
 
 On the studio branch there is more to measure with, and a record of what was
 measured: phase timings behind the Info toggle, a stroke that can be recorded
-and replayed for a table of what it cost (`BROKKR_RECORD`, `BROKKR_REPLAY`),
+and replayed for a table of what it cost (`HANI_RECORD`, `HANI_REPLAY`),
 and a stroke timed with no window. See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 Sculpting and painting are spread over every thread the machine has.
 *Worker threads* in Preferences sets how many, and *Measure* times a
 stroke's kind of work at each count and picks the fewest that are as
-fast as the most; `cargo run --release -p brokkr-core --example cores`
+fast as the most; `cargo run --release -p hani-core --example cores`
 does the same from a terminal.
 
 ### Brushes
@@ -767,7 +771,7 @@ a live reading — enough to confirm a tablet works in seconds. If it says no
 tablet was found:
 
 ```fish
-cargo run --release -p brokkr-app -- --tablets
+cargo run --release -p hani-app -- --tablets
 ```
 
 Windows and macOS fall back to full pressure; those need Pointer Input or Wintab
@@ -785,14 +789,14 @@ axes and a SpaceNavigator reports six, and it cannot repeat the bug where a
 Logitech mouse was taken for a puck because Logitech also owns `0x046d`.
 
 ```fish
-cargo run --release -p brokkr-app -- --spacemouse
+cargo run --release -p hani-app -- --spacemouse
 ```
 
 ### The icon set
 
 Twenty-one icons on a 24×24 grid, drawn as canvas paths. The files in
 `assets/icons/` are **generated** from the drawings in
-`crates/brokkr-app/src/icon.rs`, so they cannot drift from what the application
+`crates/hani-app/src/icon.rs`, so they cannot drift from what the application
 draws; `docs/icons.html` shows the whole set at the three sizes it ships at.
 
 Rendering them as SVG at run time would have cost 31 crates. Drawing them as
@@ -802,20 +806,20 @@ canvas paths costs 6.
 
 ```fish
 cargo test --workspace     # 1316 tests
-cargo bench -p brokkr-core # budget gate; exits non-zero when one is blown
+cargo bench -p hani-core # budget gate; exits non-zero when one is blown
 ```
 
 The tests worth knowing about:
 
-- **`brokkr-core/tests/seams.rs`** asserts the union of the per-brick meshes is
+- **`hani-core/tests/seams.rs`** asserts the union of the per-brick meshes is
   closed after every brush and every pattern has been dragged across brick
   corners. This is the crack test. It ships a control that proves it can detect
   a gap.
-- **`brokkr-gpu/tests/offscreen.rs`** renders to a texture with no window and
+- **`hani-gpu/tests/offscreen.rs`** renders to a texture with no window and
   checks the pixels. This is the only thing that catches the class of bug that
   compiles, passes every numeric test, and looks wrong — which has now happened
   three times.
-- **`brokkr-core/tests/hostile_meshes.rs`**, and fuzzes inside the 3MF and
+- **`hani-core/tests/hostile_meshes.rs`**, and fuzzes inside the 3MF and
   project readers, corrupt a valid file thousands of ways and require that every
   input gets an *answer*. **Each ships a control** counting how far the mutants
   got, so a reader that refused everything at its magic bytes cannot pass
@@ -830,7 +834,7 @@ The tests worth knowing about:
 To look at what the offscreen tests rendered:
 
 ```fish
-env BROKKR_DUMP_FRAMES=/tmp cargo test -p brokkr-gpu --test offscreen
+env HANI_DUMP_FRAMES=/tmp cargo test -p hani-gpu --test offscreen
 ```
 
 [`docs/`](docs/) is the long version: the build spec and the budgets it holds
@@ -856,14 +860,14 @@ Judge it on that.
 ## Layout
 
 ```
-crates/brokkr-core/   volume, bricks, brushes, patterns, meshing, undo, import, export.
+crates/hani-core/   volume, bricks, brushes, patterns, meshing, undo, import, export.
                       No UI, no windowing, no GPU.
-crates/brokkr-gpu/    wgpu resources, mesh pool, sculpt pipeline, overlay, frustum.
+crates/hani-gpu/    wgpu resources, mesh pool, sculpt pipeline, overlay, frustum.
                       No UI toolkit.
-crates/brokkr-app/    iced shell, input, tablet, spacemouse, camera, tools, viewport.
+crates/hani-app/    iced shell, input, tablet, spacemouse, camera, tools, viewport.
 ```
 
-`brokkr-core` staying free of UI and GPU dependencies is what keeps the shell
+`hani-core` staying free of UI and GPU dependencies is what keeps the shell
 choice reversible. CI fails the build if `iced`, `winit`, `wgpu`, `egui`,
 `tauri` or `raw-window-handle` ever appears in its tree.
 

@@ -2,18 +2,18 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/brokkr-core", "crates/brokkr-gpu", "crates/brokkr-app"]
+members = ["crates/hani-core", "crates/hani-gpu", "crates/hani-app"]
 
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
 license = "AGPL-3.0-only"
-repository = "https://github.com/MakerViking/brokkrsculpt"
+repository = "https://github.com/DanielJoyce/brokkrsculpt"
 rust-version = "1.90"
 
 [workspace.dependencies]
-brokkr-core = { path = "crates/brokkr-core" }
-brokkr-gpu = { path = "crates/brokkr-gpu" }
+hani-core = { path = "crates/hani-core" }
+hani-gpu = { path = "crates/hani-gpu" }
 
 bytemuck = { version = "1", features = ["derive"] }
 fast-surface-nets = "0.2"
@@ -60,12 +60,12 @@ env_logger = "0.11"
 evdev = "0.13"
 # Native file dialogs. On Linux this is the XDG desktop portal, which is what a
 # sandboxed app needs anyway. Its entire dependency set was already in this
-# lockfile before it was added -- see the note in brokkr-app/Cargo.toml.
+# lockfile before it was added -- see the note in hani-app/Cargo.toml.
 rfd = "0.17"
 pollster = "0.4"
 # Property tests: a rule stated for every input and tried on a few hundred
 # drawn at random, shrunk to the smallest that breaks it. A dev-dependency
-# of brokkr-core and never part of the application. Without its default
+# of hani-core and never part of the application. Without its default
 # features, which are a persistence file and a forking runner this has no
 # use for.
 proptest = { version = "1", default-features = false, features = ["std"] }
@@ -78,7 +78,7 @@ web-time = "1.1"
 # XML and raw DEFLATE, both needed to read a 3MF and both already compiled for
 # this workspace before they were named here: roxmltree arrives through
 # fontconfig-parser -> fontdb -> cosmic-text, and yazi through swash ->
-# cosmic-text, so making them direct dependencies of brokkr-core costs zero new
+# cosmic-text, so making them direct dependencies of hani-core costs zero new
 # crates. Each has no dependencies of its own, so the worst case if Iced ever
 # changes its text stack is that we compile two small leaf crates ourselves.
 # Pinned to 0.20 rather than 0.21 because 0.21 is both a new compile and yanked.
