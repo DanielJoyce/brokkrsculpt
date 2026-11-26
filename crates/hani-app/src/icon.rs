@@ -874,8 +874,8 @@ impl IconName {
     /// Every variant, so the tests can sweep the whole set and a new icon
     /// cannot be added without being checked.
     ///
-    /// Only the tests walk it today, hence the `allow` — the same argument
-    /// `theme.rs` makes at module scope for its unused tokens. This is the
+    /// Only the tests walk it today, hence the `allow`, the same argument
+    /// `theme.rs` makes for its unused tokens. This is the
     /// set's index, and anything that needs the whole set rather than one icon
     /// starts here.
     #[allow(dead_code)]

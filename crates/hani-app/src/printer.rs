@@ -34,8 +34,6 @@
 //! separate modules with separate constructors, and this one refuses anything
 //! that is not `http://` at a validated bare host.
 
-use std::time::Duration;
-
 /// Moonraker's default port, and the U1's.
 pub(crate) const MOONRAKER_PORT: u16 = 7125;
 
@@ -43,7 +41,8 @@ pub(crate) const MOONRAKER_PORT: u16 = 7125;
 ///
 /// Short: this runs while someone is sculpting, and a printer that is not there
 /// should be reported as not there quickly rather than holding a task open.
-const TIMEOUT: Duration = Duration::from_secs(4);
+#[cfg(not(target_arch = "wasm32"))]
+const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(4);
 
 /// A host is a bare name or address, and nothing else.
 ///

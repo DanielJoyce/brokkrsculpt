@@ -89,6 +89,28 @@ so it is not started there; a panic printed only "unreachable" until `web.rs`
 sent its message to the console; and the overlay's line pipeline had a depth
 bias, which WebGPU refuses on lines, so it has none there.
 
+## A browser with WebGPU and no adapter
+
+Reported by the maintainer on 2026-11-26 from the published page: Chrome
+had `navigator.gpu` and no adapter for it ("No available adapters"; Chrome
+turns WebGPU off and on by itself on some systems). iced then fell back to
+its software renderer, which failed on the same canvas: *"A canvas context
+other than `CanvasRenderingContext2d` was already created"*. The page now
+asks for an adapter itself before it starts the application, and with none
+it says so and says what to turn on, with Haniko. Seen in headless Chromium
+both ways: with WebGPU turned off the message, with it on the application.
+The maintainer then had it running in Firefox once `dom.webgpu.enabled` was
+on in `about:config`, which the message now says too.
+
+## Lint
+
+The browser build compiles paths the desktop does not, so it is linted on
+its own: `cargo clippy --workspace --target wasm32-unknown-unknown` under
+`-D warnings`, in CI and in the gate, and the Pages and release builds run
+with `-D warnings`. In a browser the updater's machinery is unreachable (its
+entry points refuse there), so `update.rs` and `update/apply.rs` allow dead
+code on that target only; natively every item in them is used.
+
 ## Not done
 
 - **Opening, saving, importing and exporting files do not work** in the

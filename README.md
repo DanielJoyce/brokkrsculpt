@@ -56,8 +56,20 @@ open by one person.
 > little terracotta figure from a Kofun-period kiln mound who wandered into
 > the mesh buffer during a photogrammetry scan and stayed. He lives in the
 > corner of the viewport and treats every brush stroke like real pottery.
-> His story is in [`docs/HANIKO.md`](docs/HANIKO.md). This project was
-> BrokkrSculpt, and Eitri Sculpt for a day, before it was HaniSculpt.
+> His story is in [`docs/HANIKO.md`](docs/HANIKO.md).
+
+## Where it started
+
+HaniSculpt started from [BrokkrSculpt](https://github.com/MakerViking/brokkrsculpt),
+MakerViking's voxel sculpting application for people who print what they
+make. The engine at the heart of this one is theirs: the sparse field of
+bricks, the narrow band, the brushes, the mesher, the importers and the
+printing pipeline, and the idea that a sculpt should be solid material from
+the first stroke. Everything HaniSculpt adds was built on top of that work.
+**Thank you, MakerViking**, for building it, for documenting why each piece
+is the way it is, and for releasing it under a licence that let it grow into
+this. The project was called BrokkrSculpt, and Eitri Sculpt for a day,
+before it was HaniSculpt.
 
 <p align="center">
   <img alt="A dwarven smith, carving a dragon's head from a block of stone" src="docs/images/dwarf.png" width="330">

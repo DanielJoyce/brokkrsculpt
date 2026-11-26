@@ -89,7 +89,8 @@ const TABLET_LISTEN: std::time::Duration = std::time::Duration::from_secs(8);
 /// system shows one (`logo.rs`), and on Linux the app id the desktop entry
 /// is found by, which is how Wayland shows the badge (`desktop_entry.rs`).
 fn window_settings() -> iced::window::Settings {
-    #[allow(unused_mut)]
+    // Changed after it is made only on Linux.
+    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     let mut settings = iced::window::Settings {
         decorations: false,
         icon: logo::window_icon(),

@@ -20,7 +20,8 @@ if [ "$have" != "$wanted" ]; then
   exit 1
 fi
 
-cargo build --release -p hani-app --target wasm32-unknown-unknown
+# A warning fails the build, as in CI, unless the caller says otherwise.
+RUSTFLAGS="${RUSTFLAGS:--D warnings}" cargo build --release -p hani-app --target wasm32-unknown-unknown
 rm -rf "$out"
 mkdir -p "$out"
 wasm-bindgen --target web --no-typescript --out-dir "$out" \

@@ -10,9 +10,10 @@
 //! hand tune a colour at a call site: change the token.
 
 // The full SindriCAD token set is mirrored here on purpose, so a new widget
-// reaches for an existing token instead of inventing a colour. Tokens with no
-// consumer yet are not dead code, they are the palette.
-#![allow(dead_code)]
+// reaches for an existing token instead of inventing a colour. A token with
+// no consumer yet is part of the palette, not dead code, and says so with an
+// `allow` of its own: this module used to allow dead code throughout, which
+// would have hidden a dead function as readily as an unused token.
 
 use iced::{Color, Font, Padding};
 
@@ -32,6 +33,7 @@ pub const BG_DEEP: Color = rgb(0x0b, 0x0d, 0x10);
 /// `--bg-vignette`, the centre of the viewport vignette.
 pub const BG_VIGNETTE: Color = rgb(0x15, 0x17, 0x1c);
 /// `--panel-hi`, the gradient stop above a panel.
+#[allow(dead_code)] // A token of the palette with no consumer yet.
 pub const PANEL_HI: Color = rgb(0x18, 0x1a, 0x20);
 /// `--panel`, docked panels.
 pub const PANEL: Color = rgb(0x16, 0x18, 0x1d);
@@ -153,6 +155,7 @@ pub fn linear(colour: Color, alpha: f32) -> [f32; 4] {
 // Radii, from `--r-sm` through `--r-lg`.
 pub const RADIUS_SM: f32 = 6.0;
 pub const RADIUS_MD: f32 = 8.0;
+#[allow(dead_code)] // A token of the palette with no consumer yet.
 pub const RADIUS_LG: f32 = 10.0;
 
 // Icon sizes. These live here rather than at the call sites for the reason
@@ -181,6 +184,7 @@ pub const S2: f32 = 6.0;
 pub const S3: f32 = 8.0;
 pub const S4: f32 = 12.0;
 pub const S5: f32 = 16.0;
+#[allow(dead_code)] // A token of the palette with no consumer yet.
 pub const S6: f32 = 20.0;
 
 // Typography. SindriCAD sets Inter at 13px with a 10px uppercase caption. Inter
