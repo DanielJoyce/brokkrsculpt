@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// The hierarchy's two view buttons: Explode, which pushes every drawn body
+// The hierarchy's three view buttons: Explode, which pushes every drawn body
 // apart on screen so that a small part buried among larger ones can be seen
-// and picked, and Solo active, which shows the active body alone.
+// and picked; Solo active, which shows the active body alone; and Others
+// see-through, which draws every body but the active one see-through and out
+// of reach of the pointer, so that the active one can be worked on in place
+// with the rest there to see. Choosing another row then makes that one solid
+// and the rest see-through. Asked for by the maintainer on 2026-11-26, with
+// Explode animated both ways.
 //
 // Both are VIEWS. Explode moves where a body is drawn and nothing else: the
 // document's fields stay where they are, the offsets live in the renderer
@@ -13,8 +18,17 @@
 // Escape or the button again bring them back as well. Solo active is the
 // existing solo mode, entered on the active body from the header rather than
 // from the row.
+//
+// The parts travel apart and back over `TRAVEL_MS`, eased, and the view with
+// them. While they travel back nothing is where it is drawn, so a press then
+// is taken and does nothing, as a press on nothing apart does.
+//
+// See-through is the ring cut's screen-door: a share of each pixel of the
+// body discarded by a 4x4 dither, in the shader, so there is no sorting and
+// the depth buffer stays right. The share rides in the fourth float of the
+// body's Explode entry. The pick leaves those bodies out.
 
-use glam::{Vec2, Vec3};
+use glam::{Vec2, Vec3, Vec4};
 
 use iced::Element;
 use iced::widget::{button, row};
@@ -27,6 +41,20 @@ use hani_core::NodeId;
 /// The gap left between a part and the anchor, as a fraction of the
 /// half-diagonal of everything drawn. Chosen on a screen, not measured.
 const GAP: f32 = 0.15;
+
+/// How long the parts take to travel apart or back, in milliseconds. Chosen
+/// on a screen, not measured.
+const TRAVEL_MS: f32 = 320.0;
+
+/// The share of a see-through body's pixels screened away. Chosen on a
+/// screen, not measured.
+const SEE_THROUGH: f32 = 0.7;
+
+/// Ease in and out, nought to one.
+fn eased(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
 
 /// The golden angle, in radians, which sends each part centred on the anchor
 /// a different way round the view.
@@ -53,12 +81,77 @@ pub(super) struct Explode {
     /// The view's target and distance before Explode framed the parts
     /// apart, put back when they come together.
     pub(super) view_before: Option<(Vec3, f32)>,
+    /// And the view framing the parts apart, which the view travels to.
+    pub(super) view_apart: Option<(Vec3, f32)>,
+    /// How far apart the parts are drawn, nought together to one apart.
+    pub(super) apart: f32,
+    /// Every body but the active one see-through and out of reach.
+    pub(super) see_through: bool,
+    /// What the renderer is told: each body's offset as far as it has
+    /// travelled, and the share of it screened away. Kept, as `spread` is.
+    pub(super) drawn: Vec<(NodeId, Vec4)>,
+    /// Which rows the pointer may pick: the drawn ones, less the
+    /// see-through ones. One a row, as `Hani::shown` is.
+    pub(super) pickable: Vec<bool>,
 }
 
 impl Hani {
-    /// Whether the bodies are drawn apart.
+    /// Whether the bodies are drawn apart, or on their way apart or back.
     pub(super) fn exploded(&self) -> bool {
-        self.explode.on
+        self.explode.on || self.explode.apart > 0.0
+    }
+
+    /// Carry the parts and the view a frame further apart or back.
+    pub(super) fn explode_frame(&mut self, elapsed_ms: f32) {
+        let goal = if self.explode.on { 1.0 } else { 0.0 };
+        if self.explode.apart == goal {
+            return;
+        }
+        let step = elapsed_ms.clamp(0.0, 50.0) / TRAVEL_MS;
+        self.explode.apart = if goal > self.explode.apart {
+            (self.explode.apart + step).min(1.0)
+        } else {
+            (self.explode.apart - step).max(0.0)
+        };
+        if let (Some(before), Some(apart)) = (self.explode.view_before, self.explode.view_apart) {
+            let t = eased(self.explode.apart);
+            self.camera.target = before.0.lerp(apart.0, t);
+            self.camera.distance = before.1 + (apart.1 - before.1) * t;
+            self.refresh_camera_lattice();
+            self.publish_camera();
+        }
+        if self.explode.apart == 0.0 {
+            self.together();
+        }
+        self.publish_spread();
+    }
+
+    /// Back together: the view as it was, and the gizmo back on the active
+    /// body if the tool wants one.
+    fn together(&mut self) {
+        if let Some((target, distance)) = self.explode.view_before.take() {
+            self.camera.target = target;
+            self.camera.distance = distance;
+            self.refresh_camera_lattice();
+            self.publish_camera();
+        }
+        self.explode.view_apart = None;
+        if self.tool == super::Tool::Transform
+            && self.gizmo.is_none()
+            && let Err(why) = self.arm_gizmo()
+        {
+            self.status = why;
+        }
+        self.refresh_gizmo();
+    }
+
+    /// Run the travel to its end at once, for the tests.
+    #[cfg(test)]
+    pub(super) fn settle_explode(&mut self) {
+        for _ in 0..100 {
+            self.explode_frame(16.0);
+        }
+        self.publish_visibility();
     }
 
     /// The Explode button: apart, or back together.
@@ -83,7 +176,11 @@ impl Hani {
         // tool keeps it, and the gizmo comes back on whatever is picked.
         self.disarm_gizmo(true);
         self.explode.on = true;
-        self.explode.across = (self.camera.right(), self.camera.up());
+        // Kept when they come apart again on their way back, so each part
+        // turns round where it is rather than setting off another way.
+        if self.explode.apart == 0.0 {
+            self.explode.across = (self.camera.right(), self.camera.up());
+        }
         self.hover = None;
         self.hover_body = None;
         self.status = "pick a part — escape brings them back".to_string();
@@ -96,6 +193,9 @@ impl Hani {
     /// ran past its edges (seen on the screen). What the view was is kept
     /// to put back.
     fn frame_apart(&mut self) {
+        // Coming apart again on the way back, the view to come back to is
+        // the one from before the first time.
+        let before = self.explode.view_before.unwrap_or((self.camera.target, self.camera.distance));
         let (mut low, mut high) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
         for &(body, offset) in &self.explode.spread {
             if let Some((min, max)) = self.box_of(body) {
@@ -106,35 +206,23 @@ impl Hani {
         if low.x > high.x {
             return;
         }
-        self.explode.view_before = Some((self.camera.target, self.camera.distance));
+        self.explode.view_before = Some(before);
         let framed = super::OrbitCamera::framing((low + high) * 0.5, ((high - low) * 0.5).length());
-        self.camera.target = framed.target;
-        self.camera.distance = framed
+        let distance = framed
             .distance
-            .max(self.camera.distance)
+            .max(before.1)
             .clamp(self.camera.min_distance(), self.camera.max_distance());
-        self.refresh_camera_lattice();
-        self.publish_camera();
+        self.explode.view_apart = Some((framed.target, distance));
     }
 
+    /// Start the parts back together. They travel there by the frame; see
+    /// [`Self::explode_frame`].
     pub(super) fn unexplode(&mut self) {
         if !self.explode.on {
             return;
         }
         self.explode.on = false;
         self.publish_spread();
-        if let Some((target, distance)) = self.explode.view_before.take() {
-            self.camera.target = target;
-            self.camera.distance = distance;
-            self.refresh_camera_lattice();
-            self.publish_camera();
-        }
-        if self.tool == super::Tool::Transform
-            && let Err(why) = self.arm_gizmo()
-        {
-            self.status = why;
-        }
-        self.refresh_gizmo();
     }
 
     /// Work out every drawn body's offset and hand them to the renderer.
@@ -152,7 +240,7 @@ impl Hani {
     /// none is pushed toward the eye and hidden behind the anchor.
     pub(super) fn publish_spread(&mut self) {
         self.explode.spread.clear();
-        if self.explode.on {
+        if self.exploded() {
             let mut anchor: Option<(f32, NodeId, Vec3, f32)> = None;
             let (mut low, mut high) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
             for (node, shown) in self.doc.nodes().iter().zip(&self.shown) {
@@ -194,7 +282,60 @@ impl Hani {
                 }
             }
         }
-        self.shared.set_spread(&self.explode.spread);
+        // What is drawn: the offsets as far as the parts have travelled, and
+        // the bodies drawn see-through. And what may be picked.
+        let travelled = eased(self.explode.apart);
+        let active = self.doc.active();
+        self.explode.drawn.clear();
+        self.explode.pickable.clear();
+        for (node, shown) in self.doc.nodes().iter().zip(&self.shown) {
+            let clear = self.explode.see_through && *shown && node.is_body() && node.id != active;
+            self.explode.pickable.push(*shown && !clear);
+            let offset = self.explode.spread.iter().find(|(id, _)| *id == node.id);
+            if offset.is_some() || clear {
+                let at = offset.map_or(Vec3::ZERO, |(_, offset)| *offset * travelled);
+                self.explode
+                    .drawn
+                    .push((node.id, at.extend(if clear { SEE_THROUGH } else { 0.0 })));
+            }
+        }
+        self.shared.set_spread(&self.explode.drawn);
+    }
+
+    /// Which rows the pointer may pick: the drawn ones, less those drawn
+    /// see-through.
+    pub(super) fn pick_mask(&self) -> &[bool] {
+        if self.explode.see_through && self.explode.pickable.len() == self.shown.len() {
+            &self.explode.pickable
+        } else {
+            &self.shown
+        }
+    }
+
+    /// The Others see-through button: on, or off.
+    pub(super) fn toggle_see_through(&mut self) {
+        self.explode.see_through = !self.explode.see_through;
+        if self.explode.see_through {
+            // Solo hides what this shows through, so the two are one or the
+            // other.
+            self.exit_solo();
+            self.status = format!(
+                "{} solid, the rest see-through — escape leaves it",
+                self.active_body_name()
+            );
+        } else {
+            self.status = "every body solid again".to_string();
+        }
+        self.publish_visibility();
+    }
+
+    /// Escape: leave see-through, and say whether it was on.
+    pub(super) fn see_through_escaped(&mut self) -> bool {
+        if !self.explode.see_through {
+            return false;
+        }
+        self.toggle_see_through();
+        true
     }
 
     /// A body's box as measured when Explode was pressed.
@@ -208,7 +349,9 @@ impl Hani {
     pub(super) fn pick_apart(&self, pixel: Vec2) -> Option<(NodeId, hani_core::Hit)> {
         let (origin, ray) = self.ray_through(pixel);
         let mut best: Option<(NodeId, hani_core::Hit)> = None;
+        let travelled = eased(self.explode.apart);
         for &(body, offset) in &self.explode.spread {
+            let offset = offset * travelled;
             let reach = best.map_or(self.camera.far(), |(_, hit)| hit.distance);
             if let Some(hit) = self.doc.pick_body(body, origin - offset, ray, reach) {
                 best = Some((body, hit));
@@ -222,8 +365,12 @@ impl Hani {
     /// the press is taken, so nothing is carved through a picture that is
     /// not where the bodies are. Other buttons still turn the view.
     pub(super) fn explode_pressed(&mut self, button: PointerButton, pixel: Vec2) -> bool {
-        if !self.explode.on || button != PointerButton::Left {
+        if !self.exploded() || button != PointerButton::Left {
             return false;
+        }
+        // On the way back nothing is where it is drawn.
+        if !self.explode.on {
+            return true;
         }
         if let Some((body, _)) = self.pick_apart(pixel) {
             let name = self.doc.node(body).map_or("a body", |node| node.name.as_str());
@@ -263,6 +410,12 @@ impl Hani {
                 Message::SoloActiveToggled,
                 "Show only the active body"
             ),
+            toggle(
+                icon::IconName::SeeThrough,
+                self.explode.see_through,
+                Message::OthersSeeThroughToggled,
+                "The others see-through: only the active body can be picked"
+            ),
         ]
         .spacing(theme::S2)
         .into()
@@ -273,6 +426,7 @@ impl Hani {
         if self.solo.is_some() {
             self.exit_solo();
         } else {
+            self.explode.see_through = false;
             self.enter_solo(self.doc.active());
         }
     }
@@ -341,6 +495,7 @@ mod tests {
         let (mut app, ball, bead) = ball_and_bead();
         let undo = app.history.stats().undo_entries;
         update(&mut app, Message::ExplodeToggled);
+        app.settle_explode();
         assert!(app.exploded());
         let spread = app.shared.spread_snapshot();
         let of = |id| spread.iter().find(|(body, _)| *body == id).map(|(_, at)| *at);
@@ -354,6 +509,7 @@ mod tests {
         assert_eq!(app.history.stats().undo_entries, undo, "a view pushed an undo entry");
 
         update(&mut app, Message::ExplodeToggled);
+        app.settle_explode();
         assert!(!app.exploded());
         assert!(app.shared.spread_snapshot().is_empty(), "together again, still offset");
     }
@@ -364,6 +520,7 @@ mod tests {
     fn a_press_on_a_part_apart_selects_it_and_brings_them_back() {
         let (mut app, ball, bead) = ball_and_bead();
         update(&mut app, Message::ExplodeToggled);
+        app.settle_explode();
         let offset = app.shared.spread_snapshot().iter().find(|(id, _)| *id == bead).unwrap().1;
         let (min, max) = app.doc.node(bead).and_then(|node| node.bounds()).expect("bead");
         let middle = (min + max) * 0.5;
@@ -377,6 +534,7 @@ mod tests {
 
         press(&mut app, drawn);
         assert_eq!(app.doc.active(), bead, "the press did not select the bead");
+        app.settle_explode();
         assert!(!app.exploded(), "the press did not bring them back");
         assert_eq!(app.history.stats().undo_entries, undo, "the press carved");
         assert_eq!(sample(&app), before, "the press carved");
@@ -399,6 +557,7 @@ mod tests {
         // The way the view looks, which framing the parts apart keeps.
         let toward_eye = (app.camera.eye() - app.camera.target).normalize();
         update(&mut app, Message::ExplodeToggled);
+        app.settle_explode();
         let spread = app.shared.spread_snapshot();
         let moved = spread.iter().find(|(id, _)| *id == inner).expect("an offset").1;
         assert!(moved.normalize().dot(toward_eye).abs() < 1e-3, "sent toward the eye: {moved}");
@@ -418,11 +577,13 @@ mod tests {
         update(&mut app, Message::ToolChanged(super::super::Tool::Transform));
         assert_eq!(app.gizmo.map(|gizmo| gizmo.body), Some(ball));
         update(&mut app, Message::ExplodeToggled);
+        app.settle_explode();
         assert!(app.exploded() && app.gizmo.is_none(), "the gizmo stayed up while apart");
         let offset = app.shared.spread_snapshot().iter().find(|(id, _)| *id == bead).unwrap().1;
         let (min, max) = app.doc.node(bead).and_then(|node| node.bounds()).expect("bead");
         let drawn = pixel_of(&app, (min + max) * 0.5 + offset);
         press(&mut app, drawn);
+        app.settle_explode();
         assert!(!app.exploded());
         assert_eq!(app.gizmo.map(|gizmo| gizmo.body), Some(bead), "not back on the bead");
     }
@@ -437,6 +598,7 @@ mod tests {
         app.camera.distance *= 0.4;
         let before = (app.camera.target, app.camera.distance);
         update(&mut app, Message::ExplodeToggled);
+        app.settle_explode();
         for (body, offset) in app.shared.spread_snapshot() {
             let (min, max) = app.explode.boxes.iter().find(|(id, _)| *id == body).unwrap().1;
             for corner in [min, max] {
@@ -453,7 +615,76 @@ mod tests {
             }
         }
         update(&mut app, Message::ExplodeToggled);
+        app.settle_explode();
         assert_eq!((app.camera.target, app.camera.distance), before, "the view did not come back");
+    }
+
+    /// The parts travel: a frame in, the bead is drawn part of the way out,
+    /// and further the next; on the way back a press on it is taken and
+    /// selects nothing.
+    #[test]
+    fn the_parts_travel_apart_and_a_press_on_the_way_back_does_nothing() {
+        let (mut app, ball, bead) = ball_and_bead();
+        update(&mut app, Message::ExplodeToggled);
+        let at = |app: &Hani| {
+            app.shared.spread_snapshot().iter().find(|(id, _)| *id == bead).map_or(0.0, |e| e.1.x)
+        };
+        app.explode_frame(TRAVEL_MS * 0.25);
+        app.publish_visibility();
+        let early = at(&app);
+        app.explode_frame(TRAVEL_MS * 0.25);
+        app.publish_visibility();
+        let later = at(&app);
+        app.settle_explode();
+        let full = at(&app);
+        assert!(0.0 < early && early < later && later < full, "{early} {later} {full}");
+
+        update(&mut app, Message::ExplodeToggled);
+        app.explode_frame(TRAVEL_MS * 0.1);
+        app.publish_visibility();
+        assert!(app.exploded(), "back together at once");
+        let offset = app.shared.spread_snapshot().iter().find(|(id, _)| *id == bead).unwrap().1;
+        let (min, max) = app.doc.node(bead).and_then(|node| node.bounds()).expect("bead");
+        let drawn = pixel_of(&app, (min + max) * 0.5 + offset);
+        press(&mut app, drawn);
+        assert_eq!(app.doc.active(), ball, "a press on the way back selected");
+        app.settle_explode();
+        assert!(!app.exploded());
+    }
+
+    /// See-through: every body but the active one is drawn see-through and
+    /// cannot be picked; choosing the other row swaps which; Solo and
+    /// see-through are one or the other; Escape leaves it.
+    #[test]
+    fn the_others_see_through_cannot_be_picked_and_follow_the_active_body() {
+        let (mut app, ball, bead) = ball_and_bead();
+        app.viewport_size = Vec2::new(SIZE.x, SIZE.y);
+        // On the bead and past the ball's edge, so nothing else is under it:
+        // the bead as `ball_and_bead` made it.
+        let (_, ball_max) = app.doc.node(ball).and_then(|node| node.bounds()).expect("ball");
+        let (ball_min, _) = app.doc.node(ball).and_then(|node| node.bounds()).expect("ball");
+        let radius = (ball_max.x - ball_min.x) * 0.15;
+        let on_bead = pixel_of(&app, Vec3::new(ball_max.x - radius * 0.5 + radius * 0.7, 0.0, 0.0));
+        let picked = |app: &Hani| app.pick(Vec2::new(on_bead.x, on_bead.y)).map(|(id, _)| id);
+        assert_eq!(picked(&app), Some(bead), "the bead is not under the pixel");
+
+        update(&mut app, Message::OthersSeeThroughToggled);
+        assert_eq!(app.shared.see_through_snapshot(), vec![bead]);
+        assert_ne!(picked(&app), Some(bead), "a see-through body was picked");
+        assert!(app.shared.spread_snapshot().iter().all(|(_, at)| *at == Vec3::ZERO));
+
+        update(&mut app, Message::BodySelected(bead));
+        assert_eq!(app.shared.see_through_snapshot(), vec![ball], "did not follow the row");
+        assert_eq!(picked(&app), Some(bead));
+
+        update(&mut app, Message::SoloActiveToggled);
+        assert!(app.solo.is_some() && !app.explode.see_through, "solo and see-through both on");
+        update(&mut app, Message::OthersSeeThroughToggled);
+        assert!(app.solo.is_none() && app.explode.see_through, "see-through left solo on");
+
+        assert!(app.see_through_escaped());
+        assert!(app.shared.see_through_snapshot().is_empty(), "still see-through");
+        drop(app.hierarchy_view_buttons());
     }
 
     /// With one body there is nothing to push apart, and it says so.

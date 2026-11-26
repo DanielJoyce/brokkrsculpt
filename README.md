@@ -409,10 +409,13 @@ true of it too, and what it adds is this.
   [`docs/CUT-RING.md`](docs/CUT-RING.md).
 - **Explode.** A button over the bodies list draws every part apart, each
   pushed out from the largest along the line between them, so a small
-  part tucked among others can be seen; click one and it is chosen and
-  everything comes back together (escape does that too). Nothing moves
-  but the picture. Beside it, *Show only the active body*. See
-  [`docs/WORKSPACES.md`](docs/WORKSPACES.md).
+  part tucked among others can be seen; the parts travel apart, and the
+  view with them. Click one and it is chosen and everything travels back
+  together (escape does that too). Nothing moves but the picture. Beside
+  it, *Show only the active body*, and *The others see-through*: every
+  body but the active one drawn as glass and out of reach of the pointer,
+  so the active one can be worked on in place; choosing another row makes
+  that one solid instead. See [`docs/WORKSPACES.md`](docs/WORKSPACES.md).
 - **Your sculpts are `.hani` files.** One file holds the whole document:
   every body, the mask, the paint and its layers, the timeline. A sculpt
   saved as `.brokkr` before the rename still opens, and your settings,
@@ -428,7 +431,8 @@ true of it too, and what it adds is this.
   uses a fraction of the material. EXTRACT takes the masked part of the
   surface and thickens it into a body of its own, a breastplate or a
   pauldron: a thickness, how much of it goes into the body, and an offset
-  that lifts it off. See [`docs/MODELLING-TOOLS.md`](docs/MODELLING-TOOLS.md).
+  that lifts it off, as a new part over the body or peeled off it. See
+  [`docs/MODELLING-TOOLS.md`](docs/MODELLING-TOOLS.md).
 - **Deform and revolve.** DEFORM in Transform twists, bends or tapers the
   active body along X, Y or Z, the surface detail riding along. REVOLVE
   puts an upright axis on the screen; draw a line beside it, either side or

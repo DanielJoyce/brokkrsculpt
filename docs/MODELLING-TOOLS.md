@@ -21,12 +21,13 @@ are the same kind of whole-body operation with one button.
 | Tool | Where | What it does | Engine |
 |---|---|---|---|
 | Shell | Sculpt, FORM, *Shell* row | Hollows the active body to a wall; its surface is the outside of the wall | `hani_core::shell` |
-| Extract | Sculpt, EXTRACT | The masked part of the surface thickened into a new body below the active one | `hani_core::extract` |
+| Extract | Sculpt, EXTRACT | The masked part of the surface thickened into a new body below the active one, as a *New part* or peeled off the body | `hani_core::extract` |
 | Deform | Transform, DEFORM | *Twist*, *Bend* or *Taper* the active body along X, Y or Z | `hani_core::deform` |
 | Revolve | Transform, REVOLVE | *Draw a profile*: an upright axis on the screen, a line drawn beside it, spun into a new body | `hani_core::revolve` |
 
 Each is one undo entry. Shell and deform hold the body as it was; extract
-and revolve add a row that undo takes away.
+and revolve add a row that undo takes away, and an extract peeled off holds
+the body as it was as well.
 
 ## The distance past the band (`reach.rs`)
 
@@ -80,8 +81,21 @@ surface there. A voxel counts as masked at half protection or more, so a
 feathered edge is cut at the middle of its feather.
 
 The new body is named after the source with " plate", goes directly below
-it in the tree at its depth, and becomes the active body. The source is not
-changed.
+it in the tree at its depth, and becomes the active body.
+
+Two ways, chosen under the three numbers (asked for by the maintainer on
+2026-11-26: besides peeling off, "it should just create a totally new part
+instead and not change the parent at all"):
+
+- **New part**, the default: the source is not changed. With *Inward* above
+  nought the plate sits partly inside the source, two solids over one
+  another, which is what a pad to print separately and glue on wants.
+- **Peel off**: the source also loses the plate's material,
+  `Volume::without`, the field `max(source, -plate)`. So the two meet with
+  nothing in both, as a breastplate lifted off a torso would. A property
+  test holds the field to that at every voxel of the plate's bricks and to
+  the source's own everywhere else, and a test in the application that one
+  undo puts the source back and takes the plate away.
 
 ## Deform
 

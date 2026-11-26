@@ -234,6 +234,9 @@ pub enum HollowMessage {
     InwardChanged(f32),
     /// How far the plate is moved out along the normal, in millimetres.
     OffsetChanged(f32),
+    /// Whether the plate is taken out of the body (peeled off) or the body
+    /// is left as it is.
+    PeelChosen(bool),
     ExtractApplied,
 }
 
@@ -1494,6 +1497,9 @@ pub enum Message {
     /// Show only the active body, or everything again: solo on the active
     /// body, from the hierarchy's header. See `app/explode.rs`.
     SoloActiveToggled,
+    /// Draw every body but the active one see-through and out of reach of
+    /// the pointer, or whole again. See `app/explode.rs`.
+    OthersSeeThroughToggled,
     /// Show or hide the thumbnail column. Session state, so it must NOT dirty
     /// the document: nothing about it is written to the file.
     ThumbnailsToggled,

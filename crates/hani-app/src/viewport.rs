@@ -251,7 +251,7 @@ pub struct SharedFrame {
     ghost: Mutex<GhostView>,
     /// How far each body is drawn from where it is: the hierarchy's
     /// Explode, `app/explode.rs`. See [`SharedFrame::set_spread`].
-    spread: Mutex<Vec<(NodeId, glam::Vec3)>>,
+    spread: Mutex<Vec<(NodeId, glam::Vec4)>>,
     /// The one thumbnail waiting to be drawn.
     ///
     /// **Capacity one, so the per-frame cap IS the type.** "At most one body
@@ -521,7 +521,7 @@ impl SharedFrame {
     /// Replace how far each body is drawn from where it is: the hierarchy's
     /// Explode. Wholesale, as [`SharedFrame::set_hidden`] is and for its
     /// reason; a body not named is drawn where it is.
-    pub fn set_spread(&self, spread: &[(NodeId, glam::Vec3)]) {
+    pub fn set_spread(&self, spread: &[(NodeId, glam::Vec4)]) {
         let mut held = self.spread.lock().expect("shared frame poisoned");
         held.clear();
         held.extend_from_slice(spread);
@@ -530,7 +530,15 @@ impl SharedFrame {
     /// What the renderer will be told of the spread.
     #[cfg(test)]
     pub fn spread_snapshot(&self) -> Vec<(NodeId, glam::Vec3)> {
-        self.spread.lock().expect("shared frame poisoned").clone()
+        let held = self.spread.lock().expect("shared frame poisoned");
+        held.iter().map(|(body, entry)| (*body, entry.truncate())).collect()
+    }
+
+    /// The bodies the renderer will be told to draw see-through.
+    #[cfg(test)]
+    pub fn see_through_snapshot(&self) -> Vec<NodeId> {
+        let held = self.spread.lock().expect("shared frame poisoned");
+        held.iter().filter(|(_, entry)| entry.w > 0.0).map(|(body, _)| *body).collect()
     }
 
     /// Replace what the shader is told about creases. See [`CavityView`].

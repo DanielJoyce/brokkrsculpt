@@ -5322,7 +5322,8 @@ impl Hani {
     fn pick(&self, pixel: Vec2) -> Option<(NodeId, hani_core::Hit)> {
         let (origin, ray) = self.ray_through(pixel);
         let timed = self.phases.enter(phases::Phase::Pick);
-        let hit = self.doc.pick(origin, ray, self.camera.far(), &self.shown);
+        // Less the bodies drawn see-through. See `app/explode.rs`.
+        let hit = self.doc.pick(origin, ray, self.camera.far(), self.pick_mask());
         self.phases.leave(timed);
         hit
     }
@@ -9972,6 +9973,9 @@ impl Hani {
                 if self.advance_flight(elapsed_ms) {
                     self.publish_camera();
                 }
+                // Explode's parts on their way apart or back. See
+                // `app/explode.rs`.
+                self.explode_frame(elapsed_ms);
                 // Driven off the frame tick for the same reason the autosave
                 // is: `iced::time::every` does not exist under this feature
                 // set. It stalls on a hidden window, which for playback is
@@ -10512,6 +10516,10 @@ impl Hani {
                     self.exit_solo();
                     return Task::none();
                 }
+                // Others see-through, the same way. See `app/explode.rs`.
+                if self.see_through_escaped() {
+                    return Task::none();
+                }
                 // Escape is also the way out of an armed cut.
                 //
                 // **And out of the cut ONLY, never out of mask mode.** A cut is
@@ -10875,6 +10883,7 @@ impl Hani {
             // See `app/explode.rs`.
             Message::ExplodeToggled => self.toggle_explode(),
             Message::SoloActiveToggled => self.toggle_solo_active(),
+            Message::OthersSeeThroughToggled => self.toggle_see_through(),
             Message::BodyRenameBegan(id) => return self.begin_rename(id),
             Message::BodyRenameEdited(text) => {
                 if let Some((_, held)) = &mut self.renaming {

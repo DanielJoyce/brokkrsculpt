@@ -8,9 +8,12 @@
 //! block in Sculpt, where the mask is painted. A child module of `app` for
 //! the reason `form.rs` is (`docs/STUDIO-PLAN.md` decision D6).
 //!
-//! A shell is one undo entry holding the body as it was. An extract leaves
-//! the body alone and adds the plate as a new row directly below it, one
-//! undo entry, and makes it the active body.
+//! A shell is one undo entry holding the body as it was. An extract adds
+//! the plate as a new row directly below the body and makes it the active
+//! body. As a *New part* it leaves the body alone; *Peel off*, asked for by
+//! the maintainer on 2026-11-26 beside the new part, also takes the plate's
+//! material out of the body (`Volume::without`), so the two fit together.
+//! Either is one undo entry.
 
 use web_time::Instant;
 
@@ -34,6 +37,9 @@ pub(super) struct HollowState {
     pub wall_mm: f32,
     /// An extracted plate.
     pub extract: Extraction,
+    /// Whether the plate is taken out of the body. Off by default: a new
+    /// part and the body left as it was.
+    pub peel: bool,
 }
 
 impl Default for HollowState {
@@ -41,6 +47,7 @@ impl Default for HollowState {
         Self {
             wall_mm: 1.5,
             extract: Extraction { thickness_mm: 1.0, inward: 0.0, offset_mm: 0.0 },
+            peel: false,
         }
     }
 }
@@ -63,6 +70,7 @@ impl Hani {
             HollowMessage::OffsetChanged(mm) => {
                 self.hollow.extract.offset_mm = clamped(mm, OFFSET_RANGE);
             }
+            HollowMessage::PeelChosen(peel) => self.hollow.peel = peel,
             HollowMessage::ExtractApplied => self.extract_active(),
         }
     }
@@ -101,12 +109,34 @@ impl Hani {
             }
         };
         let plate_name = hani_core::name_that_fits(&format!("{name} plate")).to_string();
+        // Peeled off: the body loses what the plate took, in the same undo
+        // entry as the plate.
+        let mut before = Vec::new();
+        if self.hollow.peel {
+            if self.doc.body_count() >= hani_core::MAX_BODIES {
+                self.status = format!("could not add {plate_name}: the document is full");
+                return;
+            }
+            let rest = self.doc.active_volume().without(&plate);
+            let Some(previous) = self.doc.replace_volume(source, rest) else {
+                return;
+            };
+            let stale: Vec<hani_core::BrickCoord> = previous.brick_coords().collect();
+            if let Some(landed) = self.doc.volume_mut(source) {
+                for coord in stale {
+                    landed.mark_dirty(coord);
+                }
+            }
+            self.thumbs.geometry_changed(source);
+            before.push(Change::WholeVolume { body: source, volume: Box::new(previous) });
+        }
         let took = started.elapsed().as_secs_f64() * 1000.0;
         let note = format!(
-            "extracted a {:.2} mm plate from {name} as {plate_name} ({took:.0} ms)",
+            "{} a {:.2} mm plate from {name} as {plate_name} ({took:.0} ms)",
+            if self.hollow.peel { "peeled" } else { "extracted" },
             self.hollow.extract.thickness_mm
         );
-        self.add_made_body(Some(source), plate_name, plate, note);
+        self.add_made_body_after(Some(source), plate_name, plate, note, before);
     }
 
     /// Add a body made by a tool, as one undo entry, and make it active.
@@ -119,6 +149,19 @@ impl Hani {
         name: String,
         volume: Volume,
         note: String,
+    ) -> Option<NodeId> {
+        self.add_made_body_after(beside, name, volume, note, Vec::new())
+    }
+
+    /// [`Self::add_made_body`], with changes already made that go in the
+    /// same undo entry, before the new row.
+    fn add_made_body_after(
+        &mut self,
+        beside: Option<NodeId>,
+        name: String,
+        volume: Volume,
+        note: String,
+        mut changes: Vec<Change>,
     ) -> Option<NodeId> {
         if self.doc.body_count() >= hani_core::MAX_BODIES {
             self.status = format!(
@@ -147,7 +190,8 @@ impl Hani {
             }
         };
         let before = self.history.stats();
-        self.history.push(Entry::new(vec![Change::NodeAdded { at, id }]));
+        changes.push(Change::NodeAdded { at, id });
+        self.history.push(Entry::new(changes));
         self.record_history(before);
         self.unsaved = true;
         self.select_body_saying(id, note);
@@ -211,12 +255,21 @@ impl Hani {
             )
             .step(0.1)
             .shown(format!("{:+.2} mm", how.offset_mm)),
+            crate::ui::segmented(
+                [(false, "New part"), (true, "Peel off")],
+                self.hollow.peel,
+                move |peel| changed(HollowMessage::PeelChosen(peel)),
+            ),
             row![crate::ui::tip(
                 crate::ui::button_secondary(
                     "Extract",
                     Some(changed(HollowMessage::ExtractApplied))
                 ),
-                "The masked area as a new body",
+                if self.hollow.peel {
+                    "The masked area as a new body, taken out of this one"
+                } else {
+                    "The masked area as a new body, this one left as it is"
+                },
             )],
         ]
         .spacing(theme::S2)
@@ -284,6 +337,42 @@ mod tests {
         assert!(volume.sample_world(-Vec3::Y * outer) > 0.0, "the unmasked side is not in it");
         update(&mut app, Message::Undo);
         assert_eq!(app.doc.body_count(), bodies, "undo takes the plate away");
+    }
+
+    /// A new part leaves the body as it was; peeled off, the body loses what
+    /// the plate took, and one undo puts the body back and takes the plate.
+    #[test]
+    fn peeling_takes_the_plate_out_of_the_body_and_one_undo_puts_it_back() {
+        let mut app = app();
+        let source = app.doc.active();
+        let outer = outer_radius(app.doc.active_volume(), Vec3::Y);
+        hani_core::extract::mask_where(app.doc.active_volume_mut(), |world| world.y > outer * 0.7);
+        let inside = Vec3::Y * (outer - 0.4);
+        let body_at = |app: &Hani| app.doc.volume(source).expect("body").sample_world(inside);
+        update(&mut app, Message::Hollow(HollowMessage::ThicknessChanged(1.0)));
+        update(&mut app, Message::Hollow(HollowMessage::InwardChanged(1.0)));
+
+        // A new part: the body keeps its material.
+        update(&mut app, Message::Hollow(HollowMessage::ExtractApplied));
+        assert!(body_at(&app) < 0.0, "a new part changed the body");
+        update(&mut app, Message::Undo);
+
+        let bodies = app.doc.body_count();
+        let undo = app.history.stats().undo_entries;
+        update(&mut app, Message::Hollow(HollowMessage::PeelChosen(true)));
+        app.select_body(source);
+        update(&mut app, Message::Hollow(HollowMessage::ExtractApplied));
+        assert!(app.status.starts_with("peeled"), "{}", app.status);
+        assert_eq!(app.doc.body_count(), bodies + 1);
+        assert_eq!(app.history.stats().undo_entries, undo + 1, "not one entry");
+        let plate = app.doc.active();
+        assert!(app.doc.volume(plate).expect("plate").sample_world(inside) < 0.0, "not plate");
+        assert!(body_at(&app) > 0.0, "the plate's material is still in the body");
+
+        update(&mut app, Message::Undo);
+        assert_eq!(app.doc.body_count(), bodies, "undo left the plate");
+        assert!(body_at(&app) < 0.0, "undo did not put the body back");
+        drop(app.extract_panel());
     }
 
     #[test]
