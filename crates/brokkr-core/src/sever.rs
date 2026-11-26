@@ -43,13 +43,46 @@ use crate::project::name_that_fits;
 use crate::undo::{Change, Entry};
 use crate::volume::Volume;
 
-/// A cut that stops at a radius: a plane through `centre` square to
-/// `normal`, within `radius` of `centre`. World units.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// A cut that stops: a plane through `centre` square to `normal`, within
+/// `radius` of `centre`, or, fitted to what it crosses
+/// ([`Volume::fit_to_islands`]), within the cross-sections of the pieces it
+/// is to cut and no more. World units.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Disc {
     pub centre: Vec3,
     pub normal: Vec3,
     pub radius: f32,
+    /// The cells of the plane the cut is made in, when it is fitted.
+    pub region: Option<std::sync::Arc<Region>>,
+}
+
+/// The part of a disc's plane a fitted cut is made in: a grid square to
+/// the normal round the centre, a cell a voxel, true where it cuts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Region {
+    u: Vec3,
+    v: Vec3,
+    pitch: f32,
+    /// Cells from the centre to the grid's edge, each way.
+    half: i32,
+    cells: Vec<bool>,
+}
+
+impl Region {
+    /// How many cells the cut is made in.
+    fn area(&self) -> usize {
+        self.cells.iter().filter(|cell| **cell).count()
+    }
+
+    fn index(&self, i: i32, j: i32) -> Option<usize> {
+        let side = 2 * self.half + 1;
+        (i.abs() <= self.half && j.abs() <= self.half)
+            .then(|| ((j + self.half) * side + (i + self.half)) as usize)
+    }
+
+    fn at(&self, i: i32, j: i32) -> bool {
+        self.index(i, j).is_some_and(|index| self.cells[index])
+    }
 }
 
 impl Disc {
@@ -58,17 +91,41 @@ impl Disc {
         (at - self.centre).dot(self.normal)
     }
 
-    /// Whether a point is within the disc's radius, measured in its plane.
+    /// A disc of `radius` and no more.
+    pub fn round(centre: Vec3, normal: Vec3, radius: f32) -> Self {
+        Self { centre, normal, radius, region: None }
+    }
+
+    /// Whether a point is within the cut, measured in its plane: within the
+    /// radius, and in the fitted region when there is one.
     pub fn within(&self, at: Vec3) -> bool {
         let offset = at - self.centre;
         let across = offset - self.normal * offset.dot(self.normal);
-        across.length_squared() <= self.radius * self.radius
+        if across.length_squared() > self.radius * self.radius {
+            return false;
+        }
+        match &self.region {
+            None => true,
+            Some(region) => region.at(
+                (offset.dot(region.u) / region.pitch).round() as i32,
+                (offset.dot(region.v) / region.pitch).round() as i32,
+            ),
+        }
     }
 
     /// Two directions in the disc's plane, square to each other.
     pub fn axes(&self) -> (Vec3, Vec3) {
         self.normal.any_orthonormal_pair()
     }
+}
+
+/// What fitting a disc to the islands under it found.
+enum Fit {
+    Fitted(Disc),
+    /// No solid within the ring at all.
+    Empty,
+    /// Solid, but no island mostly within the ring.
+    TooBig,
 }
 
 /// What a disc does to a body.
@@ -85,6 +142,19 @@ pub enum Severed {
 /// How far either side of the plane the face is made exactly, in voxels:
 /// the field's own band.
 const FACE_BAND: f32 = NARROW_BAND;
+
+/// How many steps a cut is slid along its normal each way, a radius in all.
+const STEPS_EACH_WAY: i32 = 4;
+
+/// How far an island is followed, in ring radii, before it is taken to be
+/// more than a piece the ring is round.
+const ISLAND_REACH: i32 = 3;
+
+/// How much of an island must lie within the ring for it to be cut.
+const ISLAND_SHARE: f32 = 0.4;
+
+/// How many voxels round an island the fitted cut reaches.
+const ISLAND_MARGIN: i32 = 2;
 
 /// How many voxels one walk takes before the other has its turn.
 const TURN: usize = 4096;
@@ -115,7 +185,9 @@ impl Volume {
         let step = voxel * 0.5;
         let mut exit = at + along * step;
         let mut travelled = 0.0;
-        while self.sample_world(exit) < 0.0 && travelled < radius * 4.0 {
+        // No further than the ring is wide: a knob seen with the body behind
+        // it is not as deep as the body, and the middle belongs in the knob.
+        while self.sample_world(exit) < 0.0 && travelled < radius * 2.0 {
             exit += along * step;
             travelled += step;
         }
@@ -148,14 +220,344 @@ impl Volume {
             covariance += glam::Mat3::from_cols(d * d.x, d * d.y, d * d.z);
         }
         let axis = principal_axis(covariance).unwrap_or(along);
-        Some(Disc { centre: middle, normal: axis, radius })
+        Some(Disc::round(middle, axis, radius))
+    }
+
+    /// The cut a ring round `at`, seen along `along`, proposes: the
+    /// narrowest fitted cut ([`Volume::fit_to_islands`]) through what the
+    /// ring is round.
+    ///
+    /// The directions tried are the solid's three axes under the ring
+    /// ([`Volume::disc_across`]), the surface's normal where the ring was
+    /// pressed, and the view; each is slid along itself a quarter of the
+    /// radius at a time up to the radius either way. Of the cuts that fit
+    /// and are necks (no wider than the slices beside them, not a graze off
+    /// a flank, and round the ring's middle), the one with the smallest
+    /// cross-section is chosen, a little against sliding far: on a limb
+    /// that is square across it, and on a knob it is round its neck. A
+    /// ball on its own has no neck and is round no part: `None`. The long axis alone, the first proposal, put a
+    /// disc diagonally over the top of a knob and into the ball under it,
+    /// which fitted nothing (seen on the screen, 2026-11-26).
+    pub fn propose_cut(&self, at: Vec3, along: Vec3, facing: Vec3, radius: f32) -> Option<Disc> {
+        let first = self.disc_across(at, along, radius)?;
+        let axes = self.axes_under(first.centre, radius);
+        let outward = self.outward_from(first.centre, radius);
+        let mut directions: Vec<Vec3> = axes.into_iter().flatten().collect();
+        directions.extend([facing, along].into_iter().filter_map(|way| way.try_normalize()));
+        directions.extend(outward);
+        // Each direction slid along itself: the cross-section at each step,
+        // `None` where there is no solid within the ring and infinite where
+        // the plane runs off past it.
+        let mut necks: Option<(f32, Disc)> = None;
+        for normal in directions {
+            let slices: Vec<(f32, Option<f32>, Option<Disc>)> = (-STEPS_EACH_WAY..=STEPS_EACH_WAY)
+                .map(|step| {
+                    let offset = step as f32 / STEPS_EACH_WAY as f32 * radius;
+                    let trial = Disc::round(first.centre + normal * offset, normal, radius);
+                    match self.fit(&trial) {
+                        Fit::Fitted(disc) => {
+                            let area = disc.region.as_ref().map_or(0, |region| region.area());
+                            (offset, Some(area as f32), Some(disc))
+                        }
+                        Fit::TooBig => (offset, Some(f32::INFINITY), None),
+                        Fit::Empty => (offset, None, None),
+                    }
+                })
+                .collect();
+            if std::env::var("PROBE").is_ok() {
+                eprintln!(
+                    "dir {:?}: {:?}",
+                    normal,
+                    slices.iter().map(|(o, a, _)| (*o, *a)).collect::<Vec<_>>()
+                );
+            }
+            for (at, (offset, area, disc)) in slices.iter().enumerate() {
+                let (Some(area), Some(disc)) = (area, disc) else {
+                    continue;
+                };
+                // Against cuts slanted to the way the piece grows out of
+                // the body, where there is one: a dome on a ball had a slice
+                // across its upper side, parallel to the screen, before this.
+                let slant = outward.map_or(0.0, |out| 1.0 - normal.dot(out).abs());
+                let score = area * (1.0 + 0.15 * offset.abs() / radius) * (1.0 + slant);
+                // A neck: no wider than the slices either side of it. Past
+                // the end of the solid is no slice at all, so the tip of a
+                // knob, narrowing to nothing, is not a neck; past the range
+                // tried counts as wider.
+                let beside = |at: Option<usize>| match at.and_then(|at| slices.get(at)) {
+                    None => f32::INFINITY,
+                    Some((_, None, _)) => 0.0,
+                    Some((_, Some(area), _)) => *area,
+                };
+                // And not a graze: a slice with the body past it on both
+                // sides takes a cap off a flank, not the piece the ring is
+                // round. Measured on a knob: its neck's slice, 329 cells,
+                // lost to a slice off its side, 149, before this.
+                let (before, after) = (beside(at.checked_sub(1)), beside(Some(at + 1)));
+                // And round what the ring is round: through its middle, or
+                // with the middle on the piece's side, the side where the
+                // slices run out to nothing before they run into the body.
+                // A slice down the flank of a leg, a narrow strip with the
+                // body past it, beat the cut across both legs before this.
+                let runs_out = |way: Vec<&(f32, Option<f32>, Option<Disc>)>| {
+                    way.into_iter()
+                        .find_map(|(_, area, _)| match area {
+                            None => Some(true),
+                            Some(area) if area.is_infinite() => Some(false),
+                            Some(_) => None,
+                        })
+                        .unwrap_or(false)
+                };
+                let through = offset.abs() <= radius / STEPS_EACH_WAY as f32 + f32::EPSILON;
+                let held = if *offset < 0.0 {
+                    runs_out(slices[at + 1..].iter().collect())
+                } else {
+                    runs_out(slices[..at].iter().rev().collect())
+                };
+                // A neck, or a base: the last slice that fits before the body,
+                // with the slices the other way running out to a tip. A spur
+                // widens all the way to where it meets the body (a horn, a
+                // nose, a ball blended on as a dome) and has no neck; its
+                // base is where it comes off. Seen on the screen: a dome on
+                // a ball was round no part before this.
+                let graze = before.is_infinite() && after.is_infinite();
+                let neck = *area <= before && *area <= after;
+                let base = if before.is_infinite() {
+                    runs_out(slices[at + 1..].iter().collect())
+                } else if after.is_infinite() {
+                    runs_out(slices[..at].iter().rev().collect())
+                } else {
+                    false
+                };
+                let narrow = !graze && (neck || base) && (through || held);
+                if !narrow {
+                    continue;
+                }
+                // How much piece the cut takes off: the slices on the piece's
+                // side summed, to where they run out or into the body. The
+                // smallest cut was a sliver shaved off a dome's flank, seen
+                // on the screen; the cut that takes the most piece through
+                // the least section is the dome's base.
+                let toward_after = if before.is_infinite() {
+                    true
+                } else if after.is_infinite() {
+                    false
+                } else {
+                    let sum = |way: Vec<&(f32, Option<f32>, Option<Disc>)>| {
+                        way.into_iter()
+                            .map_while(|(_, area, _)| area.filter(|area| area.is_finite()))
+                            .sum::<f32>()
+                    };
+                    sum(slices[at + 1..].iter().collect())
+                        >= sum(slices[..at].iter().rev().collect())
+                };
+                let piece: f32 = area * 0.5
+                    + if toward_after {
+                        slices[at + 1..]
+                            .iter()
+                            .map_while(|(_, area, _)| area.filter(|area| area.is_finite()))
+                            .sum::<f32>()
+                    } else {
+                        slices[..at]
+                            .iter()
+                            .rev()
+                            .map_while(|(_, area, _)| area.filter(|area| area.is_finite()))
+                            .sum::<f32>()
+                    };
+                let score = score / piece.max(1.0);
+                if necks.as_ref().is_none_or(|(best, _)| score < *best) {
+                    necks = Some((score, disc.clone()));
+                }
+            }
+        }
+        // No neck is no part: the smallest slice anywhere was a cap off the
+        // front of a ball the ring was drawn in the middle of.
+        necks.map(|(_, disc)| disc)
+    }
+
+    /// The way a piece grows out of the body round `middle`, if there is
+    /// one: from the middle of the solid within three radii of it toward
+    /// `middle`. A spur or a dome on a body has the body's solid to one
+    /// side; partway along a limb the solid is all round and there is none.
+    fn outward_from(&self, middle: Vec3, radius: f32) -> Option<Vec3> {
+        let voxel = self.voxel_size();
+        let reach = radius * 3.0;
+        let pitch = (reach * 2.0 / 30.0).max(voxel);
+        let steps = (reach / pitch).ceil() as i32;
+        let (mut sum, mut count) = (Vec3::ZERO, 0_usize);
+        for z in -steps..=steps {
+            for y in -steps..=steps {
+                for x in -steps..=steps {
+                    let offset = Vec3::new(x as f32, y as f32, z as f32) * pitch;
+                    if offset.length_squared() <= reach * reach
+                        && self.sample_world(middle + offset) < 0.0
+                    {
+                        sum += offset;
+                        count += 1;
+                    }
+                }
+            }
+        }
+        if count == 0 {
+            return None;
+        }
+        let towards = -(sum / count as f32);
+        (towards.length() > radius * 0.3).then(|| towards.normalize())
+    }
+
+    /// The three axes of the solid within `radius` of `middle`, the
+    /// largest spread first.
+    fn axes_under(&self, middle: Vec3, radius: f32) -> [Option<Vec3>; 3] {
+        let voxel = self.voxel_size();
+        let pitch = (radius * 2.0 / 40.0).max(voxel);
+        let reach = (radius / pitch).ceil() as i32;
+        let mut points = Vec::new();
+        for z in -reach..=reach {
+            for y in -reach..=reach {
+                for x in -reach..=reach {
+                    let offset = Vec3::new(x as f32, y as f32, z as f32) * pitch;
+                    if offset.length_squared() <= radius * radius
+                        && self.sample_world(middle + offset) < 0.0
+                    {
+                        points.push(middle + offset);
+                    }
+                }
+            }
+        }
+        if points.len() < 4 {
+            return [None; 3];
+        }
+        let mean = points.iter().copied().sum::<Vec3>() / points.len() as f32;
+        let mut covariance = glam::Mat3::ZERO;
+        for point in &points {
+            let d = *point - mean;
+            covariance += glam::Mat3::from_cols(d * d.x, d * d.y, d * d.z);
+        }
+        let Some(first) = principal_axis(covariance) else {
+            return [None; 3];
+        };
+        // The next by taking the first out, and the last square to both.
+        let without = covariance
+            - glam::Mat3::from_cols(first * first.x, first * first.y, first * first.z)
+                * first.dot(covariance * first);
+        let second = principal_axis(without).map(|axis| {
+            (axis - first * axis.dot(first)).normalize_or(first.any_orthogonal_vector())
+        });
+        let third = second.map(|second| first.cross(second).normalize_or_zero());
+        [Some(first), second, third]
+    }
+
+    /// The disc fitted to the pieces it is drawn round: the cross-sections
+    /// its plane makes of the solid (its islands) that lie mostly within
+    /// its radius, each whole, a few voxels round, and nothing else.
+    ///
+    /// Asked for by the maintainer on 2026-11-26: the cut "should be the
+    /// size that allows it to cut" and "only cut one leg", and a ring over
+    /// both legs splits both. A leg a little wider than the ring drawn is
+    /// mostly within it and is cut whole; the torso, which the same plane
+    /// may cross beside it, is mostly outside it and is left alone; two
+    /// legs in one ring are two islands, and both are cut. An island is
+    /// followed at most three radii out: one that runs further (a plane
+    /// along a torso) is not a piece the ring is round. `None` when no
+    /// island qualifies.
+    pub fn fit_to_islands(&self, disc: &Disc) -> Option<Disc> {
+        match self.fit(disc) {
+            Fit::Fitted(disc) => Some(disc),
+            Fit::Empty | Fit::TooBig => None,
+        }
+    }
+
+    /// [`Volume::fit_to_islands`], saying why there is no fit.
+    fn fit(&self, disc: &Disc) -> Fit {
+        let voxel = self.voxel_size();
+        let normal = disc.normal.normalize_or(Vec3::Z);
+        let (u, v) = normal.any_orthonormal_pair();
+        let pitch = voxel;
+        let ring = (disc.radius / pitch).ceil() as i32;
+        let half = ring * ISLAND_REACH;
+        let side = (2 * half + 1) as usize;
+        let mut seen = vec![false; side * side];
+        let index = |i: i32, j: i32| ((j + half) as usize) * side + (i + half) as usize;
+        let solid = |i: i32, j: i32| {
+            self.sample_world(disc.centre + (u * i as f32 + v * j as f32) * pitch) < 0.0
+        };
+        let in_ring = |i: i32, j: i32| i * i + j * j <= ring * ring;
+        let mut cells = vec![false; side * side];
+        let mut any = false;
+        let mut met = false;
+        for j in -ring..=ring {
+            for i in -ring..=ring {
+                if !in_ring(i, j) || seen[index(i, j)] || !solid(i, j) {
+                    continue;
+                }
+                met = true;
+                // One island, followed out from here.
+                let mut island = Vec::new();
+                let mut inside = 0_usize;
+                let mut escaped = false;
+                let mut stack = vec![(i, j)];
+                seen[index(i, j)] = true;
+                while let Some((a, b)) = stack.pop() {
+                    island.push((a, b));
+                    inside += usize::from(in_ring(a, b));
+                    for (da, db) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                        let (na, nb) = (a + da, b + db);
+                        if na.abs() > half || nb.abs() > half {
+                            escaped = true;
+                            continue;
+                        }
+                        if seen[index(na, nb)] || !solid(na, nb) {
+                            continue;
+                        }
+                        seen[index(na, nb)] = true;
+                        stack.push((na, nb));
+                    }
+                }
+                if escaped || (inside as f32) < island.len() as f32 * ISLAND_SHARE {
+                    continue;
+                }
+                any = true;
+                for (a, b) in island {
+                    cells[index(a, b)] = true;
+                }
+            }
+        }
+        if !any {
+            return if met { Fit::TooBig } else { Fit::Empty };
+        }
+        // A few voxels round each island, so that the face is cut cleanly
+        // to the surface and past it.
+        let mut grown = cells.clone();
+        let mut furthest = 0.0_f32;
+        for j in -half..=half {
+            for i in -half..=half {
+                if !cells[index(i, j)] {
+                    continue;
+                }
+                for dj in -ISLAND_MARGIN..=ISLAND_MARGIN {
+                    for di in -ISLAND_MARGIN..=ISLAND_MARGIN {
+                        let (a, b) = (i + di, j + dj);
+                        if a.abs() <= half && b.abs() <= half {
+                            grown[index(a, b)] = true;
+                            furthest = furthest.max(((a * a + b * b) as f32).sqrt());
+                        }
+                    }
+                }
+            }
+        }
+        Fit::Fitted(Disc {
+            centre: disc.centre,
+            normal,
+            radius: (furthest + 1.0) * pitch,
+            region: Some(std::sync::Arc::new(Region { u, v, pitch, half, cells: grown })),
+        })
     }
 
     /// Sever the piece `disc` cuts off, if it cuts one off. See the module
     /// documentation.
     pub fn sever(&self, disc: &Disc) -> Severed {
         let voxel = self.voxel_size();
-        let disc = Disc { normal: disc.normal.normalize_or(Vec3::Z), ..*disc };
+        let disc = Disc { normal: disc.normal.normalize_or(Vec3::Z), ..disc.clone() };
         let solid = |at: IVec3| self.sample_voxel(at) < 0.0;
         let world = |at: IVec3| at.as_vec3() * voxel;
         let front_of = |at: IVec3| disc.side(world(at)) >= 0.0;
@@ -455,7 +857,16 @@ impl Volume {
                 // plane, and what is past it outside. Elsewhere the other
                 // body's solid is outside.
                 let out = if side.abs() <= FACE_BAND && disc.within(at) {
-                    original.max(-keep * side).min(OUTSIDE)
+                    if original < 0.0 && !is_own(coord, index, original) {
+                        // The other's solid: past the face, at its distance
+                        // from the plane; on this side, a sliver of something
+                        // the walk did not reach, which kept was a loose speck
+                        // (seen as a fragments body on the screen).
+                        let past = -keep * side;
+                        if past > 0.0 { past.min(OUTSIDE) } else { OUTSIDE }
+                    } else {
+                        original.max(-keep * side).min(OUTSIDE)
+                    }
                 } else if original < 0.0 && !is_own(coord, index, original) {
                     OUTSIDE
                 } else {
@@ -488,6 +899,8 @@ pub enum Unsevered {
 pub struct SeverOutcome {
     pub piece: NodeId,
     pub rest: NodeId,
+    /// How many pieces were severed: two for a ring round two legs.
+    pub pieces: usize,
     pub entry: Entry,
 }
 
@@ -520,7 +933,20 @@ impl Document {
         let node = self.remove(at);
         changes.push(Change::NodeRemoved { at, node: Box::new(node) });
         self.set_active(bodies[0]);
-        Ok(SeverOutcome { piece: bodies[0], rest: bodies[1], entry: Entry::new(changes) })
+        let mut entry = Entry::new(changes);
+        // A ring round two legs severs both, one piece in two parts: each is
+        // made a body of its own, in the same entry. See `split.rs`.
+        let mut pieces = 1;
+        // Only for two real parts or more: a speck is no leg, and its own
+        // "fragments" body would only be clutter.
+        if let Some(plan) = self.split_plan(bodies[0])
+            && plan.bodies() - usize::from(plan.has_fragments()) >= 2
+            && let Some(outcome) = self.split(plan)
+        {
+            pieces = outcome.bodies.len();
+            entry = entry.followed_by(outcome.entry);
+        }
+        Ok(SeverOutcome { piece: self.active(), rest: bodies[1], pieces, entry })
     }
 }
 
@@ -661,7 +1087,7 @@ mod tests {
         use crate::undo::History;
         let mut document = Document::from_volume(figure());
         let source = document.active();
-        let disc = Disc { centre: Vec3::new(10.0, 0.0, 0.0), normal: Vec3::X, radius: 3.0 };
+        let disc = Disc::round(Vec3::new(10.0, 0.0, 0.0), Vec3::X, 3.0);
         let outcome = document.sever(source, &disc).expect("severed");
         assert_eq!(document.bodies().count(), 2);
         assert_eq!(document.active(), outcome.piece);
@@ -670,7 +1096,7 @@ mod tests {
         let visible = vec![true; document.nodes().len()];
         let _ = history.undo(&mut document, &visible);
         assert_eq!(document.bodies().count(), 1);
-        let small = Disc { radius: 1.0, ..disc };
+        let small = Disc { radius: 1.0, ..disc.clone() };
         assert!(matches!(document.sever(source, &small).err(), Some(Unsevered::NotRound)));
     }
 
@@ -694,7 +1120,7 @@ mod tests {
     #[test]
     fn a_disc_across_the_arm_severs_the_arm() {
         let volume = figure();
-        let disc = Disc { centre: Vec3::new(9.0, 0.0, 0.0), normal: Vec3::X, radius: 3.0 };
+        let disc = Disc::round(Vec3::new(9.0, 0.0, 0.0), Vec3::X, 3.0);
         let Severed::Apart { piece, rest } = volume.sever(&disc) else {
             panic!("the arm was not severed");
         };
@@ -723,9 +1149,9 @@ mod tests {
     #[test]
     fn a_disc_that_does_not_go_round_cuts_nothing() {
         let volume = figure();
-        let small = Disc { centre: Vec3::new(9.0, 0.0, 0.0), normal: Vec3::X, radius: 1.0 };
+        let small = Disc::round(Vec3::new(9.0, 0.0, 0.0), Vec3::X, 1.0);
         assert!(matches!(volume.sever(&small), Severed::NotRound));
-        let away = Disc { centre: Vec3::new(9.0, 20.0, 0.0), normal: Vec3::X, radius: 2.0 };
+        let away = Disc::round(Vec3::new(9.0, 20.0, 0.0), Vec3::X, 2.0);
         assert!(matches!(volume.sever(&away), Severed::Misses));
     }
 
@@ -745,6 +1171,149 @@ mod tests {
         assert!(matches!(volume.sever(&disc), Severed::Apart { .. }));
     }
 
+    /// A body with two legs: a ball, and two rods down out of it, apart.
+    fn two_legs() -> Volume {
+        let voxel = 0.25;
+        let mut volume = Volume::new(voxel);
+        volume.edit_box(Vec3::new(-9.0, -18.0, -7.0), Vec3::new(9.0, 7.0, 7.0), move |at, _| {
+            let body = at.length() - 6.0;
+            let leg = |x: f32| {
+                let along = (at.y + 10.0).abs() - 6.0;
+                let round = Vec3::new(at.x - x, 0.0, at.z).length() - 1.5;
+                along.max(round)
+            };
+            (body.min(leg(3.0)).min(leg(-3.0)) / voxel)
+                .clamp(crate::brick::INSIDE, crate::brick::OUTSIDE)
+        });
+        volume.take_dirty(&mut Vec::new());
+        volume
+    }
+
+    /// A ring round both legs cuts both off, each a body of its own, and
+    /// the figure keeps its body; one undo puts it back.
+    #[test]
+    fn a_ring_round_both_legs_severs_both() {
+        use crate::undo::History;
+        let volume = two_legs();
+        let ring = Disc::round(Vec3::new(0.0, -10.0, 0.0), Vec3::Y, 5.0);
+        let fitted = volume.fit_to_islands(&ring).expect("two islands in the ring");
+        let mut document = Document::from_volume(volume);
+        let source = document.active();
+        let outcome = document.sever(source, &fitted).expect("severed");
+        assert_eq!(outcome.pieces, 2, "the two legs are not two bodies");
+        assert_eq!(document.bodies().count(), 3);
+        let mut history = History::default();
+        history.push(outcome.entry);
+        let visible = vec![true; document.nodes().len()];
+        let _ = history.undo(&mut document, &visible);
+        assert_eq!(document.bodies().count(), 1);
+    }
+
+    /// A ring smaller than a leg still cuts that leg, whole, and only it:
+    /// the cut is the leg's cross-section and not the ring's circle.
+    #[test]
+    fn a_ring_smaller_than_the_leg_cuts_that_leg_whole() {
+        let volume = two_legs();
+        let ring = Disc::round(Vec3::new(3.0, -10.0, 0.0), Vec3::Y, 1.0);
+        assert!(matches!(volume.sever(&ring), Severed::NotRound), "the circle alone went round");
+        let fitted = volume.fit_to_islands(&ring).expect("the leg's island");
+        assert!(fitted.within(Vec3::new(4.3, -10.0, 0.0)), "the leg's edge is not in the cut");
+        assert!(!fitted.within(Vec3::new(-3.0, -10.0, 0.0)), "the other leg is in the cut");
+        let Severed::Apart { piece, rest } = volume.sever(&fitted) else {
+            panic!("the leg was not severed");
+        };
+        assert!(piece.sample_world(Vec3::new(3.0, -15.0, 0.0)) < 0.0, "the leg is not the piece");
+        assert!(rest.sample_world(Vec3::new(-3.0, -15.0, 0.0)) < 0.0, "the other leg went too");
+    }
+
+    /// An island the ring is not round, a slab the same plane crosses beside
+    /// the leg, reaching a little way into the ring and far past it, is not
+    /// in the cut; the rod the ring is round is.
+    #[test]
+    fn a_big_island_beside_the_ring_is_left_out() {
+        let voxel = 0.25;
+        let mut volume = Volume::new(voxel);
+        volume.edit_box(Vec3::new(-2.0, -12.0, -3.0), Vec3::new(22.0, 12.0, 6.0), move |at, _| {
+            let rod = Vec3::new(0.0, at.y, at.z).length() - 1.5;
+            let slab = (at - Vec3::new(10.0, 0.0, 3.2)).abs() - Vec3::new(10.0, 9.0, 1.0);
+            let slab = slab.max(Vec3::ZERO).length() + slab.max_element().min(0.0);
+            (rod.min(slab) / voxel).clamp(crate::brick::INSIDE, crate::brick::OUTSIDE)
+        });
+        let ring = Disc::round(Vec3::new(10.0, 0.0, 0.0), Vec3::X, 2.5);
+        assert!(ring.within(Vec3::new(10.0, 0.0, 2.4)), "the slab does not reach into the ring");
+        assert!(volume.sample_world(Vec3::new(10.0, 0.0, 2.4)) < 0.0, "the slab is not there");
+        let fitted = volume.fit_to_islands(&ring).expect("the rod's island");
+        assert!(fitted.within(Vec3::new(10.0, 1.4, 0.0)), "the rod is not in the cut");
+        assert!(!fitted.within(Vec3::new(10.0, 0.0, 2.6)), "the slab is in the cut");
+        assert!(!fitted.within(Vec3::new(10.0, 5.0, 3.2)), "the slab is in the cut");
+    }
+
+    /// A knob on a ball, rung from the front: the cut proposed goes round
+    /// its neck and severs the knob, the smaller side.
+    #[test]
+    fn a_ring_round_a_knob_cuts_round_its_neck() {
+        let voxel = 0.25;
+        let mut volume = Volume::new(voxel);
+        volume.edit_box(Vec3::splat(-10.0), Vec3::new(14.0, 10.0, 10.0), move |at, _| {
+            let ball = at.length() - 8.0;
+            let knob = (at - Vec3::new(9.5, 0.0, 0.0)).length() - 2.5;
+            (ball.min(knob) / voxel).clamp(crate::brick::INSIDE, crate::brick::OUTSIDE)
+        });
+        let at = Vec3::new(9.5, 0.0, 2.5);
+        let disc = volume.propose_cut(at, -Vec3::Z, Vec3::Z, 3.0).expect("a cut round the knob");
+        assert!(disc.normal.dot(Vec3::X).abs() > 0.8, "the cut faces {:?}", disc.normal);
+        let Severed::Apart { piece, rest } = volume.sever(&disc) else {
+            panic!("the knob was not severed");
+        };
+        assert!(piece.sample_world(Vec3::new(11.0, 0.0, 0.0)) < 0.0, "the knob is not the piece");
+        assert!(rest.sample_world(Vec3::ZERO) < 0.0, "the ball is not the rest");
+    }
+
+    /// A ring pressed on one leg and drawn wide enough to take in the other
+    /// proposes a cut through both.
+    #[test]
+    fn a_wide_ring_over_two_legs_proposes_both() {
+        let volume = two_legs();
+        let at = Vec3::new(3.0, -10.0, 1.5);
+        let disc = volume.propose_cut(at, -Vec3::Z, Vec3::Z, 7.5).expect("a cut");
+        assert!(
+            disc.normal.dot(Vec3::Y).abs() > 0.8,
+            "the cut faces {:?} at {:?}",
+            disc.normal,
+            disc.centre
+        );
+        let Severed::Apart { piece, .. } = volume.sever(&disc) else {
+            panic!("not severed");
+        };
+        assert!(piece.sample_world(Vec3::new(3.0, -15.0, 0.0)) < 0.0, "the right leg is not cut");
+        assert!(piece.sample_world(Vec3::new(-3.0, -15.0, 0.0)) < 0.0, "the left leg is not cut");
+    }
+
+    /// A dome blended onto a ball, which widens all the way to the ball and
+    /// has no neck: the ring round it cuts it off at its base.
+    #[test]
+    fn a_ring_round_a_dome_cuts_it_at_its_base() {
+        let voxel = 0.25;
+        let mut volume = Volume::new(voxel);
+        volume.edit_box(Vec3::splat(-10.0), Vec3::new(14.0, 10.0, 10.0), move |at, _| {
+            let ball = at.length() - 8.0;
+            let dome = (at - Vec3::new(8.5, 0.0, 0.0)).length() - 3.0;
+            // A smooth union, so the dome flares into the ball.
+            let k = 1.5;
+            let h = (0.5 + 0.5 * (dome - ball) / k).clamp(0.0, 1.0);
+            let joined = dome + (ball - dome) * h - k * h * (1.0 - h);
+            (joined / voxel).clamp(crate::brick::INSIDE, crate::brick::OUTSIDE)
+        });
+        let at = Vec3::new(9.5, 0.0, 2.6);
+        let disc = volume.propose_cut(at, -Vec3::Z, Vec3::Z, 4.0).expect("a cut round the dome");
+        let Severed::Apart { piece, rest } = volume.sever(&disc) else {
+            panic!("the dome was not severed");
+        };
+        assert!(piece.sample_world(Vec3::new(10.5, 0.0, 0.0)) < 0.0, "the dome is not the piece");
+        assert!(rest.sample_world(Vec3::ZERO) < 0.0, "the ball is not the rest");
+        assert!(piece.sample_world(Vec3::ZERO) > 0.0, "the ball went with the dome");
+    }
+
     proptest::proptest! {
         #![proptest_config(proptest::prelude::ProptestConfig::with_cases(12))]
 
@@ -759,7 +1328,7 @@ mod tests {
         ) {
             let volume = figure();
             let normal = Vec3::new(1.0, tilt.0, tilt.1).normalize();
-            let disc = Disc { centre: Vec3::new(x, 0.0, 0.0), normal, radius: 3.5 };
+            let disc = Disc::round(Vec3::new(x, 0.0, 0.0), normal, 3.5);
             let Severed::Apart { piece, rest } = volume.sever(&disc) else {
                 return Err(proptest::test_runner::TestCaseError::fail("not severed"));
             };
