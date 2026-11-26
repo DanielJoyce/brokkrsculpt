@@ -2037,8 +2037,12 @@ Each with the reason, and the trigger that would reopen it.
 **Severed, 2026-11-26.** The maintainer: *"Stop worry about upstream. I am
 gonna sever the repos"*, and then *"we can merge to main"*. HaniSculpt is
 its own repository (`DanielJoyce/hanisculpt`), no longer a fork, and
-`feature/studio` was merged into `main` the same day. What follows is how
-the branch lived beside upstream until then, kept as the record.
+`feature/studio` was merged into `main` the same day. Later that day the
+maintainer moved the work to `main`: *"Let's switch to main trunk
+development. Studio branch can be retired going forward."* Pull requests
+go into `main` from then on, and `feature/studio` takes nothing more. What
+follows is how the branch lived beside upstream until then, kept as the
+record.
 
 ```mermaid
 gitGraph
