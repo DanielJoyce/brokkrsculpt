@@ -16,7 +16,6 @@ path = "src/main.rs"
 [dependencies]
 hani-core.workspace = true
 hani-gpu.workspace = true
-bytemuck.workspace = true
 contracts.workspace = true
 env_logger.workspace = true
 glam.workspace = true

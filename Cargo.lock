@@ -1486,7 +1486,6 @@ name = "hani-app"
 version = "0.0.1"
 dependencies = [
  "arboard",
- "bytemuck",
  "contracts",
  "core-foundation 0.10.1",
  "dir_spec",
