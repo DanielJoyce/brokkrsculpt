@@ -542,16 +542,15 @@ mod tests {
             rough(&before, mid_y)
         );
         // The brushes that work on a ridge are drawn on one, and each
-        // picture shows what its brush does to it. Gather is a pinch: the
-        // ridge is narrower and as tall. Spread is wider and as tall.
-        // Upstream's Pinch reads the field from nearer the brush's axis
-        // by a fixed step, so the ridge keeps its top and is BROADER,
-        // with steeper sides (measured here when it was the only pinch
-        // there was: 7.7 voxels wide at half its height before and over
-        // 12 after), and turned round, which is Wear down, it reads from
-        // further off and the ridge is worn to a quarter of its height.
-        // Held as found, so that a change to any of them shows.
-        for name in ["Pinch", "Gather", "Spread", "Wear down"] {
+        // picture shows what its brush does to it. Pinch is a true pinch:
+        // the ridge is narrower and as tall. Widen is wider and as tall.
+        // Wear down is upstream's pinch turned round: it reads from
+        // further off the brush's axis and the ridge is worn to a quarter
+        // of its height. (Upstream's pinch the right way round left a
+        // ridge 7.7 voxels wide at half its height over 12 wide, broader
+        // with steeper sides, and came off the palette for it.) Held as
+        // found, so that a change to any of them shows.
+        for name in ["Pinch", "Widen", "Wear down"] {
             assert_eq!(ground_for(&does(&named(name))), Ground::Ridged, "{name}");
         }
         let wide = |volume: &Volume| {
@@ -567,17 +566,12 @@ mod tests {
             (wide(&volume), top(&volume))
         };
         let (was_wide, was_tall) = (wide(&ridge), top(&ridge));
-        let (gathered, gathered_top) = after("Gather");
-        assert!(gathered < was_wide * 0.8, "Gather left the ridge {gathered} wide of {was_wide}");
-        assert!(gathered_top > was_tall * 0.85, "and {gathered_top} tall of {was_tall}");
-        let (spread, spread_top) = after("Spread");
-        assert!(spread > was_wide * 1.15, "Spread left the ridge {spread} wide of {was_wide}");
-        assert!(spread_top > was_tall * 0.85, "and {spread_top} tall of {was_tall}");
         let (pinched, pinched_top) = after("Pinch");
-        assert!(
-            pinched > was_wide * 1.2 && pinched_top > was_tall * 0.85,
-            "Pinch left a ridge {pinched} wide and {pinched_top} tall of one {was_wide} and {was_tall}"
-        );
+        assert!(pinched < was_wide * 0.8, "Pinch left the ridge {pinched} wide of {was_wide}");
+        assert!(pinched_top > was_tall * 0.85, "and {pinched_top} tall of {was_tall}");
+        let (widened, widened_top) = after("Widen");
+        assert!(widened > was_wide * 1.15, "Widen left the ridge {widened} wide of {was_wide}");
+        assert!(widened_top > was_tall * 0.85, "and {widened_top} tall of {was_tall}");
         let (_, worn_top) = after("Wear down");
         assert!(worn_top < was_tall * 0.5, "Wear down left the ridge {worn_top} tall");
         // And Draw and Clay are drawn on the flat, where they have

@@ -11,10 +11,11 @@
 //!
 //! # The brushes that come with the application
 //!
-//! [`core`]. Draw, Clay, Inflate, Pinch, Smooth and Flatten are upstream's
-//! six, each as the settings it is, and the rest cost only their settings:
-//! a gather turned round is Spread, a levelling brush that only cuts is
-//! Scrape, a push and a pinch is Crease. They cannot be forgotten. One can
+//! [`core`]. Draw, Clay, Inflate, Smooth and Flatten are upstream's, each
+//! as the settings it is, and the rest cost only their settings: a true
+//! pinch is Pinch and turned round is Widen, a levelling brush that only
+//! cuts is Scrape, a push and upstream's pinch is Crease. Upstream's Pinch
+//! is not on the palette any more: see `core`. They cannot be forgotten. One can
 //! be changed, by keeping a brush under its name, and the changed one then
 //! stands where it stood; forgetting that puts the first back.
 //!
@@ -656,11 +657,22 @@ pub(super) fn core() -> &'static [Preset] {
             Preset::classic("Draw", BrushKind::Draw),
             Preset::classic("Clay", BrushKind::Clay),
             Preset::classic("Inflate", BrushKind::Inflate),
-            Preset::classic("Pinch", BrushKind::Pinch),
             // A true pinch and its opposite: a ridge under the stroke is
-            // narrower, or wider, and as tall. `Actions::gather`.
-            Preset::doing("Gather", Actions::GATHER),
-            Preset::doing("Spread", Actions { gather: -1.0, ..nothing }),
+            // narrower, or wider, and as tall. `Actions::gather`. They were
+            // Gather and Spread until 2026-11-26, when the maintainer, who
+            // found Gather to be ZBrush's classic pinch, asked for these
+            // names. Upstream's Pinch, which stood here, came off the
+            // palette then: it reads the field a fixed step nearer the
+            // brush's axis, so a ridge keeps its top and comes out BROADER
+            // with steeper sides, which is not what the name promises and
+            // not something the other brushes cannot do better. Its action
+            // stays, for Crease and Wear down.
+            Preset::doing("Pinch", Actions::GATHER),
+            Preset::doing("Widen", Actions { gather: -1.0, ..nothing }),
+            // Inflate turned round: the surface shrinks along its own
+            // normals. Added when Pinch's old place on the palette came
+            // free, so that the group still fills its rows.
+            Preset::doing("Deflate", Actions { inflate: -1.0, ..nothing }),
             // Upstream's pinch turned round, by what it does: it reads the
             // field from further off the brush's axis, and what stands
             // under the brush is worn away. It was called Spread here
@@ -785,12 +797,12 @@ pub(super) const GROUPS: [(&str, &[&str]); 3] = [
             "Inflate",
             "Pinch",
             "Flatten",
-            "Gather",
-            "Spread",
+            "Widen",
             "Scrape",
             "Fill",
             "Polish",
             "Wear down",
+            "Deflate",
             "Crease",
             "Ridge",
             "Bead",
@@ -1199,24 +1211,26 @@ mod tests {
         }
     }
 
-    /// The keys 1 to 6 still pick what upstream's 1 to 6 picked: the
-    /// first six of the palette are upstream's six, each as nothing but
-    /// itself, in upstream's order. See `docs/WORKSPACES.md`.
+    /// The keys 1 to 6 still pick what upstream's 1 to 6 picked, but for
+    /// 5: Draw, Clay, Smooth, Inflate and Flatten are upstream's, each as
+    /// nothing but itself, and 5 is Pinch, the true one, where upstream's
+    /// stood. See `docs/WORKSPACES.md`.
     #[test]
-    fn the_first_six_keys_are_upstreams_six() {
+    fn the_first_six_keys_are_upstreams_but_pinch_is_the_true_one() {
         let came = core();
         let upstream = [
-            BrushKind::Draw,
-            BrushKind::Clay,
-            BrushKind::Smooth,
-            BrushKind::Inflate,
-            BrushKind::Pinch,
-            BrushKind::Flatten,
+            (0, BrushKind::Draw),
+            (1, BrushKind::Clay),
+            (2, BrushKind::Smooth),
+            (3, BrushKind::Inflate),
+            (5, BrushKind::Flatten),
         ];
-        for (index, kind) in upstream.into_iter().enumerate() {
+        for (index, kind) in upstream {
             assert_eq!(came[index].kind, kind, "key {} is not {kind:?}", index + 1);
             assert!(came[index].custom.is_none(), "key {} is not plain {kind:?}", index + 1);
         }
+        assert_eq!(came[4].name, "Pinch");
+        assert_eq!(came[4].custom, Some(Actions::GATHER), "key 5 is the true pinch");
         assert!(crate::viewport::KEYED_BRUSHES <= came.len());
     }
 
@@ -1264,11 +1278,16 @@ mod tests {
                 );
             }
         }
-        // Upstream's six are six of them, each as nothing but itself.
+        // Upstream's are among them, each as nothing but itself, but for
+        // upstream's Pinch, which came off the palette on 2026-11-26: the
+        // brush called Pinch now is the true pinch (see `core`).
         for kind in BrushKind::ALL {
             let Some(_) = Actions::of(kind) else {
                 continue;
             };
+            if kind == BrushKind::Pinch {
+                continue;
+            }
             let classic = came.iter().find(|preset| preset.name == kind.label());
             assert_eq!(classic, Some(&Preset::classic(kind.label(), kind)), "{kind:?}");
         }
@@ -1279,8 +1298,8 @@ mod tests {
         };
         assert_eq!(does("Crease"), Actions::CREASE);
         assert_eq!(does("Fine crease"), Actions::CREASE);
-        assert_eq!(does("Gather"), Actions::GATHER);
-        assert_eq!(does("Spread").gather, -1.0);
+        assert_eq!(does("Pinch"), Actions::GATHER);
+        assert_eq!(does("Widen").gather, -1.0);
         assert_eq!(does("Wear down").pinch, -1.0);
         assert_eq!((does("Ridge").push, does("Ridge").gather), (0.6, 1.0));
         assert_eq!((does("Scrape").level, does("Scrape").side), (1.0, Side::Cut));

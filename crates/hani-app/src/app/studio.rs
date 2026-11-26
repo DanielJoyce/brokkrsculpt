@@ -1156,13 +1156,9 @@ impl Hani {
                     ..actions
                 }
             },),
-            amount(
-                "amount.gather",
-                "Gather together",
-                -1.0..=1.0,
-                actions.gather,
-                |actions, gather| Actions { gather, ..actions },
-            ),
+            amount("amount.gather", "Pinch", -1.0..=1.0, actions.gather, |actions, gather| {
+                Actions { gather, ..actions }
+            },),
             // Upstream's pinch, by what it does to what is under the
             // brush and not by its name: see `Actions::pinch`. Plus is
             // steeper sided, minus worn down.
@@ -2695,13 +2691,15 @@ mod tests {
         assert_eq!(app.preset_now(String::new()), before);
     }
 
-    /// Upstream's six on the palette are upstream's six: chosen there or
+    /// Upstream's brushes on the palette are upstream's brushes: chosen there or
     /// by upstream's own button, the brush in hand is the same brush, the
     /// same button is lit, and a stroke leaves the same field to the bit.
     #[test]
     fn a_classic_brush_on_the_palette_is_the_classic_brush() {
         for kind in BrushKind::ALL {
-            if Actions::of(kind).is_none() {
+            // Upstream's Pinch is not on the palette: the brush called
+            // Pinch there is the true pinch. See `presets::core`.
+            if Actions::of(kind).is_none() || kind == BrushKind::Pinch {
                 continue;
             }
             let mut by_button = app();
