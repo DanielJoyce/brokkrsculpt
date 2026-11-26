@@ -90,14 +90,14 @@ ring = "0.17"
 # rustls with its bundled webpki-roots rather than a platform verifier, so
 # there is no system OpenSSL to link and the trust store is reproducible.
 #
-# The `~3.3` bound is a COOLDOWN, not a compatibility limit. Cargo has no
+# The `~3.4` bound is a COOLDOWN, not a compatibility limit. Cargo has no
 # release-age gate the way npm and bun do here, so publish dates are checked by
-# hand -- and 3.4.0 was ten days old when this went in, against the 216 days
-# rfd had. It costs one crate to stay on 3.3 (ureq-proto 3.3 pulls base64 0.22
-# alongside the 0.23 already in the graph); an extra leaf crate is a cheaper
-# risk than a fortnight-old release of the code that terminates our TLS.
-# Lift the bound to "3" once 3.4.x has aged.
-ureq = { version = "~3.3", default-features = false, features = ["rustls"] }
+# hand. It was `~3.3` while 3.4 was ten days old; on 2026-11-26 it moved to
+# 3.4.2 (published 2026-09-13, 74 days), with ureq-proto 0.6.3 of the same day
+# and rustls and webpki-roots left where they were, which folds the second
+# base64 3.3 needed (`docs/DEPENDENCIES.md`). 3.5 was a fortnight old then.
+# Lift the bound to "3" once 3.5.x has aged.
+ureq = { version = "~3.4", default-features = false, features = ["rustls"] }
 
 # Stylus pressure is read straight from the kernel's evdev interface. That sits
 # below the display server, so one code path covers X11, XWayland and Wayland,

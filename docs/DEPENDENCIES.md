@@ -173,15 +173,44 @@ A `log::Log` that prints level, target and message, filtered by a level in
   turns on wgpu's defaults, so it is not ours to turn off, and the GL
   backend is the fallback on machines with no Vulkan.
 
-## Duplicate versions
+## Duplicate versions, and whether upgrading folds them
 
-38 crates are in the lockfile at more than one version (17 of them in the
-Linux build after proposal 1). Almost all are upstream's: iced 0.14 is on `glam` 0.25
-against our 0.33, winit and iced's clipboard are on two releases of
-`smithay-client-toolkit`, cosmic-text on two of `skrifa` and `read-fonts`,
-wgpu and naga on two of `hashbrown`. Ours: two `base64` inside `ureq`
-(proposal 4), and `getrandom` 0.2 through `ring` beside the 0.3 we use. They
-fold as upstream moves; a newer iced is the one that would fold the most.
+Asked on 2026-11-26: *"Let's see if we can unify those disparate versions
+too. Maybe we just need to upgrade"*. Mostly it does not, and the reason is
+one crate: **iced 0.14.0 is the newest iced there is** (crates.io, checked
+2026-11-26), and it holds winit 0.30, wgpu 27 and cosmic-text 0.15. Our wgpu
+has to be iced's (the viewport shares its device), so ours cannot move ahead
+of it either.
+
+Tried in a scratch copy:
+
+- **`cargo update`**, every semver-compatible upgrade at once: 505 packages
+  to 498, and still 38 crates at two or more versions. It folds nothing, adds
+  a second `miniz_oxide` (flate2's newest moved to 0.9 while png and exr are
+  on 0.8), and takes in some releases days old. Not done.
+- **`ureq` 3.3 to 3.4.2**: folds `base64` 0.22 into the 0.23 the rest use.
+  Done, on 2026-11-26.
+
+Who holds each duplicate, from the lockfile after that change:
+
+| Crates | Versions | Held by | Ours to fold? |
+|---|---|---|---|
+| `smithay-client-toolkit`, `calloop`, `calloop-wayland-source`, `rustix`, `linux-raw-sys`, `thiserror` | 0.19/0.20, 0.13/0.14, ..., 0.38/1, 1/2 | winit 0.30 against iced's clipboard and the newer Wayland crates | no, waits on iced |
+| `objc2` and eight `objc2-*`, `block2` | 0.5/0.6 | winit 0.30 and iced's macOS clipboard against rfd, arboard, softbuffer | no, waits on iced |
+| `windows`, `windows-core` and four more | 0.58/0.62 | wgpu-hal against `mundy` (iced's theme detection) | **yes: proposal 1 removes `mundy`** |
+| `windows-sys` | 0.52/0.59/0.61 | ring and winit; rustix; the rest | no |
+| `glam` | 0.25/0.29/0.33 | iced; `fast-surface-nets` (a dev-dependency); ours | 0.29 only, by dropping the dev-dependency, in test builds |
+| `skrifa`, `read-fonts`, `font-types` | two each | cosmic-text against swash | no |
+| `hashbrown`, `foldhash` | 0.15/0.16/0.17 | gpu-descriptor and petgraph; wgpu; indexmap | petgraph goes with proposal 3; the rest no |
+| `rustc-hash` | 1/2 | naga, wgpu-core, cosmic-text against iced and ours | no: iced is on 2 as well |
+| `getrandom` | 0.2/0.4 | `ring` against the rest | only by dropping `ring` |
+| `core-foundation`, `core-graphics-types` | two each | winit against wgpu-hal and ours | no |
+| `bitflags`, `redox_syscall`, `jni-sys`, `syn` | | winit's macOS and Redox crates; Android only; proc macros split between syn 2 and 3 | no |
+
+So: one fold now, six more (Windows only) with proposal 1, and the rest
+when iced moves past winit 0.30. When an iced release after 0.14 is out and
+has aged, upgrading to it is the change that folds the most; its git
+`master` is not a release to ship on.
 
 ## Suggested order
 
@@ -189,6 +218,7 @@ fold as upstream moves; a newer iced is the one that would fold the most.
    gated and looked at on a screen. Linux 340 to 264, Windows 259 to 227,
    macOS 254 to 223, browser 188 to 167 (measured).
 2. The maintainer's call on the TinkerAtlas bug report, then proposal 4.
+   (`ureq` itself moved to 3.4.2 on 2026-11-26; see above.)
 3. Proposals 5 and 6 when there is hardware and sample files to test them
    with.
 
