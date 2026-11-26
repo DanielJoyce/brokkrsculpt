@@ -908,6 +908,11 @@ pub(crate) fn shortcut(character: &str, command: bool, shift: bool, alt: bool) -
         {
             return Some(Message::WorkspaceChosen(*which));
         }
+        // Snip and report: Ctrl and ?, which a shifted slash may arrive as
+        // either. See `app/snip.rs`.
+        if command && !alt && (character == "?" || character == "/") {
+            return Some(Message::Snip(crate::message::SnipMessage::Started));
+        }
         let undo_chord = command && !alt && character.eq_ignore_ascii_case("z");
         return undo_chord.then_some(if shift { Message::Redo } else { Message::Undo });
     }

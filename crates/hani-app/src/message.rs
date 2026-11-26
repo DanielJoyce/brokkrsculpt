@@ -205,6 +205,40 @@ pub enum AfterFetch {
     Download,
 }
 
+/// Snip and report: a part of the window, drawn on and described, as an
+/// issue. See `app/snip.rs`.
+#[derive(Debug, Clone)]
+pub enum SnipMessage {
+    Started,
+    /// The window as it was, frozen.
+    Captured(iced::window::Screenshot),
+    /// The drag's first corner, where it has got to, and its end.
+    Corner(iced::Point),
+    Dragged(iced::Point),
+    Chosen,
+    Ink(SnipInk),
+    /// Drawing on the picture, in its own pixels.
+    StrokeBegun(iced::Point),
+    StrokeMoved(iced::Point),
+    StrokeEnded,
+    Undone,
+    TitleTyped(String),
+    Commented(iced::widget::text_editor::Action),
+    PictureCopied,
+    PictureSaved,
+    SaveChosen(Option<std::path::PathBuf>),
+    IssueOpened,
+    Closed,
+}
+
+/// What is drawn on a snip in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnipInk {
+    Orange,
+    White,
+    Black,
+}
+
 /// The revolve's controls. See `app/revolve.rs`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RevolveMessage {
@@ -1214,6 +1248,8 @@ pub enum Message {
     Help(HelpMessage),
     /// Saving in a browser. See `app/shelf.rs`.
     Shelf(ShelfMessage),
+    /// Snip and report. See `app/snip.rs`.
+    Snip(SnipMessage),
     PressureToggled(bool),
     PressureCurveChanged(f32),
     TiltToggled(bool),

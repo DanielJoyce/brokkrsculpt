@@ -234,6 +234,11 @@ impl Hani {
         // reopened only from the Help menu, so nothing it could cover is
         // waiting on an answer. Ranking it lower would let the unsaved-work
         // prompt draw over a screen that has not been dismissed yet.
+        // A snip over everything, the window frozen under it. See
+        // `app/snip.rs`.
+        if let Some(over) = self.snip_overlay().or_else(|| self.snip_card()) {
+            return stack![body, over, self.resize_frame()].into();
+        }
         if self.welcome {
             return stack![body, self.welcome_card(), self.resize_frame()].into();
         }
@@ -1088,6 +1093,14 @@ impl Hani {
                 // See `app/help.rs`.
                 keyed("Help", "", Some(Message::Help(crate::message::HelpMessage::Opened))),
                 keyed("Keyboard shortcuts", "?", Some(Message::ShortcutsOpened)),
+                // See `app/snip.rs`. Not in a browser, which has no
+                // screenshot to give it.
+                keyed(
+                    "Snip and report\u{2026}",
+                    "Ctrl ?",
+                    (!cfg!(target_arch = "wasm32"))
+                        .then_some(Message::Snip(crate::message::SnipMessage::Started))
+                ),
                 separator(),
                 text(format!("HaniSculpt {}", env!("CARGO_PKG_VERSION")))
                     .size(theme::TEXT_SIZE_SMALL)

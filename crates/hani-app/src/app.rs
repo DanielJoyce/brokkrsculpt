@@ -58,6 +58,7 @@ mod painting;
 mod paints;
 mod panel;
 mod shelf;
+mod snip;
 // Where a frame's time goes. See `app/phases.rs`.
 mod phases;
 mod presets;
@@ -813,6 +814,8 @@ pub struct Hani {
     help: help::HelpState,
     /// Saving in a browser. See `app/shelf.rs`.
     shelf: shelf::ShelfState,
+    /// Snip and report. See `app/snip.rs`.
+    snip: snip::SnipState,
     /// Whether it opens by itself next time.
     ///
     /// Held rather than read where it is drawn: the tick is inside `view()`,
@@ -2280,6 +2283,7 @@ impl Hani {
             shortcuts: false,
             help: help::HelpState::default(),
             shelf: shelf::ShelfState::default(),
+            snip: snip::SnipState::default(),
             welcome_on_startup: true,
             palette: crate::palette::Palette::default(),
             account: None,
@@ -9262,6 +9266,8 @@ impl Hani {
             || self.help.open
             // See `app/shelf.rs`.
             || self.shelf.open
+            // See `app/snip.rs`.
+            || self.snipping()
             || self.confirm.is_some()
             || self.orient_prompt.is_some()
             || self.bug_report.is_some()
@@ -9291,6 +9297,10 @@ impl Hani {
             // the user typed, and throwing it away on a stray Escape is the
             // same class of loss the confirm prompt exists to prevent.
             iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
+                // A snip being chosen, over everything. See `app/snip.rs`.
+                if self.snip_escaped() {
+                    return Task::none();
+                }
                 // The welcome screen first, and unlike the bug report it DOES
                 // go on Escape: it holds nothing the user typed, so there is
                 // nothing to lose by dismissing it, and a modal with no
@@ -10056,6 +10066,7 @@ impl Hani {
             // See `app/help.rs`.
             Message::Help(message) => self.help_changed(message),
             Message::Shelf(message) => return self.shelf_changed(message),
+            Message::Snip(message) => return self.snip_changed(message),
             Message::WelcomeOpened => {
                 // The menu it was chosen from has to go, or it is left drawn
                 // beneath the scrim: reachable to nothing, and still there when

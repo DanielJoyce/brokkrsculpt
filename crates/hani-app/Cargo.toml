@@ -60,6 +60,10 @@ web-time.workspace = true
 # `docs/WEB.md`.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 dir_spec.workspace = true
+# A picture on the clipboard, for Snip and report (`app/snip.rs`): iced's
+# own clipboard carries text only. Wayland's data-control protocol as well
+# as X11, so a paste works in either session.
+arboard = { version = "3.6", default-features = false, features = ["image-data", "wayland-data-control"] }
 # The updater's signature check, and the only new crate the updater costs.
 # ZERO transitive dependencies -- Ed25519 and Blake2b are implemented inline in
 # about 2.5k lines, MIT. Version pinned exactly rather than caret-bounded:

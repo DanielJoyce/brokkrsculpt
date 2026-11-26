@@ -70,3 +70,7 @@ beside it shows only the active body.
   saved.
 
 **?** on the keyboard shows every key on one card.
+
+**Ctrl ?** snips a part of the window to report: drag across it, draw on it,
+say what should be different, and open an issue on GitHub with the picture on
+the clipboard to paste in.
