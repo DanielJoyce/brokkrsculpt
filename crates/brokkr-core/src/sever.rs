@@ -192,6 +192,20 @@ impl Disc {
         flat + self.normal * self.lift(flat)
     }
 
+    /// The way the cut faces at a point of it, toward its front: the plane's
+    /// normal where it is flat, and square to the bent surface where it is
+    /// bent, by differences of [`Disc::side`] a hundredth of a millimetre
+    /// apart.
+    pub fn normal_at(&self, at: Vec3) -> Vec3 {
+        if self.bend.is_none() {
+            return self.normal;
+        }
+        let step = 0.01;
+        let along =
+            |axis: Vec3| (self.side(at + axis * step) - self.side(at - axis * step)) / (2.0 * step);
+        Vec3::new(along(Vec3::X), along(Vec3::Y), along(Vec3::Z)).normalize_or(self.normal)
+    }
+
     /// How far the cut can be off its plane anywhere: the reach a test of
     /// nearness to the plane is widened by.
     fn bent_by(&self) -> f32 {
@@ -571,7 +585,9 @@ impl Volume {
     /// arm) gets none.
     ///
     /// A bent cut is planned on the plane at its mean height, and each key
-    /// then moved along the normal onto the cut where it stands.
+    /// then moved along the normal onto the cut where it stands and turned
+    /// square to the cut there, so that a peg on a sloping part of the face
+    /// goes straight in.
     pub fn plan_keys(&self, disc: &Disc, spec: crate::part::KeySpec) -> Vec<crate::part::Key> {
         let mean = disc.bend.as_ref().map_or(0.0, |bend| bend.mean());
         let point = disc.centre + disc.normal * mean;
@@ -580,7 +596,12 @@ impl Volume {
         plan.keys
             .into_iter()
             .filter(|key| disc.within(key.centre))
-            .map(|key| crate::part::Key { centre: disc.on_cut(key.centre), ..key })
+            .map(|key| {
+                let centre = disc.on_cut(key.centre);
+                let square = disc.normal_at(centre);
+                let axis = if key.axis.dot(disc.normal) >= 0.0 { square } else { -square };
+                crate::part::Key { centre, axis, ..key }
+            })
             .collect()
     }
 
@@ -1367,8 +1388,23 @@ mod tests {
         };
         let keys = volume.plan_keys(&disc, spec);
         assert!(!keys.is_empty(), "no key on the bent face");
+        let mut tilted = false;
         for key in keys {
             assert!(disc.side(key.centre).abs() < 1e-3, "a key off the cut at {}", key.centre);
+            // Square to the cut where it stands, the way it pointed before.
+            let square = disc.normal_at(key.centre);
+            assert!(key.axis.dot(square).abs() > 0.999, "a key not square to the cut");
+            tilted |= key.axis.dot(disc.normal).abs() < 0.999;
+        }
+        assert!(tilted, "no key was turned to the slope");
+        // And parted with them, both bodies are closed.
+        let keys = volume.plan_keys(&disc, spec);
+        let mut document = Document::from_volume(volume);
+        let source = document.active();
+        let outcome = document.sever_keyed(source, &disc, &keys).expect("severed");
+        for id in [outcome.piece, outcome.rest] {
+            let (_, report) = document.volume(id).expect("a body").export_mesh();
+            assert!(report.is_printable(), "not printable: {}", report.summary());
         }
     }
 

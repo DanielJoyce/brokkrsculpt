@@ -50,6 +50,9 @@ pub(super) struct Explode {
     /// for the largest part, and the ball was pushed away from it (seen on
     /// the screen).
     pub(super) boxes: Vec<(NodeId, (Vec3, Vec3))>,
+    /// The view's target and distance before Explode framed the parts
+    /// apart, put back when they come together.
+    pub(super) view_before: Option<(Vec3, f32)>,
 }
 
 impl Brokkr {
@@ -85,6 +88,33 @@ impl Brokkr {
         self.hover_body = None;
         self.status = "pick a part — escape brings them back".to_string();
         self.publish_spread();
+        self.frame_apart();
+    }
+
+    /// Frame the parts as they are drawn apart, keeping the way the view
+    /// faces and only ever moving out: apart, a model the view held whole
+    /// ran past its edges (seen on the screen). What the view was is kept
+    /// to put back.
+    fn frame_apart(&mut self) {
+        let (mut low, mut high) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        for &(body, offset) in &self.explode.spread {
+            if let Some((min, max)) = self.box_of(body) {
+                low = low.min(min + offset);
+                high = high.max(max + offset);
+            }
+        }
+        if low.x > high.x {
+            return;
+        }
+        self.explode.view_before = Some((self.camera.target, self.camera.distance));
+        let framed = super::OrbitCamera::framing((low + high) * 0.5, ((high - low) * 0.5).length());
+        self.camera.target = framed.target;
+        self.camera.distance = framed
+            .distance
+            .max(self.camera.distance)
+            .clamp(self.camera.min_distance(), self.camera.max_distance());
+        self.refresh_camera_lattice();
+        self.publish_camera();
     }
 
     pub(super) fn unexplode(&mut self) {
@@ -93,6 +123,12 @@ impl Brokkr {
         }
         self.explode.on = false;
         self.publish_spread();
+        if let Some((target, distance)) = self.explode.view_before.take() {
+            self.camera.target = target;
+            self.camera.distance = distance;
+            self.refresh_camera_lattice();
+            self.publish_camera();
+        }
         if self.tool == super::Tool::Transform
             && let Err(why) = self.arm_gizmo()
         {
@@ -360,10 +396,11 @@ mod tests {
         inner.mark_everything_dirty();
         let inner = app.doc.add_body("Inner", inner);
         app.publish_visibility();
+        // The way the view looks, which framing the parts apart keeps.
+        let toward_eye = (app.camera.eye() - app.camera.target).normalize();
         update(&mut app, Message::ExplodeToggled);
         let spread = app.shared.spread_snapshot();
         let moved = spread.iter().find(|(id, _)| *id == inner).expect("an offset").1;
-        let toward_eye = (app.camera.eye() - (min + max) * 0.5).normalize();
         assert!(moved.normalize().dot(toward_eye).abs() < 1e-3, "sent toward the eye: {moved}");
         let half = |id| {
             let (low, high) = app.doc.node(id).and_then(|node| node.bounds()).expect("bounds");
@@ -388,6 +425,35 @@ mod tests {
         press(&mut app, drawn);
         assert!(!app.exploded());
         assert_eq!(app.gizmo.map(|gizmo| gizmo.body), Some(bead), "not back on the bead");
+    }
+
+    /// Apart, every part is framed on the screen, and together again the
+    /// view is what it was.
+    #[test]
+    fn apart_every_part_is_in_view_and_the_view_comes_back() {
+        let (mut app, _, _) = ball_and_bead();
+        app.viewport_size = Vec2::new(SIZE.x, SIZE.y);
+        // Close in on the ball, so that apart the bead would be off screen.
+        app.camera.distance *= 0.4;
+        let before = (app.camera.target, app.camera.distance);
+        update(&mut app, Message::ExplodeToggled);
+        for (body, offset) in app.shared.spread_snapshot() {
+            let (min, max) = app.explode.boxes.iter().find(|(id, _)| *id == body).unwrap().1;
+            for corner in [min, max] {
+                let at = super::super::measure::to_pixels(
+                    &app.camera,
+                    corner + offset,
+                    app.viewport_size,
+                )
+                .expect("in front of the eye");
+                assert!(
+                    (0.0..=SIZE.x).contains(&at.x) && (0.0..=SIZE.y).contains(&at.y),
+                    "a part is off the screen at {at}"
+                );
+            }
+        }
+        update(&mut app, Message::ExplodeToggled);
+        assert_eq!((app.camera.target, app.camera.distance), before, "the view did not come back");
     }
 
     /// With one body there is nothing to push apart, and it says so.
