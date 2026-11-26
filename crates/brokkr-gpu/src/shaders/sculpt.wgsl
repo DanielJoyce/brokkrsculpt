@@ -40,8 +40,9 @@ struct Uniforms {
     // The ring cut's see-through view, `docs/CUT-RING.md` stage 2: what is
     // kept solid is on the front of `ghost_plane` (xyz its normal, w its
     // offset, `dot(n, p) >= w`) and within `ghost_keep.w` of `ghost_keep.xyz`;
-    // everything else has `ghost.x` of its pixels screened away. `ghost.x`
-    // zero is off and draws every body as it always was.
+    // everything else has `ghost.x` of its pixels screened away, and what
+    // is kept `ghost.y`. `ghost.x` zero is off and draws every body as it
+    // always was.
     ghost_plane: vec4<f32>,
     ghost_keep: vec4<f32>,
     ghost: vec4<f32>,
@@ -211,15 +212,16 @@ fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) ->
     if (uniforms.ghost.x > 0.0) {
         let kept = dot(uniforms.ghost_plane.xyz, in.world) >= uniforms.ghost_plane.w
             && distance(in.world, uniforms.ghost_keep.xyz) <= uniforms.ghost_keep.w;
-        if (!kept) {
-            var bayer = array<f32, 16>(
-                0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
-                3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0
-            );
-            let cell = vec2<u32>(in.clip_position.xy) % vec2<u32>(4u, 4u);
-            if ((bayer[cell.y * 4u + cell.x] + 0.5) / 16.0 < uniforms.ghost.x) {
-                discard;
-            }
+        // The piece screened by `ghost.y`, less than the rest, so the cut
+        // face inside it and the keys on the face show through it too.
+        let amount = select(uniforms.ghost.x, uniforms.ghost.y, kept);
+        var bayer = array<f32, 16>(
+            0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
+            3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0
+        );
+        let cell = vec2<u32>(in.clip_position.xy) % vec2<u32>(4u, 4u);
+        if ((bayer[cell.y * 4u + cell.x] + 0.5) / 16.0 < amount) {
+            discard;
         }
     }
     var normal = normalize(in.view_normal);

@@ -388,8 +388,9 @@ true of it too, and what it adds is this.
   was drawn, drawn as a band on the surface, and *Split in two* makes that
   piece a body of its own and leaves the rest alone (a ring over both legs
   takes both, each a body). Handles on the cut slide it, tilt it and
-  size it, and the rest of the model goes see-through while you do, so a
-  cut across
+  size it, and the rest of the model goes see-through while you do;
+  *Part with pegs* puts a peg and its socket across the cut, each peg
+  draggable on the cut face first. So a cut across
   an arm no longer takes the torso beside it. *Line* on the bar is the
   cut that goes straight through everything. See
   [`docs/CUT-RING.md`](docs/CUT-RING.md).

@@ -114,9 +114,9 @@ pub struct Uniforms {
     pub cavity: [f32; 4],
     /// The ring cut's see-through view (`docs/CUT-RING.md`, stage 2): the
     /// plane, `[nx, ny, nz, offset]`, whose front is kept solid; the sphere,
-    /// `[x, y, z, radius]`, it is kept solid within; and in `ghost[0]` the
-    /// share of every other pixel screened away. Zero is off: every body
-    /// drawn as it always was.
+    /// `[x, y, z, radius]`, it is kept within; in `ghost[0]` the share of
+    /// every other pixel screened away, and in `ghost[1]` the share of the
+    /// kept one's. `ghost[0]` zero is off: every body drawn as it always was.
     pub ghost_plane: [f32; 4],
     pub ghost_keep: [f32; 4],
     pub ghost: [f32; 4],

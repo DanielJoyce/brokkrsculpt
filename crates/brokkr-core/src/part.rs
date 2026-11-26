@@ -521,6 +521,29 @@ impl Key {
     }
 }
 
+/// Put `keys` between two parts: `first`, behind the face (the keys' axes
+/// point out of it), and `second`, in front. A peg is added to the first and
+/// its socket, the peg grown by the clearance, taken out of the second; a
+/// pin hole or a magnet pocket is taken out of both. A parting's halves and
+/// a ring cut's two bodies (`sever.rs`) are keyed by this.
+pub(crate) fn put_keys(first: &mut Volume, second: &mut Volume, keys: &[Key], voxel: f32) {
+    for key in keys {
+        let bounds = key.bounds(voxel);
+        let key = *key;
+        let socket = move |at: Vec3| key.solid(at, voxel) - key.clearance_mm;
+        match key.kind {
+            KeyKind::Peg => {
+                first.unite(bounds, move |at| key.solid(at, voxel));
+                second.carve(bounds, socket);
+            }
+            KeyKind::PinHole | KeyKind::MagnetPocket => {
+                first.carve(bounds, socket);
+                second.carve(bounds, socket);
+            }
+        }
+    }
+}
+
 /// How far the solid runs from `from` along `direction`, up to `limit`.
 fn solid_depth(volume: &Volume, from: Vec3, direction: Vec3, limit: f32) -> f32 {
     let step = volume.voxel_size() * 0.5;
@@ -715,22 +738,7 @@ impl Volume {
         };
         let mut first = half(plan.plane);
         let mut second = half(reversed);
-
-        for key in &plan.keys {
-            let bounds = key.bounds(voxel);
-            let key = *key;
-            let socket = move |at: Vec3| key.solid(at, voxel) - key.clearance_mm;
-            match key.kind {
-                KeyKind::Peg => {
-                    first.unite(bounds, move |at| key.solid(at, voxel));
-                    second.carve(bounds, socket);
-                }
-                KeyKind::PinHole | KeyKind::MagnetPocket => {
-                    first.carve(bounds, socket);
-                    second.carve(bounds, socket);
-                }
-            }
-        }
+        put_keys(&mut first, &mut second, &plan.keys, voxel);
         (first, second)
     }
 }

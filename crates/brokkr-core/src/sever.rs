@@ -131,7 +131,13 @@ enum Fit {
 /// What a disc does to a body.
 pub enum Severed {
     /// It severs a piece: the piece, the smaller side, and the rest.
-    Apart { piece: Box<Volume>, rest: Box<Volume> },
+    Apart {
+        piece: Box<Volume>,
+        rest: Box<Volume>,
+        /// Whether the piece is on the side of the plane its normal points
+        /// to.
+        piece_in_front: bool,
+    },
     /// It does not go all the way round: the two sides are joined past its
     /// rim.
     NotRound,
@@ -447,6 +453,16 @@ impl Volume {
         [Some(first), second, third]
     }
 
+    /// The keys a cut is to have: a parting's plan on the cut's plane
+    /// ([`Volume::part_plan`]), and of its keys those within the cut, so
+    /// that a cross-section the plane makes elsewhere (a torso beside the
+    /// arm) gets none.
+    pub fn plan_keys(&self, disc: &Disc, spec: crate::part::KeySpec) -> Vec<crate::part::Key> {
+        let plane = crate::clip::ClipPlane { point: disc.centre, normal: disc.normal };
+        let plan = self.part_plan(plane, spec);
+        plan.keys.into_iter().filter(|key| disc.within(key.centre)).collect()
+    }
+
     /// The disc fitted to the pieces it is drawn round: the cross-sections
     /// its plane makes of the solid (its islands) that lie mostly within
     /// its radius, each whole, a few voxels round, and nothing else.
@@ -708,7 +724,11 @@ impl Volume {
         let sign = if piece == FRONT { 1.0 } else { -1.0 };
         let piece_body = self.severed_side(&disc, &labels, piece, sign, true);
         let rest_body = self.severed_side(&disc, &labels, piece, -sign, false);
-        Severed::Apart { piece: Box::new(piece_body), rest: Box::new(rest_body) }
+        Severed::Apart {
+            piece: Box::new(piece_body),
+            rest: Box::new(rest_body),
+            piece_in_front: piece == FRONT,
+        }
     }
 
     /// Flood the solid of one brick from `start`, already labelled `side`,
@@ -912,11 +932,36 @@ impl Document {
     ///
     /// Ask [`Document::split_guard`] first, as for every split.
     pub fn sever(&mut self, source: NodeId, disc: &Disc) -> Result<SeverOutcome, Unsevered> {
+        self.sever_keyed(source, disc, &[])
+    }
+
+    /// [`Document::sever`], and the two bodies keyed to each other by
+    /// `keys` ([`Volume::plan_keys`], or moved from there): a peg on the
+    /// body behind the cut's plane, its socket in the one in front, as a
+    /// parting keys its halves (`part.rs`).
+    pub fn sever_keyed(
+        &mut self,
+        source: NodeId,
+        disc: &Disc,
+        keys: &[crate::part::Key],
+    ) -> Result<SeverOutcome, Unsevered> {
         let at = self.index_of(source).ok_or(Unsevered::NoBody)?;
         let depth = self.nodes()[at].depth();
         let name = self.node(source).ok_or(Unsevered::NoBody)?.name.clone();
+        let voxel = self.voxel_size();
         let (piece, rest) = match self.volume(source).ok_or(Unsevered::NoBody)?.sever(disc) {
-            Severed::Apart { piece, rest } => (*piece, *rest),
+            Severed::Apart { piece, rest, piece_in_front } => {
+                let (mut piece, mut rest) = (*piece, *rest);
+                if !keys.is_empty() {
+                    let (first, second) = if piece_in_front {
+                        (&mut rest, &mut piece)
+                    } else {
+                        (&mut piece, &mut rest)
+                    };
+                    crate::part::put_keys(first, second, keys, voxel);
+                }
+                (piece, rest)
+            }
             Severed::NotRound => return Err(Unsevered::NotRound),
             Severed::Misses => return Err(Unsevered::Misses),
         };
@@ -1121,7 +1166,7 @@ mod tests {
     fn a_disc_across_the_arm_severs_the_arm() {
         let volume = figure();
         let disc = Disc::round(Vec3::new(9.0, 0.0, 0.0), Vec3::X, 3.0);
-        let Severed::Apart { piece, rest } = volume.sever(&disc) else {
+        let Severed::Apart { piece, rest, .. } = volume.sever(&disc) else {
             panic!("the arm was not severed");
         };
         let (whole, arm, body) = (solid_voxels(&volume), solid_voxels(&piece), solid_voxels(&rest));
@@ -1219,7 +1264,7 @@ mod tests {
         let fitted = volume.fit_to_islands(&ring).expect("the leg's island");
         assert!(fitted.within(Vec3::new(4.3, -10.0, 0.0)), "the leg's edge is not in the cut");
         assert!(!fitted.within(Vec3::new(-3.0, -10.0, 0.0)), "the other leg is in the cut");
-        let Severed::Apart { piece, rest } = volume.sever(&fitted) else {
+        let Severed::Apart { piece, rest, .. } = volume.sever(&fitted) else {
             panic!("the leg was not severed");
         };
         assert!(piece.sample_world(Vec3::new(3.0, -15.0, 0.0)) < 0.0, "the leg is not the piece");
@@ -1262,7 +1307,7 @@ mod tests {
         let at = Vec3::new(9.5, 0.0, 2.5);
         let disc = volume.propose_cut(at, -Vec3::Z, Vec3::Z, 3.0).expect("a cut round the knob");
         assert!(disc.normal.dot(Vec3::X).abs() > 0.8, "the cut faces {:?}", disc.normal);
-        let Severed::Apart { piece, rest } = volume.sever(&disc) else {
+        let Severed::Apart { piece, rest, .. } = volume.sever(&disc) else {
             panic!("the knob was not severed");
         };
         assert!(piece.sample_world(Vec3::new(11.0, 0.0, 0.0)) < 0.0, "the knob is not the piece");
@@ -1306,12 +1351,49 @@ mod tests {
         });
         let at = Vec3::new(9.5, 0.0, 2.6);
         let disc = volume.propose_cut(at, -Vec3::Z, Vec3::Z, 4.0).expect("a cut round the dome");
-        let Severed::Apart { piece, rest } = volume.sever(&disc) else {
+        let Severed::Apart { piece, rest, .. } = volume.sever(&disc) else {
             panic!("the dome was not severed");
         };
         assert!(piece.sample_world(Vec3::new(10.5, 0.0, 0.0)) < 0.0, "the dome is not the piece");
         assert!(rest.sample_world(Vec3::ZERO) < 0.0, "the ball is not the rest");
         assert!(piece.sample_world(Vec3::ZERO) > 0.0, "the ball went with the dome");
+    }
+
+    /// A ring cut keyed: the arm and the body, a peg on one and a socket
+    /// in the other, sized so they fit, in one undo; keys are planned only
+    /// within the cut.
+    #[test]
+    fn a_ring_cut_parts_the_arm_with_keys() {
+        use crate::part::{KeyKind, KeySpec};
+        let volume = figure();
+        let disc = volume
+            .fit_to_islands(&Disc::round(Vec3::new(10.0, 0.0, 0.0), Vec3::X, 3.0))
+            .expect("the arm's island");
+        let spec = KeySpec {
+            radius_mm: 0.5,
+            depth_mm: 0.75,
+            clearance_mm: 0.1,
+            wall_mm: 0.4,
+            ..KeySpec::peg()
+        };
+        let keys = volume.plan_keys(&disc, spec);
+        assert!(!keys.is_empty(), "no key on the arm's face");
+        assert!(keys.iter().all(|key| disc.within(key.centre) && key.kind == KeyKind::Peg));
+        let mut document = Document::from_volume(volume);
+        let source = document.active();
+        let outcome = document.sever_keyed(source, &disc, &keys).expect("severed");
+        let key = keys[0];
+        let peg_tip = key.centre + key.axis * (key.depth_mm * 0.5);
+        let behind = key.centre - key.axis * (key.depth_mm * 0.5);
+        let (piece, rest) = (
+            document.volume(outcome.piece).expect("the piece"),
+            document.volume(outcome.rest).expect("the rest"),
+        );
+        // The arm is in front of the plane (+X), so the body behind it has
+        // the peg, standing out into where the arm's socket is.
+        assert!(rest.sample_world(peg_tip) < 0.0, "the body has no peg");
+        assert!(piece.sample_world(peg_tip) > 0.0, "the arm has no socket");
+        assert!(rest.sample_world(behind) < 0.0, "the body's peg is not rooted");
     }
 
     proptest::proptest! {
@@ -1329,7 +1411,7 @@ mod tests {
             let volume = figure();
             let normal = Vec3::new(1.0, tilt.0, tilt.1).normalize();
             let disc = Disc::round(Vec3::new(x, 0.0, 0.0), normal, 3.5);
-            let Severed::Apart { piece, rest } = volume.sever(&disc) else {
+            let Severed::Apart { piece, rest, .. } = volume.sever(&disc) else {
                 return Err(proptest::test_runner::TestCaseError::fail("not severed"));
             };
             let (whole, arm, body) = (solid_voxels(&volume), solid_voxels(&piece), solid_voxels(&rest));
