@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Drive the running BrokkrSculpt window with a virtual input device.
+"""Drive the running HaniSculpt window with a virtual input device.
 
 There is no ydotool, wtype or dotool on this machine and XTEST silently does
 nothing under KWin Wayland, which is why `scripts/shot.sh` says there is no
@@ -54,13 +54,13 @@ import time
 
 UINPUT = "/dev/uinput"
 # Which window to drive. Overridable the way `shot.sh` already takes
-# `BROKKR_WINDOW_CLASS`, because the application is not the only window a test
+# `HANI_WINDOW_CLASS`, because the application is not the only window a test
 # has to reach: an export puts up a native save dialog, which is its own window
 # with its own class (`org.freedesktop.impl.portal.desktop.kde` here), and
 # without this the driver activates the application behind the dialog and every
 # keystroke lands in the wrong place. Geometry is read for whichever window
 # this names, so coordinates stay window-local either way.
-WINDOW_CLASS = os.environ.get("BROKKR_WINDOW_CLASS", "brokkrsculpt")
+WINDOW_CLASS = os.environ.get("HANI_WINDOW_CLASS", "hanisculpt")
 
 EV_SYN, EV_KEY, EV_REL, EV_ABS = 0, 1, 2, 3
 SYN_REPORT = 0
@@ -216,7 +216,7 @@ class Device:
         absmax = [0] * 64
         absmax[ABS_X], absmax[ABS_Y] = self.width - 1, self.height - 1
         os.write(self.fd, struct.pack(
-            "80sHHHHi" + "64i" * 4, b"brokkr-drive", 0x03, 0x1234, 0x5678, 1, 0,
+            "80sHHHHi" + "64i" * 4, b"hani-drive", 0x03, 0x1234, 0x5678, 1, 0,
             *absmax, *([0] * 64), *([0] * 64), *([0] * 64),
         ))
         fcntl.ioctl(self.fd, UI_DEV_CREATE)

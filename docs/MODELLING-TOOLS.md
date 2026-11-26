@@ -20,10 +20,10 @@ are the same kind of whole-body operation with one button.
 
 | Tool | Where | What it does | Engine |
 |---|---|---|---|
-| Shell | Sculpt, FORM, *Shell* row | Hollows the active body to a wall; its surface is the outside of the wall | `brokkr_core::shell` |
-| Extract | Sculpt, EXTRACT | The masked part of the surface thickened into a new body below the active one | `brokkr_core::extract` |
-| Deform | Transform, DEFORM | *Twist*, *Bend* or *Taper* the active body along X, Y or Z | `brokkr_core::deform` |
-| Revolve | Transform, REVOLVE | *Draw a profile*: an upright axis on the screen, a line drawn beside it, spun into a new body | `brokkr_core::revolve` |
+| Shell | Sculpt, FORM, *Shell* row | Hollows the active body to a wall; its surface is the outside of the wall | `hani_core::shell` |
+| Extract | Sculpt, EXTRACT | The masked part of the surface thickened into a new body below the active one | `hani_core::extract` |
+| Deform | Transform, DEFORM | *Twist*, *Bend* or *Taper* the active body along X, Y or Z | `hani_core::deform` |
+| Revolve | Transform, REVOLVE | *Draw a profile*: an upright axis on the screen, a line drawn beside it, spun into a new body | `hani_core::revolve` |
 
 Each is one undo entry. Shell and deform hold the body as it was; extract
 and revolve add a row that undo takes away.
@@ -34,7 +34,7 @@ The field is a distance only within three voxels of the surface; past that
 it is a saturated sign. A two millimetre wall at a quarter millimetre is
 eight voxels in, so the shell needs a distance the field does not hold.
 
-`brokkr_core::reach` finds it sparsely. Every band voxel within one voxel
+`hani_core::reach` finds it sparsely. Every band voxel within one voxel
 of the surface gives the surface point nearest it,
 `x - d * grad d / |grad d|^2`. Each point's ownership then spreads outward
 through the lattice, nearest first, a voxel keeping whichever point its 26

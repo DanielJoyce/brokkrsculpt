@@ -51,7 +51,7 @@ replay's table.
 ### A line a frame
 
 ```bash
-BROKKR_PHASE_LOG=phases.csv brokkrsculpt
+HANI_PHASE_LOG=phases.csv hanisculpt
 ```
 
 One comma-separated line for every frame a stroke is down in, with a heading
@@ -60,7 +60,7 @@ line. For reading a hitch back afterwards.
 ### A stroke recorded and replayed
 
 ```bash
-BROKKR_RECORD=stroke.txt brokkrsculpt
+HANI_RECORD=stroke.txt hanisculpt
 ```
 
 Sculpt, then quit. The file holds the viewport's pointer events, where the
@@ -69,7 +69,7 @@ the brush in hand by name, size and strength. It is lines of text and can be
 trimmed by hand.
 
 ```bash
-BROKKR_REPLAY=stroke.txt BROKKR_REPLAY_PROJECT=model.brokkr brokkrsculpt
+HANI_REPLAY=stroke.txt HANI_REPLAY_PROJECT=model.hani hanisculpt
 ```
 
 Opens the project (or the ball, with no project named), waits ninety frames
@@ -86,7 +86,7 @@ and after any of the renderer's tickets.
 ### A stroke with no window
 
 ```bash
-cargo test --release -p brokkr-app -- --ignored --nocapture what_a_stroke_costs
+cargo test --release -p hani-app -- --ignored --nocapture what_a_stroke_costs
 ```
 
 A ring drawn on the ball the application opens with, and on the same ball at a
@@ -95,15 +95,15 @@ pointer path. No renderer is involved, so the upload and draw rows are empty.
 
 ### The core's own
 
-`cargo bench -p brokkr-core --bench budget` times stamps and the remesh on one
+`cargo bench -p hani-core --bench budget` times stamps and the remesh on one
 fixture against budgets set on upstream's machine, and exits non-zero over
-budget, which on this machine it does. `cargo bench -p brokkr-gpu` times the
+budget, which on this machine it does. `cargo bench -p hani-gpu` times the
 sculpt pass on a generated ball.
 
 ### A paint stamp for a profiler
 
 ```bash
-cargo run --release -p brokkr-core --example paint_profile
+cargo run --release -p hani-core --example paint_profile
 ```
 
 Paint stamps of 2, 5 and 10 mm round a ball at a sixteenth of a millimetre,
@@ -113,7 +113,7 @@ how many bricks were remeshed.
 ### A stroke for a profiler
 
 ```bash
-cargo build --profile bench -p brokkr-core --example stroke_profile
+cargo build --profile bench -p hani-core --example stroke_profile
 target/release/examples/stroke_profile draw 48 2
 RAYON_NUM_THREADS=1 valgrind --tool=callgrind target/release/examples/stroke_profile draw 48 1
 ```
@@ -133,7 +133,7 @@ cache misses.
 ### A shape dragged out, for a profiler
 
 ```bash
-cargo build --profile bench -p brokkr-core --example insert_profile
+cargo build --profile bench -p hani-core --example insert_profile
 target/release/examples/insert_profile ball 40 3 2
 RAYON_NUM_THREADS=1 valgrind --tool=callgrind target/release/examples/insert_profile ball 40 3 1
 ```
@@ -184,7 +184,7 @@ The autosave was one call on the thread that draws. Upstream's own figure was
 two minutes.
 
 It is now encoded a piece of about 4 MB between two frames and written by
-another thread (`app/autosave.rs`, `brokkr-core/src/project/pieces.rs`). A
+another thread (`app/autosave.rs`, `hani-core/src/project/pieces.rs`). A
 write in pieces is given up the moment the document is wanted, and begun again
 at the next pause.
 
@@ -271,7 +271,7 @@ another run): it is below the size the voxel skip is switched on at. What it
 pays for is the remesh, and of that the surface nets are now a small part and
 gathering each brick's apron is the larger.
 
-**The mesher** (`brokkr-core/src/mesh/nets.rs`). The crate read the eight
+**The mesher** (`hani-core/src/mesh/nets.rs`). The crate read the eight
 corners of every one of a brick's 35,937 cells to find the thousand or two the
 surface is in. This finds them first: one pass makes a row of sign bits for
 each line of the apron (four samples at a time on x86-64), and the cells of a
@@ -281,14 +281,14 @@ to the crate on balls, planes at any angle, noise, noughts of both signs, and
 aprons the surface only grazes. The crate is a dev-dependency now and three
 crates fewer are in a build.
 
-**The sample** (`brokkr-core/src/region.rs`). On x86-64 before SSE4.1, which
+**The sample** (`hani-core/src/region.rs`). On x86-64 before SSE4.1, which
 is what a release is built for, `floor` is a call into the compiler's
 arithmetic library, and the trilinear read made three for every voxel. It is
 now a cast and a correction, with `floor`'s answer to the bit, the sign of a
 nought included, which twenty thousand random bit patterns and the edge cases
 are held to.
 
-**The voxels that cannot change** (`brokkr-core/src/volume/settled.rs`). A
+**The voxels that cannot change** (`hani-core/src/volume/settled.rs`). A
 stamp has always skipped a brick that holds one value throughout, where the
 brush leaves that value alone. A brick the surface passes through holds the
 band, six voxels of thirty-two, and the same two values either side of it. So
@@ -724,7 +724,7 @@ brush and above all the airbrush were slow, and could a gesture be tried
 against something coarser and applied to the real thing. Measured in release
 on the machine above, by two measurements run by hand:
 `what_a_move_of_an_insert_costs` (`app/adding.rs`) and `what_painting_costs`
-(`app/airbrush.rs`, with `BROKKR_LAYERED=1` for a stack of five layers, a
+(`app/airbrush.rs`, with `HANI_LAYERED=1` for a stack of five layers, a
 spongechop over the paint). Both time the application's own handling of the
 messages, so they include the remesh's CPU half and not the GPU's.
 
@@ -867,14 +867,14 @@ is where more threads stop paying: a second thread on a core that has one
 (hyper-threading) gives far less than a core, and a small efficiency core
 less than a large one. So it is measured.
 
-`brokkr_core::calibrate` times a stroke's kind of work (a ring of
+`hani_core::calibrate` times a stroke's kind of work (a ring of
 sculpting stamps, each remeshed, and a ring of paint stamps, on a ball at
 a sixteenth of a millimetre) in a pool of 1, 2, 4 and so on up to every
 thread, after a warm-up, and recommends the fewest threads within three
 parts in a hundred of the fastest.
 
 ```bash
-cargo run --release -p brokkr-core --example cores
+cargo run --release -p hani-core --example cores
 ```
 
 On the build machine, twice: 1 thread 822 and 827 ms, 2 threads 490 and

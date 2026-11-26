@@ -1,13 +1,13 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 
-# Contributing to BrokkrSculpt
+# Contributing to HaniSculpt
 
-Thanks for your interest in BrokkrSculpt! A few ground rules keep the project
+Thanks for your interest in HaniSculpt! A few ground rules keep the project
 healthy and its licensing clean.
 
 ## License of your contributions
 
-BrokkrSculpt is released under **AGPL-3.0-only** (see [`LICENSE`](LICENSE)). By
+HaniSculpt is released under **AGPL-3.0-only** (see [`LICENSE`](LICENSE)). By
 submitting a contribution (a pull request, patch, or any code or content), you
 agree that:
 
@@ -17,7 +17,7 @@ agree that:
    irrevocable, worldwide, royalty-free right to **relicense your contribution
    under other terms**, including a commercial license.
 
-This dual-licensing grant is what lets BrokkrSculpt stay fully open-source under
+This dual-licensing grant is what lets HaniSculpt stay fully open-source under
 the AGPL while the maintainer can also offer a commercial license to
 organizations that can't use AGPL software, the revenue that keeps the project
 maintained. It's the same inbound-relicensable model used by projects like
@@ -58,9 +58,9 @@ Before opening a PR:
 - `cargo clippy --workspace --all-targets` — **zero** warnings. CI adds
   `-D warnings`, so a warning is a failed build there.
 - `cargo test --workspace` — all green.
-- `cargo bench -p brokkr-core` if you touched the sculpt loop. It is a **gate,
+- `cargo bench -p hani-core` if you touched the sculpt loop. It is a **gate,
   not a report**: it exits non-zero when a frame-time budget is blown. Close
-  BrokkrSculpt and any other GPU or CPU hog first — the fast-drag case sits at
+  HaniSculpt and any other GPU or CPU hog first — the fast-drag case sits at
   roughly 7.7 ms of its 8 ms budget and a busy desktop alone can fail it.
 
 CI runs a stricter toolchain than a typical local one, and has caught lints
@@ -79,7 +79,7 @@ before you script anything.
 These are not style preferences. Each one cost real debugging time, and each is
 documented where it lives:
 
-- **`brokkr-core` must stay free of UI, windowing and GPU dependencies.** CI
+- **`hani-core` must stay free of UI, windowing and GPU dependencies.** CI
   fails the build if `iced`, `winit`, `wgpu`, `egui`, `tauri` or
   `raw-window-handle` appear in its tree. That is what keeps the toolkit choice
   reversible.

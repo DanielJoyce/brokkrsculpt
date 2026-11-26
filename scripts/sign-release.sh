@@ -21,7 +21,7 @@
 #   <build>                     the build ordinal to publish, e.g. 1005
 #   --requires-reinstall 0|1    REQUIRED, see below
 #   --minimum-build N           warn every client below N (default 0, no floor)
-#   --key-epoch N               sign with ~/.minisign/brokkrsculpt-N.key
+#   --key-epoch N               sign with ~/.minisign/hanisculpt-N.key
 #                               and declare epoch N (default 0, the live key)
 #   --no-attestation            skip `gh attestation verify` -- see below
 #
@@ -35,12 +35,12 @@
 # A conscious keystroke is the guard that is actually available, and this is the
 # one place in the pipeline where a human is already in the loop.
 #
-# `BROKKR_RELEASE_REPO` overrides the repository, for the scratch-repo
+# `HANI_RELEASE_REPO` overrides the repository, for the scratch-repo
 # rehearsal Phase 1 owes: the publish half of this design is otherwise first
 # exercised on the day the first signed release ships.
 set -euo pipefail
 
-REPO="${BROKKR_RELEASE_REPO:-MakerViking/brokkrsculpt}"
+REPO="${HANI_RELEASE_REPO:-DanielJoyce/brokkrsculpt}"
 TAG=beta
 
 # The client rejects any seq above this (a compiled-in constant, so that it
@@ -58,7 +58,7 @@ scripts/sign-release.sh <build> --requires-reinstall <0|1> [options]
   <build>                     the build ordinal to publish, e.g. 1005
   --requires-reinstall 0|1    required; no default, deliberately
   --minimum-build N           warn every client below N (default 0, no floor)
-  --key-epoch N               sign with ~/.minisign/brokkrsculpt-N.key
+  --key-epoch N               sign with ~/.minisign/hanisculpt-N.key
                               and declare epoch N (default 0, the live key)
   --no-attestation            skip `gh attestation verify`
   --yes                       do not ask; for CI, which has nobody to ask
@@ -116,8 +116,8 @@ is_number "$KEY_EPOCH" || die "--key-epoch must be a number, got '$KEY_EPOCH'"
 # manifest signed by one key and declaring another is refused by the client at
 # step 2d -- not as an attack, but because it would otherwise persist a
 # floor_epoch that no key can ever satisfy again.
-SECRET_KEY="${SECRET_KEY_OVERRIDE:-$HOME/.minisign/brokkrsculpt-${KEY_EPOCH}.key}"
-PUBLIC_KEY="$HOME/.minisign/brokkrsculpt-${KEY_EPOCH}.pub"
+SECRET_KEY="${SECRET_KEY_OVERRIDE:-$HOME/.minisign/hanisculpt-${KEY_EPOCH}.key}"
+PUBLIC_KEY="$HOME/.minisign/hanisculpt-${KEY_EPOCH}.pub"
 
 # --- preflight ---------------------------------------------------------------
 
@@ -134,7 +134,7 @@ done
 [ "$ASSUME_YES" -eq 1 ] || [ -t 0 ] \
     || die "not a terminal: this script requires a typed confirmation (or --yes, which is for CI)"
 
-work=$(mktemp -d /tmp/brokkr-sign-XXXXXX)
+work=$(mktemp -d /tmp/hani-sign-XXXXXX)
 trap 'rm -rf "$work"' EXIT
 
 # --- the seq, read out of the live manifest ----------------------------------
@@ -182,7 +182,7 @@ for slug in linux-x86_64 windows-x86_64 macos-arm64; do
         macos-arm64)    suffix="macos-arm64.zip" ;;
     esac
     # **Two spellings, and the old one is not dead weight.** Payloads were
-    # renamed `brokkrsculpt-<build>-…` -> `update-<build>-…` on 2026-08-31 so
+    # renamed `hanisculpt-<build>-…` -> `update-<build>-…` on 2026-08-31 so
     # they sort below the human downloads on the release page. Builds published
     # before that keep their old names, and signing a manifest that names an
     # OLD build is exactly what a rollback is -- so dropping the legacy spelling
@@ -190,7 +190,7 @@ for slug in linux-x86_64 windows-x86_64 macos-arm64; do
     # manifest records whichever name was actually found, because the client
     # joins that name to its compiled-in prefix verbatim.
     name="update-${BUILD}-${suffix}"
-    legacy="brokkrsculpt-${BUILD}-${suffix}"
+    legacy="hanisculpt-${BUILD}-${suffix}"
 
     # An absent payload means "no update for this platform", not an error: the
     # release matrix has fail-fast off precisely so a two-platform release is

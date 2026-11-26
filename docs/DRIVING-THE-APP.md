@@ -1,4 +1,4 @@
-# Driving BrokkrSculpt
+# Driving HaniSculpt
 
 How to launch, drive and screenshot the running application, so that an
 interaction can be verified end to end rather than only in the test suite.
@@ -29,9 +29,9 @@ silent — a stale process looks exactly like a failed fix. This has wasted a
 session here before.
 
 ```bash
-cargo build --release -p brokkr-app
-ls -l --time-style=+%H:%M:%S target/release/brokkrsculpt; date +%H:%M:%S
-pgrep -x brokkrsculpt || ./target/release/brokkrsculpt &
+cargo build --release -p hani-app
+ls -l --time-style=+%H:%M:%S target/release/hanisculpt; date +%H:%M:%S
+pgrep -x hanisculpt || ./target/release/hanisculpt &
 ```
 
 **2. Drive it.** Coordinates are WINDOW-LOCAL; `drive.py` reads the window
@@ -98,7 +98,7 @@ player and a private browsing session instead of the application. Never work
 around it with `spectacle -f`.
 
 **Check for unsaved work before killing the app to rebuild.** The title bar
-shows `*` for unsaved work. The autosave in `$XDG_STATE_HOME/brokkrsculpt/autosave.brokkr` is
+shows `*` for unsaved work. The autosave in `$XDG_STATE_HOME/hanisculpt/autosave.hani` is
 only written every two minutes, and File > Recover is the way back.
 
 ## Reading the status line is most of the value
