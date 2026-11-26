@@ -28,8 +28,7 @@
 use glam::{IVec3, Vec3};
 use rayon::prelude::*;
 
-use super::field::PaintField;
-use super::field::bricks_between;
+use super::field::{PaintField, PaintVisit, bricks_between};
 use super::stroke::{Pigment, laid};
 use crate::brick::{BRICK_VOXELS, Brick, BrickCoord, brick_index};
 use crate::mask::PROTECTED;
@@ -152,31 +151,39 @@ impl Volume {
         if takes.is_empty() {
             return 0;
         }
-        let mut laid_on = 0;
         let pigment = spray.pigment;
-        for (coord, take) in &takes {
-            let origin = coord.origin();
-            let (from, to) = (lo.max(origin), hi.min(coord.max_voxel()));
-            self.edit_paint_over(from, to, |voxel, _, held, _, protection| {
-                let local = voxel - origin;
-                let amount =
-                    take[brick_index(local.x as usize, local.y as usize, local.z as usize)];
-                if amount <= 0.0 {
-                    return held;
+        // Laid a brick at a time across every core, as the stroke lays it
+        // (`Volume::edit_paint_across_cores`): each brick's amounts, and a
+        // count of what it laid on.
+        let mut visits: Vec<PaintVisit<(Vec<f32>, usize)>> = takes
+            .into_iter()
+            .map(|(coord, take)| {
+                let origin = coord.origin();
+                PaintVisit {
+                    coord,
+                    lo: lo.max(origin),
+                    hi: hi.min(coord.max_voxel()),
+                    state: (take, 0),
                 }
-                let free = 1.0 - f32::from(protection) / f32::from(PROTECTED);
-                let amount = amount * free;
-                if amount <= 0.0 {
-                    return held;
-                }
-                let after = laid(held, pigment, amount);
-                if after != held {
-                    laid_on += 1;
-                }
-                after
-            });
-        }
-        laid_on
+            })
+            .collect();
+        self.edit_paint_across_cores(&mut visits, |state, _, index, _, held, _, protection| {
+            let amount = state.0[index];
+            if amount <= 0.0 {
+                return held;
+            }
+            let free = 1.0 - f32::from(protection) / f32::from(PROTECTED);
+            let amount = amount * free;
+            if amount <= 0.0 {
+                return held;
+            }
+            let after = laid(held, pigment, amount);
+            if after != held {
+                state.1 += 1;
+            }
+            after
+        });
+        visits.iter().map(|visit| visit.state.1).sum()
     }
 }
 

@@ -60,6 +60,8 @@
 //! first smoothing stroke would shuffle it.
 
 use contracts::debug_ensures;
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use glam::{IVec3, Vec3};
 
 use crate::brick::NARROW_BAND;
@@ -534,7 +536,7 @@ pub struct TouchScratch {
     pub(super) region: FieldRegion,
     /// The curvature of each cell of the region, worked out the first time
     /// a voxel asks for it. See [`Curvatures`].
-    pub(super) cavity: Vec<std::cell::Cell<f32>>,
+    pub(super) cavity: Vec<AtomicU32>,
 }
 
 impl TouchScratch {
@@ -547,6 +549,10 @@ impl TouchScratch {
 const NOT_ASKED: f32 = f32::NAN;
 
 /// The curvature of the cells under one stamp, each worked out once.
+///
+/// Kept in atomics and not in cells so that the bricks of a stamp can be
+/// written across every core (2026-11-26); a load and a store of a relaxed
+/// atomic are a plain load and store on the machines this is built for.
 ///
 /// A voxel answers for the point of the surface nearest it, and the six or
 /// so voxels on a line through the band all answer for the same point. So
@@ -566,16 +572,16 @@ pub(super) struct Curvatures<'a> {
     region: &'a FieldRegion,
     lo: IVec3,
     size: IVec3,
-    cells: &'a [std::cell::Cell<f32>],
+    cells: &'a [AtomicU32],
 }
 
 impl<'a> Curvatures<'a> {
-    pub(super) fn over(region: &'a FieldRegion, cells: &'a mut Vec<std::cell::Cell<f32>>) -> Self {
+    pub(super) fn over(region: &'a FieldRegion, cells: &'a mut Vec<AtomicU32>) -> Self {
         let (lo, hi) = region.bounds();
         let size = hi - lo + IVec3::ONE;
         let count = (size.x * size.y * size.z) as usize;
         cells.clear();
-        cells.resize(count, std::cell::Cell::new(NOT_ASKED));
+        cells.resize_with(count, || AtomicU32::new(NOT_ASKED.to_bits()));
         Self { region, lo, size, cells }
     }
 
@@ -589,7 +595,7 @@ impl<'a> Curvatures<'a> {
             &self.cells
                 [(local.x + local.y * self.size.x + local.z * self.size.x * self.size.y) as usize]
         });
-        if let Some(known) = slot.map(std::cell::Cell::get)
+        if let Some(known) = slot.map(|slot| f32::from_bits(slot.load(Ordering::Relaxed)))
             && !known.is_nan()
         {
             return known;
@@ -597,8 +603,10 @@ impl<'a> Curvatures<'a> {
         let region = self.region;
         let cavity = crate::signals::cell_cavity(|x, y, z| region.get(cell + IVec3::new(x, y, z)))
             .unwrap_or(0.0);
+        // Two cores asking for the same cell at once each work it out, and
+        // get the same number: which of them stores it does not matter.
         if let Some(slot) = slot {
-            slot.set(cavity);
+            slot.store(cavity.to_bits(), Ordering::Relaxed);
         }
         cavity
     }

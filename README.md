@@ -617,6 +617,11 @@ On the studio branch there is more to measure with, and a record of what was
 measured: phase timings behind the Info toggle, a stroke that can be recorded
 and replayed for a table of what it cost (`BROKKR_RECORD`, `BROKKR_REPLAY`),
 and a stroke timed with no window. See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
+Sculpting and painting are spread over every thread the machine has.
+*Worker threads* in Preferences sets how many, and *Measure* times a
+stroke's kind of work at each count and picks the fewest that are as
+fast as the most; `cargo run --release -p brokkr-core --example cores`
+does the same from a terminal.
 
 ### Brushes
 

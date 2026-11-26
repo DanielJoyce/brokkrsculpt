@@ -305,10 +305,16 @@ impl Brokkr {
             }
             None
         };
-        let corners: Vec<Option<glam::Vec3>> = (0..=cells)
-            .flat_map(|j| (0..=cells).map(move |i| (i, j)))
-            .map(|(i, j)| corner(i, j))
-            .collect();
+        // Across every core: a cast is a few dozen samples of the field,
+        // and 2401 of them on one core were most of a move of a large decal
+        // (17 ms at 41 mm across on four cores, the same on one).
+        let corners: Vec<Option<glam::Vec3>> = {
+            use rayon::prelude::*;
+            (0..(cells + 1) * (cells + 1))
+                .into_par_iter()
+                .map(|at| corner(at % (cells + 1), at / (cells + 1)))
+                .collect()
+        };
         let at = |i: usize, j: usize| corners[j * (cells + 1) + i];
         let mut triangles = Vec::new();
         for j in 0..cells {

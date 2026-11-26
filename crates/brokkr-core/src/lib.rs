@@ -24,6 +24,8 @@ pub mod apron;
 pub mod body;
 pub mod brick;
 pub mod brush;
+// How many worker threads this machine's work wants. See `calibrate.rs`.
+pub mod calibrate;
 pub mod cavity;
 pub mod clip;
 pub mod colour;

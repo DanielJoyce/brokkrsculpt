@@ -647,6 +647,45 @@ fn local_of(index: usize) -> IVec3 {
     )
 }
 
+/// One brick of a paint edit made across cores: which brick, the box of it
+/// to edit, and what the edit keeps for that brick alone. See
+/// [`Volume::edit_paint_across_cores`].
+pub(crate) struct PaintVisit<T> {
+    pub coord: BrickCoord,
+    pub lo: IVec3,
+    pub hi: IVec3,
+    pub state: T,
+}
+
+/// A brick lifted out of the paint for an edit across cores, and what is
+/// known of it.
+struct Lifted<'a> {
+    /// The paint brick, if there was one.
+    brick: Option<PaintBrick>,
+    /// The field's brick, which says which voxels can take paint.
+    field: &'a Brick,
+    /// What the open stroke recorded of it, if it has: `Some(None)` for a
+    /// brick that had no paint when the stroke began.
+    recorded: Option<&'a Option<PaintBrick>>,
+    protection: crate::mask::MaskSlab<'a>,
+    /// Whether a stroke is open and has yet to record this brick.
+    unrecorded: bool,
+    /// Set by the edit: whether it changed anything, the brick as it was
+    /// for the undo record, and what it was before it was made dense, to
+    /// put back if nothing changed.
+    changed: bool,
+    prior: Option<PaintBrick>,
+    was: Was,
+}
+
+/// What a lifted paint brick was, before an edit made it dense.
+#[derive(Clone, Copy)]
+enum Was {
+    Absent,
+    Uniform(Rgba),
+    Dense,
+}
+
 impl Volume {
     /// Edit the paint of every paintable voxel in the inclusive voxel box
     /// `lo..=hi`.
@@ -668,6 +707,196 @@ impl Volume {
         self.edit_paint_over(lo, hi, |voxel, position, held, _, protection| {
             edit(voxel, position, held, protection)
         });
+    }
+
+    /// [`Volume::edit_paint_over`] for edits a brick at a time, the bricks
+    /// written across every core.
+    ///
+    /// Each visit is one brick, at most once, with a box inside it and a
+    /// state of its own that the edit is handed with every voxel of it (a
+    /// stroke's coverage of that brick, a spray's amounts), and the voxel's
+    /// index in its brick after the voxel. The paint
+    /// bricks are lifted out of the field, written on whichever core, and
+    /// put back with the undo record, as the sculpting brushes' edit is
+    /// (`edit_planned_across_cores` in `volume.rs`). What each voxel holds
+    /// afterwards is what the serial edit leaves, to the bit, since each
+    /// brick is written by one hand from what it held and the edit's own
+    /// arguments.
+    ///
+    /// Measured on 2026-11-26, before this: a 10 mm paint brush took 12.8
+    /// ms a move on one thread and 9.8 on four, the airbrush 12.8 and 8.6,
+    /// where a sculpting stroke's edit took 3.6 times less on four. See
+    /// `docs/PERFORMANCE.md`.
+    pub(crate) fn edit_paint_across_cores<T: Send>(
+        &mut self,
+        visits: &mut [PaintVisit<T>],
+        edit: impl Fn(&mut T, IVec3, usize, Vec3, Rgba, Rgba, u8) -> Rgba + Sync,
+    ) {
+        debug_assert!(
+            {
+                let mut seen: Vec<IVec3> = visits.iter().map(|visit| visit.coord.0).collect();
+                seen.sort_unstable_by_key(|coord| (coord.z, coord.y, coord.x));
+                seen.windows(2).all(|pair| pair[0] != pair[1])
+            },
+            "each brick at most once"
+        );
+        let voxel_size = self.voxel_size();
+        let parts = self.paint_parts();
+        let PaintParts { bricks, mask, paint, recorder } = parts;
+        let recording = recorder.is_some();
+        let recorded_map = recorder.as_ref();
+
+        // Lifted out on this thread: a pointer move each.
+        let mut lifted: Vec<Option<Lifted<'_>>> = visits
+            .iter()
+            .map(|visit| {
+                let field = bricks.get(&visit.coord)?;
+                if let Brick::Uniform(value) = field
+                    && !PaintField::paintable(*value)
+                {
+                    return None;
+                }
+                let recorded = recorded_map.and_then(|map| map.get(&visit.coord));
+                Some(Lifted {
+                    brick: paint.bricks.remove(&visit.coord),
+                    field,
+                    recorded,
+                    protection: mask.slab(visit.coord),
+                    unrecorded: recording && recorded.is_none(),
+                    changed: false,
+                    prior: None,
+                    was: Was::Absent,
+                })
+            })
+            .collect();
+
+        // Written across every core: each brick is its own memory, and the
+        // edit only reads what is shared.
+        let write = |visit: &mut PaintVisit<T>, lifted: &mut Option<Lifted<'_>>| {
+            let Some(lifted) = lifted.as_mut() else {
+                return;
+            };
+            let origin = visit.coord.origin();
+            lifted.was = match &lifted.brick {
+                None => Was::Absent,
+                Some(PaintBrick::Uniform(rgba)) => Was::Uniform(*rgba),
+                Some(PaintBrick::Dense(_)) => Was::Dense,
+            };
+            // A dense brick's copy for the undo record, taken before the
+            // edit and only by a stroke that has not recorded it yet: the
+            // copy is 131 KB.
+            if lifted.unrecorded && matches!(lifted.was, Was::Dense) {
+                lifted.prior = lifted.brick.clone();
+            }
+            let brick = lifted.brick.get_or_insert(PaintBrick::Uniform(BARE));
+            let data = brick.make_dense();
+            for z in visit.lo.z..=visit.hi.z {
+                for y in visit.lo.y..=visit.hi.y {
+                    for x in visit.lo.x..=visit.hi.x {
+                        let voxel = IVec3::new(x, y, z);
+                        let local = voxel - origin;
+                        let index =
+                            brick_index(local.x as usize, local.y as usize, local.z as usize);
+                        let paintable = match lifted.field {
+                            Brick::Uniform(_) => true,
+                            Brick::Dense(values) => PaintField::paintable(values[index]),
+                        };
+                        if !paintable {
+                            continue;
+                        }
+                        let held = data[index];
+                        let before = match lifted.recorded {
+                            None => held,
+                            Some(None) => BARE,
+                            Some(Some(PaintBrick::Uniform(rgba))) => *rgba,
+                            Some(Some(PaintBrick::Dense(was))) => was[index],
+                        };
+                        let byte = lifted.protection.byte_at(index);
+                        let position = voxel.as_vec3() * voxel_size;
+                        let rgba = stored(edit(
+                            &mut visit.state,
+                            voxel,
+                            index,
+                            position,
+                            held,
+                            before,
+                            mask.resolve(byte),
+                        ));
+                        if rgba != held {
+                            data[index] = rgba;
+                            lifted.changed = true;
+                        }
+                    }
+                }
+            }
+        };
+        if visits.len() >= 2 {
+            visits.par_iter_mut().zip(lifted.par_iter_mut()).for_each(|(visit, one)| {
+                write(visit, one);
+            });
+        } else {
+            for (visit, one) in visits.iter_mut().zip(lifted.iter_mut()) {
+                write(visit, one);
+            }
+        }
+
+        // Put back on this thread, with the undo record. A brick the edit
+        // did not change goes back as it was, uniform or absent.
+        let mut changed_any = false;
+        let mut priors = Vec::new();
+        // Each changed brick's own box and no more: the box round all of
+        // them took in every brick between, which were remeshed for
+        // nothing.
+        let mut reach: Vec<(IVec3, IVec3)> = Vec::new();
+        for (visit, one) in visits.iter().zip(lifted) {
+            let Some(one) = one else {
+                continue;
+            };
+            let coord = visit.coord;
+            let Some(brick) = one.brick else {
+                continue;
+            };
+            if one.changed {
+                changed_any = true;
+                if one.unrecorded {
+                    // The brick as it was: absent, uniform, or this one
+                    // before the edit, which the edit changed only where it
+                    // said so; a copy of a dense brick is what the serial
+                    // edit keeps too, and only once a stroke a brick.
+                    let prior = match one.was {
+                        Was::Absent => None,
+                        Was::Uniform(rgba) => Some(PaintBrick::Uniform(rgba)),
+                        Was::Dense => one.prior,
+                    };
+                    priors.push((coord, prior));
+                }
+                paint.bricks.insert(coord, brick);
+                reach.push((visit.lo, visit.hi));
+                continue;
+            }
+            // Unchanged: as it was. A brick that was not there is not put
+            // there; one that was uniform is uniform again.
+            match one.was {
+                Was::Absent => {}
+                Was::Uniform(rgba) => {
+                    paint.bricks.insert(coord, PaintBrick::Uniform(rgba));
+                }
+                Was::Dense => {
+                    paint.bricks.insert(coord, brick);
+                }
+            }
+        }
+        if let Some(recorder) = recorder.as_mut() {
+            for (coord, prior) in priors {
+                recorder.insert(coord, prior);
+            }
+        }
+        if changed_any {
+            paint.touch();
+        }
+        for (lo, hi) in reach {
+            self.mark_dirty_voxel_range(lo, hi);
+        }
     }
 
     /// [`Volume::edit_paint`] for an edit that works from the paint as it

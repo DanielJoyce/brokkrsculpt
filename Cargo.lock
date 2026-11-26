@@ -433,6 +433,7 @@ dependencies = [
  "minisign-verify",
  "pollster",
  "proptest",
+ "rayon",
  "rfd",
  "ring",
  "roxmltree",

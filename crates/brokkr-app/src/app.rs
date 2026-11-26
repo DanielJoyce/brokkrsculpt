@@ -18,6 +18,9 @@ mod airbrush;
 mod coats;
 // The Decal touch. See `app/decal.rs`.
 mod decal;
+// How many worker threads, and a measurement of it. See `app/cores.rs`.
+pub(crate) mod cores;
+pub use cores::ThreadsChoice;
 // The card a paint is made or changed in. See `app/designer.rs`.
 mod designer;
 // What a drybrush would catch, under the ring. See `app/dry_preview.rs`.
@@ -988,6 +991,8 @@ pub struct Brokkr {
     overhang: overhang::OverhangState,
     /// The paint brush, painting in colour. See `app/painting.rs`.
     painting: painting::PaintingState,
+    /// The worker threads. See `app/cores.rs`.
+    cores: cores::CoresState,
     /// What a drybrush would catch, under the ring. See `app/dry_preview.rs`.
     dry_preview: dry_preview::DryPreview,
     /// How many texels on a side a baked texture is. See `app/paints.rs`.
@@ -2270,6 +2275,7 @@ impl Brokkr {
             form: form::FormState::default(),
             overhang: overhang::OverhangState::default(),
             painting: painting::PaintingState::default(),
+            cores: cores::CoresState::default(),
             dry_preview: dry_preview::DryPreview::default(),
             texture_size: paints::TEXTURE_SIZES[1],
             mask_tint: DEFAULT_MASK_TINT,
@@ -10721,6 +10727,8 @@ impl Brokkr {
             Message::Rack(message) => self.rack_changed(message),
             // See `app/designer.rs`.
             Message::Designer(message) => self.designer_changed(message),
+            // See `app/cores.rs`.
+            Message::Cores(message) => return self.cores_changed(message),
             Message::Airbrush(message) => self.airbrush_changed(message),
             Message::Coats(message) => self.coats_changed(message),
             Message::Decal(message) => return self.decal_changed(message),

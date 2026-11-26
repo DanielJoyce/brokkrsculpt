@@ -39,6 +39,9 @@ iced = { workspace = true, features = ["advanced", "wgpu", "debug", "canvas", "i
 # feed carries JPEG and PNG, and the render endpoint keeps a PNG a PNG.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 log.workspace = true
+# The core's own thread pool, already in the lockfile: what the application
+# sizes at start (`app/cores.rs`) and spreads the decal preview's casts over.
+rayon.workspace = true
 # The updater's signature check, and the only new crate the updater costs.
 # ZERO transitive dependencies -- Ed25519 and Blake2b are implemented inline in
 # about 2.5k lines, MIT. Version pinned exactly rather than caret-bounded:

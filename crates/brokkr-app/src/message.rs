@@ -449,6 +449,15 @@ pub enum RackMessage {
     Added(usize),
 }
 
+/// The worker threads, in Preferences. See `app/cores.rs`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CoresMessage {
+    Chosen(crate::app::ThreadsChoice),
+    /// Time the work with each count of threads.
+    Measure,
+    Measured(Vec<brokkr_core::calibrate::Trial>),
+}
+
 /// A change in the paint designer, the card a paint is made or changed
 /// in. See `app/designer.rs`.
 #[derive(Debug, Clone, PartialEq)]
@@ -1437,6 +1446,7 @@ pub enum Message {
     /// The racks of paints. See `app/rack.rs`.
     Rack(RackMessage),
     Designer(DesignerMessage),
+    Cores(CoresMessage),
     /// The airbrush. See `app/airbrush.rs`.
     Airbrush(AirbrushMessage),
     /// The one-click coats. See `app/coats.rs`.

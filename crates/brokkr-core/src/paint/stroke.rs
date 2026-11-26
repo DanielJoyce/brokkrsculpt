@@ -55,10 +55,10 @@ use contracts::{debug_ensures, debug_requires, test_ensures};
 use glam::{IVec3, Vec3};
 use rustc_hash::FxHashMap;
 
-use crate::brick::{BRICK_VOXELS, BrickCoord, NARROW_BAND, brick_index};
+use crate::brick::{BRICK_VOXELS, BrickCoord, NARROW_BAND};
 use crate::brush::{Brush, Flip, Stamp, Symmetry};
 use crate::mask::PROTECTED;
-use crate::paint::field::{Rgba, bricks_between};
+use crate::paint::field::{PaintVisit, Rgba, bricks_between};
 use crate::paint::touch::{Curvatures, Drybrush, Frame, Sponge, TouchScratch, gradient_at};
 use crate::paint::{linear, srgb};
 use crate::pattern::Prepared;
@@ -369,6 +369,30 @@ impl Sweep {
         Self { from: first.at, to: second.at, pressed, along, per_length, axis, radius }
     }
 
+    /// Whether any voxel of the brick at `coord` can be within reach.
+    ///
+    /// [`Sweep::reach`] takes a voxel a radius across the surface and a
+    /// radius above or below it at most, so nothing further than the
+    /// radius times the square root of two from the path is reached. A
+    /// brick whose middle is further than that and half its own diagonal
+    /// is not. Measured on 2026-11-26: a 10 mm stamp on a ball at a
+    /// sixteenth of a millimetre visited 762 bricks.
+    fn may_reach_brick(&self, coord: BrickCoord, voxel_size: f32) -> bool {
+        let half = crate::brick::BRICK_DIM as f32 * 0.5 * voxel_size;
+        let middle = (coord.origin().as_vec3() + Vec3::splat(crate::brick::BRICK_DIM as f32 * 0.5))
+            * voxel_size;
+        let path = self.to - self.from;
+        let length_squared = path.length_squared();
+        let t = if length_squared > 0.0 {
+            ((middle - self.from).dot(path) / length_squared).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let nearest = self.from + path * t;
+        let reach = self.radius * std::f32::consts::SQRT_2 + half * 3.0_f32.sqrt();
+        nearest.distance_squared(middle) <= reach * reach
+    }
+
     /// The box of the world the sweep can reach.
     fn bounds(&self) -> (Vec3, Vec3) {
         let extent = Vec3::splat(self.radius);
@@ -552,14 +576,31 @@ impl PaintStroke {
         let lay = *lay;
         let ready = Ready::of(lay.pigment);
 
-        for coord in bricks_between(BrickCoord::containing(lo).0, BrickCoord::containing(hi).0) {
-            let origin = coord.origin();
-            let from = lo.max(origin);
-            let to = hi.min(coord.max_voxel());
-            // Taken out for the stamp and put back after it, and only made
-            // when the stamp has something to lay in this brick.
-            let mut cover = coverage.remove(&coord);
-            volume.edit_paint_over(from, to, |voxel, position, held, before, protection| {
+        // Each brick of the stamp with its own coverage, taken out for the
+        // stamp and put back after it, the bricks written across every
+        // core (`Volume::edit_paint_across_cores`). A brick's coverage is
+        // only made when the stamp has something to lay in it.
+        let mut visits: Vec<PaintVisit<Option<Cover>>> =
+            bricks_between(BrickCoord::containing(lo).0, BrickCoord::containing(hi).0)
+                .filter_map(|coord| {
+                    let origin = coord.origin();
+                    let (from, to) = (lo.max(origin), hi.min(coord.max_voxel()));
+                    // A brick the sweep cannot reach is passed over: the
+                    // corners of the box round a stamp are most of it.
+                    if !sweep.may_reach_brick(coord, voxel_size) {
+                        return None;
+                    }
+                    (!from.cmpgt(to).any()).then(|| PaintVisit {
+                        coord,
+                        lo: from,
+                        hi: to,
+                        state: coverage.remove(&coord),
+                    })
+                })
+                .collect();
+        volume.edit_paint_across_cores(
+            &mut visits,
+            |cover, voxel, index, position, held, before, protection| {
                 let free = 1.0 - f32::from(protection) / f32::from(PROTECTED);
                 let (across, pressed) = sweep.reach(position);
                 let swept = falloff.weight(across) * pressed * free;
@@ -609,8 +650,6 @@ impl PaintStroke {
                 if most == 0 && deposit == 0 {
                     return held;
                 }
-                let local = voxel - origin;
-                let index = brick_index(local.x as usize, local.y as usize, local.z as usize);
                 let cover = cover.get_or_insert_with(Cover::nothing);
                 let was = cover.at(index);
                 cover.most[index] = cover.most[index].max(most);
@@ -623,9 +662,11 @@ impl PaintStroke {
                     return held;
                 }
                 ready.over(before, f32::from(wanted) / 255.0)
-            });
-            if let Some(cover) = cover {
-                coverage.insert(coord, cover);
+            },
+        );
+        for visit in visits {
+            if let Some(cover) = visit.state {
+                coverage.insert(visit.coord, cover);
             }
         }
     }

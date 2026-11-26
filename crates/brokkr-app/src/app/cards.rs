@@ -92,6 +92,8 @@ impl Brokkr {
                 .label("Welcome screen on startup")
                 .on_toggle(Message::WelcomeOnStartupSet)
                 .text_size(theme::LABEL_SIZE),
+            // See `app/cores.rs`.
+            self.cores_row(),
         ]
         .spacing(theme::S2);
         let card = container(
