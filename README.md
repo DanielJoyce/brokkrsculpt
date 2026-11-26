@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/DanielJoyce/brokkrsculpt/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/DanielJoyce/brokkrsculpt/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/DanielJoyce/hanisculpt/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/DanielJoyce/hanisculpt/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Licence: AGPL-3.0-only" src="https://img.shields.io/badge/licence-AGPL--3.0--only-blue">
   <img alt="Platforms: Linux, Windows, macOS" src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-informational">
   <img alt="Built with Rust" src="https://img.shields.io/badge/built%20with-Rust-orange">
@@ -42,10 +42,10 @@ It is free, open source, and **honestly not finished**. It is being built in the
 open by one person.
 
 <p align="center">
-  <strong><a href="https://github.com/DanielJoyce/brokkrsculpt/releases/tag/beta">⬇ Download the open beta</a></strong><br>
-  <a href="https://github.com/DanielJoyce/brokkrsculpt/releases/download/beta/HaniSculpt-Linux-x86_64.tar.gz">Linux</a> ·
-  <a href="https://github.com/DanielJoyce/brokkrsculpt/releases/download/beta/HaniSculpt-Windows-x86_64.zip">Windows</a> ·
-  <a href="https://github.com/DanielJoyce/brokkrsculpt/releases/download/beta/HaniSculpt-macOS-arm64.zip">macOS</a><br>
+  <strong><a href="https://github.com/DanielJoyce/hanisculpt/releases/tag/beta">⬇ Download the open beta</a></strong><br>
+  <a href="https://github.com/DanielJoyce/hanisculpt/releases/download/beta/HaniSculpt-Linux-x86_64.tar.gz">Linux</a> ·
+  <a href="https://github.com/DanielJoyce/hanisculpt/releases/download/beta/HaniSculpt-Windows-x86_64.zip">Windows</a> ·
+  <a href="https://github.com/DanielJoyce/hanisculpt/releases/download/beta/HaniSculpt-macOS-arm64.zip">macOS</a><br>
   <sub>Free, no account. Nothing is signed yet, so Windows and macOS will both
   warn you about it: <a href="#get-it">Get it</a> says exactly what to do.
   <a href="#what-works-on-which-platform">What works on which platform</a> says
@@ -141,14 +141,14 @@ without a menu of every combination.
 
 | Platform | Download |
 |---|---|
-| **Windows** (64-bit) | [HaniSculpt-Windows-x86_64.zip](https://github.com/DanielJoyce/brokkrsculpt/releases/download/beta/HaniSculpt-Windows-x86_64.zip) |
-| **macOS** (Apple silicon) | [HaniSculpt-macOS-arm64.zip](https://github.com/DanielJoyce/brokkrsculpt/releases/download/beta/HaniSculpt-macOS-arm64.zip) |
-| **Linux** (64-bit) | [HaniSculpt-Linux-x86_64.tar.gz](https://github.com/DanielJoyce/brokkrsculpt/releases/download/beta/HaniSculpt-Linux-x86_64.tar.gz) |
+| **Windows** (64-bit) | [HaniSculpt-Windows-x86_64.zip](https://github.com/DanielJoyce/hanisculpt/releases/download/beta/HaniSculpt-Windows-x86_64.zip) |
+| **macOS** (Apple silicon) | [HaniSculpt-macOS-arm64.zip](https://github.com/DanielJoyce/hanisculpt/releases/download/beta/HaniSculpt-macOS-arm64.zip) |
+| **Linux** (64-bit) | [HaniSculpt-Linux-x86_64.tar.gz](https://github.com/DanielJoyce/hanisculpt/releases/download/beta/HaniSculpt-Linux-x86_64.tar.gz) |
 
 Those links always point at the newest build, which is rebuilt from `main` on
 every change. The app updates itself after that, so this is a one-time
 download. If you would rather see the whole release, it is
-[here](https://github.com/DanielJoyce/brokkrsculpt/releases/tag/beta) — the
+[here](https://github.com/DanielJoyce/hanisculpt/releases/tag/beta) — the
 files named `update-…` there are what the built-in updater fetches, and you
 never need one by hand.
 
@@ -166,7 +166,7 @@ Or build it, which is what Linux development does anyway. You need a
 `rust-version` in the workspace manifest.
 
 ```fish
-git clone https://github.com/DanielJoyce/brokkrsculpt
+git clone https://github.com/DanielJoyce/hanisculpt
 cd hanisculpt
 cargo run --release -p hani-app
 ```
@@ -365,11 +365,11 @@ in exotic corner cases:
   big model sculpts happily at broad scale and resists fine detail. The finest
   setting is 0.03 mm, which is below what a resin printer resolves.
 
-## The studio branch
+## What HaniSculpt adds
 
-This is a fork, and its `feature/studio` branch carries work that is not
-upstream's: sculpting and painting taken further, **so that there is more
-worth printing**. It is still a printing application. Everything above is
+HaniSculpt began as a fork of BrokkrSculpt (`MakerViking/brokkrsculpt`) and
+has been its own project since 2026-11-26. What it adds is sculpting and
+painting taken further, **so that there is more worth printing**. It is still a printing application. Everything above is
 true of it too, and what it adds is this.
 
 - **Export detail.** Full, Fine, Standard or Draft: the mesh is thinned to a

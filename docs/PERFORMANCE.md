@@ -1,7 +1,7 @@
 # Performance: how it is measured, and what was found
 
 The survey that began this is in the tracking ticket,
-[DanielJoyce/brokkrsculpt#62](https://github.com/DanielJoyce/brokkrsculpt/issues/62),
+[DanielJoyce/hanisculpt#62](https://github.com/DanielJoyce/hanisculpt/issues/62),
 and the tickets it links. This document is where the instruments are
 described and where each change's before and after is written down.
 

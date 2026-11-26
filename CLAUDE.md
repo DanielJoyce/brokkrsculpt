@@ -1,7 +1,8 @@
 # Working in this repository
 
-Notes for Claude sessions on this fork (`DanielJoyce/brokkrsculpt`, a fork
-of `MakerViking/brokkrsculpt`). The design, the state of each stage and
+Notes for Claude sessions on HaniSculpt (`DanielJoyce/hanisculpt`). It
+began as a fork of `MakerViking/brokkrsculpt`; the maintainer severed the
+two on 2026-11-26. The design, the state of each stage and
 what was measured are in [`docs/STUDIO-PLAN.md`](docs/STUDIO-PLAN.md):
 read its "Where it stands" table first.
 
@@ -38,7 +39,8 @@ completion instead of pausing or stopping. In practice:
 
 What it does not cover, and still wants asking:
 
-- Anything on `main`, or on the upstream repository.
+- Anything on `main`. (On 2026-11-26 the maintainer said *"we can merge to
+  main"*, for merging `feature/studio` into it that day.)
 - Force pushes, history rewrites, deleting branches or files that are not
   this work's own.
 - Removing a feature the maintainer has said to keep. (Filament painting

@@ -93,7 +93,7 @@ const TRUSTED_KEYS: &[(u32, &str)] = &[
 /// they do not control. Two independent things must fail, and even then the
 /// worst outcome is a downgrade to one of our own previously published builds,
 /// because every digest they sign still has to match bytes we published.
-const DOWNLOAD_PREFIX: &str = "https://github.com/DanielJoyce/brokkrsculpt/releases/download/beta/";
+const DOWNLOAD_PREFIX: &str = "https://github.com/DanielJoyce/hanisculpt/releases/download/beta/";
 
 /// The absolute ceiling on a payload, compiled in and enforced **first**.
 ///
@@ -109,9 +109,9 @@ const MAX_UPDATE_BYTES: u64 = 128 * 1024 * 1024;
 /// API calls. Asset URLs go through the CDN with no rate limit; the API poll
 /// this replaces had sixty an hour per address.
 const MANIFEST_URL: &str =
-    "https://github.com/DanielJoyce/brokkrsculpt/releases/download/beta/latest.conf";
+    "https://github.com/DanielJoyce/hanisculpt/releases/download/beta/latest.conf";
 const SIGNATURE_URL: &str =
-    "https://github.com/DanielJoyce/brokkrsculpt/releases/download/beta/latest.conf.minisig";
+    "https://github.com/DanielJoyce/hanisculpt/releases/download/beta/latest.conf.minisig";
 
 /// Absolute caps on the two things fetched before anything is trusted.
 ///

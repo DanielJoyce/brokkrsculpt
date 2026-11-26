@@ -1384,7 +1384,7 @@ fn straddles((low, high): (Vec3, Vec3), axis: MirrorAxis) -> bool {
 }
 
 /// Where bug reports go.
-pub const ISSUE_URL: &str = "https://github.com/DanielJoyce/brokkrsculpt/issues/new";
+pub const ISSUE_URL: &str = "https://github.com/DanielJoyce/hanisculpt/issues/new";
 
 /// The commit this was built from, when the build system supplied one.
 ///

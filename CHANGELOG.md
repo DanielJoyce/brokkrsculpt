@@ -2,7 +2,7 @@
 
 What changed in each HaniSculpt build, newest first. Everything under
 **Unreleased** ships in the next rolling beta, and the release notes on the
-[beta release](https://github.com/MakerViking/brokkrsculpt/releases/tag/beta)
+[beta release](https://github.com/DanielJoyce/hanisculpt/releases/tag/beta)
 are generated from that section.
 
 Every green `main` produces a build, so most entries land under Unreleased and
@@ -19,7 +19,7 @@ what the application does to your model does, even when it is a fix.
 
 This file starts on 2026-08-29, the day of the first public build. For anything
 before it, see the
-[commit history](https://github.com/MakerViking/brokkrsculpt/commits/main).
+[commit history](https://github.com/DanielJoyce/hanisculpt/commits/main).
 
 ## Unreleased
 
@@ -43,7 +43,7 @@ signed yet, so both Windows and macOS will warn you about the download — the
 release notes quote each warning and say what to do about it.
 
 The three are not equally finished, and
-[the README says specifically what is unproven on each](https://github.com/MakerViking/brokkrsculpt#what-works-on-which-platform).
+[the README says specifically what is unproven on each](https://github.com/DanielJoyce/hanisculpt#what-works-on-which-platform).
 Linux is where this is built and used every day. Windows and macOS compile from
 the same commit and pass the same suite, but have had far less time in front of
 real hardware.
