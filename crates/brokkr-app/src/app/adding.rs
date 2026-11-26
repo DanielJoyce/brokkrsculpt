@@ -1061,6 +1061,12 @@ impl Brokkr {
     /// What a drag does with the insert in hand, for the status bar. See
     /// `app/cards.rs`.
     pub(super) fn insert_prompt(&self) -> Option<&'static str> {
+        // Only while a drag would add it: with the cut or the mask in hand,
+        // the prompt hid every status line they wrote (seen on the screen,
+        // 2026-11-26, a ring cut's refusal unread under it).
+        if self.tool != super::Tool::Sculpt {
+            return None;
+        }
         let what = self.inserts.what?;
         Some(match (what, self.inserts.separate) {
             (Insert::Laid, _) => "Drag along the model; the brush's radius is its thickness",

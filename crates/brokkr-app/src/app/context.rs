@@ -124,6 +124,10 @@ impl Brokkr {
                 line = line.push(number);
             }
         }
+        // Ring or Line, and Split in two. See `app/ring_cut.rs`.
+        if self.tool == Tool::Cut {
+            line = line.push(self.ring_cut_bar());
+        }
         line = line.push(self.mirror_toggles());
         container(line.wrap().vertical_spacing(theme::S1))
             .padding(iced::Padding { top: 3.0, bottom: 3.0, left: theme::S3, right: theme::S3 })

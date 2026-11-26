@@ -449,6 +449,17 @@ pub enum RackMessage {
     Added(usize),
 }
 
+/// The ring cut. See `app/ring_cut.rs`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RingMessage {
+    /// Read the cut tool's drag as a ring or a line.
+    Way(crate::app::CutWay),
+    /// Split the piece the proposed cut severs into a body of its own.
+    Split,
+    /// Drop the proposed cut.
+    Dropped,
+}
+
 /// The worker threads, in Preferences. See `app/cores.rs`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CoresMessage {
@@ -1447,6 +1458,7 @@ pub enum Message {
     Rack(RackMessage),
     Designer(DesignerMessage),
     Cores(CoresMessage),
+    Ring(RingMessage),
     /// The airbrush. See `app/airbrush.rs`.
     Airbrush(AirbrushMessage),
     /// The one-click coats. See `app/coats.rs`.
