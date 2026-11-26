@@ -184,6 +184,18 @@ impl CavityView {
     }
 }
 
+/// The ring cut's see-through view: the piece kept solid, the rest
+/// screened. See [`brokkr_gpu::Uniforms::ghost`] and `app/ring_cut.rs`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct GhostView {
+    /// The plane whose front is kept: normal and offset.
+    pub plane: [f32; 4],
+    /// The sphere it is kept within: middle and radius.
+    pub keep: [f32; 4],
+    /// The share of everything else's pixels screened away. Zero is off.
+    pub amount: f32,
+}
+
 /// The hand off between the application and the render callbacks.
 #[derive(Debug, Default)]
 pub struct SharedFrame {
@@ -233,6 +245,8 @@ pub struct SharedFrame {
     paint: Mutex<PaintView>,
     /// How creases and edges are to be drawn. See [`CavityView`].
     cavity: Mutex<CavityView>,
+    /// The ring cut's see-through view. See [`GhostView`].
+    ghost: Mutex<GhostView>,
     /// The one thumbnail waiting to be drawn.
     ///
     /// **Capacity one, so the per-frame cap IS the type.** "At most one body
@@ -486,6 +500,17 @@ impl SharedFrame {
     /// Replace what the shader is told about paint. See [`PaintView`].
     pub fn set_paint_view(&self, view: PaintView) {
         *self.paint.lock().expect("shared frame poisoned") = view;
+    }
+
+    /// Replace the ring cut's see-through view. See [`GhostView`].
+    pub fn set_ghost_view(&self, view: GhostView) {
+        *self.ghost.lock().expect("shared frame poisoned") = view;
+    }
+
+    /// What the renderer will be told of the see-through view.
+    #[cfg(test)]
+    pub fn ghost_view(&self) -> GhostView {
+        *self.ghost.lock().expect("shared frame poisoned")
     }
 
     /// Replace what the shader is told about creases. See [`CavityView`].
@@ -1162,6 +1187,7 @@ impl shader::Primitive for SculptPrimitive {
         let mask = *shared.mask.lock().expect("shared frame poisoned");
         let paint = *shared.paint.lock().expect("shared frame poisoned");
         let cavity = *shared.cavity.lock().expect("shared frame poisoned");
+        let ghost = *shared.ghost.lock().expect("shared frame poisoned");
         let aspect = bounds.width / bounds.height.max(1.0);
         let view = camera.view();
         let view_projection = camera.projection(aspect) * view;
@@ -1178,6 +1204,10 @@ impl shader::Primitive for SculptPrimitive {
                 (true, true) => 2,
             },
             cavity: cavity.packed(),
+            // The ring cut's see-through view. See `app/ring_cut.rs`.
+            ghost_plane: ghost.plane,
+            ghost_keep: ghost.keep,
+            ghost: [ghost.amount, 0.0, 0.0, 0.0],
             palette: paint.palette,
             paints: paint.paints,
         };

@@ -427,6 +427,9 @@ fn uniforms(distance: f32) -> Uniforms {
         mask_tint: 1.0,
         paint_shown: 1,
         cavity: [0.0; 4],
+        ghost_plane: [0.0; 4],
+        ghost_keep: [0.0; 4],
+        ghost: [0.0; 4],
         palette: red_palette(),
         paints: brokkr_gpu::PaintBlock::default(),
     }
@@ -2664,6 +2667,9 @@ fn a_paint_is_drawn_with_its_wash_in_the_creases_and_its_highlight_on_the_edges(
     };
     let with = |paints: PaintBlock, palette: [[f32; 4]; PALETTE_SLOTS]| Uniforms {
         cavity: [0.0, 1.0, 0.0, 0.0],
+        ghost_plane: [0.0; 4],
+        ghost_keep: [0.0; 4],
+        ghost: [0.0; 4],
         paints,
         palette,
         ..uniforms(distance)
@@ -3452,4 +3458,66 @@ fn a_metal_layer_is_drawn_with_far_more_contrast_than_paint() {
         .max_by_key(|pixel| u32::from(pixel[0]) + u32::from(pixel[1]) + u32::from(pixel[2]))
         .expect("pixels");
     assert!(brightest[0] > brightest[2] + 20, "the metal's highlight is white, {brightest:?}");
+}
+
+/// The ring cut's see-through view (`docs/CUT-RING.md`, stage 2). Off, a
+/// ball is drawn as it always was. Fully screened past a plane through its
+/// middle, the half kept is drawn and the other half is not; half screened,
+/// about half that half's pixels are drawn, in a pattern, so what is behind
+/// shows through.
+#[test]
+fn the_ring_cuts_see_through_view_screens_all_but_the_piece() {
+    let Some(harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the see-through test");
+        return;
+    };
+    let distance = MODEL_RADIUS * 3.0;
+    let mut renderer = SculptRenderer::new(&harness.device, &harness.queue, TARGET_FORMAT);
+    renderer.resize(&harness.device, WIDTH, HEIGHT);
+    let mut sphere = Volume::new(VOXEL_SIZE);
+    sphere.seed_sphere(Vec3::ZERO, MODEL_RADIUS);
+    upload_all(&mut renderer, &harness.device, &harness.queue, &mut sphere);
+    let off = uniforms(distance);
+    renderer.write_uniforms(&harness.queue, &off);
+    let plain = mask(&harness.frame(&renderer));
+
+    // Kept: the right of the picture, the side of the plane through the
+    // ball's middle that holds the line of sight and the camera's up.
+    let right = view_matrix(distance).row(0).truncate().normalize();
+    let keep = |amount: f32| Uniforms {
+        ghost_plane: [right.x, right.y, right.z, 0.0],
+        ghost_keep: [0.0, 0.0, 0.0, MODEL_RADIUS * 4.0],
+        ghost: [amount, 0.0, 0.0, 0.0],
+        ..off
+    };
+    renderer.write_uniforms(&harness.queue, &keep(0.0));
+    assert_eq!(mask(&harness.frame(&renderer)), plain, "switched off, the picture changed");
+
+    let halves = |drawn: &[bool]| {
+        let (mut left, mut right) = (0_usize, 0_usize);
+        for (at, lit) in drawn.iter().enumerate() {
+            if *lit {
+                if (at as u32 % WIDTH) < WIDTH / 2 { left += 1 } else { right += 1 }
+            }
+        }
+        (left, right)
+    };
+    let (plain_left, plain_right) = halves(&plain);
+    renderer.write_uniforms(&harness.queue, &keep(1.0));
+    let screened = harness.frame(&renderer);
+    dump("ghost-full", &screened);
+    let (left, right) = halves(&mask(&screened));
+    let (kept, gone, kept_plain) = (right, left, plain_right);
+    let _ = plain_left;
+    assert!(kept * 10 >= kept_plain * 9, "the kept half lost pixels: {kept} of {kept_plain}");
+    assert!(gone * 20 < kept_plain, "the screened half was drawn: {gone} pixels");
+
+    renderer.write_uniforms(&harness.queue, &keep(0.5));
+    let half = harness.frame(&renderer);
+    dump("ghost-half", &half);
+    let (partly, _) = halves(&mask(&half));
+    assert!(
+        partly * 4 > kept_plain && partly * 4 < kept_plain * 3,
+        "half screened drew {partly} of about {kept_plain} pixels"
+    );
 }

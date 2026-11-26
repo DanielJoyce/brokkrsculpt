@@ -483,6 +483,10 @@ impl ThumbnailAtlas {
             // carries the signal only if the viewport's does, so this costs
             // nothing when it does not.
             cavity: [0.0, crease_gain, 0.0, 0.0],
+            // A thumbnail is of the body: nothing screened.
+            ghost_plane: [0.0; 4],
+            ghost_keep: [0.0; 4],
+            ghost: [0.0; 4],
             palette: *palette,
             paints: *paints,
         };

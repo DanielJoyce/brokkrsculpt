@@ -112,6 +112,14 @@ pub struct Uniforms {
     /// construction site has to name it, which is the property the note on
     /// this struct is about.
     pub cavity: [f32; 4],
+    /// The ring cut's see-through view (`docs/CUT-RING.md`, stage 2): the
+    /// plane, `[nx, ny, nz, offset]`, whose front is kept solid; the sphere,
+    /// `[x, y, z, radius]`, it is kept solid within; and in `ghost[0]` the
+    /// share of every other pixel screened away. Zero is off: every body
+    /// drawn as it always was.
+    pub ghost_plane: [f32; 4],
+    pub ghost_keep: [f32; 4],
+    pub ghost: [f32; 4],
     /// Linear RGB per filament slot, indexed by the stored slot byte.
     ///
     /// Slot 0 is never read -- unpainted is the clay. Every entry the
@@ -143,7 +151,7 @@ pub const PALETTE_SLOTS: usize = 16;
 pub const UNKNOWN_FILAMENT: [f32; 4] = [1.0, 0.0, 1.0, 1.0];
 
 const _: () = assert!(
-    size_of::<Uniforms>() == 160 + 16 * PALETTE_SLOTS + size_of::<crate::PaintBlock>(),
+    size_of::<Uniforms>() == 208 + 16 * PALETTE_SLOTS + size_of::<crate::PaintBlock>(),
     "Uniforms must stay in step with the WGSL struct in sculpt.wgsl"
 );
 
@@ -165,6 +173,10 @@ impl Default for Uniforms {
             // Off. Unlike the two above there is nothing a user needs warning
             // of here, and a mesh carries no cavity until something asks.
             cavity: [0.0; 4],
+            // Off: nothing is being cut.
+            ghost_plane: [0.0; 4],
+            ghost_keep: [0.0; 4],
+            ghost: [0.0; 4],
             palette: [UNKNOWN_FILAMENT; PALETTE_SLOTS],
             paints: crate::PaintBlock::default(),
         }

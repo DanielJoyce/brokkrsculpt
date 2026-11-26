@@ -458,6 +458,9 @@ pub enum RingMessage {
     Split,
     /// Drop the proposed cut.
     Dropped,
+    /// How much of the rest of the model is screened while a cut is
+    /// proposed, 0..=1.
+    SeeThrough(f32),
 }
 
 /// The worker threads, in Preferences. See `app/cores.rs`.

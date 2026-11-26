@@ -12,6 +12,20 @@
 //! *Split in two* on the bar makes the piece a body. Another ring replaces
 //! the proposal, and Escape drops it. *Line* on the bar is the cut as it
 //! was, which cuts straight through everything on purpose.
+//!
+//! # Stage 2: adjusting it
+//!
+//! The cut proposed is a ring of its own, which the maintainer asked to be
+//! positioned and turned ("people can just rotate it as needed"): a middle,
+//! a normal into the piece, an axis across, and a radius. Four handles are
+//! drawn on it: on its axis to slide it along, on its rim at the axis
+//! across and a quarter turn on to tilt it either way, and on the far side
+//! of its rim to widen or narrow it. Each move of a handle fits the cut to
+//! what it crosses again ([`brokkr_core::Volume::fit_to_islands`]) and
+//! draws the band again; a ring that fits nothing is drawn alone, in red,
+//! and Split in two waits. While a cut is proposed, everything but the
+//! piece's side of it is screened (*See-through* on the bar), so the band
+//! can be seen where the rest of the model hides it.
 
 use brokkr_core::NodeId;
 use brokkr_core::sever::{Disc, Unsevered};
@@ -45,24 +59,110 @@ struct Press {
     facing: Vec3,
 }
 
-/// The cut a ring proposes.
+/// The cut a ring proposes, and what it is adjusted by.
 #[derive(Debug, Clone)]
 pub(super) struct Proposal {
     pub body: NodeId,
-    pub disc: Disc,
-    /// Where the disc meets the surface, as a band lying on it: the line
-    /// the cut would leave, a quad a piece.
+    /// The ring as adjusted: its middle, its normal into the piece, the
+    /// axis across it that its first tilt handle is on, and its radius.
+    pub ring: Ring,
+    /// The cut fitted to what the ring crosses, or `None` where it fits
+    /// nothing.
+    pub disc: Option<Disc>,
+    /// Where the cut meets the surface, as a band lying on it: the line it
+    /// would leave, a quad a piece.
     contour: Vec<[Vec3; 4]>,
 }
 
+/// A ring in the model: what the handles move.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct Ring {
+    pub centre: Vec3,
+    pub normal: Vec3,
+    pub across: Vec3,
+    pub radius: f32,
+}
+
+impl Ring {
+    /// The other axis across, a quarter turn on from `across`.
+    fn beside(&self) -> Vec3 {
+        self.normal.cross(self.across).normalize_or_zero()
+    }
+
+    fn disc(&self) -> Disc {
+        Disc::round(self.centre, self.normal, self.radius)
+    }
+
+    /// Where each handle is.
+    fn handle(&self, which: Handle) -> Vec3 {
+        match which {
+            Handle::Slide => self.centre + self.normal * self.radius * 1.4,
+            Handle::Tilt => self.centre + self.across * self.radius,
+            Handle::Turn => self.centre + self.beside() * self.radius,
+            Handle::Size => self.centre - self.across * self.radius,
+        }
+    }
+}
+
+/// The handles on a proposed cut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Handle {
+    /// Along the normal: slides the cut.
+    Slide,
+    /// On the rim at the axis across: tilts the cut about the other axis.
+    Tilt,
+    /// On the rim a quarter turn on: tilts it about the first.
+    Turn,
+    /// On the far side of the rim: widens or narrows it.
+    Size,
+}
+
+impl Handle {
+    const ALL: [Handle; 4] = [Handle::Slide, Handle::Tilt, Handle::Turn, Handle::Size];
+}
+
+/// A handle being dragged: which, from where, and the ring as it was.
+#[derive(Debug, Clone, Copy)]
+struct Held {
+    which: Handle,
+    pixel: Vec2,
+    ring: Ring,
+}
+
 /// The ring cut's state.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct RingCut {
     pub way: CutWay,
     press: Option<Press>,
     radius_px: f32,
     pub proposal: Option<Proposal>,
+    held: Option<Held>,
+    /// How much of the rest of the model is screened while a cut is
+    /// proposed, 0..=1.
+    pub see_through: f32,
 }
+
+impl Default for RingCut {
+    fn default() -> Self {
+        Self {
+            way: CutWay::default(),
+            press: None,
+            radius_px: 0.0,
+            proposal: None,
+            held: None,
+            see_through: SEE_THROUGH,
+        }
+    }
+}
+
+/// How much of the rest is screened unless set otherwise.
+const SEE_THROUGH: f32 = 0.6;
+/// How near a handle a press takes it, in pixels.
+const GRAB_PX: f32 = 12.0;
+/// How big a handle is drawn, in pixels.
+const HANDLE_PX: f32 = 6.0;
+const HANDLE: [f32; 4] = [1.0, 0.85, 0.3, 1.0];
+const MISFIT: [f32; 4] = [0.9, 0.2, 0.15, 0.9];
 
 /// Segments round the ring and the disc as they are drawn.
 const SEGMENTS: usize = 64;
@@ -87,6 +187,28 @@ impl Brokkr {
     pub(super) fn ring_pressed(&mut self, pixel: Vec2) {
         self.ring_cut.press = None;
         self.ring_cut.radius_px = 0.0;
+        self.ring_cut.held = None;
+        // A handle of the cut proposed, if the press is on one.
+        if let Some(proposal) = &self.ring_cut.proposal {
+            let ring = proposal.ring;
+            let nearest = Handle::ALL
+                .into_iter()
+                .filter_map(|which| {
+                    let at = super::measure::to_pixels(
+                        &self.camera,
+                        ring.handle(which),
+                        self.viewport_size,
+                    )?;
+                    Some((which, at.distance(pixel)))
+                })
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+            if let Some((which, distance)) = nearest
+                && distance <= GRAB_PX
+            {
+                self.ring_cut.held = Some(Held { which, pixel, ring });
+                return;
+            }
+        }
         let Some((body, hit)) = self.pick(pixel) else {
             self.status = "start the ring on the model".to_string();
             return;
@@ -99,6 +221,10 @@ impl Brokkr {
 
     /// A move of the ring: its radius.
     pub(super) fn ring_moved(&mut self, pixel: Vec2) {
+        if let Some(held) = self.ring_cut.held {
+            self.move_handle(held, pixel);
+            return;
+        }
         let Some(press) = self.ring_cut.press else {
             return;
         };
@@ -108,6 +234,9 @@ impl Brokkr {
 
     /// The ring let go: the cut it proposes.
     pub(super) fn ring_released(&mut self) {
+        if self.ring_cut.held.take().is_some() {
+            return;
+        }
         let Some(press) = self.ring_cut.press.take() else {
             return;
         };
@@ -140,10 +269,83 @@ impl Brokkr {
             self.refresh_overlay();
             return;
         };
-        let width = BAND_PX * self.world_per_pixel(disc.centre);
-        let contour = contour(volume, &disc, width);
-        self.ring_cut.proposal = Some(Proposal { body: press.body, disc, contour });
+        // The ring the handles move: the cut's plane and middle, its normal
+        // turned into the piece, at the radius the ring was drawn.
+        let normal =
+            if piece_is_in_front(volume, &disc, radius) { disc.normal } else { -disc.normal };
+        let ring =
+            Ring { centre: disc.centre, normal, across: normal.any_orthonormal_vector(), radius };
+        self.ring_cut.proposal =
+            Some(Proposal { body: press.body, ring, disc: None, contour: Vec::new() });
+        self.fit_the_ring();
         self.status = format!("a ring round {:.1} mm", radius * 2.0);
+        self.refresh_overlay();
+    }
+
+    /// Fit the proposed ring to what it crosses, and its band, again.
+    fn fit_the_ring(&mut self) {
+        let Some(proposal) = &self.ring_cut.proposal else {
+            return;
+        };
+        let (body, ring) = (proposal.body, proposal.ring);
+        let Some(volume) = self.doc.volume(body) else {
+            return;
+        };
+        let disc = volume.fit_to_islands(&ring.disc());
+        let width = BAND_PX * self.world_per_pixel(ring.centre);
+        let band = disc.as_ref().map(|disc| contour(volume, disc, width)).unwrap_or_default();
+        if let Some(proposal) = self.ring_cut.proposal.as_mut() {
+            proposal.disc = disc;
+            proposal.contour = band;
+        }
+    }
+
+    /// A handle dragged to `pixel`: the ring moved from where it was when
+    /// the handle was taken, by the drag's pixels measured along the way
+    /// the handle moves on the screen.
+    fn move_handle(&mut self, held: Held, pixel: Vec2) {
+        let ring = held.ring;
+        let size = self.viewport_size;
+        let on_screen = |point: Vec3| super::measure::to_pixels(&self.camera, point, size);
+        let drag = pixel - held.pixel;
+        // How far along `way` (from `from`, a radius long in the model) the
+        // drag went, in radii.
+        let along = |from: Vec3, way: Vec3| -> Option<f32> {
+            let (a, b) = (on_screen(from)?, on_screen(from + way * ring.radius)?);
+            let span = b - a;
+            let length = span.length();
+            (length > 1.0).then(|| drag.dot(span / length) / length)
+        };
+        let moved = match held.which {
+            Handle::Slide => along(ring.centre, ring.normal).map(|radii| Ring {
+                centre: ring.centre + ring.normal * radii * ring.radius,
+                ..ring
+            }),
+            Handle::Tilt => along(ring.handle(Handle::Tilt), ring.normal).map(|turn| {
+                let (sin, cos) = turn.sin_cos();
+                Ring {
+                    normal: (ring.normal * cos - ring.across * sin).normalize(),
+                    across: (ring.across * cos + ring.normal * sin).normalize(),
+                    ..ring
+                }
+            }),
+            Handle::Turn => along(ring.handle(Handle::Turn), ring.normal).map(|turn| {
+                let (sin, cos) = turn.sin_cos();
+                let beside = ring.beside();
+                Ring { normal: (ring.normal * cos - beside * sin).normalize(), ..ring }
+            }),
+            Handle::Size => along(ring.handle(Handle::Size), -ring.across).map(|grown| Ring {
+                radius: (ring.radius * (1.0 + grown)).max(self.doc.voxel_size() * 4.0),
+                ..ring
+            }),
+        };
+        let Some(moved) = moved else {
+            return;
+        };
+        if let Some(proposal) = self.ring_cut.proposal.as_mut() {
+            proposal.ring = moved;
+        }
+        self.fit_the_ring();
         self.refresh_overlay();
     }
 
@@ -165,6 +367,7 @@ impl Brokkr {
                 self.ring_cut.proposal = None;
                 self.ring_cut.press = None;
             }
+            RingMessage::SeeThrough(amount) => self.ring_cut.see_through = amount.clamp(0.0, 1.0),
         }
         self.refresh_overlay();
     }
@@ -185,13 +388,17 @@ impl Brokkr {
         let Some(proposal) = self.ring_cut.proposal.clone() else {
             return;
         };
+        let Some(disc) = proposal.disc else {
+            self.status = "not split: the ring is not round a part where it is".to_string();
+            return;
+        };
         let source = proposal.body;
         let name = self.doc.node(source).map(|node| node.name.clone()).unwrap_or_default();
         if let Some(why) = self.doc.split_guard(source) {
             self.status = format!("could not split {name}: {why}");
             return;
         }
-        match self.doc.sever(source, &proposal.disc) {
+        match self.doc.sever(source, &disc) {
             Ok(outcome) => {
                 self.ring_cut.proposal = None;
                 self.shared.forget_body(source);
@@ -223,6 +430,7 @@ impl Brokkr {
     /// The ring being dragged, or the cut it proposed, over the model.
     pub(super) fn add_ring_preview(&self, batch: &mut brokkr_gpu::OverlayBatch) {
         if self.tool != super::Tool::Cut {
+            self.publish_ghost();
             return;
         }
         if let Some(press) = self.ring_cut.press
@@ -239,14 +447,65 @@ impl Brokkr {
         }
         // The cut proposed, as a band on the surface where it would part
         // it: asked for by the maintainer on 2026-11-26 ("drag a rubber band
-        // on the surface ... the disc projects down to a band"). The disc it
-        // comes of is not drawn; inside the model it was out of sight anyway.
+        // on the surface ... the disc projects down to a band"), with the
+        // ring it is adjusted by and its handles.
         if let Some(proposal) = &self.ring_cut.proposal {
             for [a, b, c, d] in &proposal.contour {
                 batch.push_triangle(*a, *b, *c, BAND);
                 batch.push_triangle(*a, *c, *d, BAND);
             }
+            let ring = proposal.ring;
+            let rim = if proposal.disc.is_some() { RING } else { MISFIT };
+            circle(batch, ring.centre, ring.across, ring.beside(), ring.radius, rim);
+            batch.push_line(ring.centre, ring.handle(Handle::Slide), RING);
+            let toward_eye = (self.camera.eye() - ring.centre).normalize_or(ring.normal);
+            let (u, v) = toward_eye.any_orthonormal_pair();
+            for which in Handle::ALL {
+                let half = HANDLE_PX * self.world_per_pixel(ring.handle(which));
+                // Lifted toward the eye: on the rim they sit where it meets
+                // the surface, and the surface hid three of the four (seen
+                // on the screen).
+                // Along its own line of sight, so that it stays where it is
+                // on the screen: lifted along one shared direction, those
+                // off to the side of the view slid off the rim.
+                let point = ring.handle(which);
+                let at = point + (self.camera.eye() - point).normalize_or(toward_eye) * half * 3.0;
+                let corner = |a: f32, b: f32| at + (u * a + v * b) * half;
+                batch.push_triangle(
+                    corner(-1.0, -1.0),
+                    corner(1.0, -1.0),
+                    corner(1.0, 1.0),
+                    HANDLE,
+                );
+                batch.push_triangle(
+                    corner(-1.0, -1.0),
+                    corner(1.0, 1.0),
+                    corner(-1.0, 1.0),
+                    HANDLE,
+                );
+            }
         }
+        self.publish_ghost();
+    }
+
+    /// The see-through view: while a cut is proposed, the piece's side of
+    /// it (within four radii) solid and the rest screened; otherwise off.
+    fn publish_ghost(&self) {
+        let view = match &self.ring_cut.proposal {
+            Some(proposal) if self.tool == super::Tool::Cut => {
+                let ring = proposal.ring;
+                // A couple of voxels behind the plane, so the cut face itself
+                // is never screened.
+                let offset = ring.normal.dot(ring.centre) - self.doc.voxel_size() * 2.0;
+                crate::viewport::GhostView {
+                    plane: [ring.normal.x, ring.normal.y, ring.normal.z, offset],
+                    keep: [ring.centre.x, ring.centre.y, ring.centre.z, ring.radius * 4.0],
+                    amount: self.ring_cut.see_through,
+                }
+            }
+            _ => crate::viewport::GhostView::default(),
+        };
+        self.shared.set_ghost_view(view);
     }
 
     /// The ring cut's part of the bar: Ring or Line, and while a cut is
@@ -259,13 +518,27 @@ impl Brokkr {
         )]
         .spacing(theme::S2)
         .align_y(Alignment::Center);
-        if self.ring_cut.proposal.is_some() {
+        if let Some(proposal) = &self.ring_cut.proposal {
             line = line
+                .push(
+                    crate::ui::number(
+                        &self.drafts,
+                        "ring.see_through",
+                        "See-through",
+                        self.ring_cut.see_through,
+                        0.0..=1.0,
+                        |amount| Message::Ring(RingMessage::SeeThrough(amount)),
+                    )
+                    .shown(format!("{:.0}%", self.ring_cut.see_through * 100.0))
+                    .inline(),
+                )
                 .push(
                     button(text("Split in two").size(theme::LABEL_SIZE))
                         .padding(theme::PAD_CHOICE)
                         .style(theme::tool_button_active)
-                        .on_press(Message::Ring(RingMessage::Split)),
+                        .on_press_maybe(
+                            proposal.disc.is_some().then_some(Message::Ring(RingMessage::Split)),
+                        ),
                 )
                 .push(crate::ui::button_secondary(
                     "Drop",
@@ -274,6 +547,30 @@ impl Brokkr {
         }
         line.into()
     }
+}
+
+/// Whether the piece a cut takes off is in front of its plane: the side
+/// with less solid within three radii of its middle, the body being on the
+/// other.
+fn piece_is_in_front(volume: &brokkr_core::Volume, disc: &Disc, radius: f32) -> bool {
+    let reach = radius * 3.0;
+    let pitch = (reach * 2.0 / 24.0).max(volume.voxel_size());
+    let steps = (reach / pitch).ceil() as i32;
+    let (mut front, mut back) = (0_usize, 0_usize);
+    for z in -steps..=steps {
+        for y in -steps..=steps {
+            for x in -steps..=steps {
+                let offset = Vec3::new(x as f32, y as f32, z as f32) * pitch;
+                if offset.length_squared() > reach * reach
+                    || volume.sample_world(disc.centre + offset) >= 0.0
+                {
+                    continue;
+                }
+                if offset.dot(disc.normal) >= 0.0 { front += 1 } else { back += 1 }
+            }
+        }
+    }
+    front <= back
 }
 
 /// A circle of `radius` round `centre` in the plane of `u` and `v`.
@@ -352,6 +649,18 @@ mod tests {
 
     const SIZE: Vector = Vector { x: 800.0, y: 600.0 };
 
+    /// Set `disc` as the cut proposed on `body`, as a ring would.
+    fn set_proposal(app: &mut Brokkr, body: NodeId, disc: &Disc) {
+        let ring = Ring {
+            centre: disc.centre,
+            normal: disc.normal,
+            across: disc.normal.any_orthonormal_vector(),
+            radius: disc.radius,
+        };
+        app.ring_cut.proposal =
+            Some(Proposal { body, ring, disc: Some(disc.clone()), contour: Vec::new() });
+    }
+
     fn update(app: &mut Brokkr, message: Message) {
         drop(app.update(message));
     }
@@ -426,7 +735,10 @@ mod tests {
         );
         let band = contour(volume, &disc, 0.3);
         assert!(!band.is_empty(), "no band round the arm");
-        app.ring_cut.proposal = Some(Proposal { body, disc, contour: band });
+        set_proposal(&mut app, body, &disc);
+        if let Some(proposal) = app.ring_cut.proposal.as_mut() {
+            proposal.contour = band;
+        }
         let mut batch = brokkr_gpu::OverlayBatch::default();
         app.add_ring_preview(&mut batch);
         assert!(!batch.surfaces.is_empty(), "the band was not drawn");
@@ -439,6 +751,120 @@ mod tests {
         );
         update(&mut app, Message::Undo);
         assert_eq!(app.doc.bodies().count(), 1);
+    }
+
+    /// A body with an arm along X, as one shape, in an application with
+    /// the cut tool in hand and a cut proposed square across the arm.
+    fn armed_with_a_cut() -> Brokkr {
+        let mut app = Brokkr::with_tablet(crate::tablet::Tablet::inert());
+        let voxel = app.doc.voxel_size();
+        let mut figure = brokkr_core::Volume::new(voxel);
+        figure.edit_box(Vec3::splat(-11.0), Vec3::new(26.0, 11.0, 11.0), move |position, _| {
+            let ball = position.length() - 8.0;
+            let along = (position.x - 14.0).abs() - 9.0;
+            let round = Vec3::new(0.0, position.y, position.z).length() - 2.0;
+            (ball.min(along.max(round)) / voxel)
+                .clamp(brokkr_core::brick::INSIDE, brokkr_core::brick::OUTSIDE)
+        });
+        app.doc.replace_active_volume(figure);
+        update(&mut app, Message::ToolChanged(super::super::Tool::Cut));
+        let body = app.doc.active();
+        set_proposal(&mut app, body, &Disc::round(Vec3::new(16.0, 0.0, 0.0), Vec3::X, 4.0));
+        app.fit_the_ring();
+        app
+    }
+
+    /// Drag a handle of the proposed cut by `by` pixels, through the
+    /// pointer as a user does.
+    fn drag_handle(app: &mut Brokkr, which: Handle, by: Vector) {
+        let ring = app.ring_cut.proposal.as_ref().expect("a cut").ring;
+        let at =
+            super::super::measure::to_pixels(&app.camera, ring.handle(which), app.viewport_size)
+                .expect("the handle is on the screen");
+        let at = Vector { x: at.x, y: at.y };
+        update(
+            app,
+            Message::Pointer(PointerEvent::Pressed {
+                button: PointerButton::Left,
+                position: at,
+                size: SIZE,
+            }),
+        );
+        update(app, Message::Pointer(PointerEvent::Moved { position: at + by, size: SIZE }));
+        update(app, Message::Frame);
+        update(app, Message::Pointer(PointerEvent::Released { button: PointerButton::Left }));
+    }
+
+    /// The handles move the cut: the slide handle along its normal, the
+    /// tilt handles turn it, the size handle widens it, each fitting the
+    /// cut again; a press away from every handle is a new ring and leaves
+    /// the cut alone until it is let go.
+    #[test]
+    fn the_handles_slide_turn_and_size_the_cut() {
+        let mut app = armed_with_a_cut();
+        app.viewport_size = Vec2::new(SIZE.x, SIZE.y);
+        let before = app.ring_cut.proposal.as_ref().expect("a cut").ring;
+        assert!(app.ring_cut.proposal.as_ref().is_some_and(|proposal| proposal.disc.is_some()));
+        // Along the normal's way on the screen.
+        let way = |app: &Brokkr, from: Vec3, to: Vec3| {
+            let size = app.viewport_size;
+            let a = super::super::measure::to_pixels(&app.camera, from, size).expect("on screen");
+            let b = super::super::measure::to_pixels(&app.camera, to, size).expect("on screen");
+            let d = (b - a).normalize_or_zero() * 30.0;
+            Vector { x: d.x, y: d.y }
+        };
+        let push = way(&app, before.centre, before.centre + before.normal);
+        drag_handle(&mut app, Handle::Slide, push);
+        let slid = app.ring_cut.proposal.as_ref().expect("a cut").ring;
+        let moved = (slid.centre - before.centre).dot(before.normal);
+        assert!(moved > 0.5, "the slide handle moved the cut {moved} along its normal");
+        assert!((slid.normal - before.normal).length() < 1e-4, "sliding turned it");
+
+        let tilt = way(&app, slid.handle(Handle::Tilt), slid.handle(Handle::Tilt) + slid.normal);
+        drag_handle(&mut app, Handle::Tilt, tilt);
+        let tilted = app.ring_cut.proposal.as_ref().expect("a cut").ring;
+        assert!(tilted.normal.dot(slid.normal) < 0.995, "the tilt handle did not turn the cut");
+        assert!((tilted.normal.length() - 1.0).abs() < 1e-4);
+
+        let grow =
+            way(&app, tilted.handle(Handle::Size), tilted.handle(Handle::Size) - tilted.across);
+        drag_handle(&mut app, Handle::Size, grow);
+        let grown = app.ring_cut.proposal.as_ref().expect("a cut").ring;
+        assert!(grown.radius > tilted.radius, "the size handle did not widen the cut");
+        assert!(
+            app.ring_cut.proposal.as_ref().is_some_and(|proposal| proposal.disc.is_some()),
+            "it no longer fits"
+        );
+    }
+
+    /// While a cut is proposed the rest is screened by the see-through
+    /// setting, the piece's side kept; dropped, or with another tool, it is
+    /// off.
+    #[test]
+    fn the_rest_is_see_through_while_a_cut_is_proposed() {
+        let mut app = armed_with_a_cut();
+        update(&mut app, Message::Ring(RingMessage::SeeThrough(0.4)));
+        let view = app.shared.ghost_view();
+        assert_eq!(view.amount, 0.4);
+        let ring = app.ring_cut.proposal.as_ref().expect("a cut").ring;
+        assert_eq!(view.plane[..3], ring.normal.to_array());
+        update(&mut app, Message::Ring(RingMessage::Dropped));
+        assert_eq!(app.shared.ghost_view().amount, 0.0, "dropped, the rest is still screened");
+    }
+
+    /// A cut turned so that it fits nothing is not split, and says so.
+    #[test]
+    fn a_cut_that_fits_nothing_is_not_split() {
+        let mut app = armed_with_a_cut();
+        let body = app.doc.active();
+        // Lengthwise down the arm into the ball: it crosses the body too.
+        set_proposal(&mut app, body, &Disc::round(Vec3::new(10.0, 0.0, 0.0), Vec3::Y, 4.0));
+        app.fit_the_ring();
+        assert!(app.ring_cut.proposal.as_ref().is_some_and(|proposal| proposal.disc.is_none()));
+        drop(app.ring_cut_bar());
+        update(&mut app, Message::Ring(RingMessage::Split));
+        assert_eq!(app.doc.bodies().count(), 1);
+        assert!(app.status.contains("not round a part"), "{}", app.status);
     }
 
     /// What a split at a ring costs, and what a parting along a line
@@ -457,7 +883,7 @@ mod tests {
             update(&mut app, Message::Frame);
             let body = app.doc.active();
             let disc = Disc::round(Vec3::new(0.1, 0.2, 0.3), Vec3::X, 40.0);
-            app.ring_cut.proposal = Some(Proposal { body, disc, contour: Vec::new() });
+            set_proposal(&mut app, body, &disc);
             let started = std::time::Instant::now();
             update(&mut app, Message::Ring(RingMessage::Split));
             let split = started.elapsed().as_secs_f32() * 1000.0;

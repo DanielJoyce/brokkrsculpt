@@ -283,6 +283,9 @@ fn main() {
             paint_shown: 1,
             // Off, as the application ships it.
             cavity: [0.0; 4],
+            ghost_plane: [0.0; 4],
+            ghost_keep: [0.0; 4],
+            ghost: [0.0; 4],
             palette: Uniforms::default().palette,
             paints: brokkr_gpu::PaintBlock::default(),
         };
