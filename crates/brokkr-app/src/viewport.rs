@@ -249,6 +249,9 @@ pub struct SharedFrame {
     cavity: Mutex<CavityView>,
     /// The ring cut's see-through view. See [`GhostView`].
     ghost: Mutex<GhostView>,
+    /// How far each body is drawn from where it is: the hierarchy's
+    /// Explode, `app/explode.rs`. See [`SharedFrame::set_spread`].
+    spread: Mutex<Vec<(NodeId, glam::Vec3)>>,
     /// The one thumbnail waiting to be drawn.
     ///
     /// **Capacity one, so the per-frame cap IS the type.** "At most one body
@@ -515,6 +518,21 @@ impl SharedFrame {
         *self.ghost.lock().expect("shared frame poisoned")
     }
 
+    /// Replace how far each body is drawn from where it is: the hierarchy's
+    /// Explode. Wholesale, as [`SharedFrame::set_hidden`] is and for its
+    /// reason; a body not named is drawn where it is.
+    pub fn set_spread(&self, spread: &[(NodeId, glam::Vec3)]) {
+        let mut held = self.spread.lock().expect("shared frame poisoned");
+        held.clear();
+        held.extend_from_slice(spread);
+    }
+
+    /// What the renderer will be told of the spread.
+    #[cfg(test)]
+    pub fn spread_snapshot(&self) -> Vec<(NodeId, glam::Vec3)> {
+        self.spread.lock().expect("shared frame poisoned").clone()
+    }
+
     /// Replace what the shader is told about creases. See [`CavityView`].
     pub fn set_cavity_view(&self, view: CavityView) {
         *self.cavity.lock().expect("shared frame poisoned") = view;
@@ -725,6 +743,12 @@ impl SharedFrame {
         {
             let opposite = self.opposite_polarity.lock().expect("shared frame poisoned");
             renderer.set_opposite_polarity(&opposite);
+        }
+
+        {
+            // Explode's offsets; see `app/explode.rs`.
+            let spread = self.spread.lock().expect("shared frame poisoned");
+            renderer.set_spread(queue, &spread);
         }
 
         if reset_happened || !pool_was_quiet {

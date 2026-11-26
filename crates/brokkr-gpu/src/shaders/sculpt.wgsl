@@ -181,9 +181,14 @@ fn vertex_main(
     @location(1) normal: vec3<f32>,
     @location(2) attributes: vec4<f32>,
     @location(3) paint: vec4<f32>,
+    // How far this body is drawn from where it is: the hierarchy's Explode,
+    // `brokkr_gpu::spread`. Zero for every body not exploded. Only where it
+    // is DRAWN moves: `world` and `height` stay the model's own, so the
+    // overhang tint and the ring cut's see-through read the real body.
+    @location(4) spread: vec3<f32>,
 ) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = uniforms.view_projection * vec4<f32>(position, 1.0);
+    out.clip_position = uniforms.view_projection * vec4<f32>(position + spread, 1.0);
     // The view matrix is a rigid transform, so its upper 3x3 rotates normals
     // correctly without an inverse transpose.
     out.view_normal = (uniforms.view * vec4<f32>(normal, 0.0)).xyz;

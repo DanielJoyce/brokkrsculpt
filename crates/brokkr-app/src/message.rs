@@ -1387,6 +1387,13 @@ pub enum Message {
     /// rather than a saved-visibility vector — every shipped version of the
     /// vector design loses the hand-set set on the way out.
     SoloExited,
+    /// Push every drawn body apart on screen, or bring them back. A view and
+    /// never an edit; a press on a body while apart selects it and brings
+    /// them back. See `app/explode.rs`.
+    ExplodeToggled,
+    /// Show only the active body, or everything again: solo on the active
+    /// body, from the hierarchy's header. See `app/explode.rs`.
+    SoloActiveToggled,
     /// Show or hide the thumbnail column. Session state, so it must NOT dirty
     /// the document: nothing about it is written to the file.
     ThumbnailsToggled,

@@ -3529,3 +3529,53 @@ fn the_ring_cuts_see_through_view_screens_all_but_the_piece() {
         "half screened drew {partly} of about {kept_plain} pixels"
     );
 }
+
+/// The hierarchy's Explode draws a body somewhere other than where it is, by
+/// a per-body offset the vertex shader adds and nothing else reads: the
+/// picture moves with the offset, a body with no offset is drawn where it
+/// is, and taking the offset away puts it back exactly.
+#[test]
+fn a_spread_body_is_drawn_moved_by_its_offset() {
+    let Some(harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the spread test");
+        return;
+    };
+    let distance = MODEL_RADIUS * 3.0;
+    let mut renderer = SculptRenderer::new(&harness.device, &harness.queue, TARGET_FORMAT);
+    renderer.resize(&harness.device, WIDTH, HEIGHT);
+    let mut sphere = Volume::new(VOXEL_SIZE);
+    sphere.seed_sphere(Vec3::ZERO, MODEL_RADIUS * 0.5);
+    upload_all(&mut renderer, &harness.device, &harness.queue, &mut sphere);
+    renderer.write_uniforms(&harness.queue, &uniforms(distance));
+    let plain = mask(&harness.frame(&renderer));
+
+    // The middle column of what is drawn, in pixels from the left.
+    let middle = |drawn: &[bool]| {
+        let (mut sum, mut count) = (0_u64, 0_u64);
+        for (at, lit) in drawn.iter().enumerate() {
+            if *lit {
+                sum += u64::from(at as u32 % WIDTH);
+                count += 1;
+            }
+        }
+        assert!(count > 0, "nothing was drawn");
+        sum as f64 / count as f64
+    };
+    let before = middle(&plain);
+
+    // Another body's offset moves nothing.
+    renderer.set_spread(&harness.queue, &[(NodeId(THE_ONLY_BODY.0 + 1), Vec3::splat(5.0))]);
+    assert_eq!(mask(&harness.frame(&renderer)), plain, "another body's offset moved this one");
+
+    // This body's, to the right of the picture, moves it right.
+    let right = view_matrix(distance).row(0).truncate().normalize();
+    renderer.set_spread(&harness.queue, &[(THE_ONLY_BODY, right * MODEL_RADIUS * 0.8)]);
+    let moved = harness.frame(&renderer);
+    dump("spread", &moved);
+    let after = middle(&mask(&moved));
+    assert!(after > before + f64::from(WIDTH) * 0.1, "drawn at {after:.0}, from {before:.0}");
+
+    // And none puts it back exactly.
+    renderer.set_spread(&harness.queue, &[]);
+    assert_eq!(mask(&harness.frame(&renderer)), plain, "with no offset it is not where it was");
+}

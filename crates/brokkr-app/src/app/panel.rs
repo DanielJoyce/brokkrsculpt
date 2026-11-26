@@ -2609,6 +2609,8 @@ impl Brokkr {
         .spacing(theme::S2);
 
         let mut stacked = column![
+            // Explode and Solo active, in every mode. See `app/explode.rs`.
+            self.hierarchy_view_buttons(),
             // The pictures' switch is in the View menu, with the other view
             // settings. They are session state and do not dirty the
             // document.

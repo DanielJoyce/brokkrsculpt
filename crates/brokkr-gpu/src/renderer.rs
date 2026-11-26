@@ -454,6 +454,13 @@ impl SculptRenderer {
                         step_mode: wgpu::VertexStepMode::Vertex,
                         attributes: &wgpu::vertex_attr_array![2 => Unorm8x4, 3 => Unorm8x4],
                     },
+                    // Explode's per-body offset, one entry per instance. See
+                    // `crate::spread`.
+                    wgpu::VertexBufferLayout {
+                        array_stride: crate::spread::SPREAD_BYTES,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &wgpu::vertex_attr_array![4 => Float32x3],
+                    },
                 ],
             },
             fragment: Some(wgpu::FragmentState {
@@ -588,6 +595,12 @@ impl SculptRenderer {
     /// [`MeshPool::set_opposite_polarity`].
     pub fn set_opposite_polarity(&mut self, opposite: &[NodeId]) {
         self.pool.set_opposite_polarity(opposite);
+    }
+
+    /// Replace how far each body is drawn from where it is: the hierarchy's
+    /// Explode. A body not named is drawn where it is. See `crate::spread`.
+    pub fn set_spread(&mut self, queue: &wgpu::Queue, spread: &[(NodeId, glam::Vec3)]) {
+        self.pool.spread.set(queue, spread);
     }
 
     /// How many of one body's bricks the pool holds, for tests that have to

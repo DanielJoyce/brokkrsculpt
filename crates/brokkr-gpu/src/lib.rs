@@ -13,6 +13,7 @@ pub mod mesh_pool;
 pub mod overlay;
 mod paints;
 pub mod renderer;
+pub mod spread;
 pub mod thumbnail;
 
 pub use frustum::Frustum;
