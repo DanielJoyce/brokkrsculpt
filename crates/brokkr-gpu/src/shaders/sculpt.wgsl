@@ -37,6 +37,14 @@ struct Uniforms {
     // A vec4 because a uniform struct aligns to 16 bytes and the four scalars
     // above have filled their row.
     cavity: vec4<f32>,
+    // The ring cut's see-through view, `docs/CUT-RING.md` stage 2: what is
+    // kept solid is on the front of `ghost_plane` (xyz its normal, w its
+    // offset, `dot(n, p) >= w`) and within `ghost_keep.w` of `ghost_keep.xyz`;
+    // everything else has `ghost.x` of its pixels screened away. `ghost.x`
+    // zero is off and draws every body as it always was.
+    ghost_plane: vec4<f32>,
+    ghost_keep: vec4<f32>,
+    ghost: vec4<f32>,
     // Linear RGB per filament slot, indexed by the stored slot byte. Slot 0 is
     // never read. Sixteen entries of 16 bytes, which keeps the struct's size a
     // multiple of 16 without a padding word; the Rust type asserts the total,
@@ -142,6 +150,9 @@ struct VertexOutput {
     // `brokkr_core::paint::Finish::code`: nought for none. Flat: a finish is
     // one or another.
     @location(7) @interpolate(flat) finish: u32,
+    // The vertex in the model's own space, for the ring cut's see-through
+    // view.
+    @location(8) world: vec3<f32>,
 }
 
 // How rough and how metal a finish is, by its code.
@@ -176,6 +187,7 @@ fn vertex_main(
     // correctly without an inverse transpose.
     out.view_normal = (uniforms.view * vec4<f32>(normal, 0.0)).xyz;
     out.world_normal = normal;
+    out.world = position;
     out.height = position.y;
     out.mask = attributes.r;
     // `Unorm8x4` hands the byte back as `n / 255`; the round undoes it exactly.
@@ -193,6 +205,23 @@ fn vertex_main(
 
 @fragment
 fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+    // The ring cut's see-through view: all but the piece being cut screened
+    // by a 4x4 ordered dither, so what is behind (the cut's band and face)
+    // shows through with no sorting and the depth buffer still right.
+    if (uniforms.ghost.x > 0.0) {
+        let kept = dot(uniforms.ghost_plane.xyz, in.world) >= uniforms.ghost_plane.w
+            && distance(in.world, uniforms.ghost_keep.xyz) <= uniforms.ghost_keep.w;
+        if (!kept) {
+            var bayer = array<f32, 16>(
+                0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
+                3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0
+            );
+            let cell = vec2<u32>(in.clip_position.xy) % vec2<u32>(4u, 4u);
+            if ((bayer[cell.y * 4u + cell.x] + 0.5) / 16.0 < uniforms.ghost.x) {
+                discard;
+            }
+        }
+    }
     var normal = normalize(in.view_normal);
 
     // Back faces are visible inside cavities and through openings. Flipping the

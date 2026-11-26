@@ -198,6 +198,54 @@ out; a knob on a stalk is cut round its neck; a dome blended on is cut at
 its base; a wide ring pressed on one leg cuts across both. On the screen: a
 dome on the ball, the band round its base, the dome split off as one body.
 
+## Stage 2, as built (2026-11-26)
+
+**The ring the handles move** (`app/ring_cut.rs`). A cut proposed is kept
+as a ring: its middle, its normal (turned toward the piece, the side with
+less solid within three radii), an axis across it, and the radius the ring
+was drawn at. The fitted cut and its band are worked out from it again on
+every move of a handle, and a ring that fits nothing is drawn in red with
+no band, *Split in two* waiting.
+
+**Four handles**, small squares facing the eye, each lifted toward the eye
+along its own line of sight (on the rim they sit where it meets the
+surface, which hid them; lifted along one shared direction, those off to
+the side of the view slid off the rim, both seen on the screen):
+
+- on the normal's axis, past the rim: slides the cut along it;
+- on the rim at the axis across: tilts it about the other axis;
+- on the rim a quarter turn on: tilts it about the first;
+- on the rim's far side: widens or narrows it.
+
+A press within twelve pixels of a handle takes it; anywhere else starts a
+new ring. A drag moves the handle by how far the pointer went along the
+way the handle moves on the screen, measured from where it was taken, so
+the result does not depend on how many pointer events arrived.
+
+**See-through** (`brokkr-gpu`, `sculpt.wgsl`). Three new vectors in the
+uniforms: a plane, a sphere, and an amount. A fragment in front of the
+plane and within the sphere is drawn as it always was; any other has that
+share of its pixels screened away by a 4x4 ordered dither. No sorting, the
+depth buffer still right, and the band and cut face show through what is
+screened. The application keeps the piece's side, from two voxels behind
+the cut to four radii out, and the rest screened by *See-through* on the
+bar, 60 % unless set; with no cut proposed, or another tool, it is off.
+
+Tests: a render test (llvmpipe) holds that off changes no pixel, that
+fully screened past a plane through a ball draws the kept half as before
+and the other not at all, and that half screened draws about half; the
+handles, dragged through the pointer as a user drags them, slide the cut
+along its normal and not round it, turn it, and widen it, and it still
+fits; the see-through view is published while a cut is proposed and off
+when it is dropped; a cut turned to fit nothing is not split and says so.
+On the screen: a dome on the ball, ringed, the ball screened and the dome
+solid, the ring and its four handles, and the cut slid out along its axis
+with the band following.
+
+Not done: a handle hidden behind the piece cannot be taken until the view
+is turned; the see-through view keeps a sphere of four radii, which on a
+long limb leaves the far end screened.
+
 ## Open questions
 
 None open.

@@ -387,7 +387,9 @@ true of it too, and what it adds is this.
   or where it meets the body), sized to the part however roughly the ring
   was drawn, drawn as a band on the surface, and *Split in two* makes that
   piece a body of its own and leaves the rest alone (a ring over both legs
-  takes both, each a body), so a cut across
+  takes both, each a body). Handles on the cut slide it, tilt it and
+  size it, and the rest of the model goes see-through while you do, so a
+  cut across
   an arm no longer takes the torso beside it. *Line* on the bar is the
   cut that goes straight through everything. See
   [`docs/CUT-RING.md`](docs/CUT-RING.md).
