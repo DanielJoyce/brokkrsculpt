@@ -176,7 +176,7 @@ jobs:
           set -euo pipefail
           mkdir -p stage/brokkrsculpt
           cp target/release/brokkrsculpt stage/brokkrsculpt/
-          cp packaging/brokkrsculpt.desktop stage/brokkrsculpt/
+          cp packaging/hanisculpt.desktop stage/brokkrsculpt/
           cp README.md LICENSE stage/brokkrsculpt/
           tar -C stage -czf "${{ matrix.asset }}" brokkrsculpt
 

@@ -1,9 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 
-<h1 align="center">Eitri Sculpt</h1>
-
-<p align="center"><em>Formerly BrokkrSculpt. Eitri is Brokkr's brother, the smith of the pair who
-worked the forge while Brokkr kept the bellows going.</em></p>
+<p align="center">
+  <img src="assets/brand/haniko/hanisculpt-lockup.png" alt="HaniSculpt, with Haniko waving" width="520">
+</p>
 
 <p align="center">
   <strong>Shape it. Print it.</strong><br>
@@ -18,13 +17,13 @@ worked the forge while Brokkr kept the bellows going.</em></p>
 </p>
 
 <p align="center">
-  <img alt="Eitri Sculpt: a dwarven smith carved in the viewport, brush strip on the left, properties on the right" src="docs/images/ui-dwarf-0827.jpg" width="900">
+  <img alt="HaniSculpt: a dwarven smith carved in the viewport, brush strip on the left, properties on the right" src="docs/images/ui-dwarf-0827.jpg" width="900">
 </p>
 
 Start from a ball, a scan, or something you downloaded. Push it around until it
 looks right. Send it to your slicer and print it.
 
-That last step is the one most sculpting tools leave to you. Eitri Sculpt
+That last step is the one most sculpting tools leave to you. HaniSculpt
 treats it as the point of the exercise: it works in **solid material** rather
 than on a hollow surface, so the things that usually go wrong between sculpting
 and printing mostly cannot happen here.
@@ -53,9 +52,12 @@ open by one person.
   where each of the three builds actually stands.</sub>
 </p>
 
-> Named for Eitri, the dwarven smith of Norse myth who forged Mjolnir while
-> his brother Brokkr worked the bellows. This fork of BrokkrSculpt took his
-> name on 2026-11-26. It does clay.
+> Meet Haniko, the patron spirit of undone vertices and happy accidents: a
+> little terracotta figure from a Kofun-period kiln mound who wandered into
+> the mesh buffer during a photogrammetry scan and stayed. He lives in the
+> corner of the viewport and treats every brush stroke like real pottery.
+> His story is in [`docs/HANIKO.md`](docs/HANIKO.md). This project was
+> BrokkrSculpt, and Eitri Sculpt for a day, before it was HaniSculpt.
 
 <p align="center">
   <img alt="Brokkr the dwarven smith, carving a dragon's head from a block of stone" src="docs/images/brokkr-dwarf.png" width="330">
@@ -69,7 +71,7 @@ A normal 3D model is a **surface** — a shell of triangles with nothing behind
 it. That is why models break. A hole in the shell is just a place where the
 surface stops, and pulling on a thin part can tear a new one.
 
-Eitri Sculpt works on **solid material** instead. Every point in space knows how
+HaniSculpt works on **solid material** instead. Every point in space knows how
 far it is from the edge of the model, so there is no shell to tear and no hole
 to leave behind. In practice:
 
@@ -109,7 +111,7 @@ automatically is not built yet.
 ## See it in action
 
 <p align="center">
-  <img alt="A 470,000 triangle piglet imported into Eitri Sculpt from a 3MF file" src="docs/images/piglet-imported-0819.jpg" width="820">
+  <img alt="A 470,000 triangle piglet imported into HaniSculpt from a 3MF file" src="docs/images/piglet-imported-0819.jpg" width="820">
 </p>
 
 A model sculpted years ago in ZBrush, exported as 3MF and imported here:
@@ -219,7 +221,7 @@ about it.
 
 ## Printing
 
-Eitri Sculpt does not slice, and should not. What it does is hand off cleanly to
+HaniSculpt does not slice, and should not. What it does is hand off cleanly to
 the things that do.
 
 - **One click into OrcaSlicer.** *File > Open in OrcaSlicer* exports a 3MF and

@@ -60,6 +60,13 @@ fn config_directory() -> Option<PathBuf> {
 
 /// `base`, in the application's directory, and in `apart` inside that when
 /// it would otherwise be the settings' own directory.
+/// The user's data directory itself (`$XDG_DATA_HOME`, `~/.local/share`),
+/// not the application's folder in it: where desktop entries and icons go.
+/// See `desktop_entry.rs`.
+pub fn xdg_data_home() -> Option<PathBuf> {
+    dir_spec::data_home()
+}
+
 fn apart_from_config(base: Option<PathBuf>, apart: &str) -> Option<PathBuf> {
     let directory = base?.join(APPLICATION);
     if Some(&directory) == config_directory().as_ref() {

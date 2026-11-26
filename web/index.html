@@ -4,7 +4,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Eitri Sculpt</title>
+  <title>HaniSculpt</title>
+  <link rel="icon" type="image/png" href="icon.png">
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #16181d; }
     canvas { display: block; width: 100vw; height: 100vh; outline: none; }
@@ -17,12 +18,12 @@
   </style>
 </head>
 <body>
-  <div id="note">Loading <b>Eitri Sculpt</b>…</div>
+  <div id="note"><div><img src="icon.png" alt="" width="96" height="96"><br>Loading <b>HaniSculpt</b>…</div></div>
   <script type="module">
     const note = document.getElementById("note");
     if (!navigator.gpu) {
       note.innerHTML =
-        "<div><b>Eitri Sculpt</b> needs WebGPU.<br>" +
+        "<div><b>HaniSculpt</b> needs WebGPU.<br>" +
         "Chrome or Edge 113 and later have it; Firefox and Safari have it in their newest versions.</div>";
     } else {
       try {
@@ -36,7 +37,7 @@
         if (!String(error).includes("Using exceptions for control flow")) {
           console.error(error);
           document.body.appendChild(note);
-          note.textContent = "Eitri Sculpt could not start: " + error;
+          note.textContent = "HaniSculpt could not start: " + error;
         }
       }
     }
