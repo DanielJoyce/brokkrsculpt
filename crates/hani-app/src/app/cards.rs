@@ -20,7 +20,7 @@ use crate::theme;
 
 /// Every key and held modifier, as the shortcuts card lists them: the key,
 /// and what it does. In the order a user meets them.
-pub(super) const SHORTCUTS: [(&str, &str); 25] = [
+pub(super) const SHORTCUTS: [(&str, &str); 26] = [
     ("Left drag", "Sculpt, paint or mask with the tool in hand"),
     ("Ctrl or Alt, held", "Carve instead of add; erase paint; unmask"),
     ("Shift, held", "Smooth while held"),
@@ -46,6 +46,7 @@ pub(super) const SHORTCUTS: [(&str, &str); 25] = [
     ("Tab", "Back to the mode before"),
     ("Ctrl comma", "Hide the body; with Alt, show every body"),
     ("?", "These keys"),
+    ("Ctrl ?", "Snip a part of the window to report"),
 ];
 
 impl Hani {

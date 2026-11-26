@@ -438,6 +438,13 @@ true of it too, and what it adds is this.
   puts an upright axis on the screen; draw a line beside it, either side or
   across, and it is spun round the axis into a new body, a vase from one
   stroke.
+- **Snip and report.** **Ctrl ?** (or Help, *Snip and report…*) freezes
+  the window; drag across the part you mean, draw on it in one of three
+  inks, give it a title and say what should be different, and *Open an
+  issue on GitHub* opens a new issue with those filled in and the picture
+  on the clipboard, for one paste. GitHub's API makes no issue without a
+  token and takes no pictures, so the page is GitHub's own. Not in the
+  browser version.
 - **Help in the application.** The **?** in the title bar opens three
   pages, what HaniSculpt is, getting around and how it works, in tabs with
   a search across them. They are Markdown files in

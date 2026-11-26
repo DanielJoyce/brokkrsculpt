@@ -24,6 +24,10 @@ pub const RELEASE_PAGE: &str = "https://github.com/DanielJoyce/hanisculpt/releas
 /// Help.
 pub const REPOSITORY: &str = "https://github.com/DanielJoyce/hanisculpt";
 
+/// GitHub's page for a new issue on it, which Snip and report opens with a
+/// title and a body in its query (`app/snip.rs`).
+pub const NEW_ISSUE: &str = "https://github.com/DanielJoyce/hanisculpt/issues/new";
+
 /// Whether a link may be handed to the user's browser.
 ///
 /// **Split out of [`open_in_browser`] so acceptance can be tested.** That one
@@ -42,7 +46,9 @@ pub const REPOSITORY: &str = "https://github.com/DanielJoyce/hanisculpt";
 /// prefix ending in `/`, which is what stops `https://site.com` admitting
 /// `https://site.com.example.net/`.
 pub(crate) fn may_be_opened(link: &str) -> bool {
-    link == RELEASE_PAGE || link == REPOSITORY
+    link == RELEASE_PAGE
+        || link == REPOSITORY
+        || link.strip_prefix(NEW_ISSUE).is_some_and(|query| query.starts_with('?'))
 }
 
 /// Hand a link to whatever the desktop opens links with.
@@ -99,6 +105,8 @@ mod tests {
         assert!(may_be_opened(REPOSITORY), "the repository link would be refused");
         assert!(!may_be_opened("https://github.com/DanielJoyce/hanisculpt.example.net"));
         assert!(!may_be_opened("https://github.com/DanielJoyce/hanisculpt/../other"));
+        assert!(may_be_opened(&format!("{NEW_ISSUE}?title=a&body=b")));
+        assert!(!may_be_opened(&format!("{NEW_ISSUE}s/../../x")));
         assert!(!may_be_opened("https://github.com/someone/else/releases/tag/beta"));
         assert!(!may_be_opened("https://tinkeratlas.com/"));
         assert!(open_in_browser("https://evil.example/phish").is_err());
