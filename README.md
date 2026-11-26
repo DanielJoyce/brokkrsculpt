@@ -428,7 +428,8 @@ true of it too, and what it adds is this.
   uses a fraction of the material. EXTRACT takes the masked part of the
   surface and thickens it into a body of its own, a breastplate or a
   pauldron: a thickness, how much of it goes into the body, and an offset
-  that lifts it off. See [`docs/MODELLING-TOOLS.md`](docs/MODELLING-TOOLS.md).
+  that lifts it off, as a new part over the body or peeled off it. See
+  [`docs/MODELLING-TOOLS.md`](docs/MODELLING-TOOLS.md).
 - **Deform and revolve.** DEFORM in Transform twists, bends or tapers the
   active body along X, Y or Z, the surface detail riding along. REVOLVE
   puts an upright axis on the screen; draw a line beside it, either side or

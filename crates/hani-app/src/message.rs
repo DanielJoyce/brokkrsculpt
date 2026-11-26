@@ -234,6 +234,9 @@ pub enum HollowMessage {
     InwardChanged(f32),
     /// How far the plate is moved out along the normal, in millimetres.
     OffsetChanged(f32),
+    /// Whether the plate is taken out of the body (peeled off) or the body
+    /// is left as it is.
+    PeelChosen(bool),
     ExtractApplied,
 }
 
