@@ -559,6 +559,7 @@ const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 /// out under BEFORE the send button, rather than leaving the user to infer it
 /// from having signed in on a different screen. See `panel.rs`'s
 /// `bug_report_card`.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn send(
     report: Report,
     base: &str,
@@ -589,6 +590,17 @@ pub(crate) fn send(
         // rather than "change the report".
         Err(other) => Err(format!("could not reach tinkeratlas.com ({other})")),
     }
+}
+
+/// In a browser a report is not sent: there is no socket here to send it
+/// from. See `docs/WEB.md`.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn send(
+    _report: Report,
+    _base: &str,
+    _authorization: Option<&str>,
+) -> Result<String, String> {
+    Err("a bug report cannot be sent from the browser".to_string())
 }
 
 #[cfg(test)]

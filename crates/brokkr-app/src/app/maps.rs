@@ -21,6 +21,9 @@
 //!   ([`relief`]): it takes a fifth of a second in the build the tests
 //!   run in (measured: `what_a_stamp_costs` in the core).
 
+// A picked file has no path in a browser. See `web.rs`.
+#[cfg(target_arch = "wasm32")]
+use crate::web::NoPath;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};

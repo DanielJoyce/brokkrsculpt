@@ -4724,7 +4724,7 @@ mod tests {
         let name = source.file_name().expect("a file has a name");
         let target = scratch.join(format!("brokkr-v3-check-{}", name.to_string_lossy()));
 
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         {
             let file = std::fs::File::create(&target).expect("could not create the scratch file");
             let mut writer = std::io::BufWriter::with_capacity(1 << 20, file);

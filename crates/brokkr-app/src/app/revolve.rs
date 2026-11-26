@@ -176,7 +176,7 @@ impl Brokkr {
 
     /// Spin a drawn line into a body.
     fn revolve_drawn(&mut self, pixels: &[Vec2]) {
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         let voxel_size = self.doc.voxel_size();
         let profile: Vec<Vec2> = pixels
             .iter()

@@ -30,6 +30,24 @@
 //! state and data each go in a directory of their own inside it there, and
 //! anywhere else an environment makes two of them the same.
 
+// In a browser there are no folders: every directory is `None`, so a
+// setting is not kept and a file is not looked for, the same as a machine
+// with no home directory. Shadows the crate, which is native only. See
+// `docs/WEB.md`.
+#[cfg(target_arch = "wasm32")]
+mod dir_spec {
+    use std::path::PathBuf;
+    pub fn config_home() -> Option<PathBuf> {
+        None
+    }
+    pub fn state_home() -> Option<PathBuf> {
+        None
+    }
+    pub fn data_home() -> Option<PathBuf> {
+        None
+    }
+}
+
 use std::path::PathBuf;
 
 /// Everything the application writes lives under a directory of this name.

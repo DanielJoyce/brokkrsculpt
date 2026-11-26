@@ -1279,7 +1279,7 @@ impl shader::Primitive for SculptPrimitive {
         // there may be sixty-four of them; the viewport's runs exactly once a
         // frame, which is what makes "at most one body per frame" true of the
         // schedule as well as of the mailbox.
-        let began = std::time::Instant::now();
+        let began = web_time::Instant::now();
         shared.apply(&mut pipeline.renderer, device, queue);
         shared.cost.lock().expect("shared frame poisoned").prepare_ms +=
             began.elapsed().as_secs_f32() * 1000.0;
@@ -1315,7 +1315,7 @@ impl shader::Primitive for SculptPrimitive {
         let Self::Viewport { shared } = self else {
             return;
         };
-        let began = std::time::Instant::now();
+        let began = web_time::Instant::now();
 
         pipeline.renderer.render(
             encoder,

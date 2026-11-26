@@ -649,11 +649,11 @@ mod timing {
     #[test]
     #[ignore = "a measurement, not a claim: run by hand"]
     fn what_the_pictures_cost() {
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         let brushes = super::super::presets::core();
         let mut slowest = (0.0_f64, "");
         for preset in brushes {
-            let one = std::time::Instant::now();
+            let one = web_time::Instant::now();
             std::hint::black_box(pixels(preset));
             let took = one.elapsed().as_secs_f64() * 1000.0;
             if took > slowest.0 {

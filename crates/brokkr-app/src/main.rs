@@ -66,6 +66,7 @@ mod timeline;
 mod ui;
 mod update;
 mod viewport;
+mod web;
 mod welcome;
 
 use app::Brokkr;
@@ -135,6 +136,9 @@ fn main() -> iced::Result {
     // Before anything can panic, and before the window opens. A panic used to
     // take the window and leave nothing behind but a backtrace on a terminal
     // the user had not launched from.
+    // In a browser, a panic's message to the console first, so the crash
+    // report's hook below chains to it. See `web.rs`.
+    web::console_panics();
     crash::install();
     // The worker threads, sized before anything asks the pool for work. See
     // `app/cores.rs`.
@@ -147,6 +151,10 @@ fn main() -> iced::Result {
     // crate had been invisible since the day it was written -- which is why an
     // import or a resample left no trace in a log people were being told to
     // read. `brokkr_gpu` IS correct: that one is a library.
+    //
+    // Not in a browser: it stamps each line with the standard library's
+    // clock, which panics there, and its output has nowhere to go.
+    #[cfg(not(target_arch = "wasm32"))]
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("warn,brokkrsculpt=info,brokkr_gpu=info"),
     )

@@ -102,8 +102,8 @@ impl Breadcrumbs {
 /// The width is not cosmetic. `report::trim_breadcrumbs` recognises an ordinary
 /// crumb by exactly nine leading bytes, so this and that must agree.
 fn clock() -> String {
-    let seconds = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let seconds = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map_or(0, |since| since.as_secs());
     let day = seconds % 86_400;
     format!("{:02}:{:02}:{:02}", day / 3600, (day % 3600) / 60, day % 60)

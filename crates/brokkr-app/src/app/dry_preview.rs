@@ -153,7 +153,7 @@ mod tests {
             let mut batch = brokkr_gpu::OverlayBatch::default();
             app.add_drybrush_preview(&mut batch);
             let runs = 10;
-            let started = std::time::Instant::now();
+            let started = web_time::Instant::now();
             for _ in 0..runs {
                 batch.surfaces.clear();
                 app.add_drybrush_preview(&mut batch);

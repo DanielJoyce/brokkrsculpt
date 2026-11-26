@@ -18,7 +18,6 @@ brokkr-core.workspace = true
 brokkr-gpu.workspace = true
 bytemuck.workspace = true
 contracts.workspace = true
-dir_spec.workspace = true
 env_logger.workspace = true
 glam.workspace = true
 # `canvas` is the icon set, and it is the one feature of iced this project pays
@@ -31,17 +30,34 @@ glam.workspace = true
 # circles and diagonals cannot be made of. A whole icon set is what earns the
 # six. See `icon.rs`.
 iced = { workspace = true, features = ["advanced", "wgpu", "debug", "canvas", "image-without-codecs"] }
-# The welcome screen's article thumbnails. `default-features = false` is the
-# whole point: iced's own `image` feature is `image-without-codecs` PLUS
+# Pictures taken in: decals, stamps and a picture across a brush's tip.
+# `default-features = false` is the whole point: iced's own `image` feature is `image-without-codecs` PLUS
 # `image/default`, and it is the second half that brings AVIF, EXR, AV1 grain
 # synthesis and fax decoding -- measured against this lockfile, +72 crates.
-# The widget alone is +6 and these two decoders are +9. Both are needed: the
-# feed carries JPEG and PNG, and the render endpoint keeps a PNG a PNG.
+# The widget alone is +6 and these two decoders are +9: JPEG and PNG.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 log.workspace = true
 # The core's own thread pool, already in the lockfile: what the application
 # sizes at start (`app/cores.rs`) and spreads the decal preview's casts over.
 rayon.workspace = true
+serde_json = "1.0.151"
+rfd.workspace = true
+wgpu.workspace = true
+# Vector displacement maps (app/maps.rs): the files other programs write
+# them in are OpenEXR, and nothing already here reads one. Taken directly
+# and with no default features. Measured against this lockfile: +7 crates
+# (exr, lebe, bit_field, zune-inflate, and multiversion with its macro
+# crate and target-features), where `image/exr` was turned down above as
+# part of `image/default` and its 72.
+exr = { version = "1.74.3", default-features = false }
+web-time.workspace = true
+
+# Native only: the folders settings live in, the updater, the bug report's
+# one request and the printer's. None of them builds for the browser, where
+# there are no such folders, no socket and no executable to replace. See
+# `docs/WEB.md`.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+dir_spec.workspace = true
 # The updater's signature check, and the only new crate the updater costs.
 # ZERO transitive dependencies -- Ed25519 and Blake2b are implemented inline in
 # about 2.5k lines, MIT. Version pinned exactly rather than caret-bounded:
@@ -53,7 +69,6 @@ rayon.workspace = true
 # all have to be reinvented here, badly, in the one code path whose output gets
 # made executable.
 minisign-verify = "=0.2.5"
-rfd.workspace = true
 # SHA-256 for the update payload. **+0 compiled crates**: `ring 0.17.14` is
 # already in the graph as rustls' backend (Cargo.lock:3040), so this is a
 # declaration rather than a dependency -- but it IS a new direct line, because
@@ -64,7 +79,6 @@ rfd.workspace = true
 # single worst place in the codebase to be clever: it is the check that decides
 # whether network bytes get the execute bit.
 ring = "0.17"
-serde_json = "1.0.151"
 # The bug report's one and only network call. `default-features = false` with
 # just `rustls` is what keeps this to a measured 17 compiled crates for this
 # target: no proxy support, no cookies, no charset transcoding, no gzip, and
@@ -79,24 +93,19 @@ serde_json = "1.0.151"
 # risk than a fortnight-old release of the code that terminates our TLS.
 # Lift the bound to "3" once 3.4.x has aged.
 ureq = { version = "~3.3", default-features = false, features = ["rustls"] }
-# +0 crates: already compiled for brokkr-core's 3MF importer. See articles.rs
-# for why the welcome screen reads RSS rather than the JSON API.
-getrandom.workspace = true
-roxmltree.workspace = true
-wgpu.workspace = true
-# Vector displacement maps (app/maps.rs): the files other programs write
-# them in are OpenEXR, and nothing already here reads one. Taken directly
-# and with no default features. Measured against this lockfile: +7 crates
-# (exr, lebe, bit_field, zune-inflate, and multiversion with its macro
-# crate and target-features), where `image/exr` was turned down above as
-# part of `image/default` and its 72.
-exr = { version = "1.74.3", default-features = false }
 
 # Stylus pressure is read straight from the kernel's evdev interface. That sits
 # below the display server, so one code path covers X11, XWayland and Wayland,
 # and it works with any tablet the kernel has a driver for rather than a list of
 # vendors. Nothing else in the stack can supply it: iced 0.14 drops winit's
 # force field, and winit 0.30 only ever had it for touch.
+
+# In a browser, a panic's message to the console: without it a panic there
+# reads only "unreachable". Both already in the graph through winit.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["console"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
 

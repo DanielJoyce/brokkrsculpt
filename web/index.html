@@ -1,0 +1,45 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Eitri Sculpt</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #16181d; }
+    canvas { display: block; width: 100vw; height: 100vh; outline: none; }
+    #note {
+      position: fixed; inset: 0; display: grid; place-items: center;
+      color: #e6e8ec; font: 15px/1.5 system-ui, sans-serif; text-align: center;
+      padding: 16px;
+    }
+    #note b { color: #ff7a3c; }
+  </style>
+</head>
+<body>
+  <div id="note">Loading <b>Eitri Sculpt</b>…</div>
+  <script type="module">
+    const note = document.getElementById("note");
+    if (!navigator.gpu) {
+      note.innerHTML =
+        "<div><b>Eitri Sculpt</b> needs WebGPU.<br>" +
+        "Chrome or Edge 113 and later have it; Firefox and Safari have it in their newest versions.</div>";
+    } else {
+      try {
+        const app = await import("./brokkrsculpt.js");
+        note.remove();
+        await app.default();
+      } catch (error) {
+        // iced runs its event loop by throwing out of `main` on the web: a
+        // thrown "Using exceptions for control flow" is the loop starting,
+        // not a failure.
+        if (!String(error).includes("Using exceptions for control flow")) {
+          console.error(error);
+          document.body.appendChild(note);
+          note.textContent = "Eitri Sculpt could not start: " + error;
+        }
+      }
+    }
+  </script>
+</body>
+</html>

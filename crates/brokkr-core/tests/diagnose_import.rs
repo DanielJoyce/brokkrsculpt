@@ -83,7 +83,7 @@ fn diagnose() {
 
     println!("\n=== {} ===", path.display());
 
-    let started = std::time::Instant::now();
+    let started = web_time::Instant::now();
     let mesh = read(&path);
     println!("read in {:.0} ms", started.elapsed().as_secs_f64() * 1000.0);
 
@@ -170,7 +170,7 @@ fn diagnose() {
             refine_to_resolve: refine,
             ..VoxeliseOptions::at(voxel)
         };
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         let Ok((volume, report)) = voxelise(&mesh, &options) else {
             println!("\nAT {voxel} mm, {label}: REFUSED");
             continue;

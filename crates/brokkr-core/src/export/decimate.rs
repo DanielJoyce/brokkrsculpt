@@ -2345,11 +2345,11 @@ mod tests {
     fn the_cost_of_decimating_is_printed() {
         for (radius, voxel) in [(30.0, 0.5), (30.0, 0.25), (30.0, 0.125)] {
             let volume = ball(radius, voxel);
-            let started = std::time::Instant::now();
+            let started = web_time::Instant::now();
             let (dense, _) = volume.export_mesh();
             let export = started.elapsed();
             for tolerance in [0.01, 0.03, 0.1] {
-                let started = std::time::Instant::now();
+                let started = web_time::Instant::now();
                 let (mesh, report) = dense.decimated(&volume, DecimateSpec::within(tolerance));
                 let took = started.elapsed();
                 println!(

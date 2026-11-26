@@ -1495,7 +1495,7 @@ mod timing {
             let mut region = TouchScratch::new();
             let mut time = |coat: Coat| {
                 let rounds = 20;
-                let started = std::time::Instant::now();
+                let started = web_time::Instant::now();
                 for round in 0..rounds {
                     coat.apply(&brush, &mut volume, &stamp, 1 + (round % 2) as u8, &mut region);
                 }

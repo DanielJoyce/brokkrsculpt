@@ -18,7 +18,7 @@
 //! ([`rayon::ThreadPool::install`]), so the global pool is not touched. The
 //! first run is a warm-up and is not counted.
 
-use std::time::Instant;
+use web_time::Instant;
 
 use glam::Vec3;
 

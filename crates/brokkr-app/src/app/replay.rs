@@ -31,7 +31,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use web_time::Instant;
 
 use brokkr_core::BrushKind;
 use glam::Vec3;

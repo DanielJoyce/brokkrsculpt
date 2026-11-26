@@ -138,8 +138,8 @@ pub struct Entry<'a> {
 /// applies: **nothing compares this to make a decision**, so a wrong clock
 /// makes `at` wrong and changes nothing else. Ordering is position in the file.
 fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|since| since.as_secs())
         .unwrap_or_default()
 }

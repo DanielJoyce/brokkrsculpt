@@ -53,6 +53,9 @@
 //! code, called and not copied, as it was before there was a palette.
 //! Anything else is the generic brush.
 
+// A picked file has no path in a browser. See `web.rs`.
+#[cfg(target_arch = "wasm32")]
+use crate::web::NoPath;
 use std::sync::Arc;
 
 use brokkr_core::brush::alpha::{Alpha, BuiltIn};

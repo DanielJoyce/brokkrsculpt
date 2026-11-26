@@ -21,7 +21,8 @@
 //!
 //! Run with `cargo bench -p brokkr-core --bench engine`.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use brokkr_core::brush::engine::{BrushDef, FieldOp};
 use brokkr_core::{Brush, BrushDirection, BrushKind, BrushScratch, Stamp, Volume};

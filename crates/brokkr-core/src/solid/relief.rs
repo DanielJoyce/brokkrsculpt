@@ -1099,7 +1099,7 @@ mod tests {
     #[ignore = "a measurement, not a test"]
     fn what_a_stamp_costs() {
         for kind in BuiltInMap::ALL {
-            let started = std::time::Instant::now();
+            let started = web_time::Instant::now();
             let map = kind.map();
             let read = started.elapsed();
             let relief = Relief::of(&map).expect("a shape");
@@ -1107,7 +1107,7 @@ mod tests {
                 "{kind:?}: the map in {read:?}, its shape at three sizes in {:?}",
                 started.elapsed() - read
             );
-            let started = std::time::Instant::now();
+            let started = web_time::Instant::now();
             drop(stamped(&relief, false));
             println!("{kind:?}: stamped 64 voxels across in {:?}", started.elapsed());
         }

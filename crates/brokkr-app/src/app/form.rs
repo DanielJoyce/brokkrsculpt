@@ -18,7 +18,7 @@
 //! millimetre, in release. That is on the update thread, like an export,
 //! and like an export it should move to a task. It is owed.
 
-use std::time::Instant;
+use web_time::Instant;
 
 use brokkr_core::form::{FormError, level_for};
 use brokkr_core::{Change, Entry, FormPyramid, Volume};

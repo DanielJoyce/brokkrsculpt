@@ -1070,7 +1070,7 @@ mod timing {
     use super::super::{Actions, Profile};
     use super::*;
     use crate::pattern::Pattern;
-    use std::time::Instant;
+    use web_time::Instant;
 
     /// What a stamp of a layer costs beside the same brush with build-up
     /// on. Run by hand, in release:

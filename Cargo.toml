@@ -70,6 +70,11 @@ pollster = "0.4"
 # use for.
 proptest = { version = "1", default-features = false, features = ["std"] }
 rayon = "1"
+# `Instant` and `SystemTime` that work in a browser, where the standard
+# library's panic on first use. On every other target it re-exports the
+# standard library's own, so a native build is unchanged. **Already in the
+# graph**: winit pulls this same version. See `docs/WEB.md`.
+web-time = "1.1"
 # XML and raw DEFLATE, both needed to read a 3MF and both already compiled for
 # this workspace before they were named here: roxmltree arrives through
 # fontconfig-parser -> fontdb -> cosmic-text, and yazi through swash ->

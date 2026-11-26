@@ -1174,7 +1174,7 @@ mod cost {
                 let mut volume = ball();
                 let mut join = Join::new();
                 volume.begin_stroke();
-                let started = std::time::Instant::now();
+                let started = web_time::Instant::now();
                 join.add(&mut volume, &knob, How { cut: false, blend: width });
                 println!("a knob of {half} joined over {width}: {:?}", started.elapsed());
             }
@@ -1196,12 +1196,12 @@ mod cost {
             let mut volume = ball();
             let mut join = Join::new();
             volume.begin_stroke();
-            let started = std::time::Instant::now();
+            let started = web_time::Instant::now();
             for run in &runs {
                 join.add(&mut volume, run, how);
             }
             let each = started.elapsed();
-            let started = std::time::Instant::now();
+            let started = web_time::Instant::now();
             join.set(&mut volume, &solids, how);
             println!(
                 "a hung cable of 24 runs joined over {width}: {each:?} a run at a time, {:?} together",
