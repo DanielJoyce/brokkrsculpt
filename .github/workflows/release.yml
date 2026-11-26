@@ -341,9 +341,9 @@ jobs:
 
           | | |
           |---|---|
-          | **Windows** (64-bit) | [HaniSculpt-Windows-x86_64.zip](https://github.com/DanielJoyce/brokkrsculpt/releases/download/beta/HaniSculpt-Windows-x86_64.zip) |
-          | **macOS** (Apple silicon) | [HaniSculpt-macOS-arm64.zip](https://github.com/DanielJoyce/brokkrsculpt/releases/download/beta/HaniSculpt-macOS-arm64.zip) |
-          | **Linux** (64-bit) | [HaniSculpt-Linux-x86_64.tar.gz](https://github.com/DanielJoyce/brokkrsculpt/releases/download/beta/HaniSculpt-Linux-x86_64.tar.gz) |
+          | **Windows** (64-bit) | [HaniSculpt-Windows-x86_64.zip](https://github.com/DanielJoyce/hanisculpt/releases/download/beta/HaniSculpt-Windows-x86_64.zip) |
+          | **macOS** (Apple silicon) | [HaniSculpt-macOS-arm64.zip](https://github.com/DanielJoyce/hanisculpt/releases/download/beta/HaniSculpt-macOS-arm64.zip) |
+          | **Linux** (64-bit) | [HaniSculpt-Linux-x86_64.tar.gz](https://github.com/DanielJoyce/hanisculpt/releases/download/beta/HaniSculpt-Linux-x86_64.tar.gz) |
 
           Those three links always point at the newest build. Everything in the
           asset list below named `update-…` is for the built-in updater to

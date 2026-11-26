@@ -17,7 +17,7 @@
 /// `update_check.rs` until the updater replaced that module, and moving it was
 /// not optional -- the allowlist and its test both read it, so deleting the old
 /// module without moving this first does not compile.
-pub const RELEASE_PAGE: &str = "https://github.com/DanielJoyce/brokkrsculpt/releases/tag/beta";
+pub const RELEASE_PAGE: &str = "https://github.com/DanielJoyce/hanisculpt/releases/tag/beta";
 
 /// Whether a link may be handed to the user's browser.
 ///
@@ -81,7 +81,7 @@ mod tests {
     #[test]
     fn only_the_release_page_may_be_opened() {
         assert!(may_be_opened(RELEASE_PAGE), "the update button would be refused: {RELEASE_PAGE}");
-        assert!(!may_be_opened("https://github.com/DanielJoyce/brokkrsculpt"));
+        assert!(!may_be_opened("https://github.com/DanielJoyce/hanisculpt"));
         assert!(!may_be_opened("https://github.com/someone/else/releases/tag/beta"));
         assert!(!may_be_opened("https://tinkeratlas.com/"));
         assert!(open_in_browser("https://evil.example/phish").is_err());

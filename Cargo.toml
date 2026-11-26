@@ -8,7 +8,7 @@ members = ["crates/hani-core", "crates/hani-gpu", "crates/hani-app"]
 version = "0.0.1"
 edition = "2024"
 license = "AGPL-3.0-only"
-repository = "https://github.com/DanielJoyce/brokkrsculpt"
+repository = "https://github.com/DanielJoyce/hanisculpt"
 rust-version = "1.90"
 
 [workspace.dependencies]

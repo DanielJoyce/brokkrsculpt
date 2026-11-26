@@ -6,7 +6,7 @@
 
 Please use GitHub's private reporting: the **Report a vulnerability** button
 under the repository's
-[Security tab](https://github.com/DanielJoyce/brokkrsculpt/security/advisories/new).
+[Security tab](https://github.com/DanielJoyce/hanisculpt/security/advisories/new).
 Do not open a public issue for anything security-sensitive.
 
 HaniSculpt is a solo project. I read every report, and I aim to acknowledge
@@ -16,7 +16,7 @@ advisory is credited to you (unless you prefer otherwise).
 ## Supported versions
 
 There is a **public open beta** on Linux, Windows and macOS: the rolling
-[`beta` release](https://github.com/DanielJoyce/brokkrsculpt/releases), rebuilt
+[`beta` release](https://github.com/DanielJoyce/hanisculpt/releases), rebuilt
 and republished on every push to `main`. So there is exactly one supported
 version and it is whatever `beta` currently points at. Fixes land on `main` and
 reach that release on the next push; there is nothing older to backport to.

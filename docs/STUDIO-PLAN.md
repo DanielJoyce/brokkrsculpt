@@ -2033,6 +2033,12 @@ Each with the reason, and the trigger that would reopen it.
 
 ## 13. The branch, and living beside upstream
 
+**Severed, 2026-11-26.** The maintainer: *"Stop worry about upstream. I am
+gonna sever the repos"*, and then *"we can merge to main"*. HaniSculpt is
+its own repository (`DanielJoyce/hanisculpt`), no longer a fork, and
+`feature/studio` was merged into `main` the same day. What follows is how
+the branch lived beside upstream until then, kept as the record.
+
 ```mermaid
 gitGraph
     commit id: "upstream a2bf0eb"
@@ -2057,8 +2063,8 @@ gitGraph
     merge "studio/s1a-decimate"
 ```
 
-- **`main` mirrors upstream** (`MakerViking/brokkrsculpt`) and carries nothing
-  of this plan.
+- **`main` mirrored upstream** (`MakerViking/brokkrsculpt`) and carried nothing
+  of this plan, until the repositories were severed on 2026-11-26.
 - **`feature/studio` is the long-lived integration branch.** It is merged into,
   never rebased, because it is published and other branches hang off it.
 - **Each increment is a topic branch** (`studio/<milestone>-<name>`, or a
@@ -2175,7 +2181,8 @@ proceeds on the stated default for each.
 
 1. **Upstream.** Offer S1 (and later S4) to `MakerViking/brokkrsculpt` as pull
    requests, or keep everything on the fork? *Default: build them so they could
-   be offered, and decide when S1a is done.*
+   be offered, and decide when S1a is done.* **Answered 2026-11-26:** neither;
+   the repositories were severed and HaniSculpt is its own project.
 2. **Order.** Print track first, as ranked, or painting first (section 11.2)?
    *Default: as ranked.*
 3. **Build or depend** for decimation and unwrapping. *Default: in house, with

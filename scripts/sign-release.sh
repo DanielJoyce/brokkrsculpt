@@ -40,7 +40,7 @@
 # exercised on the day the first signed release ships.
 set -euo pipefail
 
-REPO="${HANI_RELEASE_REPO:-DanielJoyce/brokkrsculpt}"
+REPO="${HANI_RELEASE_REPO:-DanielJoyce/hanisculpt}"
 TAG=beta
 
 # The client rejects any seq above this (a compiled-in constant, so that it
