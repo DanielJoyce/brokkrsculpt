@@ -103,6 +103,7 @@ impl FieldRegion {
     /// way, and its values, X fastest. For a reader that works out where a
     /// voxel's value is for itself, several voxels at a time, and has made
     /// sure of its own that each is inside.
+    #[cfg(target_arch = "x86_64")]
     #[inline]
     pub(crate) fn layout(&self) -> (IVec3, IVec3, &[f32]) {
         (self.lo, self.size, &self.values)

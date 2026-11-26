@@ -61,6 +61,8 @@ README current in the same pull request as the code.
 
 - `cargo fmt --all -- --check`
 - `RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets`
+- `RUSTFLAGS="-D warnings" cargo clippy --workspace --target wasm32-unknown-unknown`
+  (the browser build; `rustup target add wasm32-unknown-unknown` once)
 - `cargo test -p hani-core` (the dev profile, where contracts and debug
   assertions are live), and `cargo test --release -p hani-core --lib`
 - `cargo test -p hani-gpu`

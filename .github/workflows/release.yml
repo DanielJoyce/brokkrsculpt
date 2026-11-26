@@ -47,6 +47,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # A warning fails the build, as it does in CI.
+  RUSTFLAGS: -D warnings
   # **The build ordinal, and the only thing in this file that orders releases.**
   # `CARGO_PKG_VERSION` is frozen at 0.0.1 and a git SHA has no order, so this
   # is what the updater compares. `BASE` is the literal 1000, chosen on

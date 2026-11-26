@@ -529,6 +529,7 @@ mod tests {
 /// which is exactly what happened when it was one.
 pub(crate) const TINKERATLAS: &str = "https://tinkeratlas.com";
 
+#[cfg(not(target_arch = "wasm32"))]
 fn endpoint(base: &str) -> String {
     format!("{}/api/desktop/bug-report", base.trim_end_matches('/'))
 }
@@ -538,6 +539,7 @@ fn endpoint(base: &str) -> String {
 /// The send runs inside a `Task`, so a slow server stalls the report and not
 /// the window. Fifteen seconds is long enough for a cold serverless start and
 /// short enough that a user does not conclude the application has hung.
+#[cfg(not(target_arch = "wasm32"))]
 const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Post a report, blocking.
