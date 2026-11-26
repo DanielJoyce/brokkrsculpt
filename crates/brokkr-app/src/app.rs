@@ -821,24 +821,11 @@ pub struct Brokkr {
     /// Loaded once into state for the same reason `welcome_on_startup` is --
     /// the panel draws it every frame and must not open a file to do so.
     palette: crate::palette::Palette,
-    /// The TinkerAtlas articles that screen shows. See [`crate::articles`] for
-    /// why this is fetched only while the screen is actually up.
-    feed: crate::articles::Feed,
     /// The signed-in TinkerAtlas account, if there is one. See
     /// [`crate::account`]: optional throughout, and its only effect on
     /// behaviour is that a bug report goes out under this name instead of
     /// anonymously.
     account: Option<crate::account::Account>,
-    /// Whether a sign-in is waiting on the browser, so the button can say so
-    /// and cannot be pressed into starting a second listener.
-    signing_in: bool,
-    /// The signed-in user's picture, once it has arrived.
-    ///
-    /// Held here and not on [`crate::account::Account`] so that module stays
-    /// free of the renderer: the account is an identity, this is a decoded
-    /// texture. It is also why it is not in the stored file -- a `Handle` is
-    /// not something to persist, and the URL it came from already is.
-    avatar: Option<iced::widget::image::Handle>,
     /// The cube part under the pointer, lit so a click's effect is visible
     /// before the click.
     cube_hover: Option<navcube::Part>,
@@ -1457,7 +1444,7 @@ pub const PROJECT_EXTENSION: &str = "brokkr";
 async fn pick_project_to_open() -> Option<std::path::PathBuf> {
     rfd::AsyncFileDialog::new()
         .set_title("Open sculpt")
-        .add_filter("BrokkrSculpt", &[PROJECT_EXTENSION])
+        .add_filter("Eitri Sculpt", &[PROJECT_EXTENSION])
         .pick_file()
         .await
         .map(|handle| handle.path().to_path_buf())
@@ -1466,7 +1453,7 @@ async fn pick_project_to_open() -> Option<std::path::PathBuf> {
 async fn pick_project_to_save() -> Option<std::path::PathBuf> {
     rfd::AsyncFileDialog::new()
         .set_title("Save sculpt")
-        .add_filter("BrokkrSculpt", &[PROJECT_EXTENSION])
+        .add_filter("Eitri Sculpt", &[PROJECT_EXTENSION])
         .set_file_name(format!("sculpt.{PROJECT_EXTENSION}"))
         .save_file()
         .await
@@ -1994,10 +1981,7 @@ impl Brokkr {
         // A recording or a replay asked for by the environment, after the
         // welcome flag it overrides: `app/replay.rs`.
         app.replay_from_environment();
-        // The screen is up, so its articles are wanted. The only other place
-        // that raises it, `Message::WelcomeOpened`, asks for them too.
-        let mut boot =
-            if app.welcome { vec![app.fetch_articles(), app.fetch_avatar()] } else { Vec::new() };
+        let mut boot = Vec::new();
         // **Asked whether the welcome screen is up or not**, unlike the
         // articles. The user who most needs to hear that their build is stale
         // is the one who turned the welcome screen off, and the answer goes to
@@ -2244,10 +2228,7 @@ impl Brokkr {
             shortcuts: false,
             welcome_on_startup: true,
             palette: crate::palette::Palette::default(),
-            feed: crate::articles::Feed::default(),
             account: None,
-            signing_in: false,
-            avatar: None,
             cube_hover: None,
             flight: None,
             menu: None,
@@ -2412,7 +2393,7 @@ impl Brokkr {
     /// star appears the moment a stroke lands with nothing else to wire.
     pub fn title(&self) -> String {
         let star = if self.unsaved { "*" } else { "" };
-        format!("{}{star} — BrokkrSculpt", self.document_name())
+        format!("{}{star} — Eitri Sculpt", self.document_name())
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -2615,7 +2596,7 @@ impl Brokkr {
                     };
                     let why = format!(
                         "build {} is installed, but starting it failed after {tries} ({}) -- this \
-                         window is still the old build; close it and start BrokkrSculpt again",
+                         window is still the old build; close it and start Eitri Sculpt again",
                         offer.build, refused.error
                     );
                     refused_at(Step::Relaunch, why)
@@ -6824,7 +6805,7 @@ impl Brokkr {
     pub(crate) fn diagnostics(&self) -> String {
         use std::fmt::Write;
         let mut out = String::new();
-        let _ = writeln!(out, "BrokkrSculpt {} ({})", env!("CARGO_PKG_VERSION"), build_commit());
+        let _ = writeln!(out, "Eitri Sculpt {} ({})", env!("CARGO_PKG_VERSION"), build_commit());
         // **The build ordinal and the updater's own state, in every report.**
         // Costs two lines and turns every future "it stopped updating" into a
         // one-message diagnosis instead of a conversation: which build they are
@@ -9179,43 +9160,6 @@ impl Brokkr {
         self.refresh_overlay();
     }
 
-    /// Ask TinkerAtlas for its articles, unless a request is already out.
-    ///
-    /// **Only ever called while the welcome screen is up**, which is what makes
-    /// the tick on that screen an honest control over it: turn the screen off
-    /// and this stops happening, with no second setting to find. See
-    /// [`crate::articles`].
-    ///
-    /// Re-fetched each time the screen opens rather than cached for the
-    /// session, because the whole point of the panel is that it is current, and
-    /// a user who opens it twice in a day has asked twice.
-    fn fetch_articles(&mut self) -> Task<Message> {
-        if matches!(self.feed, crate::articles::Feed::Loading) {
-            return Task::none();
-        }
-        self.feed = crate::articles::Feed::Loading;
-        Task::perform(async { crate::articles::fetch() }, Message::ArticlesLoaded)
-    }
-
-    /// Ask for the signed-in user's picture, if there is one to ask for.
-    ///
-    /// Fetched when the welcome screen goes up rather than at startup, for the
-    /// same reason the articles are: the account row is the only place it is
-    /// drawn, so a session that never opens that screen never makes the
-    /// request. Once held it is kept -- it is the same picture.
-    fn fetch_avatar(&self) -> Task<Message> {
-        if self.avatar.is_some() {
-            return Task::none();
-        }
-        let Some(url) = self.account.as_ref().map(|a| a.avatar_url.clone()) else {
-            return Task::none();
-        };
-        if url.is_empty() {
-            return Task::none();
-        }
-        Task::perform(async move { crate::articles::fetch_avatar(&url) }, Message::AvatarLoaded)
-    }
-
     /// Whether a modal card is up, and therefore owns the input.
     ///
     /// One list, read by both halves of the guard: `on_key` for the keyboard
@@ -10024,14 +9968,6 @@ impl Brokkr {
                 // the screen is dismissed.
                 self.top_menu = None;
                 self.welcome = true;
-                return Task::batch([self.fetch_articles(), self.fetch_avatar()]);
-            }
-            Message::ArticlesRetried => return self.fetch_articles(),
-            Message::ArticlesLoaded(answer) => {
-                self.feed = match answer {
-                    Ok(articles) => crate::articles::Feed::Ready(articles),
-                    Err(why) => crate::articles::Feed::Failed(why),
-                };
             }
             Message::UpdateChecked(answer) => {
                 // Also to the status line, and ONLY when the card is not up.
@@ -10047,16 +9983,15 @@ impl Brokkr {
                     && !self.welcome
                     && self.status.is_empty()
                 {
-                    self.status =
-                        format!("{} -- {}", offer.headline(), crate::articles::RELEASE_PAGE);
+                    self.status = format!("{} -- {}", offer.headline(), crate::links::RELEASE_PAGE);
                 }
                 self.offer = answer;
             }
             Message::LinkOpened(link) => {
-                // The screen stays up: reading an article is not choosing what
-                // to do with the application, and coming back to a dismissed
-                // welcome screen would be a surprise.
-                if let Err(why) = crate::articles::open_in_browser(&link) {
+                // The screen stays up: reading the release page is not
+                // choosing what to do with the application, and coming back to
+                // a dismissed welcome screen would be a surprise.
+                if let Err(why) = crate::links::open_in_browser(&link) {
                     self.status = why;
                 }
             }
@@ -10079,7 +10014,7 @@ impl Brokkr {
                     self.status = format!(
                         "build {} needs a full download -- {}",
                         offer.build,
-                        crate::articles::RELEASE_PAGE
+                        crate::links::RELEASE_PAGE
                     );
                     return Task::none();
                 }
@@ -10157,7 +10092,7 @@ impl Brokkr {
                             Some(build),
                         );
                         self.status = format!(
-                            "went back from build {build} — restart BrokkrSculpt to use it"
+                            "went back from build {build} — restart Eitri Sculpt to use it"
                         );
                     }
                     Err(why) => self.update_says_of(
@@ -10218,41 +10153,6 @@ impl Brokkr {
                 self.welcome_on_startup = show;
                 crate::welcome::set_on_startup(show);
             }
-            Message::SignInRequested => {
-                // Guarded rather than merely disabled in the view: a second
-                // press would bind a second listener and open a second tab,
-                // and only one of them could ever be answered.
-                if self.signing_in {
-                    return Task::none();
-                }
-                self.signing_in = true;
-                self.status = "waiting for the browser…".to_string();
-                return Task::perform(async { crate::account::sign_in() }, Message::SignInFinished);
-            }
-            Message::SignInFinished(outcome) => {
-                self.signing_in = false;
-                match outcome {
-                    Ok(account) => {
-                        self.status = format!("signed in as {}", account.label());
-                        self.account = Some(account);
-                        return self.fetch_avatar();
-                    }
-                    // "could not" is what colours the status line as an error;
-                    // see `panel.rs`.
-                    Err(why) => self.status = format!("could not sign in: {why}"),
-                }
-            }
-            Message::AvatarLoaded(handle) => self.avatar = handle,
-            Message::SignOutRequested => match crate::account::sign_out() {
-                Ok(()) => {
-                    self.account = None;
-                    // Or the next person to sign in on this machine gets the
-                    // last one's face beside their name.
-                    self.avatar = None;
-                    self.status = "signed out".to_string();
-                }
-                Err(why) => self.status = why,
-            },
             Message::SymmetryAxisToggled(axis) => self.toggle_mirror(axis),
             Message::PatternChanged(kind) => self.brush.pattern.kind = kind,
             Message::PatternScaleChanged(scale) => self.brush.pattern.scale_mm = scale,
@@ -11973,17 +11873,17 @@ mod tests {
     #[test]
     fn the_title_carries_the_file_name_and_the_unsaved_star() {
         let mut app = app();
-        assert_eq!(app.title(), "untitled — BrokkrSculpt");
+        assert_eq!(app.title(), "untitled — Eitri Sculpt");
 
         press(&mut app, centre_of_viewport());
         release(&mut app);
-        assert_eq!(app.title(), "untitled* — BrokkrSculpt");
+        assert_eq!(app.title(), "untitled* — Eitri Sculpt");
 
         app.project_path = Some(std::path::PathBuf::from("/tmp/dragon.brokkr"));
-        assert_eq!(app.title(), "dragon.brokkr* — BrokkrSculpt");
+        assert_eq!(app.title(), "dragon.brokkr* — Eitri Sculpt");
 
         app.unsaved = false;
-        assert_eq!(app.title(), "dragon.brokkr — BrokkrSculpt");
+        assert_eq!(app.title(), "dragon.brokkr — Eitri Sculpt");
     }
 
     // --- the confirm-before-discard prompt -----------------------------------
@@ -12587,11 +12487,9 @@ mod tests {
         assert!(!dismisses_the_welcome(&Message::UpdateCheckSet(true)));
         assert!(!dismisses_the_welcome(&Message::WelcomeOnStartupSet(true)));
         assert!(
-            !dismisses_the_welcome(&Message::LinkOpened("https://tinkeratlas.com/x".into())),
-            "reading an article closed the screen it was read from"
+            !dismisses_the_welcome(&Message::LinkOpened(crate::links::RELEASE_PAGE.into())),
+            "opening the release page closed the screen it was opened from"
         );
-        assert!(!dismisses_the_welcome(&Message::ArticlesRetried));
-        assert!(!dismisses_the_welcome(&Message::ArticlesLoaded(Ok(Vec::new()))));
 
         // And the ones that must: every button that starts real work.
         assert!(dismisses_the_welcome(&Message::NewSculpt));
@@ -15301,7 +15199,7 @@ mod tests {
         let before = app.doc.active_volume().brick_coords().count();
         app.open_project(&path);
 
-        assert!(app.status.contains("not a BrokkrSculpt file"), "reported: {}", app.status);
+        assert!(app.status.contains("not an Eitri Sculpt file"), "reported: {}", app.status);
         assert_eq!(
             app.doc.active_volume().brick_coords().count(),
             before,
@@ -16686,7 +16584,7 @@ mod export_tests {
     fn the_diagnostics_carry_what_a_bug_report_needs() {
         let app = app();
         let report = app.diagnostics();
-        for expected in ["BrokkrSculpt", "model:", "view:", "tablet:", "spacemouse:"] {
+        for expected in ["Eitri Sculpt", "model:", "view:", "tablet:", "spacemouse:"] {
             assert!(report.contains(expected), "diagnostics are missing {expected}:\n{report}");
         }
         // The platform line is one or the other, never neither. `session:`

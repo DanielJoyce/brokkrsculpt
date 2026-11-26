@@ -84,7 +84,7 @@ fn write_to(path: &std::path::Path, show: bool) {
     let _ = std::fs::write(
         path,
         format!(
-            "# BrokkrSculpt welcome screen.\n\
+            "# Eitri Sculpt welcome screen.\n\
              # Delete this file to see it again on startup.\n\
              {KEY} = {show}\n"
         ),
