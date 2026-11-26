@@ -15,16 +15,29 @@
       padding: 16px;
     }
     #note b { color: #ff7a3c; }
+    #note code { color: #ff7a3c; }
   </style>
 </head>
 <body>
   <div id="note"><div><img src="icon.png" alt="" width="96" height="96"><br>Loading <b>HaniSculpt</b>…</div></div>
   <script type="module">
     const note = document.getElementById("note");
-    if (!navigator.gpu) {
+    const icon = '<img src="icon.png" alt="" width="96" height="96"><br>';
+    // Asked here, before the application starts, because a browser can have
+    // WebGPU and still have no adapter for it (Chrome on Linux without its
+    // flags, a blocked graphics driver). The application cannot run without
+    // one, and iced would otherwise fall back to a software renderer that
+    // fails on the same canvas with a message about a 2D context.
+    const adapter = navigator.gpu ? await navigator.gpu.requestAdapter().catch(() => null) : null;
+    if (!adapter) {
       note.innerHTML =
-        "<div><b>HaniSculpt</b> needs WebGPU.<br>" +
-        "Chrome or Edge 113 and later have it; Firefox and Safari have it in their newest versions.</div>";
+        "<div>" + icon + "<b>HaniSculpt</b> needs WebGPU, and this browser " +
+        (navigator.gpu ? "has no graphics adapter for it" : "does not have it") + ".<br><br>" +
+        "Chrome and Edge on Windows and macOS have it on.<br>" +
+        "Chrome on Linux: turn on <code>chrome://flags/#enable-unsafe-webgpu</code> " +
+        "and <code>chrome://flags/#enable-vulkan</code>, then restart it.<br>" +
+        "Firefox: turn on <code>dom.webgpu.enabled</code> in <code>about:config</code>, then reload.<br>" +
+        "Safari 26 has it too.</div>";
     } else {
       try {
         const app = await import("./hanisculpt.js");

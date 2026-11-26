@@ -47,6 +47,11 @@
 //! key until one verifies, keep the epoch **from our own key list**, and only
 //! then parse. See [`verify_manifest`].
 
+// In a browser the updater is inert: `check`, `download` and the rest have
+// browser twins that refuse (`docs/WEB.md`), so the machinery behind them is
+// compiled, and type-checked, but unreachable there. Natively every item is
+// used, and `-D warnings` holds it to that.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code))]
 use std::fmt;
 
 /// Putting a verified file in place, on all three platforms. See the module.

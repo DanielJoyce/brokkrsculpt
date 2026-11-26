@@ -35,6 +35,11 @@
 //! is handed a verified file and a target, and it either swaps them or refuses
 //! with a reason.
 
+// In a browser the updater is inert: `check`, `download` and the rest have
+// browser twins that refuse (`docs/WEB.md`), so the machinery behind them is
+// compiled, and type-checked, but unreachable there. Natively every item is
+// used, and `-D warnings` holds it to that.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code))]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 

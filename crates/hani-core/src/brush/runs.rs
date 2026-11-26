@@ -45,7 +45,11 @@
 use glam::{IVec3, Vec3};
 
 use super::BrushDirection;
-use super::compound::{Actions, Shape, Side, Slope};
+use super::compound::{Actions, Slope};
+// Read only by the x86-64 run; elsewhere there is no run to read them.
+#[cfg(target_arch = "x86_64")]
+use super::compound::{Shape, Side};
+#[cfg(target_arch = "x86_64")]
 use crate::brick::{INSIDE, OUTSIDE};
 use crate::region::FieldRegion;
 use crate::volume::VoxelEdit;
@@ -76,6 +80,10 @@ where
 
 /// What one stamp holds constant: the names are the ones
 /// `Compound::run` has them under, which are `Brush::stamp`'s.
+///
+/// Filled on every target and read only by the x86-64 run: elsewhere the run
+/// is the empty one above it, and the brush goes voxel by voxel.
+#[cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
 pub(super) struct Kernel<'a> {
     pub centre: Vec3,
     pub radius_squared: f32,

@@ -151,9 +151,6 @@ made for it, and there are no third-party fonts, icons, textures or sample
 models to attribute.
 
 - `docs/images/*.jpg` — screenshots of the application, taken from it.
-- `docs/images/dwarf.png` — the dwarven smith illustration of the project's
-  first name, commissioned for it and generated with Google Gemini. Copyright
-  holder as for the rest of the repository.
 - `assets/brand/haniko/` — Haniko, HaniSculpt's mascot: the badge, the
   mascot and the lockup, given by the maintainer, and the PNGs
   `scripts/brand-assets.py` makes from them. See `docs/HANIKO.md`.

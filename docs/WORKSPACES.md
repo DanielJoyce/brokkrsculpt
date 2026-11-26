@@ -226,8 +226,9 @@ pick the library's first eight and that in Sculpt the order starts with
 today's eight. Today's seventh and eighth were Move and Paint, and
 neither is a brush of the palette: the palette holds brushes on the
 field, with a picture of a stroke and a profile, and Move and Paint are
-neither. So 7 and 8 pick Gather and Spread now, and Move and Paint are
-on the rail. Making Move a brush of the palette is a change to the
+neither. So 7 and 8 picked Gather and Spread, and Move and Paint are
+on the rail. (On 2026-11-26 Gather became Pinch, taking 5 where
+upstream's Pinch stood, Spread became Widen at 7, and 8 is Scrape.) Making Move a brush of the palette is a change to the
 brush model and was not made.
 
 Tests: `each_rail_button_lights_itself_and_brush_comes_back` (every pair

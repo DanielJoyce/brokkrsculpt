@@ -8,7 +8,7 @@
 //! on. A brush is named rather than placed, so a key goes on picking the
 //! same brush whatever is added to the palette before it. A key nobody has
 //! set picks what the palette has in that place, which for Sculpt is
-//! upstream's six and then Gather and Spread, and for Transform the first
+//! Draw, Clay, Smooth, Inflate, Pinch, Flatten, Widen and Scrape, and for Transform the first
 //! eight parts.
 //!
 //! Kept in `keys.conf` in the settings directory, one `mode.key = name`
@@ -166,8 +166,8 @@ mod tests {
     use proptest::prelude::*;
 
     const PLACES: [&str; 10] = [
-        "Draw", "Clay", "Smooth", "Inflate", "Pinch", "Flatten", "Gather", "Spread", "Scrape",
-        "Fill",
+        "Draw", "Clay", "Smooth", "Inflate", "Pinch", "Flatten", "Widen", "Scrape", "Fill",
+        "Polish",
     ];
 
     fn default(key: usize) -> Option<String> {

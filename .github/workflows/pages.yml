@@ -23,6 +23,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # A warning fails the build, as it does in CI.
+  RUSTFLAGS: -D warnings
 
 jobs:
   build:
