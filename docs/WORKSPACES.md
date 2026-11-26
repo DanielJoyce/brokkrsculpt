@@ -501,9 +501,12 @@ split off a ball kept the whole ball's box, was taken for the largest part,
 and pushed the ball away (seen on the screen;
 `explode_after_a_split_moves_the_piece_and_not_the_body`).
 
-Not done: the view is not zoomed out to hold the parts apart, so a wide
-model can open past the edge of the view (the wheel brings it in); the
-parts jump apart rather than moving; a part's offset is worked out from
+Apart, the view is framed to hold every part, facing the way it faced and
+only ever moving out, and together again it is put back as it was
+(`apart_every_part_is_in_view_and_the_view_comes_back`): a model the view
+held whole had opened past its edges.
+
+Not done: the parts jump apart rather than moving; a part's offset is worked out from
 its box, so two parts on the same side of the largest at the same
 distance can still overlap each other; folders are not exploded as a
 group.

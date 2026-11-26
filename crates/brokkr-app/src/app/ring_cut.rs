@@ -456,10 +456,13 @@ impl Brokkr {
             return;
         }
         let point = origin + ray * ((disc.centre - origin).dot(disc.normal) / facing);
+        // On a bent cut, onto the cut where it stands and square to it.
         if let Some(key) = proposal.keys.get_mut(at)
             && disc.within(point)
         {
-            key.centre = point;
+            key.centre = disc.on_cut(point);
+            let square = disc.normal_at(key.centre);
+            key.axis = if key.axis.dot(disc.normal) >= 0.0 { square } else { -square };
         }
         self.refresh_overlay();
     }
@@ -667,7 +670,8 @@ impl Brokkr {
             let ring = proposal.ring;
             // Each key on the cut face: its rim, and its middle to drag.
             for key in &proposal.keys {
-                circle(batch, key.centre, ring.across, ring.beside(), key.radius_mm, HANDLE);
+                let (across, beside) = key.axis.any_orthonormal_pair();
+                circle(batch, key.centre, across, beside, key.radius_mm, HANDLE);
                 let half = HANDLE_PX * 0.6 * self.world_per_pixel(key.centre);
                 let lift = (self.camera.eye() - key.centre).normalize_or(ring.normal) * half * 3.0;
                 let at = key.centre + lift;
@@ -699,8 +703,13 @@ impl Brokkr {
             Some(proposal) if self.tool == super::Tool::Cut => {
                 let ring = proposal.ring;
                 // A couple of voxels behind the plane, so the cut face itself
-                // is never screened.
-                let offset = ring.normal.dot(ring.centre) - self.doc.voxel_size() * 2.0;
+                // is never screened; behind the lowest point of a bent cut,
+                // with what its curve can overshoot the points by, so that
+                // none of a bent face is screened either.
+                let lowest = proposal.lifts.iter().copied().fold(0.0_f32, f32::min);
+                let highest = proposal.lifts.iter().copied().fold(0.0_f32, f32::max);
+                let below = lowest - (highest - lowest) * 0.25;
+                let offset = ring.normal.dot(ring.centre) + below - self.doc.voxel_size() * 2.0;
                 crate::viewport::GhostView {
                     plane: [ring.normal.x, ring.normal.y, ring.normal.z, offset],
                     keep: [ring.centre.x, ring.centre.y, ring.centre.z, ring.radius * 4.0],
@@ -1206,6 +1215,17 @@ mod tests {
         assert_eq!(view.amount, 0.4);
         let ring = app.ring_cut.proposal.as_ref().expect("a cut").ring;
         assert_eq!(view.plane[..3], ring.normal.to_array());
+        // Bent below the plane on one side: none of the bent face screened.
+        if let Some(proposal) = app.ring_cut.proposal.as_mut() {
+            proposal.lifts[2] = -1.5;
+        }
+        app.refresh_overlay();
+        let bent = app.shared.ghost_view();
+        assert!(
+            bent.plane[3] <= ring.normal.dot(ring.centre) - 1.5,
+            "the bent face is screened: kept from {}",
+            bent.plane[3]
+        );
         update(&mut app, Message::Ring(RingMessage::Dropped));
         assert_eq!(app.shared.ghost_view().amount, 0.0, "dropped, the rest is still screened");
     }

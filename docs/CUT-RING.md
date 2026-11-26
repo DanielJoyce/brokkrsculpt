@@ -323,10 +323,19 @@ sloped face. Explode afterwards pushed the ball away from the dome, because
 the piece's cached box was still the whole ball's; Explode now measures
 each body's bricks when it is pressed (`explode_after_a_split_moves_the_piece_and_not_the_body`).
 
+Then, the same day: each key stands square to the cut where it is
+(`Disc::normal_at`, by differences of the cut's side), the way it pointed
+before, so a peg on a sloping part of a bent face goes straight in, and a
+key dragged on a bent face is put onto it and turned with it; keyed, both
+bodies are closed (`keys_on_a_bent_cut_stand_on_it`). The see-through view
+keeps everything in front of the bend's lowest point, less what its curve
+can overshoot by, so none of a bent face is screened.
+
 Not done: a point moves only along its own angle, so a collar dipping at a
 place between two points needs the two either side; the see-through view
-still screens by the flat plane; a key is not tilted to a steep face; more
-than eight points, or adding one, is not offered.
+keeps a slab that holds the whole bent face rather than following it, so
+some of the rest beside a deep bend stays solid; more than eight points,
+or adding one, is not offered.
 
 ## Open questions
 
