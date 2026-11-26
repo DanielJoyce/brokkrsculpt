@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! BrokkrSculpt: a voxel and SDF based 3D sculpting application.
+//! HaniSculpt: a voxel and SDF based 3D sculpting application.
 
 // **No console window on Windows.** Without this the binary is built for the
 // console subsystem, so double-clicking it opens a black terminal beside the
@@ -33,6 +33,7 @@ mod cursor;
 mod curve;
 mod cut;
 mod cut_preview;
+mod desktop_entry;
 mod gizmo;
 mod icon;
 mod links;
@@ -83,6 +84,23 @@ fn app_theme(_state: &Brokkr) -> iced::Theme {
 /// Long enough to find the pen and press it after reading the instruction,
 /// short enough that a redirected run does not look hung.
 const TABLET_LISTEN: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// The window: no system title bar, Haniko's badge as its icon where the
+/// system shows one (`logo.rs`), and on Linux the app id the desktop entry
+/// is found by, which is how Wayland shows the badge (`desktop_entry.rs`).
+fn window_settings() -> iced::window::Settings {
+    #[allow(unused_mut)]
+    let mut settings = iced::window::Settings {
+        decorations: false,
+        icon: logo::window_icon(),
+        ..Default::default()
+    };
+    #[cfg(target_os = "linux")]
+    {
+        settings.platform_specific.application_id = desktop_entry::APP_ID.to_string();
+    }
+    settings
+}
 
 fn main() -> iced::Result {
     // **The channel CI reads the build ordinal back out of.**
@@ -160,6 +178,9 @@ fn main() -> iced::Result {
     )
     .init();
 
+    // The launcher's icon on Linux. See `desktop_entry.rs`.
+    desktop_entry::install();
+
     iced::application(Brokkr::new, Brokkr::update, Brokkr::view)
         .title(Brokkr::title)
         .subscription(Brokkr::subscription)
@@ -180,6 +201,6 @@ fn main() -> iced::Result {
         // SindriCAD does, so there is one bar instead of two. `panel.rs`'s
         // `header` carries the move, maximise, minimise and close that the
         // decoration would have provided.
-        .window(iced::window::Settings { decorations: false, ..Default::default() })
+        .window(window_settings())
         .run()
 }

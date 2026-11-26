@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
-Name=BrokkrSculpt
+Name=HaniSculpt
 GenericName=3D Sculpting
 Comment=Voxel sculpting for 3D printing
 Exec=brokkrsculpt
-Icon=brokkrsculpt
+Icon=hanisculpt
 Terminal=false
 Categories=Graphics;3DGraphics;Engineering;
 Keywords=sculpt;voxel;3D;print;mesh;STL;3MF;
-StartupWMClass=brokkrsculpt
+StartupWMClass=hanisculpt

@@ -7,9 +7,8 @@
 //!
 //! Every icon also exists as a file under `assets/icons/`, **generated from
 //! this data** by the `write_the_svg_twins` test rather than maintained beside
-//! it. `logo.rs` and `assets/brand/brokkrsculpt-mark.svg` are hand-kept twins
-//! and rely on nobody editing one without the other; at twenty-one icons that
-//! bet is not worth taking, and generating them means the contact sheet cannot
+//! it. At twenty-one icons, keeping a file and a drawing in step by hand is not
+//! a bet worth taking, and generating them means the contact sheet cannot
 //! flatter a drawing the application does not actually have.
 //!
 //! # House style, hold to it when adding entries
@@ -1128,10 +1127,9 @@ fn file_stem(name: IconName) -> String {
 /// One icon as a standalone SVG document.
 ///
 /// **Generated from the same `&'static` data the application draws**, rather
-/// than hand-written beside it. `logo.rs` and `brokkrsculpt-mark.svg` are twins
-/// maintained by hand and rely on nobody editing one without the other; with
-/// twenty-one icons that bet is not worth taking, and generating them means the
-/// contact sheet cannot flatter a drawing the application does not have.
+/// than hand-written beside it: with twenty-one icons, keeping a file and a
+/// drawing in step by hand is not a bet worth taking, and generating them means
+/// the contact sheet cannot flatter a drawing the application does not have.
 ///
 /// `currentColor` throughout, so the files drop into a web page or a README and
 /// take their colour from it — which is how SindriCAD's set works, and the one

@@ -26,6 +26,7 @@ mkdir -p "$out"
 wasm-bindgen --target web --no-typescript --out-dir "$out" \
   "$target/wasm32-unknown-unknown/release/brokkrsculpt.wasm"
 cp web/index.html "$out/index.html"
+cp assets/brand/haniko/hanisculpt-icon-256.png "$out/icon.png"
 # A Pages site built from a branch runs Jekyll unless told not to; one
 # published by the workflow does not, and the marker costs nothing.
 touch "$out/.nojekyll"

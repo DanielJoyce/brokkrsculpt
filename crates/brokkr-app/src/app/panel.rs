@@ -382,11 +382,11 @@ impl Brokkr {
         // Two `text`s in a row cannot sit flush: a row's spacing applies
         // between them, and setting it to zero leaves the glyphs kerned as two
         // separate runs anyway. `rich_text` colours spans inside a single run,
-        // which is what makes it read as EitriSCULPT and not Eitri SCULPT.
+        // which is what makes it read as HaniSCULPT and not Hani SCULPT.
         let wordmark = row![
             crate::logo::mark(24.0),
             rich_text::<(), Message, _, _>([
-                span("Eitri").color(theme::TEXT),
+                span("Hani").color(theme::TEXT),
                 span("SCULPT").color(theme::ACCENT),
             ])
             .size(theme::TEXT_SIZE),
@@ -543,16 +543,9 @@ impl Brokkr {
     /// there is no manual yet; they are deliberately few, and everything here
     /// is also discoverable in the interface.
     fn welcome_card(&self) -> Element<'_, Message> {
-        let lockup = row![
-            crate::logo::mark(32.0),
-            rich_text::<(), Message, _, _>([
-                span("Eitri").color(theme::TEXT),
-                span("SCULPT").color(theme::ACCENT),
-            ])
-            .size(theme::TEXT_SIZE),
-        ]
-        .spacing(theme::S3)
-        .align_y(Alignment::Center);
+        // Haniko and the name, the picture the maintainer gave for this
+        // screen. See `logo.rs`.
+        let lockup = crate::logo::lockup(112.0);
 
         type ButtonStyle = fn(&iced::Theme, button::Status) -> button::Style;
         let action = |label: &'static str, message: Message, style: ButtonStyle| {
@@ -623,7 +616,7 @@ impl Brokkr {
         // website to go. The keys moved up into the space: they are the one
         // thing a first-time user cannot get anywhere else.
         let heading = column![
-            text("Welcome to Eitri Sculpt").size(theme::TITLE_SIZE).color(theme::TEXT),
+            text("Welcome to HaniSculpt").size(theme::TITLE_SIZE).color(theme::TEXT),
             text("A sculpting tool for people who print what they make.")
                 .size(theme::TEXT_SIZE)
                 .color(theme::TEXT_DIM),
@@ -1051,7 +1044,7 @@ impl Brokkr {
             TopMenu::Help => column![
                 keyed("Keyboard shortcuts", "?", Some(Message::ShortcutsOpened)),
                 separator(),
-                text(format!("Eitri Sculpt {}", env!("CARGO_PKG_VERSION")))
+                text(format!("HaniSculpt {}", env!("CARGO_PKG_VERSION")))
                     .size(theme::TEXT_SIZE_SMALL)
                     .color(theme::TEXT),
                 // **The ordinal first, then the commit.** This line said

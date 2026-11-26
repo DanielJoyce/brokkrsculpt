@@ -1447,7 +1447,7 @@ pub const PROJECT_EXTENSION: &str = "brokkr";
 async fn pick_project_to_open() -> Option<std::path::PathBuf> {
     rfd::AsyncFileDialog::new()
         .set_title("Open sculpt")
-        .add_filter("Eitri Sculpt", &[PROJECT_EXTENSION])
+        .add_filter("HaniSculpt", &[PROJECT_EXTENSION])
         .pick_file()
         .await
         .map(|handle| handle.path().to_path_buf())
@@ -1456,7 +1456,7 @@ async fn pick_project_to_open() -> Option<std::path::PathBuf> {
 async fn pick_project_to_save() -> Option<std::path::PathBuf> {
     rfd::AsyncFileDialog::new()
         .set_title("Save sculpt")
-        .add_filter("Eitri Sculpt", &[PROJECT_EXTENSION])
+        .add_filter("HaniSculpt", &[PROJECT_EXTENSION])
         .set_file_name(format!("sculpt.{PROJECT_EXTENSION}"))
         .save_file()
         .await
@@ -2396,7 +2396,7 @@ impl Brokkr {
     /// star appears the moment a stroke lands with nothing else to wire.
     pub fn title(&self) -> String {
         let star = if self.unsaved { "*" } else { "" };
-        format!("{}{star} — Eitri Sculpt", self.document_name())
+        format!("{}{star} — HaniSculpt", self.document_name())
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -2599,7 +2599,7 @@ impl Brokkr {
                     };
                     let why = format!(
                         "build {} is installed, but starting it failed after {tries} ({}) -- this \
-                         window is still the old build; close it and start Eitri Sculpt again",
+                         window is still the old build; close it and start HaniSculpt again",
                         offer.build, refused.error
                     );
                     refused_at(Step::Relaunch, why)
@@ -6808,7 +6808,7 @@ impl Brokkr {
     pub(crate) fn diagnostics(&self) -> String {
         use std::fmt::Write;
         let mut out = String::new();
-        let _ = writeln!(out, "Eitri Sculpt {} ({})", env!("CARGO_PKG_VERSION"), build_commit());
+        let _ = writeln!(out, "HaniSculpt {} ({})", env!("CARGO_PKG_VERSION"), build_commit());
         // **The build ordinal and the updater's own state, in every report.**
         // Costs two lines and turns every future "it stopped updating" into a
         // one-message diagnosis instead of a conversation: which build they are
@@ -10094,9 +10094,8 @@ impl Brokkr {
                             crate::update::journal::Step::Revert,
                             Some(build),
                         );
-                        self.status = format!(
-                            "went back from build {build} — restart Eitri Sculpt to use it"
-                        );
+                        self.status =
+                            format!("went back from build {build} — restart HaniSculpt to use it");
                     }
                     Err(why) => self.update_says_of(
                         crate::update::journal::Step::Revert,
@@ -11876,17 +11875,17 @@ mod tests {
     #[test]
     fn the_title_carries_the_file_name_and_the_unsaved_star() {
         let mut app = app();
-        assert_eq!(app.title(), "untitled — Eitri Sculpt");
+        assert_eq!(app.title(), "untitled — HaniSculpt");
 
         press(&mut app, centre_of_viewport());
         release(&mut app);
-        assert_eq!(app.title(), "untitled* — Eitri Sculpt");
+        assert_eq!(app.title(), "untitled* — HaniSculpt");
 
         app.project_path = Some(std::path::PathBuf::from("/tmp/dragon.brokkr"));
-        assert_eq!(app.title(), "dragon.brokkr* — Eitri Sculpt");
+        assert_eq!(app.title(), "dragon.brokkr* — HaniSculpt");
 
         app.unsaved = false;
-        assert_eq!(app.title(), "dragon.brokkr — Eitri Sculpt");
+        assert_eq!(app.title(), "dragon.brokkr — HaniSculpt");
     }
 
     // --- the confirm-before-discard prompt -----------------------------------
@@ -15202,7 +15201,7 @@ mod tests {
         let before = app.doc.active_volume().brick_coords().count();
         app.open_project(&path);
 
-        assert!(app.status.contains("not an Eitri Sculpt file"), "reported: {}", app.status);
+        assert!(app.status.contains("not a HaniSculpt file"), "reported: {}", app.status);
         assert_eq!(
             app.doc.active_volume().brick_coords().count(),
             before,
@@ -16587,7 +16586,7 @@ mod export_tests {
     fn the_diagnostics_carry_what_a_bug_report_needs() {
         let app = app();
         let report = app.diagnostics();
-        for expected in ["Eitri Sculpt", "model:", "view:", "tablet:", "spacemouse:"] {
+        for expected in ["HaniSculpt", "model:", "view:", "tablet:", "spacemouse:"] {
             assert!(report.contains(expected), "diagnostics are missing {expected}:\n{report}");
         }
         // The platform line is one or the other, never neither. `session:`
