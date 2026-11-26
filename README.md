@@ -382,6 +382,13 @@ true of it too, and what it adds is this.
   printer manages, as the model stands, and an export then says how much
   of the surface that is. Seen while sculpting, when there is still time
   to do something about a chin.
+- **The ring cut.** With the cut tool, drag a ring round what to cut, an
+  arm, a head, a spur: it proposes a cut across it, drawn as a band on
+  the surface where it would part the model, and *Split in two* makes
+  that piece a body of its own and leaves the rest alone, so a cut across
+  an arm no longer takes the torso beside it. *Line* on the bar is the
+  cut that goes straight through everything. See
+  [`docs/CUT-RING.md`](docs/CUT-RING.md).
 - **Parting with keys.** The plane cut with **alt** held makes two bodies
   with pegs and sockets that fit, for a model bigger than the bed or one
   that prints better in halves. *Print a fit test…* writes a plate of

@@ -52,6 +52,8 @@ pub mod rotate;
 pub mod signals;
 pub mod similarity;
 pub mod solid;
+// Severing a piece off a body with a disc: the ring cut. See `sever.rs`.
+pub mod sever;
 pub mod split;
 pub mod stroke;
 #[cfg(test)]

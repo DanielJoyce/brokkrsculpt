@@ -18,6 +18,9 @@ mod airbrush;
 mod coats;
 // The Decal touch. See `app/decal.rs`.
 mod decal;
+// The ring cut. See `app/ring_cut.rs`.
+mod ring_cut;
+pub use ring_cut::CutWay;
 // How many worker threads, and a measurement of it. See `app/cores.rs`.
 pub(crate) mod cores;
 pub use cores::ThreadsChoice;
@@ -993,6 +996,8 @@ pub struct Brokkr {
     painting: painting::PaintingState,
     /// The worker threads. See `app/cores.rs`.
     cores: cores::CoresState,
+    /// The ring cut. See `app/ring_cut.rs`.
+    ring_cut: ring_cut::RingCut,
     /// What a drybrush would catch, under the ring. See `app/dry_preview.rs`.
     dry_preview: dry_preview::DryPreview,
     /// How many texels on a side a baked texture is. See `app/paints.rs`.
@@ -2276,6 +2281,7 @@ impl Brokkr {
             overhang: overhang::OverhangState::default(),
             painting: painting::PaintingState::default(),
             cores: cores::CoresState::default(),
+            ring_cut: ring_cut::RingCut::default(),
             dry_preview: dry_preview::DryPreview::default(),
             texture_size: paints::TEXTURE_SIZES[1],
             mask_tint: DEFAULT_MASK_TINT,
@@ -5054,6 +5060,8 @@ impl Brokkr {
         self.add_decal_preview(&mut batch);
         // What a drybrush would catch. See `app/dry_preview.rs`.
         self.add_drybrush_preview(&mut batch);
+        // The ring cut. See `app/ring_cut.rs`.
+        self.add_ring_preview(&mut batch);
         self.shared.swap_overlay(&mut batch);
         self.overlay = batch;
     }
@@ -5471,6 +5479,8 @@ impl Brokkr {
             // for the reason shift's preview is live: a verb read from a key
             // at the release has to be visible before the release.
             (Tool::Cut, _) if self.parting_cut() => "PART — KEEP BOTH".to_string(),
+            // See `app/ring_cut.rs`.
+            (Tool::Cut, _) if self.rings() => "RING CUT".to_string(),
             (Tool::Cut, _) => self.live_cut_shape().label().to_string(),
             (Tool::Transform, _) => "MOVE".to_string(),
             (Tool::Sculpt, _) => self.effective_brush().kind.label().to_uppercase(),
@@ -9470,6 +9480,10 @@ impl Brokkr {
                             // into the next one.
                             self.cut_path.clear();
                             self.cut_path.push(position);
+                            // Or the middle of a ring. See `app/ring_cut.rs`.
+                            if self.rings() {
+                                self.ring_pressed(position);
+                            }
                             DragKind::Cutting
                         }
                         // Deliberately does NOT pick: masking paints the ACTIVE
@@ -9554,8 +9568,14 @@ impl Brokkr {
                 }
                 if let Some(drag) = self.drag.filter(|drag| drag.button == button) {
                     if matches!(drag.kind, DragKind::Cutting) {
-                        // The drag already recorded where the button went down.
-                        self.finish_cut(drag.origin);
+                        if self.rings() {
+                            // The ring let go. See `app/ring_cut.rs`.
+                            self.cut_path.clear();
+                            self.ring_released();
+                        } else {
+                            // The drag already recorded where the button went down.
+                            self.finish_cut(drag.origin);
+                        }
                     }
                     // **The one place the field is rebuilt**, and it is the
                     // release rather than the motion: a bake per frame would be
@@ -9678,6 +9698,8 @@ impl Brokkr {
                     // is what will go. A press that chose a body is over:
                     // dragging must not turn it into a stroke on a body the
                     // user has only just arrived at.
+                    // A ring's radius. See `app/ring_cut.rs`.
+                    Some(DragKind::Cutting) if self.rings() => self.ring_moved(position),
                     Some(DragKind::Cutting) => {
                         // Spaced rather than every event, so an identical
                         // looking stroke reduces to the same shape whether it
@@ -10489,6 +10511,13 @@ impl Brokkr {
                     self.tool = Tool::Sculpt;
                     return Task::none();
                 }
+                // A ring or the cut it proposed is dropped, the tool still in
+                // hand. See `app/ring_cut.rs`.
+                if self.tool == Tool::Cut && self.ring_escaped() {
+                    self.cut_path.clear();
+                    self.drag = None;
+                    return Task::none();
+                }
                 if self.tool == Tool::Cut {
                     // A LIVE path is thrown away without disarming, exactly as
                     // a live gizmo drag is above and for the same reason:
@@ -10729,6 +10758,8 @@ impl Brokkr {
             Message::Designer(message) => self.designer_changed(message),
             // See `app/cores.rs`.
             Message::Cores(message) => return self.cores_changed(message),
+            // See `app/ring_cut.rs`.
+            Message::Ring(message) => self.ring_changed(message),
             Message::Airbrush(message) => self.airbrush_changed(message),
             Message::Coats(message) => self.coats_changed(message),
             Message::Decal(message) => return self.decal_changed(message),
@@ -13461,6 +13492,8 @@ mod tests {
         let undo_before = app.history.stats().undo_entries;
 
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         app.alt = true;
         assert_eq!(
             app.live_tool_label(),
@@ -13540,6 +13573,8 @@ mod tests {
             app.camera.pitch = 0.0;
             app.publish_camera();
             update(app, Message::ToolChanged(Tool::Cut));
+            // The line cut, not the ring. See `app/ring_cut.rs`.
+            update(app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
             app.alt = true;
             let middle_y = SIZE.y / 2.0;
             press(app, Vector::new(SIZE.x * 0.1, middle_y));
@@ -13614,6 +13649,8 @@ mod tests {
         let before = app.doc.active_volume().stats();
 
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         app.alt = true;
         // A closed loop round the middle of the view.
         let (cx, cy) = (SIZE.x / 2.0, SIZE.y / 2.0);
@@ -13645,6 +13682,8 @@ mod tests {
 
         let middle_y = SIZE.y / 2.0;
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         assert_eq!(app.tool, Tool::Cut, "the cut did not arm");
 
         // Drag left to right across the middle of the viewport.
@@ -13719,6 +13758,8 @@ mod tests {
         let entries_before = app.history.stats().undo_entries;
 
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         press(&mut app, Vector::new(column, SIZE.y * 0.1));
         app.on_pointer(PointerEvent::Moved {
             position: Vector::new(column, SIZE.y * 0.9),
@@ -13750,6 +13791,8 @@ mod tests {
 
         let column = column_at_world_x(&app, 10.0);
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         press(&mut app, Vector::new(column, SIZE.y * 0.1));
         app.on_pointer(PointerEvent::Moved {
             position: Vector::new(column, SIZE.y * 0.9),
@@ -13775,6 +13818,8 @@ mod tests {
         app.publish_camera();
         app.viewport_size = Vec2::new(SIZE.x, SIZE.y);
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         press(&mut app, Vector::new(SIZE.x * 0.65, SIZE.y * 0.2));
         app.on_pointer(PointerEvent::Moved {
             position: Vector::new(SIZE.x * 0.65, SIZE.y * 0.8),
@@ -13814,6 +13859,8 @@ mod tests {
     fn a_click_with_the_cut_armed_does_nothing() {
         let mut app = app();
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         let before = app.doc.active_volume().brick_coords().count();
 
         press(&mut app, centre_of_viewport());
@@ -13885,6 +13932,8 @@ mod tests {
         app.camera.pitch = 0.0;
         app.publish_camera();
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
 
         let radius = SIZE.y * 0.15;
         drag_loop(&mut app, &loop_around(radius, 24));
@@ -13958,6 +14007,8 @@ mod tests {
         app.camera.pitch = 0.0;
         app.publish_camera();
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
 
         let points = loop_around(SIZE.y * 0.15, 12);
         press(&mut app, points[0]);
@@ -14021,6 +14072,8 @@ mod tests {
         let before = app.doc.active_volume().duplicated(glam::IVec3::ZERO);
 
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         drag_loop(&mut app, &loop_around(SIZE.y * 0.06, 20));
         assert!(app.unsaved, "the lasso did not cut: {}", app.status);
 
@@ -14062,6 +14115,8 @@ mod tests {
 
         app.shift = true;
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         drag_loop(&mut app, &loop_around(SIZE.y * 0.06, 20));
 
         let deep = -toward_camera * 50.0;
@@ -14099,6 +14154,8 @@ mod tests {
         let across = facing.cross(Vec3::Y).normalize_or(Vec3::X);
 
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         // Shift, so the cut goes all the way through and there are two ends to
         // compare. With the depth cap on there is only one.
         app.shift = true;
@@ -14157,6 +14214,8 @@ mod tests {
         let bodies_before = app.doc.nodes().len();
 
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         app.control = true;
         drag_loop(&mut app, &loop_around(SIZE.y * 0.12, 20));
         app.control = false;
@@ -14230,6 +14289,8 @@ mod tests {
 
         // Cut the neck: a lasso around the middle, deep enough to part it.
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         app.shift = true;
         drag_loop(&mut app, &loop_around(SIZE.y * 0.035, 16));
         app.shift = false;
@@ -14247,6 +14308,8 @@ mod tests {
     fn a_lasso_disarms_the_cut_like_a_line_does() {
         let mut app = app();
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         drag_loop(&mut app, &loop_around(SIZE.y * 0.15, 20));
         assert_ne!(app.tool, Tool::Cut, "the cut stayed armed after a lasso");
     }
@@ -14259,6 +14322,8 @@ mod tests {
     /// time anyone reads it.
     fn ctrl_lasso(app: &mut Brokkr, radius: f32) {
         update(app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         app.control = true;
         let points = loop_around(radius, 24);
         let first = *points.first().expect("a loop needs points");
@@ -14423,10 +14488,14 @@ mod tests {
         app.publish_camera();
 
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         drag_loop(&mut app, &loop_around(SIZE.y * 0.15, 24));
         assert!(app.status.contains("lasso"), "a lasso reported: {}", app.status);
 
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         press(&mut app, Vector::new(SIZE.x * 0.1, SIZE.y * 0.3));
         app.on_pointer(PointerEvent::Moved {
             position: Vector::new(SIZE.x * 0.9, SIZE.y * 0.3),
@@ -14442,6 +14511,8 @@ mod tests {
     fn a_loop_thinner_than_the_voxel_grid_is_refused() {
         let mut app = app();
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         let before = app.doc.active_volume().brick_coords().count();
 
         // Long, and about a pixel wide: out along the middle of the viewport
@@ -14470,6 +14541,8 @@ mod tests {
     fn escape_mid_path_leaves_the_cut_armed() {
         let mut app = app();
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         press(&mut app, Vector::new(SIZE.x * 0.2, SIZE.y * 0.5));
         app.on_pointer(PointerEvent::Moved {
             position: Vector::new(SIZE.x * 0.5, SIZE.y * 0.4),
@@ -14490,6 +14563,8 @@ mod tests {
     fn the_live_label_follows_the_shape_being_drawn() {
         let mut app = app();
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         assert_eq!(app.live_tool_label(), "PLANE CUT", "an unstarted cut is not a plane cut");
 
         let points = loop_around(SIZE.y * 0.15, 20);
@@ -14508,6 +14583,8 @@ mod tests {
         let before = app.doc.active_volume().sample_world(probe);
 
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         press(&mut app, Vector::new(SIZE.x * 0.1, SIZE.y / 2.0));
         app.on_pointer(PointerEvent::Moved {
             position: Vector::new(SIZE.x * 0.9, SIZE.y / 2.0),
@@ -14549,6 +14626,8 @@ mod tests {
 
         let before = app.doc.active_volume().brick_coords().count();
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         press(&mut app, Vector::new(SIZE.x * 0.1, SIZE.y / 2.0));
         app.on_pointer(PointerEvent::Moved {
             position: Vector::new(SIZE.x * 0.9, SIZE.y / 2.0),
@@ -14581,6 +14660,8 @@ mod tests {
     fn escape_disarms_the_cut() {
         let mut app = app();
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         assert_eq!(app.tool, Tool::Cut);
         update(&mut app, Message::MenuClosed);
         assert_ne!(app.tool, Tool::Cut, "escape left a destructive mode armed");
@@ -15316,6 +15397,8 @@ mod tests {
         let before = app.doc.volume(other).expect("a live body").sample_world(above);
 
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         press(&mut app, Vector::new(SIZE.x * 0.1, SIZE.y / 2.0));
         app.on_pointer(PointerEvent::Moved {
             position: Vector::new(SIZE.x * 0.9, SIZE.y / 2.0),
@@ -15361,6 +15444,8 @@ mod tests {
         let cut_away = app.doc.volume(first).expect("a live body").sample_world(over_the_soloed);
 
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         press(&mut app, Vector::new(SIZE.x * 0.1, SIZE.y / 2.0));
         app.on_pointer(PointerEvent::Moved {
             position: Vector::new(SIZE.x * 0.9, SIZE.y / 2.0),
@@ -17993,6 +18078,8 @@ mod solo_tests {
         let first = app.doc.active();
         add_body(&mut app, "Body 2", 30.0);
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         update(&mut app, Message::SoloEntered(first));
         assert!(app.tool == Tool::Cut && app.solo.is_some(), "the fixture did not arm both modes");
 
@@ -19512,6 +19599,8 @@ mod body_panel_tests {
         let entries = app.history_stats.undo_entries;
 
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         app.on_pointer(PointerEvent::Pressed {
             button: PointerButton::Left,
             position: iced::Vector::new(80.0, 300.0),
@@ -20530,6 +20619,8 @@ mod body_panel_tests {
     fn escape_answers_the_split_card_before_anything_else() {
         let mut app = one_body_of_two_parts();
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         assert_eq!(app.tool, Tool::Cut, "the fixture did not arm the cut");
         update(&mut app, Message::BodySplit);
 
@@ -20793,6 +20884,8 @@ mod rename_tests {
         let mut app = app();
         let first = app.doc.nodes()[0].id;
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         assert_eq!(app.tool, Tool::Cut, "the cut did not arm");
 
         type_into_the_field(&mut app, first, "Discarded");
@@ -21719,6 +21812,8 @@ mod mask_tool_tests {
     fn escape_clears_the_cut_and_leaves_mask_mode_on() {
         let mut app = app();
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         update(&mut app, Message::MenuClosed);
         assert_eq!(app.tool, Tool::Sculpt, "escape did not disarm the cut");
 
@@ -23076,6 +23171,8 @@ mod mask_generator_tests {
         let field = field_of(&app);
 
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         app.control = true;
         let middle_y = SIZE.y / 2.0;
         update(
@@ -23120,6 +23217,8 @@ mod mask_generator_tests {
         let field = field_of(&app);
 
         update(&mut app, Message::ToolChanged(Tool::Cut));
+        // The line cut, not the ring. See `app/ring_cut.rs`.
+        update(&mut app, Message::Ring(crate::message::RingMessage::Way(CutWay::Line)));
         let middle_y = SIZE.y / 2.0;
         update(
             &mut app,
