@@ -503,6 +503,17 @@ impl PaintField {
         )
     }
 
+    /// Rebuilt through any map onto the same lattice: each `wanted` brick's
+    /// voxel takes the one `source_of` names, nearest neighbour. For a warp
+    /// that is not a similarity (`crate::deform`).
+    pub(crate) fn gathered_through(
+        &self,
+        wanted: FxHashSet<BrickCoord>,
+        source_of: impl Fn(IVec3) -> IVec3 + Sync,
+    ) -> PaintField {
+        self.gathered(wanted, |_| None, source_of)
+    }
+
     fn gathered(
         &self,
         wanted: FxHashSet<BrickCoord>,

@@ -399,11 +399,17 @@ impl Brokkr {
                 self.section(PanelSection::Stroke, || self.stroke_panel()),
                 self.section(PanelSection::Pattern, || self.pattern_panel()),
                 self.section(PanelSection::Form, || self.form_panel()),
+                // See `hollow.rs`.
+                self.section(PanelSection::Extract, || self.extract_panel()),
                 self.section(PanelSection::Workbench, || self.workbench_panel()),
                 self.section(PanelSection::Detail, || self.detail_panel()),
             ],
             Workspace::Transform => vec![
                 self.section(PanelSection::Add, || self.adding_settings()),
+                // See `deform.rs`.
+                self.section(PanelSection::Deform, || self.deform_panel()),
+                // See `revolve.rs`.
+                self.section(PanelSection::Revolve, || self.revolve_panel()),
                 self.section(PanelSection::Detail, || self.detail_panel()),
             ],
             Workspace::Paint => vec![

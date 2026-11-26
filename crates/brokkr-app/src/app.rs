@@ -43,7 +43,13 @@ pub use adding::Insert;
 mod maps;
 pub use maps::MapName;
 mod fit_test;
+// Twist, bend and taper. See `app/deform.rs`.
+mod deform;
 mod form;
+// A line drawn beside an axis, spun into a body. See `app/revolve.rs`.
+mod revolve;
+// Shell and extract. See `app/hollow.rs`.
+mod hollow;
 mod measure;
 mod overhang;
 mod painting;
@@ -991,6 +997,12 @@ pub struct Brokkr {
     inserts: adding::AddState,
     /// The form tools' settings. See `app/form.rs`.
     form: form::FormState,
+    /// The revolve's axis and the line being drawn. See `app/revolve.rs`.
+    revolve: revolve::RevolveState,
+    /// The deformers' settings. See `app/deform.rs`.
+    deform: deform::DeformState,
+    /// Shell and extract settings. See `app/hollow.rs`.
+    hollow: hollow::HollowState,
     /// The overhang view: whether it is on, and how steep a lean the
     /// printer manages. See `app/overhang.rs`.
     overhang: overhang::OverhangState,
@@ -2282,6 +2294,9 @@ impl Brokkr {
             bench: None,
             inserts: adding::AddState::default(),
             form: form::FormState::default(),
+            revolve: revolve::RevolveState::default(),
+            deform: deform::DeformState::default(),
+            hollow: hollow::HollowState::default(),
             overhang: overhang::OverhangState::default(),
             painting: painting::PaintingState::default(),
             cores: cores::CoresState::default(),
@@ -9403,6 +9418,11 @@ impl Brokkr {
                 if self.explode_pressed(button, position) {
                     return;
                 }
+                // A press with the revolve's axis up draws its line. See
+                // `app/revolve.rs`.
+                if self.revolve_pressed(button, position) {
+                    return;
+                }
 
                 // A press on the navigation cube belongs to the cube. Checked
                 // before anything else, or clicking it would also carve a divot
@@ -9571,6 +9591,12 @@ impl Brokkr {
                 self.refresh_overlay();
             }
             PointerEvent::Released { button } => {
+                // The revolve's line let go: it becomes a body. See
+                // `app/revolve.rs`.
+                if self.revolve_released(button) {
+                    self.refresh_overlay();
+                    return;
+                }
                 // **The one commit path for a row drag**, and it is the global
                 // release rather than the row's own `on_release`: a row only
                 // sees a release while the pointer is still over it, so a drag
@@ -9632,6 +9658,8 @@ impl Brokkr {
                 self.cursor = Some(position);
                 // The loose end of a measurement follows the pointer.
                 self.measure_hover(position);
+                // The revolve's line follows the pointer. See `app/revolve.rs`.
+                self.revolve_moved(position);
 
                 // Past the slop this is a drag, not a click, and it stays one
                 // even if it comes back: otherwise an orbit that ends where it
@@ -10467,7 +10495,7 @@ impl Brokkr {
                 // The palette of brushes at the pointer, and a measurement
                 // being taken: Escape puts either away, which changes
                 // nothing. See `app/studio.rs` and `app/measure.rs`.
-                if self.close_palette() || self.measure_escaped() {
+                if self.close_palette() || self.measure_escaped() || self.revolve_escaped() {
                     return Task::none();
                 }
                 // The bodies drawn apart come back together. See
@@ -10786,6 +10814,12 @@ impl Brokkr {
             Message::Decal(message) => return self.decal_changed(message),
             Message::Studio(message) => return self.studio_changed(message),
             Message::Form(message) => self.form_changed(message),
+            // See `app/hollow.rs`.
+            Message::Hollow(message) => self.hollow_changed(message),
+            // See `app/deform.rs`.
+            Message::Deform(message) => self.deform_changed(message),
+            // See `app/revolve.rs`.
+            Message::Revolve(message) => self.revolve_changed(message),
             Message::Measure(message) => self.measure_changed(message),
             Message::Add(message) => self.add_changed(message),
             // See `app/maps.rs`.

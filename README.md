@@ -402,6 +402,17 @@ true of it too, and what it adds is this.
   everything comes back together (escape does that too). Nothing moves
   but the picture. Beside it, *Show only the active body*. See
   [`docs/WORKSPACES.md`](docs/WORKSPACES.md).
+- **Shell and extract.** *Shell* in FORM hollows a body to a wall of the
+  thickness asked, its surface the outside of the wall, for a print that
+  uses a fraction of the material. EXTRACT takes the masked part of the
+  surface and thickens it into a body of its own, a breastplate or a
+  pauldron: a thickness, how much of it goes into the body, and an offset
+  that lifts it off. See [`docs/MODELLING-TOOLS.md`](docs/MODELLING-TOOLS.md).
+- **Deform and revolve.** DEFORM in Transform twists, bends or tapers the
+  active body along X, Y or Z, the surface detail riding along. REVOLVE
+  puts an upright axis on the screen; draw a line beside it, either side or
+  across, and it is spun round the axis into a new body, a vase from one
+  stroke.
 - **Parting with keys.** The plane cut with **alt** held makes two bodies
   with pegs and sockets that fit, for a model bigger than the bed or one
   that prints better in halves. *Print a fit test…* writes a plate of

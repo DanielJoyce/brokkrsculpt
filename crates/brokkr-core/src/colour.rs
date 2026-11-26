@@ -579,6 +579,17 @@ impl ColourField {
         )
     }
 
+    /// Rebuilt through any map onto the same lattice: each `wanted` brick's
+    /// voxel takes the one `source_of` names, nearest neighbour. For a warp
+    /// that is not a similarity (`crate::deform`).
+    pub(crate) fn gathered_through(
+        &self,
+        wanted: FxHashSet<BrickCoord>,
+        source_of: impl Fn(IVec3) -> IVec3 + Sync,
+    ) -> ColourField {
+        self.gathered(wanted, |_| None, source_of)
+    }
+
     /// Build every `wanted` destination brick by reading one source cell per
     /// voxel, nearest neighbour.
     ///
