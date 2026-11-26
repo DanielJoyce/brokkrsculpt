@@ -456,6 +456,8 @@ pub enum RingMessage {
     Way(crate::app::CutWay),
     /// Split the piece the proposed cut severs into a body of its own.
     Split,
+    /// The same, with pegs and sockets between the two.
+    Part,
     /// Drop the proposed cut.
     Dropped,
     /// How much of the rest of the model is screened while a cut is

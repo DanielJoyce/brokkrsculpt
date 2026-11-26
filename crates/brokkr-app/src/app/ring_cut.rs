@@ -72,6 +72,9 @@ pub(super) struct Proposal {
     /// Where the cut meets the surface, as a band lying on it: the line it
     /// would leave, a quad a piece.
     contour: Vec<[Vec3; 4]>,
+    /// The keys a parting would put across the cut: planned when it is
+    /// fitted, and each draggable across the cut face.
+    pub keys: Vec<brokkr_core::part::Key>,
 }
 
 /// A ring in the model: what the handles move.
@@ -129,6 +132,14 @@ struct Held {
     ring: Ring,
 }
 
+/// What a press on a proposed cut took.
+#[derive(Debug, Clone, Copy)]
+enum Taken {
+    Handle(Held),
+    /// A key, by its place in the proposal's list.
+    Key(usize),
+}
+
 /// The ring cut's state.
 #[derive(Debug)]
 pub(super) struct RingCut {
@@ -136,7 +147,7 @@ pub(super) struct RingCut {
     press: Option<Press>,
     radius_px: f32,
     pub proposal: Option<Proposal>,
-    held: Option<Held>,
+    held: Option<Taken>,
     /// How much of the rest of the model is screened while a cut is
     /// proposed, 0..=1.
     pub see_through: f32,
@@ -163,6 +174,7 @@ const GRAB_PX: f32 = 12.0;
 const HANDLE_PX: f32 = 6.0;
 const HANDLE: [f32; 4] = [1.0, 0.85, 0.3, 1.0];
 const MISFIT: [f32; 4] = [0.9, 0.2, 0.15, 0.9];
+const KEY: [f32; 4] = [0.35, 0.8, 1.0, 1.0];
 
 /// Segments round the ring and the disc as they are drawn.
 const SEGMENTS: usize = 64;
@@ -205,7 +217,24 @@ impl Brokkr {
             if let Some((which, distance)) = nearest
                 && distance <= GRAB_PX
             {
-                self.ring_cut.held = Some(Held { which, pixel, ring });
+                self.ring_cut.held = Some(Taken::Handle(Held { which, pixel, ring }));
+                return;
+            }
+            // A key's middle, to drag it across the cut face.
+            let key = proposal
+                .keys
+                .iter()
+                .enumerate()
+                .filter_map(|(at, key)| {
+                    let on =
+                        super::measure::to_pixels(&self.camera, key.centre, self.viewport_size)?;
+                    Some((at, on.distance(pixel)))
+                })
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+            if let Some((at, distance)) = key
+                && distance <= GRAB_PX
+            {
+                self.ring_cut.held = Some(Taken::Key(at));
                 return;
             }
         }
@@ -221,9 +250,16 @@ impl Brokkr {
 
     /// A move of the ring: its radius.
     pub(super) fn ring_moved(&mut self, pixel: Vec2) {
-        if let Some(held) = self.ring_cut.held {
-            self.move_handle(held, pixel);
-            return;
+        match self.ring_cut.held {
+            Some(Taken::Handle(held)) => {
+                self.move_handle(held, pixel);
+                return;
+            }
+            Some(Taken::Key(at)) => {
+                self.move_key(at, pixel);
+                return;
+            }
+            None => {}
         }
         let Some(press) = self.ring_cut.press else {
             return;
@@ -275,8 +311,13 @@ impl Brokkr {
             if piece_is_in_front(volume, &disc, radius) { disc.normal } else { -disc.normal };
         let ring =
             Ring { centre: disc.centre, normal, across: normal.any_orthonormal_vector(), radius };
-        self.ring_cut.proposal =
-            Some(Proposal { body: press.body, ring, disc: None, contour: Vec::new() });
+        self.ring_cut.proposal = Some(Proposal {
+            body: press.body,
+            ring,
+            disc: None,
+            contour: Vec::new(),
+            keys: Vec::new(),
+        });
         self.fit_the_ring();
         self.status = format!("a ring round {:.1} mm", radius * 2.0);
         self.refresh_overlay();
@@ -294,10 +335,38 @@ impl Brokkr {
         let disc = volume.fit_to_islands(&ring.disc());
         let width = BAND_PX * self.world_per_pixel(ring.centre);
         let band = disc.as_ref().map(|disc| contour(volume, disc, width)).unwrap_or_default();
+        // Planned again with the cut: a key moved by hand stays only until
+        // the cut itself is moved.
+        let keys =
+            disc.as_ref().map(|disc| volume.plan_keys(disc, self.key_spec)).unwrap_or_default();
         if let Some(proposal) = self.ring_cut.proposal.as_mut() {
             proposal.disc = disc;
             proposal.contour = band;
+            proposal.keys = keys;
         }
+    }
+
+    /// A key dragged to `pixel`: to where the pointer's ray meets the cut's
+    /// plane, if that is within the cut.
+    fn move_key(&mut self, at: usize, pixel: Vec2) {
+        let (origin, ray) = self.ray_through(pixel);
+        let Some(proposal) = self.ring_cut.proposal.as_mut() else {
+            return;
+        };
+        let Some(disc) = &proposal.disc else {
+            return;
+        };
+        let facing = ray.dot(disc.normal);
+        if facing.abs() < 1e-4 {
+            return;
+        }
+        let point = origin + ray * ((disc.centre - origin).dot(disc.normal) / facing);
+        if let Some(key) = proposal.keys.get_mut(at)
+            && disc.within(point)
+        {
+            key.centre = point;
+        }
+        self.refresh_overlay();
     }
 
     /// A handle dragged to `pixel`: the ring moved from where it was when
@@ -362,7 +431,8 @@ impl Brokkr {
                 self.ring_cut.proposal = None;
                 self.ring_cut.press = None;
             }
-            RingMessage::Split => self.split_by_the_ring(),
+            RingMessage::Split => self.split_by_the_ring(false),
+            RingMessage::Part => self.split_by_the_ring(true),
             RingMessage::Dropped => {
                 self.ring_cut.proposal = None;
                 self.ring_cut.press = None;
@@ -383,8 +453,9 @@ impl Brokkr {
         had
     }
 
-    /// Split the piece the proposed disc severs into a body of its own.
-    fn split_by_the_ring(&mut self) {
+    /// Split the piece the proposed disc severs into a body of its own,
+    /// keyed to the rest when `keyed`.
+    fn split_by_the_ring(&mut self, keyed: bool) {
         let Some(proposal) = self.ring_cut.proposal.clone() else {
             return;
         };
@@ -398,7 +469,12 @@ impl Brokkr {
             self.status = format!("could not split {name}: {why}");
             return;
         }
-        match self.doc.sever(source, &disc) {
+        let keys = if keyed { proposal.keys.clone() } else { Vec::new() };
+        if keyed && keys.is_empty() {
+            self.status = format!("not parted: the cut across {name} has no room for a key");
+            return;
+        }
+        match self.doc.sever_keyed(source, &disc, &keys) {
             Ok(outcome) => {
                 self.ring_cut.proposal = None;
                 self.shared.forget_body(source);
@@ -407,9 +483,10 @@ impl Brokkr {
                 self.history.push(outcome.entry);
                 self.unsaved = true;
                 self.record_history(before);
-                self.status = match outcome.pieces {
-                    1 => format!("split {name} in two at the ring"),
-                    pieces => format!("split {pieces} pieces off {name} at the ring"),
+                self.status = match (outcome.pieces, keyed) {
+                    (_, true) => format!("parted {name} at the ring with {} keys", keys.len()),
+                    (1, false) => format!("split {name} in two at the ring"),
+                    (pieces, false) => format!("split {pieces} pieces off {name} at the ring"),
                 };
                 self.tool = super::Tool::Sculpt;
                 self.refresh_model_radius();
@@ -485,6 +562,21 @@ impl Brokkr {
                 );
             }
         }
+        if let Some(proposal) = &self.ring_cut.proposal {
+            let ring = proposal.ring;
+            // Each key on the cut face: its rim, and its middle to drag.
+            for key in &proposal.keys {
+                circle(batch, key.centre, ring.across, ring.beside(), key.radius_mm, HANDLE);
+                let half = HANDLE_PX * 0.6 * self.world_per_pixel(key.centre);
+                let lift = (self.camera.eye() - key.centre).normalize_or(ring.normal) * half * 3.0;
+                let at = key.centre + lift;
+                let (u, v) =
+                    (self.camera.eye() - at).normalize_or(ring.normal).any_orthonormal_pair();
+                let corner = |a: f32, b: f32| at + (u * a + v * b) * half;
+                batch.push_triangle(corner(-1.0, -1.0), corner(1.0, -1.0), corner(1.0, 1.0), KEY);
+                batch.push_triangle(corner(-1.0, -1.0), corner(1.0, 1.0), corner(-1.0, 1.0), KEY);
+            }
+        }
         self.publish_ghost();
     }
 
@@ -501,6 +593,9 @@ impl Brokkr {
                     plane: [ring.normal.x, ring.normal.y, ring.normal.z, offset],
                     keep: [ring.centre.x, ring.centre.y, ring.centre.z, ring.radius * 4.0],
                     amount: self.ring_cut.see_through,
+                    // Half as much: the keys on the cut face are inside the
+                    // piece, and drawn solid it hid them.
+                    kept_amount: self.ring_cut.see_through * 0.5,
                 }
             }
             _ => crate::viewport::GhostView::default(),
@@ -538,6 +633,15 @@ impl Brokkr {
                         .style(theme::tool_button_active)
                         .on_press_maybe(
                             proposal.disc.is_some().then_some(Message::Ring(RingMessage::Split)),
+                        ),
+                )
+                .push(
+                    button(text("Part with pegs").size(theme::LABEL_SIZE))
+                        .padding(theme::PAD_CHOICE)
+                        .style(theme::tool_button)
+                        .on_press_maybe(
+                            (proposal.disc.is_some() && !proposal.keys.is_empty())
+                                .then_some(Message::Ring(RingMessage::Part)),
                         ),
                 )
                 .push(crate::ui::button_secondary(
@@ -657,8 +761,13 @@ mod tests {
             across: disc.normal.any_orthonormal_vector(),
             radius: disc.radius,
         };
-        app.ring_cut.proposal =
-            Some(Proposal { body, ring, disc: Some(disc.clone()), contour: Vec::new() });
+        app.ring_cut.proposal = Some(Proposal {
+            body,
+            ring,
+            disc: Some(disc.clone()),
+            contour: Vec::new(),
+            keys: Vec::new(),
+        });
     }
 
     fn update(app: &mut Brokkr, message: Message) {
@@ -865,6 +974,71 @@ mod tests {
         update(&mut app, Message::Ring(RingMessage::Split));
         assert_eq!(app.doc.bodies().count(), 1);
         assert!(app.status.contains("not round a part"), "{}", app.status);
+    }
+
+    /// Keys are planned on a cut that fits; one dragged through the
+    /// pointer moves across the cut face and stays on it; Part with pegs
+    /// parts the arm off with a peg standing in its socket, one undo.
+    #[test]
+    fn part_with_pegs_keys_the_arm_to_the_body() {
+        let mut app = armed_with_a_cut();
+        app.viewport_size = Vec2::new(SIZE.x, SIZE.y);
+        app.key_spec = brokkr_core::part::KeySpec {
+            radius_mm: 0.6,
+            depth_mm: 1.0,
+            clearance_mm: 0.1,
+            wall_mm: 0.4,
+            ..brokkr_core::part::KeySpec::peg()
+        };
+        app.fit_the_ring();
+        let proposal = app.ring_cut.proposal.clone().expect("a cut");
+        assert!(!proposal.keys.is_empty(), "no key planned on the arm's face");
+        let key = proposal.keys[0];
+
+        // Drag the key a little across the face.
+        let at = super::super::measure::to_pixels(&app.camera, key.centre, app.viewport_size)
+            .expect("on screen");
+        let start = Vector { x: at.x, y: at.y };
+        update(
+            &mut app,
+            Message::Pointer(PointerEvent::Pressed {
+                button: PointerButton::Left,
+                position: start,
+                size: SIZE,
+            }),
+        );
+        update(
+            &mut app,
+            Message::Pointer(PointerEvent::Moved {
+                position: start + Vector { x: 0.0, y: 3.0 },
+                size: SIZE,
+            }),
+        );
+        update(&mut app, Message::Frame);
+        update(&mut app, Message::Pointer(PointerEvent::Released { button: PointerButton::Left }));
+        let moved = app.ring_cut.proposal.as_ref().expect("a cut").keys[0];
+        let disc = app
+            .ring_cut
+            .proposal
+            .as_ref()
+            .and_then(|proposal| proposal.disc.clone())
+            .expect("fits");
+        assert!(moved.centre != key.centre, "the key did not move");
+        assert!(
+            disc.side(moved.centre).abs() < 1e-3 && disc.within(moved.centre),
+            "it left the face"
+        );
+
+        update(&mut app, Message::Ring(RingMessage::Part));
+        assert_eq!(app.doc.bodies().count(), 2, "{}", app.status);
+        assert!(app.status.contains("keys"), "{}", app.status);
+        let tip = moved.centre + moved.axis * (moved.depth_mm * 0.5);
+        let solid_in = |app: &Brokkr| {
+            app.doc.bodies().filter(|(_, volume)| volume.sample_world(tip) < 0.0).count()
+        };
+        assert_eq!(solid_in(&app), 1, "the peg's tip is in neither body, or in both");
+        update(&mut app, Message::Undo);
+        assert_eq!(app.doc.bodies().count(), 1);
     }
 
     /// What a split at a ring costs, and what a parting along a line

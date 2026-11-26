@@ -194,6 +194,8 @@ pub struct GhostView {
     pub keep: [f32; 4],
     /// The share of everything else's pixels screened away. Zero is off.
     pub amount: f32,
+    /// The share of the kept part's.
+    pub kept_amount: f32,
 }
 
 /// The hand off between the application and the render callbacks.
@@ -1207,7 +1209,7 @@ impl shader::Primitive for SculptPrimitive {
             // The ring cut's see-through view. See `app/ring_cut.rs`.
             ghost_plane: ghost.plane,
             ghost_keep: ghost.keep,
-            ghost: [ghost.amount, 0.0, 0.0, 0.0],
+            ghost: [ghost.amount, ghost.kept_amount, 0.0, 0.0],
             palette: paint.palette,
             paints: paint.paints,
         };

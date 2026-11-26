@@ -3516,6 +3516,14 @@ fn the_ring_cuts_see_through_view_screens_all_but_the_piece() {
     let half = harness.frame(&renderer);
     dump("ghost-half", &half);
     let (partly, _) = halves(&mask(&half));
+    // And the kept half screened by its own, smaller share: about half of
+    // it drawn too, so what is inside it shows through.
+    renderer.write_uniforms(&harness.queue, &Uniforms { ghost: [1.0, 0.5, 0.0, 0.0], ..keep(1.0) });
+    let (_, kept_half) = halves(&mask(&harness.frame(&renderer)));
+    assert!(
+        kept_half * 4 > kept_plain && kept_half * 4 < kept_plain * 3,
+        "the kept half, half screened, drew {kept_half} of {kept_plain} pixels"
+    );
     assert!(
         partly * 4 > kept_plain && partly * 4 < kept_plain * 3,
         "half screened drew {partly} of about {kept_plain} pixels"

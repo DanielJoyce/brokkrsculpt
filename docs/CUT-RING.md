@@ -246,6 +246,42 @@ Not done: a handle hidden behind the piece cannot be taken until the view
 is turned; the see-through view keeps a sphere of four radii, which on a
 long limb leaves the far end screened.
 
+## Stage 3, as built (2026-11-26): Part with pegs
+
+**Keys on the cut's face** (`Volume::plan_keys`). A parting's plan on the
+cut's plane (`part.rs`, every rule of it: the widest point of each island,
+a second key where there is room, the wall round and under each), and of
+its keys those within the fitted cut, so a cross-section the plane makes
+elsewhere gets none. Planned each time the cut is fitted, so moving the cut
+plans them again.
+
+**Severed and keyed** (`Document::sever_keyed`). The sever, then the keys
+between the two bodies by the parting's own loop, lifted out of
+`Volume::parted` into `part::put_keys`: a peg added to the body behind the
+plane and its socket, the peg grown by the clearance, taken out of the one
+in front (a pin hole or magnet pocket out of both). One undo entry.
+
+**In the application.** Each key drawn on the cut face, its rim and a dot
+at its middle; a press on the dot drags the key across the face, to where
+the pointer's ray meets the cut's plane, and only within the cut. *Part
+with pegs* beside *Split in two*, waiting while the cut fits nothing or has
+no room for a key. The key's size and kind are the parting's, set in Print.
+The piece is now screened too, at half the see-through: the keys are on the
+cut face, inside the piece, and drawn solid it hid them (seen on the
+screen).
+
+Tests: an arm severed with keys has the peg on the body behind the cut and
+its socket in the arm, keys only within the cut; in the application, keys
+planned on a cut that fits, one dragged through the pointer moves across
+the face and stays on it, Part with pegs leaves the peg's tip in exactly one
+body, one undo; the render test holds the kept part screened by its own
+share. On the screen: a dome ringed, the cut face and its key seen through
+the piece, Part with pegs making two bodies.
+
+Not done: a key dragged is not checked against the wall the plan checks
+for, so one pulled to the face's edge can break out; a key moved by hand is
+planned away again when the cut is moved.
+
 ## Open questions
 
 None open.
