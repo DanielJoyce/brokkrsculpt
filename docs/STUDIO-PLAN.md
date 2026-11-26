@@ -20,7 +20,7 @@ was built and what was measured.
 | S2 Mini painting | **Done but for broad occlusion**, 2026-11-23 (section 8), which waits for S4. Its painting by filament slot and *Mix paints* were removed on 2026-11-25 at the maintainer's word; the colour paint and the paint rack (`PAINT-RACK.md`) are what paints now | Paint brush: *Mix paints* (removed), then a rack of paints, each with a wash, an edge highlight and a zenithal undercoat; *Loaded*, *Drybrush*, *Sponge* and *Fill*; a flat view; export as PLY in colour, and 3MF by the filament each paint prints in |
 | S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). A textured tip and the gesture warps remain. Its Crease button and PRESETS block became the palette of milestone B | *Stamp* with six images or any picture, one at a time or in a row *Along the stroke*, *Lazy*, *Size from pressure* |
 | S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush and form smooth remain. Posing is not planned (section 9.3) | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
-| S5 Unwrap and bake | **Done but for the other maps**, 2026-11-23 (sections 10.4 and 10.5): unwrap, the base colour bake, OBJ with a picture, and GLB. Normal, occlusion and finish maps remain | Export as *OBJ+PNG* or *GLB*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
+| S5 Unwrap and bake | **Done but for the normal map**, 2026-11-23 (sections 10.4 and 10.5), and the occlusion with the finish in one picture on 2026-11-26 (10.6): unwrap, the base colour bake, OBJ with a picture, and GLB. The normal map remains | Export as *OBJ+PNG* or *GLB*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
 | P Painting engine | **Usable**, 2026-11-23 (section 15): the storage, the view and the brush. Painted colour is on screen, in the project file and in every export that carries colour | The paint brush lays a colour: *Paint*, *Glaze* or *Erase*, put on *Loaded*, as a *Wash*, with a *Drybrush* or a *Sponge*, at any opacity, with a soft edge. *Pick from model* takes a colour back off it |
 | B A brush is its settings | **Done but for B5**, 2026-11-23 (section 16): files in the right directories, one generic brush, the palette, a picture across the tip, build-up on or off, lines or dabs. Brushes that stamp a shape (B5) are a later stage | BRUSHES: twenty-one that come with the application, upstream's six among them, and the user's own, a file each. *What it does* shows a brush as five amounts to change. *Profile*: five shapes and a flat middle. *Picture across the tip*, *Builds up* or *One layer*, and *Set down* as a line or every so many widths |
 | M Reading sizes | **Done**, 2026-11-23 (section 17) | A scale bar in the corner of the viewport that follows the zoom, and *Measure*: two clicks on the model, and the straight-line distance between them drawn and read out |
@@ -1844,7 +1844,33 @@ control that matters here as everywhere.
 
 **Not built:** the finish as a metal and roughness picture (every material
 is the same matt non-metal), normal and occlusion maps, and compression of
-the mesh.
+the mesh. (The finish was built with the paint rack's varnish, and the
+occlusion in 10.6.)
+
+### 10.6 Built, 2026-11-26: occlusion, in the finish's picture
+
+`Unwrap::finish_baked` makes one picture the way glTF packs three maps:
+red how open the surface is, green the roughness, blue the metalness. The
+occlusion is the one a wash pools by (`Volume::occlusion_at`: six rays
+over the hemisphere a point faces, a few millimetres out), so a viewer's
+ambient light darkens the recesses the paint already knows about. Every
+body in a GLB now has this picture, not only a varnished one, and its
+material names it twice: as the roughness and metal picture and as the
+occlusion picture.
+
+Tests: on a cube with a slot cut in its top, the slot's floor is baked
+more shut in than the open top, and with no varnish every baked texel is
+the matte non-metal; the GLB names the packed picture as its occlusion;
+the application's GLB, read back with `serde_json`, has the occlusion and
+a ball reads open in at least nine tenths of its baked texels.
+
+**Measured** (release, four cores, a 24 mm cube at a quarter millimetre
+with a slot, decimated to 28 triangles, 1024 texels): the colour bake 0.12
+s, the packed picture 0.25 to 0.29 s. The occlusion is most of that: six
+rays of four steps a texel.
+
+**Not built:** the normal map, which a decimated GLB wants most and which
+needs tangents written beside the normals.
 
 ---
 

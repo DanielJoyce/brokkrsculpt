@@ -33,12 +33,13 @@
 //! handful of numbers and one kind of string in it, the bodies' names,
 //! which are escaped.
 //!
-//! # Roughness and metal
+//! # Occlusion, roughness and metal
 //!
-//! A body a varnish was laid on (stage 6 of `docs/PAINT-RACK.md`) has a
-//! second picture, its roughness and metal as glTF packs them, green and
-//! blue, and its material names it. A body with none is the same matt
-//! non-metal every material here was before.
+//! A body may have a second picture, its occlusion, roughness and metal as
+//! glTF packs them in red, green and blue ([`Unwrap::finish_baked`]), and
+//! its material names it twice: as the roughness and metal picture and as
+//! the occlusion picture, which the format reads from red. A body with
+//! none is a matt non-metal with no occlusion.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -223,11 +224,14 @@ pub fn write(bodies: &[Body<'_>], out: &mut impl Write) -> io::Result<()> {
         materials.push(match finish {
             Some(view) => {
                 images.push(*view);
+                // One picture, two uses: green and blue are the roughness
+                // and metal, red the occlusion.
                 format!(
                     "{{\"pbrMetallicRoughness\":{{\"baseColorTexture\":{{\"index\":{colour}}},\
-                     \"metallicRoughnessTexture\":{{\"index\":{}}},\
-                     \"metallicFactor\":1,\"roughnessFactor\":1}}}}",
-                    images.len() - 1
+                     \"metallicRoughnessTexture\":{{\"index\":{packed}}},\
+                     \"metallicFactor\":1,\"roughnessFactor\":1}},\
+                     \"occlusionTexture\":{{\"index\":{packed}}}}}",
+                    packed = images.len() - 1
                 )
             }
             // Not metal, and not shiny: a painted model, lit by whatever
@@ -821,6 +825,11 @@ mod tests {
         let image = &glb.json.get("images").list()[texture.get("source").index()];
         let (picture, _) = glb.view(image.get("bufferView").index());
         assert_eq!(picture, b"finish!");
+        // The same picture is the occlusion, read from its red.
+        assert_eq!(
+            material.get("occlusionTexture").get("index").index(),
+            pbr.get("metallicRoughnessTexture").get("index").index()
+        );
         assert!(
             glb.json.get("materials").list()[1]
                 .get("pbrMetallicRoughness")
