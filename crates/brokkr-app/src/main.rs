@@ -26,7 +26,6 @@
 
 mod account;
 mod app;
-mod articles;
 mod breadcrumbs;
 mod camera;
 mod crash;
@@ -36,6 +35,7 @@ mod cut;
 mod cut_preview;
 mod gizmo;
 mod icon;
+mod links;
 // `/dev/input` and the evdev crate are Linux only, and so is everything that
 // reads them: the stylus in `tablet` and the puck in `spacemouse` both sit
 // behind the same gate. Windows and macOS need Pointer Input, Wintab or IOKit

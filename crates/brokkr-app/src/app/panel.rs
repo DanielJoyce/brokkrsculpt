@@ -382,11 +382,11 @@ impl Brokkr {
         // Two `text`s in a row cannot sit flush: a row's spacing applies
         // between them, and setting it to zero leaves the glyphs kerned as two
         // separate runs anyway. `rich_text` colours spans inside a single run,
-        // which is what makes it read as BrokkrSCULPT and not Brokkr SCULPT.
+        // which is what makes it read as EitriSCULPT and not Eitri SCULPT.
         let wordmark = row![
             crate::logo::mark(24.0),
             rich_text::<(), Message, _, _>([
-                span("Brokkr").color(theme::TEXT),
+                span("Eitri").color(theme::TEXT),
                 span("SCULPT").color(theme::ACCENT),
             ])
             .size(theme::TEXT_SIZE),
@@ -537,22 +537,16 @@ impl Brokkr {
 
     /// The welcome screen.
     ///
-    /// Two columns, as SindriCAD's is: what to do down the left, something to
-    /// read down the right, "show this on startup" along the foot. See
-    /// [`crate::welcome`] for what did not come across from that one and why --
-    /// briefly, there is no webview to put its remote pane in and no sign-in to
-    /// put its account row in.
-    ///
-    /// The right column is the substitution that matters. SindriCAD's is a
-    /// news page fetched from TinkerAtlas; this is the keys, because there is
-    /// no manual yet and a beta is the moment people meet them for the first
-    /// time. It is deliberately short: a wall of text on a modal is read by
-    /// nobody, and everything here is also discoverable in the interface.
+    /// Two columns: what to do down the left, the welcome and the keys down
+    /// the right, "show this on startup" along the foot. Nothing on it leads
+    /// off the machine but the update button. The keys are there because
+    /// there is no manual yet; they are deliberately few, and everything here
+    /// is also discoverable in the interface.
     fn welcome_card(&self) -> Element<'_, Message> {
         let lockup = row![
             crate::logo::mark(32.0),
             rich_text::<(), Message, _, _>([
-                span("Brokkr").color(theme::TEXT),
+                span("Eitri").color(theme::TEXT),
                 span("SCULPT").color(theme::ACCENT),
             ])
             .size(theme::TEXT_SIZE),
@@ -623,199 +617,18 @@ impl Brokkr {
             }
         }
 
-        // **The account row, and signing in is optional.** It buys one thing
-        // and the copy says which: a bug report that can be answered. Nothing
-        // else in the application changes when it is empty -- see
-        // [`crate::account`] and `report::send`.
-        left = left.push(space::vertical().height(theme::S3));
-        left = left.push(match &self.account {
-            Some(account) => column![
-                {
-                    // The picture is optional in the strongest sense: a
-                    // profile with none, a host that will not answer and a
-                    // format we do not decode all arrive here as `None`, and
-                    // in every one of them the row is the name alone. A
-                    // missing face must never cost the account row.
-                    let mut who = row![].spacing(theme::S2).align_y(Alignment::Center);
-                    if let Some(handle) = &self.avatar {
-                        who = who.push(
-                            container(
-                                iced::widget::image(handle.clone())
-                                    .width(Length::Fixed(AVATAR_ROW_PX))
-                                    .content_fit(iced::ContentFit::Cover),
-                            )
-                            .clip(true)
-                            .width(Length::Fixed(AVATAR_ROW_PX))
-                            .height(Length::Fixed(AVATAR_ROW_PX)),
-                        );
-                    }
-                    who.push(
-                        text(account.label().to_string()).size(theme::TEXT_SIZE).color(theme::TEXT),
-                    )
-                },
-                button(text("Sign out").size(theme::TEXT_SIZE_SMALL))
-                    .padding(Padding {
-                        top: theme::S1,
-                        bottom: theme::S1,
-                        left: theme::S3,
-                        right: theme::S3
-                    })
-                    .style(theme::tool_button)
-                    .on_press(Message::SignOutRequested),
-            ]
-            .spacing(theme::S1),
-            None => column![
-                action(
-                    if self.signing_in {
-                        "Waiting for the browser…"
-                    } else {
-                        "Sign in with TinkerAtlas"
-                    },
-                    Message::SignInRequested,
-                    theme::tool_button,
-                ),
-                text("Optional. Lets us reply to your bug reports.")
-                    .size(theme::CAPTION_SIZE)
-                    .color(theme::TEXT_MUTE),
-            ]
-            .spacing(theme::S1),
-        });
-
-        // **The articles, which is what SindriCAD's right column is.** It
-        // embeds the site in an iframe; there is no webview here, so the same
-        // articles arrive as data and are drawn with the same widgets as
-        // everything else. Three states, as that one has: asking, answered, and
-        // unreachable with a retry.
-        let feed: Element<'_, Message> = match &self.feed {
-            crate::articles::Feed::Idle | crate::articles::Feed::Loading => {
-                text("Fetching the latest articles…")
-                    .size(theme::TEXT_SIZE_SMALL)
-                    .color(theme::TEXT_MUTE)
-                    .into()
-            }
-            crate::articles::Feed::Failed(why) => column![
-                // Says which way it failed rather than "offline": a 503 and no
-                // route are different problems and only one of them is yours.
-                text(why.clone()).size(theme::TEXT_SIZE_SMALL).color(theme::TEXT_MUTE),
-                button(text("Try again").size(theme::TEXT_SIZE_SMALL))
-                    .padding(Padding {
-                        top: theme::S1,
-                        bottom: theme::S1,
-                        left: theme::S3,
-                        right: theme::S3
-                    })
-                    .style(theme::tool_button)
-                    .on_press(Message::ArticlesRetried),
-            ]
-            .spacing(theme::S2)
-            .into(),
-            crate::articles::Feed::Ready(articles) if articles.is_empty() => {
-                text("Nothing published yet.")
-                    .size(theme::TEXT_SIZE_SMALL)
-                    .color(theme::TEXT_MUTE)
-                    .into()
-            }
-            crate::articles::Feed::Ready(articles) => {
-                // **Two to a row, picture on top.** The single narrow column
-                // this replaced could only carry a thumbnail beside the words,
-                // which left the picture too small to be worth its bytes and
-                // the text too narrow to carry a summary. Two wide cards give
-                // both, and match the page these articles come from.
-                let mut grid = column![].spacing(theme::S3);
-                for pair in articles.chunks(GRID_COLUMNS) {
-                    let mut line = row![].spacing(theme::S3);
-                    for article in pair {
-                        let mut card = column![].spacing(theme::S1).width(Length::Fill);
-                        // Cloning the HANDLE and not the pixels: it is
-                        // refcounted and keeps its id, so the renderer's atlas
-                        // entry survives the frame. Building a handle here
-                        // instead would mint a new id every frame and re-upload
-                        // every thumbnail. See `articles::Article::thumbnail`.
-                        //
-                        // No picture is an ordinary outcome, so the card simply
-                        // has none rather than a placeholder that would draw the
-                        // eye to what is missing.
-                        if let Some(handle) = &article.thumbnail {
-                            card = card.push(
-                                container(
-                                    iced::widget::image(handle.clone())
-                                        .width(Length::Fill)
-                                        .content_fit(iced::ContentFit::Cover),
-                                )
-                                .clip(true)
-                                .width(Length::Fill)
-                                .height(Length::Fixed(CARD_THUMB_PX)),
-                            );
-                        }
-                        card = card.push(
-                            text(article.title.clone()).size(theme::TEXT_SIZE).color(theme::TEXT),
-                        );
-                        card = card.push(
-                            text(article.summary.clone())
-                                .size(theme::TEXT_SIZE_SMALL)
-                                .color(theme::TEXT_DIM),
-                        );
-                        card = card.push(
-                            text(article.date.clone())
-                                .size(theme::CAPTION_SIZE)
-                                .color(theme::TEXT_MUTE),
-                        );
-                        line = line.push(
-                            button(card)
-                                .width(Length::Fill)
-                                .padding(theme::S2)
-                                .style(theme::tool_button)
-                                .on_press(Message::LinkOpened(article.link.clone())),
-                        );
-                    }
-                    // A last row with one article in it must not stretch that
-                    // card across the width the pair would have had.
-                    for _ in pair.len()..GRID_COLUMNS {
-                        line = line.push(space::horizontal());
-                    }
-                    grid = grid.push(line);
-                }
-                scrollable(grid).height(Length::Fixed(GRID_HEIGHT_PX)).into()
-            }
-        };
-
-        // **The two buttons, which are the point of the panel.** The articles
-        // say what the community is doing; these are how someone acts on it.
-        // Both go through the same one-host check every article link does, so
-        // neither can be turned into a way to open something else.
-        let atlas = |label: &'static str, link: &'static str, style: ButtonStyle| {
-            button(text(label).size(theme::TEXT_SIZE))
-                .padding(Padding {
-                    top: theme::S2,
-                    bottom: theme::S2,
-                    left: theme::S4,
-                    right: theme::S4,
-                })
-                .style(style)
-                .on_press(Message::LinkOpened(link.to_string()))
-        };
-        let heading = row![
-            column![
-                text("Welcome to BrokkrSculpt").size(theme::TITLE_SIZE).color(theme::TEXT),
-                text("A sculpting tool for people who print what they make.")
-                    .size(theme::TEXT_SIZE)
-                    .color(theme::TEXT_DIM),
-            ]
-            .spacing(theme::S1)
-            .width(Length::Fill),
-            atlas("Join TinkerAtlas", crate::articles::JOIN_URL, theme::tool_button_active),
-            atlas("Visit TinkerAtlas", crate::articles::VISIT_URL, theme::tool_button),
+        // **The right column is the welcome and the keys.** It carried
+        // TinkerAtlas's articles, a sign-in and two buttons to that site until
+        // 2026-11-26, when the maintainer asked for the links to the external
+        // website to go. The keys moved up into the space: they are the one
+        // thing a first-time user cannot get anywhere else.
+        let heading = column![
+            text("Welcome to Eitri Sculpt").size(theme::TITLE_SIZE).color(theme::TEXT),
+            text("A sculpting tool for people who print what they make.")
+                .size(theme::TEXT_SIZE)
+                .color(theme::TEXT_DIM),
         ]
-        .spacing(theme::S2)
-        .align_y(Alignment::Center);
-
-        let right = column![
-            heading,
-            text("Latest from TinkerAtlas").size(theme::TEXT_SIZE_SMALL).color(theme::TEXT_DIM),
-            feed,
-        ]
-        .spacing(theme::S3)
-        .width(Length::Fill);
+        .spacing(theme::S1);
 
         // **The wording comes from the offer, because the direction is not
         // always forward.** A rollback publishes a higher `seq` naming a LOWER
@@ -850,7 +663,7 @@ impl Brokkr {
                 } else if offer.payload.is_some() && !offer.requires_reinstall {
                     Message::UpdateDownloadRequested
                 } else {
-                    Message::LinkOpened(crate::articles::RELEASE_PAGE.to_string())
+                    Message::LinkOpened(crate::links::RELEASE_PAGE.to_string())
                 };
                 let mut pressable = button(text(label).size(theme::TEXT_SIZE_SMALL))
                     .padding(Padding {
@@ -895,11 +708,8 @@ impl Brokkr {
                 .label("Show this screen on startup")
                 .on_toggle(Message::WelcomeOnStartupSet)
                 .text_size(theme::TEXT_SIZE_SMALL),
-            // Beside the screen's own tick, because it governs the same kind of
-            // thing: an outbound connection. The property this card is meant to
-            // hold is that **every outbound connection has exactly one visible
-            // switch** -- see `articles.rs`. The articles and the avatar are
-            // governed by the tick to its left; this one governs the updater.
+            // **Every outbound connection has exactly one visible switch**, and
+            // this is the updater's.
             checkbox(self.update_settings.when != crate::update::When::Never)
                 .label("Check for updates")
                 .on_toggle(Message::UpdateCheckSet)
@@ -941,9 +751,7 @@ impl Brokkr {
         };
 
         // **The keys stay.** They are the one thing a first-time user cannot get
-        // anywhere else -- there is no manual -- and they are cheap here: a
-        // strip under the two columns rather than a third column, so neither
-        // the actions nor the articles lose width to them.
+        // anywhere else -- there is no manual.
         let key = |keys: &'static str, what: &'static str| {
             row![
                 container(text(keys).size(theme::CAPTION_SIZE).color(theme::ACCENT))
@@ -974,15 +782,12 @@ impl Brokkr {
         ]
         .spacing(theme::S4);
 
+        let right = column![heading, keys].spacing(theme::S4).width(Length::Fill);
         let card = container(
-            column![lockup, row![left, right].spacing(theme::S5), keys, foot,].spacing(theme::S4),
+            column![lockup, row![left, right].spacing(theme::S5), foot,].spacing(theme::S4),
         )
         .padding(theme::S5)
-        // **Wide enough for two article cards side by side**, which is what
-        // sets it: 220 for the actions, 16 of gap, two ~330 cards and the
-        // padding. The narrow card this replaced could only stack articles in
-        // one column, and that column could not carry a picture worth showing.
-        .max_width(960.0)
+        .max_width(820.0)
         .style(theme::menu_card);
 
         modal_layer(card)
@@ -1246,7 +1051,7 @@ impl Brokkr {
             TopMenu::Help => column![
                 keyed("Keyboard shortcuts", "?", Some(Message::ShortcutsOpened)),
                 separator(),
-                text(format!("BrokkrSculpt {}", env!("CARGO_PKG_VERSION")))
+                text(format!("Eitri Sculpt {}", env!("CARGO_PKG_VERSION")))
                     .size(theme::TEXT_SIZE_SMALL)
                     .color(theme::TEXT),
                 // **The ordinal first, then the commit.** This line said
@@ -3533,36 +3338,6 @@ impl Brokkr {
         .into()
     }
 }
-
-/// How tall an article thumbnail is drawn on its card, in logical pixels.
-///
-/// The picture spans the card's whole width, so only the height is fixed here;
-/// `ContentFit::Cover` crops to fill it whatever the source aspect is.
-///
-/// **Sized down from 16:9 so four cards and the key strip fit a 768-high
-/// window**, which is the size `tool_strip`'s header records as the one that
-/// must keep working. At 170 the card ran about eighty pixels past the bottom
-/// of the window and took the Close button with it -- seen on screen, not in a
-/// test, because nothing in the suite lays this out.
-const CARD_THUMB_PX: f32 = 120.0;
-
-/// How tall the article grid may be before it scrolls, in logical pixels.
-///
-/// Two rows of cards at [`CARD_THUMB_PX`] come to about this. It is a bound
-/// rather than a fit: a summary that wraps to a third line, or a fifth article
-/// if [`crate::articles::MAX_SHOWN`] ever grows, scrolls instead of pushing the
-/// footer off the screen. The page this mirrors scrolls its article column too.
-const GRID_HEIGHT_PX: f32 = 440.0;
-
-/// How many article cards sit side by side.
-const GRID_COLUMNS: usize = 2;
-
-/// How big the avatar is drawn in the account row, in logical pixels.
-///
-/// Smaller than the 64 asked of the server, which is deliberate: the row is
-/// one line of text tall, and a picture with pixels to spare stays sharp on a
-/// HiDPI output instead of being upscaled.
-const AVATAR_ROW_PX: f32 = 28.0;
 
 /// Cut a path down so it cannot push a column wider than it was given.
 ///

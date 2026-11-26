@@ -89,7 +89,7 @@ fn write_report(info: &std::panic::PanicHookInfo<'_>) {
 /// a real failure.
 fn compose(payload: &str, at: Option<(&str, u32)>) -> String {
     let mut text = String::with_capacity(4096);
-    text.push_str("BrokkrSculpt crashed.\n\n");
+    text.push_str("Eitri Sculpt crashed.\n\n");
     let _ = writeln!(text, "version: {}", env!("CARGO_PKG_VERSION"));
     let _ = writeln!(text, "target:  {}", std::env::consts::ARCH);
     let _ = writeln!(text, "os:      {}", std::env::consts::OS);

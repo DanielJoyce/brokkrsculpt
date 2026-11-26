@@ -744,7 +744,7 @@ impl std::fmt::Display for ProjectError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ProjectError::Io(error) => write!(f, "{error}"),
-            ProjectError::NotABrokkrFile => write!(f, "this is not a BrokkrSculpt file"),
+            ProjectError::NotABrokkrFile => write!(f, "this is not an Eitri Sculpt file"),
             ProjectError::ContainerVersion { found, supported } => write!(
                 f,
                 "the file's layout is version {found}, and this build understands {supported}"

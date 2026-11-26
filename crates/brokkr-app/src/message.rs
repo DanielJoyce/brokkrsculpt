@@ -1167,10 +1167,6 @@ pub enum Message {
     WelcomeOpened,
     /// Dismiss it. Escape does this too.
     WelcomeClosed,
-    /// The TinkerAtlas feed came back, or did not.
-    ArticlesLoaded(Result<Vec<crate::articles::Article>, String>),
-    /// Ask again after a failure.
-    ArticlesRetried,
     /// The answer from the update check: `Some` when a build worth telling the
     /// user about is published. Never an error.
     ///
@@ -1220,25 +1216,13 @@ pub enum Message {
     UpdateDownloaded(Result<std::path::PathBuf, String>),
     /// The update-check tick, from either surface that carries it.
     ///
-    /// Two surfaces on purpose: the welcome screen, beside the articles tick it
-    /// sits next to, and Help, because the default is `always` and a switch
+    /// Two surfaces on purpose: the welcome screen, and Help, because the default is `always` and a switch
     /// reachable only from a screen the user turned off is not a switch.
     UpdateCheckSet(bool),
-    /// Open a TinkerAtlas link in the browser: an article, or one of the two
-    /// buttons on the welcome screen. The link is checked against the one host
-    /// it may lead to before anything is spawned -- see
-    /// [`crate::articles::open_in_browser`].
+    /// Open a link in the browser: the release page, from the update
+    /// button. The link is checked against the one page it may be before
+    /// anything is spawned -- see [`crate::links::open_in_browser`].
     LinkOpened(String),
-    /// Start the browser half of signing in to TinkerAtlas.
-    SignInRequested,
-    /// The sign-in came back, with an account or with why not.
-    SignInFinished(Result<crate::account::Account, String>),
-    /// The signed-in user's avatar arrived, or did not. `None` is ordinary:
-    /// no picture, an unreachable host, a format we do not decode.
-    AvatarLoaded(Option<iced::widget::image::Handle>),
-    /// Forget the stored account. Local only: it does not revoke the token,
-    /// which is done on the site under desktop connections.
-    SignOutRequested,
     /// The "show this on startup" tick, which is written through immediately:
     /// a preference that only lands when the dialog is dismissed the right way
     /// is one that silently forgets.

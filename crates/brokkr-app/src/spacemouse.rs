@@ -727,7 +727,7 @@ impl Config {
     pub fn to_text(self) -> String {
         use std::fmt::Write;
         let mut out = String::new();
-        let _ = writeln!(out, "# BrokkrSculpt SpaceMouse settings.");
+        let _ = writeln!(out, "# Eitri Sculpt SpaceMouse settings.");
         let _ = writeln!(out, "# An axis may be prefixed with - to invert it.\n");
         let _ = writeln!(
             out,
