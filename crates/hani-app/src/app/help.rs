@@ -186,7 +186,6 @@ impl Hani {
                 .on_press(Message::Help(HelpMessage::Opened)),
             "Help",
         )
-        .into()
     }
 
     /// The card, over everything below it.
