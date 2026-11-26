@@ -143,6 +143,19 @@ pub enum FormMessage {
     DetailGainApplied,
 }
 
+/// Help's card. See `app/help.rs`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum HelpMessage {
+    Opened,
+    /// A tab, or a search result, chose this page.
+    Page(usize),
+    /// What is typed in the search box.
+    Searched(String),
+    /// A link in a page was followed.
+    Link(String),
+    Closed,
+}
+
 /// The revolve's controls. See `app/revolve.rs`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RevolveMessage {
@@ -1144,6 +1157,9 @@ pub enum Message {
     /// Help, Keyboard shortcuts: every key and held modifier, on a card.
     ShortcutsOpened,
     ShortcutsClosed,
+    /// Help: opened, a page, a search, a link in a page, closed. See
+    /// `app/help.rs`.
+    Help(HelpMessage),
     PressureToggled(bool),
     PressureCurveChanged(f32),
     TiltToggled(bool),

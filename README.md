@@ -432,6 +432,11 @@ true of it too, and what it adds is this.
   puts an upright axis on the screen; draw a line beside it, either side or
   across, and it is spun round the axis into a new body, a vase from one
   stroke.
+- **Help in the application.** The **?** in the title bar opens three
+  pages, what HaniSculpt is, getting around and how it works, in tabs with
+  a search across them. They are Markdown files in
+  [`docs/help/`](docs/help/), so they read the same here. Each heading of
+  the panel says what it is for when the pointer rests on it.
 - **Parting with keys.** The plane cut with **alt** held makes two bodies
   with pegs and sockets that fit, for a model bigger than the bed or one
   that prints better in halves. *Print a fit test…* writes a plate of

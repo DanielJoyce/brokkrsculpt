@@ -182,9 +182,16 @@ impl Hani {
     /// The COATS block.
     pub(super) fn coats_block(&self) -> Element<'_, Message> {
         let coats = &self.painting.coats;
-        crate::ui::section("COATS", coats.open, Message::Coats(CoatsMessage::Opened), None, || {
-            self.coats_panel()
-        })
+        // The heading's hover line is in `app/help.rs`.
+        let heading = crate::ui::tip(
+            crate::ui::heading("COATS", coats.open, Message::Coats(CoatsMessage::Opened), None),
+            super::help::COATS_TIP,
+        );
+        if coats.open {
+            column![heading, self.coats_panel()].spacing(theme::S2).into()
+        } else {
+            heading
+        }
     }
 
     fn coats_panel(&self) -> Element<'_, Message> {
