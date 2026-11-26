@@ -57,6 +57,7 @@ mod overhang;
 mod painting;
 mod paints;
 mod panel;
+mod shelf;
 // Where a frame's time goes. See `app/phases.rs`.
 mod phases;
 mod presets;
@@ -67,9 +68,6 @@ mod swatch;
 mod workbench;
 pub use workbench::Piece;
 
-// A picked file has no path in a browser. See `web.rs`.
-#[cfg(target_arch = "wasm32")]
-use crate::web::NoPath;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use web_time::Instant;
@@ -813,6 +811,8 @@ pub struct Hani {
     shortcuts: bool,
     /// Help, open or not. See `app/help.rs`.
     help: help::HelpState,
+    /// Saving in a browser. See `app/shelf.rs`.
+    shelf: shelf::ShelfState,
     /// Whether it opens by itself next time.
     ///
     /// Held rather than read where it is drawn: the tick is inside `view()`,
@@ -1331,6 +1331,8 @@ pub(crate) enum PendingAction {
     Open,
     /// Open a specific file, chosen from the recent list, so no dialog.
     OpenRecent(std::path::PathBuf),
+    /// Open a sculpt kept in the browser, by its name. See `app/shelf.rs`.
+    OpenStored(String),
     /// Load the crash net. Its own variant rather than an `OpenRecent` of the
     /// autosave path, because the document that comes back must NOT be owned by
     /// that path -- see [`Hani::recover_autosave`].
@@ -1361,7 +1363,9 @@ impl PendingAction {
     pub(crate) fn describe(&self) -> &'static str {
         match self {
             PendingAction::NewSculpt => "Starting a new sculpt",
-            PendingAction::Open | PendingAction::OpenRecent(_) => "Opening another file",
+            PendingAction::Open | PendingAction::OpenRecent(_) | PendingAction::OpenStored(_) => {
+                "Opening another file"
+            }
             PendingAction::RecoverAutosave => "Recovering the autosave",
             PendingAction::Import => "Importing a mesh in place of every body",
             PendingAction::Quit(_) => "Quitting",
@@ -1454,14 +1458,21 @@ pub const LEGACY_PROJECT_EXTENSION: &str = "brokkr";
 /// an async task. In practice the portal still centres the dialog on the right
 /// screen; verify that rather than assume it.
 async fn pick_project_to_open() -> Option<std::path::PathBuf> {
-    rfd::AsyncFileDialog::new()
+    let handle = rfd::AsyncFileDialog::new()
         .set_title("Open sculpt")
         .add_filter("HaniSculpt", &[PROJECT_EXTENSION, LEGACY_PROJECT_EXTENSION])
         .pick_file()
-        .await
-        .map(|handle| handle.path().to_path_buf())
+        .await?;
+    // In a browser the file has no path: its bytes are held under its
+    // name. See `files.rs`.
+    #[cfg(target_arch = "wasm32")]
+    return Some(crate::files::hold(&handle.file_name(), handle.read().await));
+    #[cfg(not(target_arch = "wasm32"))]
+    Some(handle.path().to_path_buf())
 }
 
+// Not in a browser, which keeps a save itself. See `app/shelf.rs`.
+#[cfg(not(target_arch = "wasm32"))]
 async fn pick_project_to_save() -> Option<std::path::PathBuf> {
     rfd::AsyncFileDialog::new()
         .set_title("Save sculpt")
@@ -1479,6 +1490,11 @@ async fn pick_project_to_save() -> Option<std::path::PathBuf> {
 
 async fn pick_export_target(format: ExportFormat) -> Option<std::path::PathBuf> {
     let extension = format.extension();
+    // In a browser the export is a download, and the browser asks where it
+    // goes, or puts it with the others. See `files.rs`.
+    #[cfg(target_arch = "wasm32")]
+    return Some(std::path::PathBuf::from(format!("sculpt.{extension}")));
+    #[cfg(not(target_arch = "wasm32"))]
     rfd::AsyncFileDialog::new()
         .set_title(format!("Export {}", format.label()))
         .add_filter(format.label(), &[extension])
@@ -1496,12 +1512,16 @@ async fn pick_export_target(format: ExportFormat) -> Option<std::path::PathBuf> 
 /// `pick_file`, so unlike the two save dialogs there is no extension fixup: the
 /// file already exists and its name is not ours to correct.
 async fn pick_mesh_to_import() -> Option<std::path::PathBuf> {
-    rfd::AsyncFileDialog::new()
+    let handle = rfd::AsyncFileDialog::new()
         .set_title("Import mesh")
         .add_filter("Mesh", &hani_core::MESH_EXTENSIONS)
         .pick_file()
-        .await
-        .map(|handle| handle.path().to_path_buf())
+        .await?;
+    // As `pick_project_to_open`.
+    #[cfg(target_arch = "wasm32")]
+    return Some(crate::files::hold(&handle.file_name(), handle.read().await));
+    #[cfg(not(target_arch = "wasm32"))]
+    Some(handle.path().to_path_buf())
 }
 
 /// A hold-and-drag gesture adjusting one brush number.
@@ -1937,6 +1957,26 @@ fn dismisses_the_welcome(message: &Message) -> bool {
             | Message::OpenRequested
             | Message::ImportRequested
             | Message::OpenRecent(_)
+            // The sculpts a browser keeps. See `app/shelf.rs`.
+            | Message::Shelf(crate::message::ShelfMessage::Opened)
+    )
+}
+
+/// What the File menu's entries send. Choosing one is done with the menu.
+fn closes_the_file_menu(message: &Message) -> bool {
+    matches!(
+        message,
+        Message::NewSculpt
+            | Message::OpenRequested
+            | Message::ImportRequested
+            | Message::OpenRecent(_)
+            | Message::RecoverAutosave
+            | Message::SaveRequested
+            | Message::SaveAsRequested
+            | Message::ExportRequested(_)
+            | Message::OpenInSlicer
+            | Message::PrinterChecked
+            | Message::Shelf(crate::message::ShelfMessage::ToComputer)
     )
 }
 
@@ -2239,6 +2279,7 @@ impl Hani {
             key_menu: None,
             shortcuts: false,
             help: help::HelpState::default(),
+            shelf: shelf::ShelfState::default(),
             welcome_on_startup: true,
             palette: crate::palette::Palette::default(),
             account: None,
@@ -2459,6 +2500,9 @@ impl Hani {
                 self.recover_autosave();
                 Task::none()
             }
+            PendingAction::OpenStored(name) => {
+                self.fetch_kept(name, crate::message::AfterFetch::Open)
+            }
             PendingAction::Import => Task::perform(pick_mesh_to_import(), Message::ImportChosen),
             // Destroying the last window is what ends a non-daemon iced
             // application (`iced_winit` sends `Control::Exit` once the window
@@ -2662,6 +2706,10 @@ impl Hani {
                 Some(action) => self.run_pending(action),
                 None => Task::none(),
             },
+            // In a browser, kept there. See `app/shelf.rs`.
+            #[cfg(target_arch = "wasm32")]
+            ConfirmChoice::Save => self.shelf_save(crate::message::AfterSave::Continue),
+            #[cfg(not(target_arch = "wasm32"))]
             ConfirmChoice::Save => match self.project_path.clone() {
                 // It has a file already, so this is a plain write and the
                 // answer is known immediately.
@@ -7270,7 +7318,8 @@ impl Hani {
     }
 
     fn open_project(&mut self, path: &std::path::Path) {
-        let file = match std::fs::File::open(path) {
+        // A file picked in a browser is held by name. See `files.rs`.
+        let mut reader = match crate::files::open(path) {
             Ok(file) => file,
             Err(error) => {
                 self.status = format!("could not open {}: {error}", path.display());
@@ -7280,7 +7329,6 @@ impl Hani {
                 return;
             }
         };
-        let mut reader = std::io::BufReader::new(file);
         let (doc, state) = match hani_core::project::read(&mut reader) {
             Ok(loaded) => loaded,
             Err(error) => {
@@ -7482,9 +7530,14 @@ impl Hani {
     /// to look at: it drives this through a temporary that reads back empty.
     fn verify_written(&self, path: &std::path::Path) -> Result<(), String> {
         let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
-        let mut reader = std::io::BufReader::new(file);
+        self.check_written(&mut std::io::BufReader::new(file))
+    }
+
+    /// The check of [`Self::verify_written`], on bytes from anywhere: in a
+    /// browser they are checked in memory. See `app/shelf.rs`.
+    fn check_written(&self, reader: &mut impl std::io::Read) -> Result<(), String> {
         let outline =
-            hani_core::project::read_outline(&mut reader).map_err(|error| error.to_string())?;
+            hani_core::project::read_outline(reader).map_err(|error| error.to_string())?;
         if outline.nodes != self.doc.node_count() || outline.bodies != self.doc.body_count() {
             return Err(format!(
                 "the file came back with {} rows and {} bodies, and the document has {} and {}",
@@ -7574,7 +7627,8 @@ impl Hani {
             hani_core::export::threemf::Placement { plate_centre: crate::slicer::plate_centre() };
         let settings = crate::slicer::project_settings_body(&self.palette);
         let write = || -> std::io::Result<()> {
-            let file = std::fs::File::create(path)?;
+            // In a browser, a download. See `files.rs`.
+            let file = crate::files::create(path)?;
             let mut file = std::io::BufWriter::new(file);
             match format {
                 ExportFormat::Stl => hani_core::export::stl::write_all(&parts, &mut file)?,
@@ -7610,7 +7664,7 @@ impl Hani {
 
         match write() {
             Ok(()) => {
-                let bytes = std::fs::metadata(path).map(|data| data.len()).unwrap_or(0);
+                let bytes = crate::files::size(path);
                 // STL has nowhere to put an object boundary, so several bodies
                 // arrive in a slicer as one part. Said here rather than
                 // discovered after slicing.
@@ -9205,6 +9259,8 @@ impl Hani {
             || self.shortcuts
             // See `app/help.rs`.
             || self.help.open
+            // See `app/shelf.rs`.
+            || self.shelf.open
             || self.confirm.is_some()
             || self.orient_prompt.is_some()
             || self.bug_report.is_some()
@@ -9251,6 +9307,10 @@ impl Hani {
                 }
                 // Help, as those. See `app/help.rs`.
                 if self.help_escaped() {
+                    return Task::none();
+                }
+                // And the browser's card. See `app/shelf.rs`.
+                if self.shelf_escaped() {
                     return Task::none();
                 }
                 self.update(Message::MenuClosed)
@@ -9798,6 +9858,9 @@ impl Hani {
         if self.renaming.is_some() && !keeps_the_rename_open(&message) {
             self.commit_rename();
         }
+        // A browser warns before the page is left with work unsaved; on
+        // the desktop this does nothing. See `app/shelf.rs`.
+        self.warn_if_unsaved();
         // **A crash net being written in pieces is of the document as it
         // was when the first piece was made.** Anything but the frame tick
         // may be about to change it, so the write is given up before the
@@ -9830,6 +9893,11 @@ impl Hani {
         // gone rather than under one that has not.
         if self.welcome && dismisses_the_welcome(&message) {
             self.welcome = false;
+        }
+        // An entry of the File menu chosen closes the menu, which stayed
+        // open over the viewport, and over the browser's file chooser.
+        if self.top_menu.is_some() && closes_the_file_menu(&message) {
+            self.top_menu = None;
         }
         // Whatever is about the document as something to keep finds the
         // document in its place and not a piece off the workbench. See
@@ -9983,6 +10051,7 @@ impl Hani {
             Message::ShortcutsClosed => self.shortcuts = false,
             // See `app/help.rs`.
             Message::Help(message) => self.help_changed(message),
+            Message::Shelf(message) => return self.shelf_changed(message),
             Message::WelcomeOpened => {
                 // The menu it was chosen from has to go, or it is left drawn
                 // beneath the scrim: reachable to nothing, and still there when
@@ -10989,7 +11058,9 @@ impl Hani {
                 return Task::perform(
                     async move {
                         let started = Instant::now();
-                        let outcome = hani_core::import::read_path(&path).and_then(|mesh| {
+                        // A file picked in a browser is held by name. See
+                        // `files.rs`.
+                        let outcome = crate::files::read_mesh(&path).and_then(|mesh| {
                             // Measured on the mesh, because by the time there
                             // is a volume the mesh is gone and its bounding box
                             // has been centred on the origin -- which destroys
@@ -11051,12 +11122,23 @@ impl Hani {
                     self.open_project(&path);
                 }
             }
+            // In a browser, kept there. See `app/shelf.rs`.
+            #[cfg(target_arch = "wasm32")]
+            Message::SaveRequested => {
+                return self.shelf_save(crate::message::AfterSave::Stay);
+            }
+            #[cfg(target_arch = "wasm32")]
+            Message::SaveAsRequested => {
+                return self.shelf_changed(crate::message::ShelfMessage::Opened);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
             Message::SaveRequested => match self.project_path.clone() {
                 // Save over the file it came from; with no file yet this is a
                 // Save As, which is what a first Save should do.
                 Some(path) => self.save_project(&path),
                 None => return Task::perform(pick_project_to_save(), Message::SaveChosen),
             },
+            #[cfg(not(target_arch = "wasm32"))]
             Message::SaveAsRequested => {
                 return Task::perform(pick_project_to_save(), Message::SaveChosen);
             }
@@ -12493,6 +12575,19 @@ mod tests {
             "a second press blanked the card while the install was still running"
         );
         assert_eq!(app.status, "installing build 1042…");
+    }
+
+    /// Choosing Export from the File menu closes the menu; the menu stayed
+    /// over the viewport, and in a browser over its file chooser.
+    #[test]
+    fn a_file_menu_entry_chosen_closes_the_menu() {
+        let mut app = app();
+        app.welcome = false;
+        update(&mut app, Message::TopMenuToggled(crate::message::TopMenu::File));
+        assert_eq!(app.top_menu, Some(crate::message::TopMenu::File));
+        update(&mut app, Message::ExportRequested(ExportFormat::Stl));
+        assert_eq!(app.top_menu, None);
+        assert!(!closes_the_file_menu(&Message::TopMenuToggled(crate::message::TopMenu::File)));
     }
 
     #[test]

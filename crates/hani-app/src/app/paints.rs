@@ -292,6 +292,7 @@ impl Hani {
         obj: &mut impl std::io::Write,
     ) -> std::io::Result<()> {
         use hani_core::export::textured::{Textured, write_mtl, write_obj};
+        use std::io::Write;
 
         let stem =
             path.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_default();
@@ -299,14 +300,21 @@ impl Hani {
         let mut pictures = Vec::with_capacity(bodies.len());
         for (index, (_, texture)) in textures.iter().enumerate() {
             let picture = format!("{stem}_{}.png", index + 1);
-            image::save_buffer(
-                path.with_file_name(&picture),
+            // Made in memory and written through `files.rs`, so that in a
+            // browser each picture is a download of its own.
+            let mut png = Vec::new();
+            image::write_buffer_with_format(
+                &mut std::io::Cursor::new(&mut png),
                 &texture.rgba,
                 texture.size,
                 texture.size,
                 image::ExtendedColorType::Rgba8,
+                image::ImageFormat::Png,
             )
             .map_err(std::io::Error::other)?;
+            let mut file = crate::files::create(&path.with_file_name(&picture))?;
+            file.write_all(&png)?;
+            file.flush()?;
             pictures.push(picture);
         }
         let textured: Vec<Textured<'_>> = bodies
@@ -323,8 +331,9 @@ impl Hani {
         let materials = format!("{stem}.mtl");
         write_obj(&textured, &materials, obj)?;
         let mut file =
-            std::io::BufWriter::new(std::fs::File::create(path.with_file_name(&materials))?);
-        write_mtl(&textured, &mut file)
+            std::io::BufWriter::new(crate::files::create(&path.with_file_name(&materials))?);
+        write_mtl(&textured, &mut file)?;
+        file.flush()
     }
 
     /// Write the bodies as one GLB, each with its picture inside the file.

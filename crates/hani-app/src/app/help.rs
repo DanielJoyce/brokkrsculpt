@@ -276,7 +276,17 @@ impl Hani {
                 content.items(),
                 markdown::Settings::with_text_size(
                     theme::TEXT_SIZE,
-                    markdown::Style::from_palette(theme::theme().palette()),
+                    markdown::Style {
+                        // The application's own faces, which in a browser
+                        // are the only ones there are: a span asked for in a
+                        // family or a style with no face panics there. Bold
+                        // and italic spans keep this family. See
+                        // `theme::MONO` and `assets/fonts`.
+                        font: theme::FONT,
+                        inline_code_font: theme::MONO,
+                        code_block_font: theme::MONO,
+                        ..markdown::Style::from_palette(theme::theme().palette())
+                    },
                 ),
             )
             .map(|link| Message::Help(HelpMessage::Link(link))),
@@ -345,6 +355,11 @@ mod tests {
             for (at, _) in source.match_indices("(help:") {
                 let name: String = source[at + 1..].chars().take_while(|c| *c != ')').collect();
                 assert!(page_named(&name).is_some(), "{slug} links to {name}, which is no page");
+            }
+            // And a link out of the help is one the application opens.
+            for (at, _) in source.match_indices("(https:") {
+                let link: String = source[at + 1..].chars().take_while(|c| *c != ')').collect();
+                assert!(crate::links::may_be_opened(&link), "{slug} links to {link}, refused");
             }
         }
     }

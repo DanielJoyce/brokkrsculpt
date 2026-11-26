@@ -7,7 +7,8 @@
 //! welcome screen and carried its Join and Visit buttons. Those went on
 //! 2026-11-26 at the maintainer's word: *"Remove the links to the external
 //! website."* What is left is the release page the updater's button leads
-//! to, and the guard every link goes through.
+//! to, the repository, which the welcome screen and Help link to (asked for
+//! on 2026-11-26), and the guard every link goes through.
 
 /// Where a user is sent to get a build.
 ///
@@ -19,6 +20,10 @@
 /// module without moving this first does not compile.
 pub const RELEASE_PAGE: &str = "https://github.com/DanielJoyce/hanisculpt/releases/tag/beta";
 
+/// The project's own repository, linked from the welcome screen and from
+/// Help.
+pub const REPOSITORY: &str = "https://github.com/DanielJoyce/hanisculpt";
+
 /// Whether a link may be handed to the user's browser.
 ///
 /// **Split out of [`open_in_browser`] so acceptance can be tested.** That one
@@ -29,15 +34,15 @@ pub const RELEASE_PAGE: &str = "https://github.com/DanielJoyce/hanisculpt/releas
 ///
 /// # The rule, which is an invariant and not a heuristic
 ///
-/// A link is admitted when it is exactly [`RELEASE_PAGE`], and nothing else
-/// is. The welcome screen's links to TinkerAtlas, its articles and its
+/// A link is admitted when it is exactly [`RELEASE_PAGE`] or
+/// [`REPOSITORY`], and nothing else is. The welcome screen's links to TinkerAtlas, its articles and its
 /// sign-in were taken out on 2026-11-26 at the maintainer's word (*"Remove
 /// the links to the external website"*), and the prefix that admitted that
 /// site went with them. A link added later goes in as an exact page, or as a
 /// prefix ending in `/`, which is what stops `https://site.com` admitting
 /// `https://site.com.example.net/`.
 pub(crate) fn may_be_opened(link: &str) -> bool {
-    link == RELEASE_PAGE
+    link == RELEASE_PAGE || link == REPOSITORY
 }
 
 /// Hand a link to whatever the desktop opens links with.
@@ -49,6 +54,15 @@ pub fn open_in_browser(link: &str) -> Result<(), String> {
     if !may_be_opened(link) {
         return Err("that link is not one this application opens".to_string());
     }
+    // In a browser, a new tab of it. See `web.rs`.
+    #[cfg(target_arch = "wasm32")]
+    return crate::web::open_tab(link);
+    #[cfg(not(target_arch = "wasm32"))]
+    open_on_desktop(link)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn open_on_desktop(link: &str) -> Result<(), String> {
     // **One of these three, and no shell.** `xdg-open` exists only on
     // Linux; macOS has `open`; Windows has no single-word equivalent, and
     // `cmd /C start` would put a SHELL between us and a URL.
@@ -76,12 +90,15 @@ pub fn open_in_browser(link: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    /// The update button's page is admitted, and nothing else is: not the
-    /// rest of GitHub, and not the site the welcome screen used to link to.
+    /// The update button's page and the repository are admitted, and
+    /// nothing else is: not the rest of GitHub, and not the site the welcome
+    /// screen used to link to.
     #[test]
-    fn only_the_release_page_may_be_opened() {
+    fn only_the_release_page_and_the_repository_may_be_opened() {
         assert!(may_be_opened(RELEASE_PAGE), "the update button would be refused: {RELEASE_PAGE}");
-        assert!(!may_be_opened("https://github.com/DanielJoyce/hanisculpt"));
+        assert!(may_be_opened(REPOSITORY), "the repository link would be refused");
+        assert!(!may_be_opened("https://github.com/DanielJoyce/hanisculpt.example.net"));
+        assert!(!may_be_opened("https://github.com/DanielJoyce/hanisculpt/../other"));
         assert!(!may_be_opened("https://github.com/someone/else/releases/tag/beta"));
         assert!(!may_be_opened("https://tinkeratlas.com/"));
         assert!(open_in_browser("https://evil.example/phish").is_err());

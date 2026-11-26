@@ -81,5 +81,8 @@ holds the bricks, the mask, the paint and the history of the session.
 
 ## In a browser
 
-The same program also builds for the web and runs on WebGPU. There it works on
-one core, and opening and saving files is not built yet.
+The same program also builds for the web and runs on WebGPU, on one core.
+There a browser has no folders to write in, so **Save** keeps the sculpt inside
+the browser, *Sculpts in this browser* lists what it keeps, and *Save to
+computer* and every export download a file. **Open** and **Import** take a file
+from the computer as on the desktop.

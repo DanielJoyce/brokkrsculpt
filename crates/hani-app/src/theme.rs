@@ -204,7 +204,14 @@ pub const LABEL_SIZE: f32 = TEXT_SIZE_SMALL;
 /// and a heading this size in one would cost a row of controls.
 pub const TITLE_SIZE: f32 = 20.0;
 /// Monospace for the debug overlay, where columns of numbers must not jitter.
+#[cfg(not(target_arch = "wasm32"))]
 pub const MONO: Font = Font::MONOSPACE;
+/// In a browser, Inter: there are no system fonts there, only the two
+/// bundled faces, and shaping text in a family with no face in it panics
+/// ("no default font found"), which is how switching Help to a page with
+/// code in it stopped the web version. See `docs/WEB.md`.
+#[cfg(target_arch = "wasm32")]
+pub const MONO: Font = FONT;
 
 // Padding, one set a kind of control, from the spacing scale. Before these
 // there were a dozen literal pairs written at the call sites.

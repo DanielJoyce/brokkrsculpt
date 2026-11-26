@@ -419,8 +419,10 @@ true of it too, and what it adds is this.
   brushes and autosave move across by themselves on the first start.
 - **In a browser.** The same application builds for the web and runs on
   WebGPU: merging into the `pages` branch publishes it to this
-  repository's GitHub Pages site. Files cannot be opened or saved there
-  yet. See [`docs/WEB.md`](docs/WEB.md).
+  repository's GitHub Pages site. There, *Save* keeps a sculpt in the
+  browser, *Save to computer* and every export download a file, and
+  *Open…* and *Import and replace…* take one from the computer. See
+  [`docs/WEB.md`](docs/WEB.md).
 - **Shell and extract.** *Shell* in FORM hollows a body to a wall of the
   thickness asked, its surface the outside of the wall, for a print that
   uses a fraction of the material. EXTRACT takes the masked part of the
