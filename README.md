@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img alt="HaniSculpt: a dwarven smith carved in the viewport, brush strip on the left, properties on the right" src="docs/images/ui-dwarf-0827.jpg" width="900">
+  <img alt="HaniSculpt's Sculpt workspace: a ball with a row of rivets and a twisted rope laid across it by two brushes, the palette of brushes on the right with Pinch and Widen among them" src="docs/images/hani-sculpt.jpg" width="900">
 </p>
 
 Start from a ball, a scan, or something you downloaded. Push it around until it
@@ -71,10 +71,6 @@ is the way it is, and for releasing it under a licence that let it grow into
 this. The project was called BrokkrSculpt, and Eitri Sculpt for a day,
 before it was HaniSculpt.
 
-<p align="center">
-  <img alt="A dwarven smith, carving a dragon's head from a block of stone" src="docs/images/dwarf.png" width="330">
-</p>
-
 ## Why solid material matters
 
 This is the one idea worth understanding, and it explains most of the rest.
@@ -123,27 +119,36 @@ automatically is not built yet.
 ## See it in action
 
 <p align="center">
-  <img alt="A 470,000 triangle piglet imported into HaniSculpt from a 3MF file" src="docs/images/piglet-imported-0819.jpg" width="820">
+  <img alt="Transform: a vase drawn as one line beside the revolve axis and spun round it, then bent 45 degrees with the DEFORM block's Bend, the DEFORM and REVOLVE blocks open on the right" src="docs/images/hani-modelling.jpg" width="820">
+</p>
+
+A line drawn beside an axis, spun into a vase with *Revolve*, then bent 45
+degrees with *Deform*. Both are in Transform, with *Shell* and *Extract* in
+Sculpt; see [`docs/MODELLING-TOOLS.md`](docs/MODELLING-TOOLS.md).
+
+<p align="center">
+  <img alt="Paint: the vase given a brown base coat in one press, then three yellow bands painted round it with the loaded brush, the rack of paints on the right" src="docs/images/hani-paint.jpg" width="820">
+</p>
+
+Paint coats a body in one press, then takes strokes of a real hobby paint
+from the rack, here a brown base coat and three loaded yellow bands.
+
+<p align="center">
+  <img alt="Print: the painted vase with the export block open, Detail, show overhangs, STL, OBJ, 3MF, PLY, OBJ+PNG and GLB, and the parting keys" src="docs/images/hani-print.jpg" width="820">
+</p>
+
+Print is where a model leaves: STL, OBJ, 3MF and PLY, or OBJ+PNG and GLB with
+the paint baked to a texture.
+
+<p align="center">
+  <img alt="The welcome screen: Haniko and the HaniSculpt lockup, New sculpt, Open and Import mesh, and the keys" src="docs/images/hani-welcome.jpg" width="700">
 </p>
 
 A model sculpted years ago in ZBrush, exported as 3MF and imported here:
 **469,982 triangles, 57.2 mm across, in 617 ms**, with nothing lost.
 
-<p align="center">
-  <img alt="A close-up of the imported piglet model" src="docs/images/piglet-closeup-0819.jpg" width="640">
-</p>
-
-<p align="center">
-  <img alt="A sculpted ball with two flat faces cut through it" src="docs/images/cut-plane-0819.jpg" width="820">
-</p>
-
 Drag a line across the model and it cuts, straight through. **The cut face
 closes itself**, so what is left still prints.
-
-<p align="center">
-  <img alt="A woven pattern pressed into a sculpted surface" src="docs/images/detail-weave-0819.jpg" width="410">
-  <img alt="A crack pattern pressed into a sculpted surface" src="docs/images/detail-cracks-0819.jpg" width="410">
-</p>
 
 Patterns are a **modifier on whichever brush you are holding**, not brushes of
 their own — so clay-with-scales and inflate-with-hair are both just there,
@@ -286,10 +291,6 @@ answered. Nothing else in the application needs it.
 Paint over what you want left alone, and every brush stops at it. The tint is
 a view, not a material: it says where protection is, and turning it off changes
 nothing about what a stroke does.
-
-<p align="center">
-  <img alt="A masked head and beard shown in blue while the rest of the model stays unprotected" src="docs/images/mask-0827.jpg" width="820">
-</p>
 
 Masking scales the brush's effect rather than switching it, so a softly painted
 edge gives a soft boundary rather than a cut line, and Move carries a mask along
@@ -507,11 +508,11 @@ true of it too, and what it adds is this.
   the colours they showed.
 - **A palette of brushes.** Each button shows a picture of a stroke of
   its brush, made by the brush itself. Thirty-six come with it: Draw,
-  Clay, Inflate, Pinch, Smooth and Flatten, and *Gather*, *Spread*,
+  Clay, Inflate, Smooth and Flatten, and *Pinch*, *Widen*, *Deflate*,
   *Scrape*, *Fill*, *Polish*, *Crease*, *Ridge*, *Bead*, *Band*, *Layer*,
-  *Clay strips*, *Stitches* and more. *Gather* is a true pinch: a ridge
-  under the stroke comes out narrower and as tall, and *Spread* is its
-  opposite. Every one is the same brush with different settings, and
+  *Clay strips*, *Stitches* and more. *Pinch* is a true pinch, ZBrush's
+  classic: a ridge under the stroke comes out narrower and as tall, and
+  *Widen* is its opposite. Every one is the same brush with different settings, and
   *What it does* shows them: how much it pushes, inflates, pinches,
   gathers, smooths and levels.
   Change them, choose the *Profile* of the stroke (five shapes, and a flat
@@ -560,54 +561,6 @@ true of it too, and what it adds is this.
   texture that stays sharp however far the mesh is thinned. A GLB also
   carries the recesses' shade as an occlusion map, beside the varnish's
   roughness, and a normal map, so a thinned mesh is lit as the sculpt is.
-
-<p align="center">
-  <img alt="A ball painted with the colour brush: a red stroke and a blue one, a yellow sponge speckle, a dark glaze drawn down across all three that darkens each where it crosses, and a stripe of white at half opacity that the red and the blue show through. Beside it the panel: Colour or Filaments, Paint, Glaze or Erase, Loaded, Wash, Drybrush, Sponge or Fill, the colour in hand, its opacity, the machine's filaments and a range of swatches" src="docs/images/studio-colour-brush.png" width="760">
-</p>
-
-<p align="center">
-  <img alt="A ball with three strokes: an X drawn with the Layer brush, no taller where its two lines cross; a strip of clay scrubbed over three times and still one thickness; and a row of bars set down a width apart. Beside it the panel: BRUSHES, twenty-one buttons with Stitches lit, and under the profile, Picture across the tip with the six pictures and Bar chosen" src="docs/images/studio-brush-layer.png" width="760">
-</p>
-
-<p align="center">
-  <img alt="A ball with five strokes across it, each from a different brush on the palette: a band with a flat top, a bead, a crease, a scraped flat and a row of rivets. Beside it the brush's own settings: radius and strength, the Profile row of five shapes and its flat middle, Picture across the tip, Builds up or One layer, Set down as a line, and What it does opened to show Crease as a push of 0.60 in and a pinch of 1.00 together" src="docs/images/studio-brush-palette.png" width="760">
-</p>
-
-<p align="center">
-  <img alt="A ball with a box, a cone and a ring set down on it, and a cable laid across it in a wave with a collar at one end and a flange at the other. Beside it the ADD block: Ball, Box, Cylinder, Cone, Ring, Cable, Hung cable, a copy of a body, Baked in or Its own body, Soft join, Held off the surface, and the two ends of a cable" src="docs/images/studio-adding.png" width="760">
-</p>
-
-<p align="center">
-  <img alt="Three balls set down on a larger one, side by side. The first is joined plainly and the crease round it is a ragged line. The second is joined over two voxels and the crease is clean. The third is joined over six and sits in a fillet that can be seen from across the model" src="docs/images/studio-soft-join.png" width="620">
-</p>
-
-<p align="center">
-  <img alt="A ball with six vector displacement stamps on it: two studs with caps wider than their stems, two horns that curl over to one side, a plate that leans over the surface behind it, and a leaning dome read from an OpenEXR file. No edge of any stamp's square can be seen" src="docs/images/studio-vector-displacement.png" width="520">
-</p>
-
-<p align="center">
-  <img alt="The palette of brushes brought up in the middle of the viewport by the b key: thirty-six buttons in rows of five under the headings Sculpt, Lines and stamps, and Add, each with a small picture of its brush's stroke over its name, with Draw lit" src="docs/images/studio-palette-popup.png" width="760">
-</p>
-
-<p align="center">
-  <img alt="The workbench: a ball with trial strokes of the Crease brush on it, and across the top of the viewport a line reading WORKBENCH, a ball, nothing here is kept, with A fresh piece and Back to the model beside it" src="docs/images/studio-workbench.png" width="760">
-</p>
-
-<p align="center">
-  <img alt="A ball with a line measured across it from one point on its surface to another, 40.50 mm written on the line. In the bottom left of the viewport a scale bar reading 10 mm, at the middle of the view, and under it the Measure button, the length again, and Clear" src="docs/images/studio-measure.png" width="760">
-</p>
-
-<p align="center">
-  <img alt="A ball seen from below with the overhang view on: the cap that leans past 45 degrees is tinted orange, and the small patch that rests on the bed is not" src="docs/images/studio-overhang.png" width="420">
-</p>
-
-<p align="center">
-  <img alt="The fit test: a bar with six sockets and one corner cut off, and beside it a peg on a small base" src="docs/images/studio-fit-test.png" width="640">
-</p>
-
-<p align="center">
-  <img alt="A row of rivets laid along two drags with the Rivet row preset, the studio and presets blocks in the panel on the right" src="docs/images/studio-rivet-row.png" width="820">
-</p>
 
 [docs/STUDIO-PLAN.md](docs/STUDIO-PLAN.md) is the design, the state of each
 part, what was measured, and what was tried and dropped. Everything on the
@@ -682,7 +635,7 @@ does the same from a terminal.
 | Clay | blends toward a plane held just outside the surface, adding only |
 | Smooth | blends toward the average of the neighbouring values |
 | Inflate | offsets the level set, moving every point along its own normal |
-| Pinch | squeezes the field toward the brush axis, sharpening ridges |
+| Pinch | squeezes the surface toward the stroke's line by a share of its distance from it: a ridge comes out narrower and as tall |
 | Flatten | blends toward the tangent plane under the cursor |
 | Move | grabs the material and pulls it with the pointer |
 
