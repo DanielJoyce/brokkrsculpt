@@ -463,6 +463,8 @@ pub enum RingMessage {
     /// How much of the rest of the model is screened while a cut is
     /// proposed, 0..=1.
     SeeThrough(f32),
+    /// Put a bent cut's points back on its plane.
+    Flat,
 }
 
 /// The worker threads, in Preferences. See `app/cores.rs`.

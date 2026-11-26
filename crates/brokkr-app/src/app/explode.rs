@@ -44,6 +44,12 @@ pub(super) struct Explode {
     /// on the anchor are sent across. Held rather than read each time so
     /// that turning the view does not move them.
     pub(super) across: (Vec3, Vec3),
+    /// Each body's box, measured from its bricks when Explode was pressed.
+    /// Not the document's cached box, which is a superset that only grows:
+    /// a piece just split off a ball kept the whole ball's box, was taken
+    /// for the largest part, and the ball was pushed away from it (seen on
+    /// the screen).
+    pub(super) boxes: Vec<(NodeId, (Vec3, Vec3))>,
 }
 
 impl Brokkr {
@@ -58,13 +64,13 @@ impl Brokkr {
             self.unexplode();
             return;
         }
-        let drawn = self
-            .doc
-            .nodes()
-            .iter()
-            .zip(&self.shown)
-            .filter(|(node, shown)| **shown && node.is_body() && node.bounds().is_some())
-            .count();
+        self.explode.boxes.clear();
+        for (node, shown) in self.doc.nodes().iter().zip(&self.shown) {
+            if let Some(found) = node.volume().filter(|_| *shown).and_then(|v| v.world_bounds()) {
+                self.explode.boxes.push((node.id, found));
+            }
+        }
+        let drawn = self.explode.boxes.len();
         if drawn < 2 {
             self.status = "only one body is drawn".to_string();
             return;
@@ -114,7 +120,7 @@ impl Brokkr {
             let mut anchor: Option<(f32, NodeId, Vec3, f32)> = None;
             let (mut low, mut high) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
             for (node, shown) in self.doc.nodes().iter().zip(&self.shown) {
-                let Some((min, max)) = node.bounds().filter(|_| *shown && node.is_body()) else {
+                let Some((min, max)) = self.box_of(node.id).filter(|_| *shown) else {
                     continue;
                 };
                 low = low.min(min);
@@ -130,8 +136,7 @@ impl Brokkr {
                 let (right, up) = self.explode.across;
                 let mut centred = 0;
                 for (node, shown) in self.doc.nodes().iter().zip(&self.shown) {
-                    let Some((min, max)) = node.bounds().filter(|_| *shown && node.is_body())
-                    else {
+                    let Some((min, max)) = self.box_of(node.id).filter(|_| *shown) else {
                         continue;
                     };
                     let away = (min + max) * 0.5 - middle;
@@ -154,6 +159,11 @@ impl Brokkr {
             }
         }
         self.shared.set_spread(&self.explode.spread);
+    }
+
+    /// A body's box as measured when Explode was pressed.
+    fn box_of(&self, body: NodeId) -> Option<(Vec3, Vec3)> {
+        self.explode.boxes.iter().find(|(id, _)| *id == body).map(|(_, found)| *found)
     }
 
     /// The nearest drawn surface under a pixel, each body marched where it

@@ -93,6 +93,7 @@ side is done. Solid bricks stored as one number are taken whole.
    draggable on it before the parting is made.
 4. **A curved contour.** Points on the contour that can be dragged along
    the surface, and a cut surface through them instead of the plane.
+   Built: see stage 4 below.
 
 Each is tested as the rest of the studio is: properties where a rule holds
 for any input (a split's two bodies together are the source; a disc that
@@ -281,6 +282,51 @@ the piece, Part with pegs making two bodies.
 Not done: a key dragged is not checked against the wall the plan checks
 for, so one pulled to the face's edge can break out; a key moved by hand is
 planned away again when the cut is moved.
+
+## Stage 4, as built (2026-11-26): a bent cut
+
+**The bend** (`sever::Bend`). A height along the cut's normal at each of
+eight even angles round its middle; the height at a point of the cut is
+those heights interpolated periodically by angle (Catmull-Rom) and eased in
+from their mean at the middle to their full value at a reach, so the face
+is flat in its middle and has no point where every angle meets. A `Disc`
+carries one or none. Everything that asks where the cut is asks
+`Disc::side`, which is the plane less the bend's height, so the walk, the
+two bodies and their closed faces follow the bend with no change of their
+own; the seeds, the fit to the islands and the band on the surface are
+taken on the cut (`Disc::on_cut`) rather than on the plane; the test of
+whether a brick is near the cut is widened by how far the bend goes. Keys
+are planned on the plane at the bend's mean height and each moved along the
+normal onto the cut where it stands.
+
+**In the application.** Eight green points on the band, where the cut meets
+the surface going out from its middle at each angle. A point dragged takes
+the height of the surface under the pointer, along the cut's normal (up or
+down a neck, round a collar), within two radii; the cut is fitted, drawn
+and keyed again through the heights. The reach is four fifths of the way
+out to where the flat cut meets the surface. The handles move a bent cut
+whole: the heights are measured in the ring's own frame. *Flat* on the bar,
+shown while any point is off the plane, puts them back.
+
+Tests: a bend passes through its heights for any heights and reach, and a
+bend of one height everywhere is the plane moved by it (both properties);
+a bent cut across the arm leaves the raised side with the body and takes
+the level side with the arm, both closed; keys on a bent cut stand on it.
+Through the application: the eight points sit on the arm's surface at the
+cut, one dragged 1.5 mm along the arm through the pointer takes that height
+and is drawn there, Flat puts the cut back, and Split in two follows the
+bend.
+
+On the screen: a dome on the ball, ringed; a point dragged outward and the
+band running up the dome on that side; Split in two leaving a stump with a
+sloped face. Explode afterwards pushed the ball away from the dome, because
+the piece's cached box was still the whole ball's; Explode now measures
+each body's bricks when it is pressed (`explode_after_a_split_moves_the_piece_and_not_the_body`).
+
+Not done: a point moves only along its own angle, so a collar dipping at a
+place between two points needs the two either side; the see-through view
+still screens by the flat plane; a key is not tilted to a steep face; more
+than eight points, or adding one, is not offered.
 
 ## Open questions
 

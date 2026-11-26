@@ -495,6 +495,12 @@ where it was drawn chose it, brought the three back and put the gizmo on
 the cube. Show only the active body drew the cube alone, SOLO in the
 header, and again drew all three.
 
+Each body's box is measured from its bricks when Explode is pressed, not
+read from the document's cache: the cache only grows, and a piece just
+split off a ball kept the whole ball's box, was taken for the largest part,
+and pushed the ball away (seen on the screen;
+`explode_after_a_split_moves_the_piece_and_not_the_body`).
+
 Not done: the view is not zoomed out to hold the parts apart, so a wide
 model can open past the edge of the view (the wheel brings it in); the
 parts jump apart rather than moving; a part's offset is worked out from
