@@ -60,7 +60,7 @@ env:
   # Four digits also makes a stale ordinal visible by eye: a number that could
   # be mistaken for a run number or a version is one nobody double-takes at.
   #
-  # **The sum is done in a step, not here.** `BROKKR_BUILD: ${{ 1000 +
+  # **The sum is done in a step, not here.** `HANI_BUILD: ${{ 1000 +
   # github.run_number }}` looks obvious and does not compile: ARITHMETIC in a
   # workflow-level `env` value fails the whole workflow before any job is
   # created, so nothing runs and the run is reported against the file path
@@ -69,7 +69,7 @@ env:
   # }}` alone is not, so it is the operator and not the context. A broken
   # workflow also reports a failed run on every push to EVERY branch, which is
   # what makes it look like something else.
-  BROKKR_BUILD_BASE: "1000"
+  HANI_BUILD_BASE: "1000"
 
 jobs:
   build:
@@ -81,12 +81,12 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            # **Capitalised, and deliberately NOT starting with `brokkrsculpt`.**
+            # **Capitalised, and deliberately NOT starting with `hanisculpt`.**
             # GitHub lists release assets alphabetically, so while these were
-            # named `brokkrsculpt-linux-x86_64.tar.gz` they sorted BELOW every
-            # `brokkrsculpt-<ordinal>-…` payload -- 33 near-identical names in
+            # named `hanisculpt-linux-x86_64.tar.gz` they sorted BELOW every
+            # `hanisculpt-<ordinal>-…` payload -- 33 near-identical names in
             # front of the three a person actually wants. No name beginning
-            # `brokkrsculpt` can win that sort, because the comparison reaches
+            # `hanisculpt` can win that sort, because the comparison reaches
             # `1` against `l`/`w`/`m` and the digit sorts first. Hence a
             # different first letter for the human downloads and `update-` for
             # the payloads: `B` < `l` < `u` under both a case-sensitive and a
@@ -96,7 +96,7 @@ jobs:
             # bare payload `.exe` instead of this archive and ran it out of his
             # Downloads folder, which is why his install directory was somewhere
             # the updater had to reason about at all.
-            asset: BrokkrSculpt-Linux-x86_64.tar.gz
+            asset: HaniSculpt-Linux-x86_64.tar.gz
             # The raw, build-stamped executable the updater downloads. Named
             # separately from `asset` because the two have different jobs: this
             # one is named by the signed manifest and must never be replaced in
@@ -104,10 +104,10 @@ jobs:
             # clobbered on every push.
             slug: linux-x86_64
           - os: windows-latest
-            asset: BrokkrSculpt-Windows-x86_64.zip
+            asset: HaniSculpt-Windows-x86_64.zip
             slug: windows-x86_64
           - os: macos-latest
-            asset: BrokkrSculpt-macOS-arm64.zip
+            asset: HaniSculpt-macOS-arm64.zip
             slug: macos-arm64
     runs-on: ${{ matrix.os }}
     # **This job compiles the entire dependency tree, with build scripts and
@@ -139,16 +139,16 @@ jobs:
 
       - name: Compute the build ordinal
         shell: bash
-        run: echo "BROKKR_BUILD=$((BROKKR_BUILD_BASE + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+        run: echo "HANI_BUILD=$((HANI_BUILD_BASE + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
 
       - name: Build
-        run: cargo build --release -p brokkr-app
+        run: cargo build --release -p hani-app
 
       # **Read the ordinal back out of the binary that was just built.**
       #
       # This step exists because of one specific, silent failure. `build.rs`
-      # returns early when `BROKKR_COMMIT` is set -- which this workflow sets --
-      # so a `BROKKR_BUILD` emission placed after that guard never runs; and
+      # returns early when `HANI_COMMIT` is set -- which this workflow sets --
+      # so a `HANI_BUILD` emission placed after that guard never runs; and
       # `Swatinem/rust-cache` will happily serve a warm build-script output, so
       # a binary can be published reporting the PREVIOUS run's ordinal with
       # nothing anywhere saying so. That failure is self-perpetuating: every
@@ -165,29 +165,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          exe=target/release/brokkrsculpt
-          [ "${{ matrix.os }}" = "windows-latest" ] && exe=target/release/brokkrsculpt.exe
+          exe=target/release/hanisculpt
+          [ "${{ matrix.os }}" = "windows-latest" ] && exe=target/release/hanisculpt.exe
           "$exe" --version
-          "$exe" --version | grep -qx "build = ${BROKKR_BUILD:?}"
+          "$exe" --version | grep -qx "build = ${HANI_BUILD:?}"
 
       - name: Package (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           set -euo pipefail
-          mkdir -p stage/brokkrsculpt
-          cp target/release/brokkrsculpt stage/brokkrsculpt/
-          cp packaging/brokkrsculpt.desktop stage/brokkrsculpt/
-          cp README.md LICENSE stage/brokkrsculpt/
-          tar -C stage -czf "${{ matrix.asset }}" brokkrsculpt
+          mkdir -p stage/hanisculpt
+          cp target/release/hanisculpt stage/hanisculpt/
+          cp packaging/hanisculpt.desktop stage/hanisculpt/
+          cp README.md LICENSE stage/hanisculpt/
+          tar -C stage -czf "${{ matrix.asset }}" hanisculpt
 
       - name: Package (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path stage/brokkrsculpt | Out-Null
-          Copy-Item target/release/brokkrsculpt.exe stage/brokkrsculpt/
-          Copy-Item README.md, LICENSE stage/brokkrsculpt/
-          Compress-Archive -Path stage/brokkrsculpt -DestinationPath "${{ matrix.asset }}"
+          New-Item -ItemType Directory -Force -Path stage/hanisculpt | Out-Null
+          Copy-Item target/release/hanisculpt.exe stage/hanisculpt/
+          Copy-Item README.md, LICENSE stage/hanisculpt/
+          Compress-Archive -Path stage/hanisculpt -DestinationPath "${{ matrix.asset }}"
 
       # A real `.app`, because a bare Mach-O binary is not something a Mac user
       # can double click. Hand-built rather than bundled by a tool: the whole
@@ -200,19 +200,19 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           set -euo pipefail
-          APP="stage/BrokkrSculpt.app"
+          APP="stage/HaniSculpt.app"
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-          cp target/release/brokkrsculpt "$APP/Contents/MacOS/BrokkrSculpt"
-          chmod +x "$APP/Contents/MacOS/BrokkrSculpt"
+          cp target/release/hanisculpt "$APP/Contents/MacOS/HaniSculpt"
+          chmod +x "$APP/Contents/MacOS/HaniSculpt"
           cat > "$APP/Contents/Info.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-            <key>CFBundleName</key><string>BrokkrSculpt</string>
-            <key>CFBundleDisplayName</key><string>BrokkrSculpt</string>
-            <key>CFBundleIdentifier</key><string>com.tinkeratlas.brokkrsculpt</string>
-            <key>CFBundleExecutable</key><string>BrokkrSculpt</string>
+            <key>CFBundleName</key><string>HaniSculpt</string>
+            <key>CFBundleDisplayName</key><string>HaniSculpt</string>
+            <key>CFBundleIdentifier</key><string>com.tinkeratlas.hanisculpt</string>
+            <key>CFBundleExecutable</key><string>HaniSculpt</string>
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleShortVersionString</key><string>0.1.0</string>
             <key>CFBundleVersion</key><string>0.1.0</string>
@@ -246,9 +246,9 @@ jobs:
           # in the release until the sweep ages them out. `sign-release.sh`
           # therefore looks for both spellings, and the sweep counts both.
           case "${{ matrix.slug }}" in
-            linux-x86_64)   cp target/release/brokkrsculpt "payload/update-${BROKKR_BUILD:?}-linux-x86_64" ;;
-            windows-x86_64) cp target/release/brokkrsculpt.exe "payload/update-${BROKKR_BUILD:?}-windows-x86_64.exe" ;;
-            macos-arm64)    cp "${{ matrix.asset }}" "payload/update-${BROKKR_BUILD:?}-macos-arm64.zip" ;;
+            linux-x86_64)   cp target/release/hanisculpt "payload/update-${HANI_BUILD:?}-linux-x86_64" ;;
+            windows-x86_64) cp target/release/hanisculpt.exe "payload/update-${HANI_BUILD:?}-windows-x86_64.exe" ;;
+            macos-arm64)    cp "${{ matrix.asset }}" "payload/update-${HANI_BUILD:?}-macos-arm64.zip" ;;
           esac
           ls -l payload
 
@@ -314,7 +314,7 @@ jobs:
 
       - name: Compute the build ordinal
         shell: bash
-        run: echo "BROKKR_BUILD=$((BROKKR_BUILD_BASE + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
+        run: echo "HANI_BUILD=$((HANI_BUILD_BASE + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
 
       - name: Publish
         env:
@@ -341,9 +341,9 @@ jobs:
 
           | | |
           |---|---|
-          | **Windows** (64-bit) | [BrokkrSculpt-Windows-x86_64.zip](https://github.com/MakerViking/brokkrsculpt/releases/download/beta/BrokkrSculpt-Windows-x86_64.zip) |
-          | **macOS** (Apple silicon) | [BrokkrSculpt-macOS-arm64.zip](https://github.com/MakerViking/brokkrsculpt/releases/download/beta/BrokkrSculpt-macOS-arm64.zip) |
-          | **Linux** (64-bit) | [BrokkrSculpt-Linux-x86_64.tar.gz](https://github.com/MakerViking/brokkrsculpt/releases/download/beta/BrokkrSculpt-Linux-x86_64.tar.gz) |
+          | **Windows** (64-bit) | [HaniSculpt-Windows-x86_64.zip](https://github.com/DanielJoyce/hanisculpt/releases/download/beta/HaniSculpt-Windows-x86_64.zip) |
+          | **macOS** (Apple silicon) | [HaniSculpt-macOS-arm64.zip](https://github.com/DanielJoyce/hanisculpt/releases/download/beta/HaniSculpt-macOS-arm64.zip) |
+          | **Linux** (64-bit) | [HaniSculpt-Linux-x86_64.tar.gz](https://github.com/DanielJoyce/hanisculpt/releases/download/beta/HaniSculpt-Linux-x86_64.tar.gz) |
 
           Those three links always point at the newest build. Everything in the
           asset list below named `update-…` is for the built-in updater to
@@ -357,10 +357,10 @@ jobs:
           this project does not have yet. Neither warning is about anything being
           wrong with the download.
 
-          - **macOS** will say *"BrokkrSculpt.app is damaged and can't be opened."*
+          - **macOS** will say *"HaniSculpt.app is damaged and can't be opened."*
             It is not damaged; that is what Gatekeeper says about any unsigned app
             from the internet. Move it to Applications, then in Terminal run
-            `xattr -dr com.apple.quarantine /Applications/BrokkrSculpt.app` and
+            `xattr -dr com.apple.quarantine /Applications/HaniSculpt.app` and
             open it normally.
 
             Not Control+click then Open -- Sequoia removed that. The supported
@@ -372,7 +372,7 @@ jobs:
             nothing system wide.
           - **Windows** will show *"Windows protected your PC"* from SmartScreen.
             Click **More info**, then **Run anyway**.
-          - **Linux** has nothing to say about it. Untar and run `./brokkrsculpt`.
+          - **Linux** has nothing to say about it. Untar and run `./hanisculpt`.
 
           ## Known, and worth knowing before you file it
 
@@ -395,8 +395,8 @@ jobs:
           **The swap has only been run for real on Linux.** Windows and macOS
           share the same verified download and the same checks; what is untested
           there is the replacement itself. Both keep the previous build and leave
-          a `RECOVER-BROKKRSCULPT.txt` beside the application saying how to
-          restore it. `BROKKR_NO_SELF_UPDATE=1` downloads and verifies but never
+          a `RECOVER-HANISCULPT.txt` beside the application saying how to
+          restore it. `HANI_NO_SELF_UPDATE=1` downloads and verifies but never
           installs.
 
           ## Reporting
@@ -436,21 +436,21 @@ jobs:
           # destroys.
           if gh release view beta --repo "$R" >/dev/null 2>&1; then
             gh release edit beta --repo "$R" --prerelease \
-              --title "BrokkrSculpt open beta" --notes-file notes.md --target "$SHA"
+              --title "HaniSculpt open beta" --notes-file notes.md --target "$SHA"
           else
             gh release create beta --repo "$R" --prerelease \
-              --title "BrokkrSculpt open beta" --notes-file notes.md --target "$SHA"
+              --title "HaniSculpt open beta" --notes-file notes.md --target "$SHA"
           fi
 
           # **One-time migration, 2026-08-31: drop the pre-rename human
           # archives BEFORE uploading the new ones.**
           #
-          # They were `brokkrsculpt-<platform>.…` and are now
-          # `BrokkrSculpt-<Platform>.…`. Two reasons this cannot wait until
+          # They were `hanisculpt-<platform>.…` and are now
+          # `HaniSculpt-<Platform>.…`. Two reasons this cannot wait until
           # after the upload, and the first is not optional:
           #
           # 1. **GitHub compares asset names case-insensitively.** Uploading
-          #    `BrokkrSculpt-Windows-x86_64.zip` while `brokkrsculpt-windows-
+          #    `HaniSculpt-Windows-x86_64.zip` while `hanisculpt-windows-
           #    -x86_64.zip` exists fails with `HTTP 422 ReleaseAsset.name
           #    already exists`, and `--clobber` does not save it: that looks for
           #    an EXACT name to delete first, finds none, and uploads into the
@@ -465,9 +465,9 @@ jobs:
           # next push. That is the lesser risk: payloads and the manifest are
           # untouched, so self-updating keeps working throughout, and a failed
           # run is loud. Safe to delete this block once it has run.
-          for stale in brokkrsculpt-linux-x86_64.tar.gz \
-                       brokkrsculpt-windows-x86_64.zip \
-                       brokkrsculpt-macos-arm64.zip; do
+          for stale in hanisculpt-linux-x86_64.tar.gz \
+                       hanisculpt-windows-x86_64.zip \
+                       hanisculpt-macos-arm64.zip; do
             if gh release delete-asset beta "$stale" --repo "$R" --yes 2>/dev/null; then
               echo "removed the pre-rename archive $stale"
             fi
@@ -541,13 +541,13 @@ jobs:
 
           # Every build-stamped payload, newest ordinal first. **Both spellings**
           # -- `update-<n>-…` is what this workflow publishes now, and
-          # `brokkrsculpt-<n>-…` is what it published before 2026-08-31. Counting
+          # `hanisculpt-<n>-…` is what it published before 2026-08-31. Counting
           # only one of them would either retain the old ones for ever or sweep
           # the new ones on the wrong schedule.
           mapfile -t ordinals < <(
             gh release view beta --repo "$R" --json assets \
               --jq '.assets[].name' 2>/dev/null \
-            | sed -nE 's/^(update|brokkrsculpt)-([0-9]+)-.*$/\2/p' | sort -rnu
+            | sed -nE 's/^(update|hanisculpt)-([0-9]+)-.*$/\2/p' | sort -rnu
           )
           echo "retained ordinals: ${ordinals[*]:-none}"
 
@@ -561,10 +561,10 @@ jobs:
               continue
             fi
             # Both spellings again, for the same reason as the scan above. The
-            # human archives are safe from this: they are `BrokkrSculpt-…`, and
+            # human archives are safe from this: they are `HaniSculpt-…`, and
             # neither prefix matches them at any case.
             for name in $(gh release view beta --repo "$R" --json assets \
-                            --jq ".assets[].name | select(startswith(\"update-$ordinal-\") or startswith(\"brokkrsculpt-$ordinal-\"))"); do
+                            --jq ".assets[].name | select(startswith(\"update-$ordinal-\") or startswith(\"hanisculpt-$ordinal-\"))"); do
               echo "sweeping $name"
               gh release delete-asset beta "$name" --repo "$R" --yes
               dropped=$((dropped + 1))
@@ -585,13 +585,13 @@ jobs:
           live_seq=$(gh release download beta --repo "$R" --pattern latest.conf \
                        --output - 2>/dev/null | sed -n 's/^seq *= *//p' | head -1 || true)
           if [ -z "${live_build:-}" ]; then
-            echo "::warning::no signed manifest is published yet, so no client will see build ${BROKKR_BUILD} unless the signing step below succeeds."
-          elif [ "${live_build}" != "${BROKKR_BUILD}" ]; then
-            behind=$(( BROKKR_BUILD - live_build ))
+            echo "::warning::no signed manifest is published yet, so no client will see build ${HANI_BUILD} unless the signing step below succeeds."
+          elif [ "${live_build}" != "${HANI_BUILD}" ]; then
+            behind=$(( HANI_BUILD - live_build ))
             if [ "$behind" -gt 1 ]; then
-              echo "::warning::the signed manifest still names build ${live_build} (seq ${live_seq:-?}) while ${BROKKR_BUILD} is published -- ${behind} builds behind, so signing has been failing. Check the step below."
+              echo "::warning::the signed manifest still names build ${live_build} (seq ${live_seq:-?}) while ${HANI_BUILD} is published -- ${behind} builds behind, so signing has been failing. Check the step below."
             else
-              echo "the signed manifest names build ${live_build}; the signing step below should take it to ${BROKKR_BUILD}"
+              echo "the signed manifest names build ${live_build}; the signing step below should take it to ${HANI_BUILD}"
             fi
           fi
 
@@ -621,7 +621,7 @@ jobs:
           # the honest signal -- a signing step that silently does nothing is
           # how a release channel stops working with nobody noticing.
           if [ -z "${MINISIGN_SECRET_KEY:-}" ]; then
-            echo "::warning::no MINISIGN_SECRET_KEY configured, so build ${BROKKR_BUILD} was published but NOT signed. No client will be offered it."
+            echo "::warning::no MINISIGN_SECRET_KEY configured, so build ${HANI_BUILD} was published but NOT signed. No client will be offered it."
             exit 0
           fi
 
@@ -648,8 +648,8 @@ jobs:
           # cannot get a backdoored build signed. Here the runner IS the signer,
           # so that protection is gone and provenance attestation plus the epoch
           # rotation are what remain.
-          BROKKR_RELEASE_REPO="$R" ./scripts/sign-release.sh \
-            "${BROKKR_BUILD:?}" \
+          HANI_RELEASE_REPO="$R" ./scripts/sign-release.sh \
+            "${HANI_BUILD:?}" \
             --requires-reinstall 0 \
             --key-epoch 0 \
             --secret-key "$key" \

@@ -1,0 +1,5 @@
+# Kinds the rules in paint_index.py get wrong: brand, line, name, kind.
+# Tab separated. Add a line when a paint is found misfiled.
+Citadel_Colour	Base	Retributor Armour	metallic
+Citadel_Colour	Base	Screaming Bell	metallic
+Citadel_Colour	Layer	Ironbreaker	metallic

@@ -11,4 +11,4 @@
 #
 # The whole directory rather than `*.obj`, so a golden added later is covered
 # by default instead of by remembering.
-crates/brokkr-core/tests/fixtures/** -text
+crates/hani-core/tests/fixtures/** -text

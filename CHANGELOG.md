@@ -1,8 +1,8 @@
 # Changelog
 
-What changed in each BrokkrSculpt build, newest first. Everything under
+What changed in each HaniSculpt build, newest first. Everything under
 **Unreleased** ships in the next rolling beta, and the release notes on the
-[beta release](https://github.com/MakerViking/brokkrsculpt/releases/tag/beta)
+[beta release](https://github.com/DanielJoyce/hanisculpt/releases/tag/beta)
 are generated from that section.
 
 Every green `main` produces a build, so most entries land under Unreleased and
@@ -19,7 +19,7 @@ what the application does to your model does, even when it is a fix.
 
 This file starts on 2026-08-29, the day of the first public build. For anything
 before it, see the
-[commit history](https://github.com/MakerViking/brokkrsculpt/commits/main).
+[commit history](https://github.com/DanielJoyce/hanisculpt/commits/main).
 
 ## Unreleased
 
@@ -38,12 +38,12 @@ physical Mac.
 
 ### The first public build
 
-BrokkrSculpt is now downloadable for **Linux, Windows and macOS**. Nothing is
+HaniSculpt is now downloadable for **Linux, Windows and macOS**. Nothing is
 signed yet, so both Windows and macOS will warn you about the download — the
 release notes quote each warning and say what to do about it.
 
 The three are not equally finished, and
-[the README says specifically what is unproven on each](https://github.com/MakerViking/brokkrsculpt#what-works-on-which-platform).
+[the README says specifically what is unproven on each](https://github.com/DanielJoyce/hanisculpt#what-works-on-which-platform).
 Linux is where this is built and used every day. Windows and macOS compile from
 the same commit and pass the same suite, but have had far less time in front of
 real hardware.
@@ -87,7 +87,7 @@ real hardware.
   Windows the line was a default rather than a finding, whether or not a pen
   was reporting. Windows now enumerates its HID devices at startup, names the
   pen with its pressure range, tilt and eraser, and listens for a pen whichever
-  of the two top-level usages its driver presents. `brokkrsculpt.exe --tablets
+  of the two top-level usages its driver presents. `hanisculpt.exe --tablets
   > tablets.txt` lists every HID device and says why each is or is not a
   stylus, including the mouse-mode case, which is the one to check first: a
   tablet whose driver has Windows Ink switched off is a mouse to every
@@ -159,8 +159,8 @@ real hardware.
   macOS use the same verified download and the same checks, and their
   replacement step has been tested against everything except real hardware —
   which, on those two, is the part that can go wrong. Each keeps a copy of the
-  build it replaced and writes a `RECOVER-BROKKRSCULPT.txt` beside the
-  application saying how to put it back. Set `BROKKR_NO_SELF_UPDATE=1` and the
+  build it replaced and writes a `RECOVER-HANISCULPT.txt` beside the
+  application saying how to put it back. Set `HANI_NO_SELF_UPDATE=1` and the
   update is downloaded and verified but never installed, which is what macOS did
   before this and what to fall back to if the swap ever misbehaves.
 - **Stylus and SpaceMouse on Windows and macOS.** Written, compiled on each

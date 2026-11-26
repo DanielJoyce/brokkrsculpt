@@ -1,0 +1,288 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! Diagnose what a real file does on the way in.
+//!
+//! Not a gate and not part of the suite: an investigation tool for when an
+//! import comes out looking wrong. It answers the question the status line
+//! cannot, which is **whether a defect arrived in the file or was made here**.
+//! That distinction decides everything about the fix, and guessing it has
+//! already cost this project a session.
+//!
+//! ```fish
+//! env HANI_DIAGNOSE=/path/to/model.obj \
+//!   cargo test -p hani-core --release --test diagnose_import -- --ignored --nocapture
+//! ```
+//!
+//! Set `HANI_DIAGNOSE_VOXEL` to try another voxel size; it defaults to the
+//! 0.25 mm the application imports at.
+
+use hani_core::export::ExportMesh;
+use hani_core::voxelise::{VoxeliseOptions, voxelise};
+
+/// The three separate defects a slicer lumps together as "non-manifold".
+///
+/// Counted here rather than taken from `MeshReport`, because that type does not
+/// carry the third one: it assumes surface nets winds consistently and says so.
+/// An assumption is worth measuring once on a real model.
+fn manifold_triple(mesh: &ExportMesh) -> (usize, usize, usize) {
+    use std::collections::HashMap;
+    // Unordered pair -> how many triangles use it, and how many traverse it
+    // low-to-high. A shared edge that two triangles both traverse the SAME way
+    // means they disagree about which side is out.
+    let mut uses: HashMap<(u32, u32), (u32, u32)> = HashMap::new();
+    for [a, b, c] in &mesh.triangles {
+        for (from, to) in [(*a, *b), (*b, *c), (*c, *a)] {
+            let key = if from <= to { (from, to) } else { (to, from) };
+            let entry = uses.entry(key).or_insert((0, 0));
+            entry.0 += 1;
+            if from <= to {
+                entry.1 += 1;
+            }
+        }
+    }
+    let one_sided = uses.values().filter(|(n, _)| *n == 1).count();
+    let over_used = uses.values().filter(|(n, _)| *n > 2).count();
+    // Exactly two triangles, both going the same way round it.
+    let same_direction =
+        uses.values().filter(|(n, fwd)| *n == 2 && (*fwd == 2 || *fwd == 0)).count();
+    (one_sided, over_used, same_direction)
+}
+
+fn read(path: &std::path::Path) -> ExportMesh {
+    let bytes = std::fs::read(path).expect("reading the model");
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let mesh = match ext.as_str() {
+        "obj" => hani_core::import::obj::read(&bytes),
+        "stl" => hani_core::import::stl::read(&bytes),
+        "3mf" => hani_core::import::threemf::read(&bytes),
+        other => panic!("no reader for .{other}"),
+    };
+    mesh.expect("the file should read")
+}
+
+/// Longest side of the mesh's bounding box, and the box itself.
+fn extent(mesh: &ExportMesh) -> (glam::Vec3, glam::Vec3) {
+    let mut min = glam::Vec3::splat(f32::INFINITY);
+    let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
+    for p in &mesh.positions {
+        min = min.min(*p);
+        max = max.max(*p);
+    }
+    (min, max)
+}
+
+#[test]
+#[ignore = "an investigation tool; needs HANI_DIAGNOSE=<path>"]
+fn diagnose() {
+    let Ok(path) = std::env::var("HANI_DIAGNOSE") else {
+        panic!("set HANI_DIAGNOSE to the model to look at");
+    };
+    let path = std::path::PathBuf::from(path);
+    let voxel: f32 =
+        std::env::var("HANI_DIAGNOSE_VOXEL").ok().and_then(|v| v.parse().ok()).unwrap_or(0.25);
+
+    println!("\n=== {} ===", path.display());
+
+    let started = web_time::Instant::now();
+    let mesh = read(&path);
+    println!("read in {:.0} ms", started.elapsed().as_secs_f64() * 1000.0);
+
+    // --- what arrived -------------------------------------------------------
+    //
+    // The reader welds, so this is real topology rather than an artefact of
+    // however the file happened to index its corners.
+    let source = mesh.validate();
+    let (min, max) = extent(&mesh);
+    let size = max - min;
+    println!("\nTHE FILE ITSELF");
+    println!("  {}", source.summary());
+    println!("  non-manifold edges: {}", source.non_manifold_edges);
+    // Scale-dependent, and the check that produces it compares a cross product
+    // against f32::EPSILON. A model authored at 0.1 mm has triangles whose
+    // cross products are ~1e-8 and every one of them counts as "zero area",
+    // which says nothing about the model. Read it only alongside the box.
+    println!(
+        "  zero-area triangles: {} (meaningless if the box below is tiny)",
+        source.zero_area_triangles
+    );
+    println!(
+        "  bounding box: {:.3} x {:.3} x {:.3} mm (longest {:.3})",
+        size.x,
+        size.y,
+        size.z,
+        size.max_element()
+    );
+    // Does the SOURCE predict the voxel it needs?
+    //
+    // If it does, the importer can pick a size up front instead of voxelising
+    // once to find out. Edge length is the candidate: a generated mesh's
+    // feature size is roughly its cell size, and its triangles are cut from
+    // that same grid.
+    {
+        let scale = 200.0 / size.max_element().max(1.0e-9);
+        let mut edges: Vec<f32> = Vec::with_capacity(mesh.triangles.len() * 3);
+        for [a, b, c] in &mesh.triangles {
+            let (pa, pb, pc) = (
+                mesh.positions[*a as usize],
+                mesh.positions[*b as usize],
+                mesh.positions[*c as usize],
+            );
+            edges.push((pb - pa).length() * scale);
+            edges.push((pc - pb).length() * scale);
+            edges.push((pa - pc).length() * scale);
+        }
+        edges.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        let at = |q: f64| edges[((edges.len() - 1) as f64 * q) as usize];
+        println!(
+            "  edge length once scaled to 200 mm: p10 {:.4}, median {:.4}, p90 {:.4} mm",
+            at(0.10),
+            at(0.50),
+            at(0.90)
+        );
+    }
+
+    println!(
+        "  -> the file is {}",
+        if source.boundary_edges == 0 {
+            "CLOSED. Any hole below was made here.".to_string()
+        } else {
+            format!("ALREADY OPEN: {} boundary edges arrived in it.", source.boundary_edges)
+        }
+    );
+
+    // --- what the import does with it ---------------------------------------
+    //
+    // `VoxeliseOptions::at` is exactly what the application uses, refit and
+    // centring included. A diagnostic that quietly used different options would
+    // be answering a question nobody asked -- the first version of this did,
+    // and reported a refusal the application never hits.
+    for (label, cavities, repair, refine) in [
+        ("at this exact size", true, true, false),
+        ("with both repairs OFF", false, false, false),
+        ("AS THE APPLICATION IMPORTS IT (refining itself)", true, true, true),
+    ] {
+        // Refinement off: this tool exists to report what a NAMED voxel size
+        // does, and a run that quietly moved to a different one would be
+        // answering a different question.
+        let options = VoxeliseOptions {
+            fill_sealed_cavities: cavities,
+            repair_broken_scan_lines: repair,
+            refine_to_resolve: refine,
+            ..VoxeliseOptions::at(voxel)
+        };
+        let started = web_time::Instant::now();
+        let Ok((volume, report)) = voxelise(&mesh, &options) else {
+            println!("\nAT {voxel} mm, {label}: REFUSED");
+            continue;
+        };
+        let took = started.elapsed().as_secs_f64() * 1000.0;
+
+        println!("\nAT {voxel} mm, {label} ({took:.0} ms)");
+        println!("  {}", report.summary());
+        println!(
+            "  surface lost to thin walls: {} of {} triangles ({:.2}%)",
+            report.lost_triangles,
+            report.triangles,
+            100.0 * report.lost_triangles as f64 / report.triangles.max(1) as f64
+        );
+        println!("  scan lines repaired:      {}", report.repaired_scan_lines);
+        println!("  filament voxels erased:   {}", report.erased_filament_voxels);
+        println!("  isolated sign flips:      {}", report.isolated_sign_flips);
+        println!("  cavity voxels filled:     {}", report.filled_voxels);
+        println!(
+            "  bricks: {} dense + {} uniform  <- uniform 0 means NOTHING is solid inside",
+            report.dense_bricks, report.uniform_bricks
+        );
+
+        let (out, out_report) = volume.export_mesh();
+        println!("  back out: {}", out_report.summary());
+        let (one_sided, over_used, same_dir) = manifold_triple(&out);
+        println!(
+            "  the three \"non-manifold\" defects: {one_sided} one-sided, \
+             {over_used} used by 3+, {same_dir} wound against a neighbour"
+        );
+        println!(
+            "  -> {}",
+            if out_report.boundary_edges == 0 {
+                "closed, printable".to_string()
+            } else {
+                format!("{} holes in the result", out_report.boundary_edges)
+            }
+        );
+        drop(out);
+
+        // Where do the visible streaks come from?
+        //
+        // A strand is solid material with almost nothing solid beside it. The
+        // question that decides the fix is whether those strands are SATURATED:
+        //
+        //   saturated  -> no source triangle within the narrow band, so the
+        //                 material was invented here and the filament eraser
+        //                 is the right place to deal with it.
+        //   not        -> a real surface is right there, so the spike is IN THE
+        //                 FILE and no amount of sweeping the field will remove
+        //                 it without also removing genuine thin features.
+        //
+        // Getting this backwards means tuning a repair pass that was never
+        // going to help.
+        if std::env::var("HANI_DIAGNOSE_STRANDS").is_ok() {
+            // Which AXIS does the surviving thin material run along?
+            //
+            // This is the question that identifies a sweep leak, and it is the
+            // one to ask first. `voxelise` signs voxels by a winding number
+            // swept along X, and its own header warns that one hole "inverts a
+            // whole scan line, or leaks". So thin material that runs
+            // overwhelmingly along X is material the SWEEP invented, however
+            // clean the source is -- and the saturation test will not see it,
+            // because a leaked line passing near the model stays inside the
+            // narrow band of real triangles for most of its length.
+            //
+            // Runs along Y or Z in similar numbers would mean the opposite:
+            // real thin geometry, which has no reason to prefer an axis.
+            let (mut along_x, mut along_y, mut along_z) = (0usize, 0usize, 0usize);
+            let (mut saturated, mut near_surface) = (0usize, 0usize);
+            for coord in volume.brick_coords().collect::<Vec<_>>() {
+                let origin = coord.origin();
+                for dz in 0..32 {
+                    for dy in 0..32 {
+                        for dx in 0..32 {
+                            let v = origin + glam::IVec3::new(dx, dy, dz);
+                            let d = volume.sample_voxel(v);
+                            if d >= 0.0 {
+                                continue;
+                            }
+                            let solid = |s: glam::IVec3| volume.sample_voxel(v + s) < 0.0;
+                            let x = solid(glam::IVec3::X) || solid(glam::IVec3::NEG_X);
+                            let y = solid(glam::IVec3::Y) || solid(glam::IVec3::NEG_Y);
+                            let z = solid(glam::IVec3::Z) || solid(glam::IVec3::NEG_Z);
+                            // A strand: continues along exactly one axis and
+                            // has nothing beside it on the other two.
+                            match (x, y, z) {
+                                (true, false, false) => along_x += 1,
+                                (false, true, false) => along_y += 1,
+                                (false, false, true) => along_z += 1,
+                                _ => continue,
+                            }
+                            if d <= -3.0 {
+                                saturated += 1;
+                            } else {
+                                near_surface += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            let total = along_x + along_y + along_z;
+            println!("  STRAND VOXELS by the axis they run along:");
+            println!("    along X (the sweep axis): {along_x}");
+            println!("    along Y:                  {along_y}");
+            println!("    along Z:                  {along_z}");
+            println!("    of those: {saturated} saturated, {near_surface} within the band");
+            if total > 0 && along_x > 4 * (along_y + along_z).max(1) {
+                println!("  -> SWEEP LEAK. The sign sweep invented these; the source is innocent.");
+            } else if total > 0 {
+                println!("  -> no axis preference, so this is real thin geometry from the file.");
+            }
+        }
+    }
+}

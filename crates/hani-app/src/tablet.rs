@@ -1,0 +1,1761 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//! Stylus pressure.
+//!
+//! # Why this reads the kernel directly
+//!
+//! Nothing in the windowing stack can supply pen pressure. iced 0.14's
+//! `touch::Event` carries only a position and drops winit's `force` field, and
+//! winit 0.30 never had force for pens at all, only for touch. Short of
+//! forking iced, the pressure has to come from somewhere else.
+//!
+//! It comes from evdev, the kernel's input interface. That sits below the
+//! display server, so a single code path covers X11, XWayland and Wayland, and
+//! it works with any tablet the kernel has a driver for. No vendor list: a
+//! Huion, a Wacom and an XP-Pen all publish `ABS_PRESSURE` on a device that
+//! also reports `BTN_TOOL_PEN`, and that pair is the whole detection rule.
+//!
+//! # How it fits with the pointer
+//!
+//! The tablet driver already turns pen contact into ordinary pointer motion and
+//! button presses, so iced sees a normal drag and the application needs no
+//! separate positioning path. This module only answers "how hard is the pen
+//! being pressed right now", which the sculpt loop samples when it builds a
+//! stamp. Position and pressure come from the same physical event stream
+//! microseconds apart, so sampling the latest value is accurate enough.
+//!
+//! # Permissions
+//!
+//! Reading `/dev/input/event*` needs membership of the `input` group on most
+//! distributions. Without it the devices are simply invisible and the
+//! application falls back to full pressure, which is exactly how it behaves for
+//! a mouse. [`Tablet::diagnosis`] explains which of those two happened, because
+//! "my tablet does nothing" otherwise looks identical to "I am using a mouse".
+
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use web_time::Instant;
+
+use glam::Vec2;
+
+/// How long after the last pen event the pen is still considered present.
+///
+/// Some drivers do not send a clean `BTN_TOOL_PEN` release when the device is
+/// unplugged mid stroke. Without this the application would keep believing a
+/// pen is hovering and scale every mouse stroke by a stale pressure.
+const PEN_TIMEOUT_MS: u64 = 1_500;
+
+/// What the pen is doing right now.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PenState {
+    /// A stylus is in range of a tablet, so its pressure is meaningful.
+    ///
+    /// True for either end of the pen. The eraser and the tip are reported as
+    /// separate tools by the kernel and are never in range at the same time, so
+    /// checking only for the tip would make every eraser stroke look like a
+    /// mouse and quietly run at full pressure.
+    pub in_proximity: bool,
+    /// Normalised to 0 through 1 using the device's own reported range.
+    pub pressure: f32,
+    /// The eraser end of the stylus is the one in range.
+    pub eraser: bool,
+    /// Tilt away from vertical, each axis normalised to -1 through 1 against
+    /// the device's own reported range. Zero is upright.
+    pub tilt: Vec2,
+}
+
+impl PenState {
+    /// What a mouse looks like: no pen, so strokes run at full strength.
+    pub const NONE: Self =
+        Self { in_proximity: false, pressure: 0.0, eraser: false, tilt: Vec2::ZERO };
+}
+
+/// A tablet the application has found and is listening to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabletDevice {
+    pub name: String,
+    pub path: String,
+    /// Raw units at full press. Wildly device specific: 8191 on a Huion Kamvas,
+    /// 2047 or 4095 on various Wacom tablets, 1023 on older hardware. Shown in
+    /// the interface because it is the quickest way to tell a working tablet
+    /// from a misdetected one.
+    pub pressure_max: i32,
+    /// Whether the device reports tilt. Plenty of pens do not, and saying so is
+    /// better than leaving the user to wonder why leaning does nothing.
+    pub has_tilt: bool,
+    /// Whether the device has an eraser end.
+    pub has_eraser: bool,
+}
+
+/// Why no pressure is arriving, for the interface to explain.
+///
+/// **"Found" and "reading" are two different states, and the difference is
+/// the whole value of the line on a machine nobody here can test.** They used
+/// to be one word, "listening", which meant only that a device had been
+/// enumerated -- and a Windows report then arrived saying the panel showed a
+/// pen while the pen did nothing, which that word could neither confirm nor
+/// deny. The puck's diagnosis had told the two apart from the start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Diagnosis {
+    /// A tablet is open and has reported at least once.
+    Listening,
+    /// A stylus device is open, and nothing has arrived from it yet. Either the
+    /// pen has not touched down since launch, or it never will: a driver in
+    /// mouse mode, or a pipe that is registered but not delivering.
+    Found,
+    /// Nothing that looks like a stylus is connected.
+    NoTabletFound,
+    /// Devices exist but could not be opened. Almost always group membership.
+    PermissionDenied,
+    /// The reading pipe itself failed to set up. [`Tablet::describe`] carries
+    /// the detail.
+    PipeFailed,
+    /// This platform has no implementation yet.
+    Unsupported,
+}
+
+impl Diagnosis {
+    pub fn explain(self) -> &'static str {
+        match self {
+            Diagnosis::Listening => "reading the pen",
+            Diagnosis::Found => "pen found, nothing received from it yet",
+            Diagnosis::NoTabletFound => "no tablet found, using full pressure",
+            Diagnosis::PermissionDenied => {
+                "cannot read /dev/input, add your user to the input group"
+            }
+            Diagnosis::PipeFailed => "the pen pipe could not be set up",
+            Diagnosis::Unsupported => "pen pressure is Linux only so far",
+        }
+    }
+}
+
+/// State shared with the reader threads.
+#[derive(Debug)]
+struct Shared {
+    /// Latest normalised pressure, as `f32` bits.
+    pressure: AtomicU32,
+    /// Highest pressure seen since the last reset, so a user can confirm their
+    /// tablet reaches full range without having to watch a number flicker.
+    peak: AtomicU32,
+    in_proximity: AtomicBool,
+    /// The two pen ends, tracked separately because proximity is either of
+    /// them and the kernel reports them as different tools.
+    ///
+    /// Only the evdev reader sets it and only Linux has one, so off Linux it is
+    /// written by nobody and read by nobody. Kept rather than `cfg`'d out: the
+    /// struct is shared and a second shape for two platforms costs more than
+    /// the allow.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    tool_tip: AtomicBool,
+    tool_eraser: AtomicBool,
+    tilt_x: AtomicU32,
+    tilt_y: AtomicU32,
+    /// Milliseconds since `started` at the last pen event.
+    last_event_ms: AtomicU64,
+    /// Whether any pen event has EVER arrived. `last_event_ms` cannot answer
+    /// that once the timeout has passed, and this is what separates
+    /// [`Diagnosis::Found`] from [`Diagnosis::Listening`].
+    seen: AtomicBool,
+    started: Instant,
+    devices: Mutex<Vec<TabletDevice>>,
+    permission_denied: AtomicBool,
+    /// Why the reading pipe failed to set up, when it did. Written by a backend
+    /// whose setup can fail after the device list is filled -- Raw Input's
+    /// window and registration -- so the panel can say so instead of showing a
+    /// device name over a pipe that will never deliver.
+    pipe_failure: Mutex<Option<String>>,
+}
+
+impl Shared {
+    fn new() -> Self {
+        Self {
+            pressure: AtomicU32::new(0),
+            peak: AtomicU32::new(0),
+            in_proximity: AtomicBool::new(false),
+            tool_tip: AtomicBool::new(false),
+            tool_eraser: AtomicBool::new(false),
+            tilt_x: AtomicU32::new(0),
+            tilt_y: AtomicU32::new(0),
+            last_event_ms: AtomicU64::new(0),
+            seen: AtomicBool::new(false),
+            started: Instant::now(),
+            devices: Mutex::new(Vec::new()),
+            permission_denied: AtomicBool::new(false),
+            pipe_failure: Mutex::new(None),
+        }
+    }
+
+    fn now_ms(&self) -> u64 {
+        self.started.elapsed().as_millis() as u64
+    }
+
+    // Written only by the evdev backend, which is Linux only. The fields and
+    // the readers are shared, so these stay compiled everywhere rather than
+    // being cfg'd into two shapes -- but with no producer on Windows or macOS
+    // they are dead there, and `-D warnings` is right to say so. Allowed with
+    // a reason rather than silenced: when those platforms grow a Pointer
+    // Input, Wintab or IOKit backend, it calls exactly these.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn touch(&self) {
+        self.last_event_ms.store(self.now_ms(), Ordering::Relaxed);
+        self.seen.store(true, Ordering::Relaxed);
+    }
+
+    /// Record that the reading pipe could not be set up. Kept rather than
+    /// cfg'd to Windows for the reason the setters above are.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    fn set_pipe_failure(&self, why: String) {
+        *self.pipe_failure.lock().expect("tablet state poisoned") = Some(why);
+    }
+
+    // Same as the rest of these: written by the evdev reader alone.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn set_pressure(&self, value: f32) {
+        self.pressure.store(value.to_bits(), Ordering::Relaxed);
+        self.peak.fetch_max(value.to_bits(), Ordering::Relaxed);
+        self.touch();
+    }
+
+    // Written by the evdev reader alone; see `tool_tip`.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn set_tilt(&self, tilt: Vec2) {
+        self.tilt_x.store(tilt.x.to_bits(), Ordering::Relaxed);
+        self.tilt_y.store(tilt.y.to_bits(), Ordering::Relaxed);
+        self.touch();
+    }
+
+    /// Record which end of the stylus is in range.
+    ///
+    /// Proximity is either end. Pressure and tilt are cleared when both are
+    /// gone, so a lifted pen cannot leave a stale value scaling later strokes.
+    // Written by the evdev reader alone; see `tool_tip`.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn set_tool(&self, tip: Option<bool>, eraser: Option<bool>) {
+        if let Some(down) = tip {
+            self.tool_tip.store(down, Ordering::Relaxed);
+        }
+        if let Some(down) = eraser {
+            self.tool_eraser.store(down, Ordering::Relaxed);
+        }
+        let present =
+            self.tool_tip.load(Ordering::Relaxed) || self.tool_eraser.load(Ordering::Relaxed);
+        self.in_proximity.store(present, Ordering::Relaxed);
+        if !present {
+            self.pressure.store(0.0f32.to_bits(), Ordering::Relaxed);
+            self.tilt_x.store(0.0f32.to_bits(), Ordering::Relaxed);
+            self.tilt_y.store(0.0f32.to_bits(), Ordering::Relaxed);
+        }
+        self.touch();
+    }
+
+    /// Convenience for tests and for dropping every tool at once.
+    // Written by the evdev reader alone; see `tool_tip`.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn set_proximity(&self, present: bool) {
+        self.set_tool(Some(present), Some(false));
+    }
+
+    fn state(&self) -> PenState {
+        self.state_at(self.now_ms())
+    }
+
+    /// Split out from `state` so the timeout can be tested without waiting for
+    /// a wall clock, and without the result depending on how long the process
+    /// happened to have been running.
+    fn state_at(&self, now_ms: u64) -> PenState {
+        let last = self.last_event_ms.load(Ordering::Relaxed);
+        if now_ms.saturating_sub(last) > PEN_TIMEOUT_MS {
+            return PenState::NONE;
+        }
+        PenState {
+            in_proximity: self.in_proximity.load(Ordering::Relaxed),
+            pressure: f32::from_bits(self.pressure.load(Ordering::Relaxed)),
+            eraser: self.tool_eraser.load(Ordering::Relaxed),
+            tilt: Vec2::new(
+                f32::from_bits(self.tilt_x.load(Ordering::Relaxed)),
+                f32::from_bits(self.tilt_y.load(Ordering::Relaxed)),
+            ),
+        }
+    }
+}
+
+/// Watches for tablets and tracks the current pen pressure.
+///
+/// Cheap to clone: everything lives behind an `Arc` shared with the reader
+/// threads.
+#[derive(Debug, Clone)]
+pub struct Tablet {
+    shared: Arc<Shared>,
+}
+
+impl Tablet {
+    /// Start watching. Never fails: a machine with no tablet, or no permission
+    /// to read one, simply reports [`PenState::NONE`] for ever.
+    pub fn start() -> Self {
+        let shared = Arc::new(Shared::new());
+        backend::spawn(Arc::clone(&shared));
+        Self { shared }
+    }
+
+    /// A tablet that will never report anything, so tests do not go looking
+    /// through `/dev/input` or spawn reader threads.
+    #[cfg(test)]
+    pub fn inert() -> Self {
+        Self { shared: Arc::new(Shared::new()) }
+    }
+
+    pub fn state(&self) -> PenState {
+        self.shared.state()
+    }
+
+    /// Feed a pen state in directly, so code that consumes the pen can be
+    /// tested without a device.
+    #[cfg(test)]
+    pub fn simulate(&self, state: PenState) {
+        // Which end is in range only means anything while the pen is in range
+        // at all, or an "eraser away" state would report as present.
+        self.shared.set_tool(
+            Some(state.in_proximity && !state.eraser),
+            Some(state.in_proximity && state.eraser),
+        );
+        if state.in_proximity {
+            self.shared.set_pressure(state.pressure);
+            self.shared.set_tilt(state.tilt);
+        }
+    }
+
+    pub fn devices(&self) -> Vec<TabletDevice> {
+        self.shared.devices.lock().expect("tablet state poisoned").clone()
+    }
+
+    /// Highest pressure seen since the last reset.
+    pub fn peak(&self) -> f32 {
+        f32::from_bits(self.shared.peak.load(Ordering::Relaxed))
+    }
+
+    pub fn reset_peak(&self) {
+        self.shared.peak.store(0, Ordering::Relaxed);
+    }
+
+    pub fn diagnosis(&self) -> Diagnosis {
+        if !backend::SUPPORTED {
+            return Diagnosis::Unsupported;
+        }
+        // Before the device list: a pipe that failed delivers from no device,
+        // however many were found.
+        if self.pipe_failure().is_some() {
+            return Diagnosis::PipeFailed;
+        }
+        if !self.devices().is_empty() {
+            return if self.shared.seen.load(Ordering::Relaxed) {
+                Diagnosis::Listening
+            } else {
+                Diagnosis::Found
+            };
+        }
+        if self.shared.permission_denied.load(Ordering::Relaxed) {
+            return Diagnosis::PermissionDenied;
+        }
+        Diagnosis::NoTabletFound
+    }
+
+    /// Why the reading pipe failed to set up, if it did.
+    pub fn pipe_failure(&self) -> Option<String> {
+        self.shared.pipe_failure.lock().expect("tablet state poisoned").clone()
+    }
+
+    /// The diagnosis as a sentence, with the pipe failure's own words when
+    /// there is one. What the panel, the breadcrumbs and the bug report print.
+    pub fn describe(&self) -> String {
+        let diagnosis = self.diagnosis();
+        match self.pipe_failure() {
+            Some(why) if diagnosis == Diagnosis::PipeFailed => {
+                format!("{}: {why}", diagnosis.explain())
+            }
+            _ => diagnosis.explain().to_string(),
+        }
+    }
+
+    /// The pressure to apply to a stamp right now.
+    ///
+    /// Returns 1 whenever there is no pen, so a mouse sculpts at full strength.
+    /// That fallback is the whole reason proximity is tracked separately from
+    /// pressure: a hovering or absent pen reads zero, and treating that as the
+    /// stroke strength would make the application appear to do nothing at all.
+    pub fn stamp_pressure(&self, enabled: bool, curve: f32) -> f32 {
+        if !enabled {
+            return 1.0;
+        }
+        let pen = self.state();
+        if !pen.in_proximity {
+            return 1.0;
+        }
+        shape(pen.pressure, curve)
+    }
+}
+
+/// Map raw pressure through a response curve.
+///
+/// An exponent below 1 makes light touches bite harder, which is what most
+/// people want on a tablet whose raw response is close to linear in force but
+/// not in feel. Above 1 gives finer control at the light end.
+pub fn shape(raw: f32, curve: f32) -> f32 {
+    raw.clamp(0.0, 1.0).powf(curve.max(0.05))
+}
+
+/// Normalise a raw axis value against the range the device reports.
+///
+/// Devices differ by more than an order of magnitude here, so nothing may
+/// assume a fixed maximum. A device reporting a degenerate range is treated as
+/// full pressure rather than dividing by zero.
+// Written only by the evdev backend, which is Linux only. The fields and
+// the readers are shared, so these stay compiled everywhere rather than
+// being cfg'd into two shapes -- but with no producer on Windows or macOS
+// they are dead there, and `-D warnings` is right to say so. Allowed with
+// a reason rather than silenced: when those platforms grow a Pointer
+// Input, Wintab or IOKit backend, it calls exactly these.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn normalise(value: i32, minimum: i32, maximum: i32) -> f32 {
+    if maximum <= minimum {
+        return 1.0;
+    }
+    ((value - minimum) as f32 / (maximum - minimum) as f32).clamp(0.0, 1.0)
+}
+
+/// Normalise a signed axis such as tilt to -1 through 1.
+///
+/// Scaled against the larger half of the range rather than mapped across the
+/// whole of it, so that an upright pen reading zero comes out as exactly zero
+/// even on a device whose range is slightly lopsided, like -64 to 63.
+// Written only by the evdev backend, which is Linux only. The fields and
+// the readers are shared, so these stay compiled everywhere rather than
+// being cfg'd into two shapes -- but with no producer on Windows or macOS
+// they are dead there, and `-D warnings` is right to say so. Allowed with
+// a reason rather than silenced: when those platforms grow a Pointer
+// Input, Wintab or IOKit backend, it calls exactly these.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn normalise_signed(value: i32, minimum: i32, maximum: i32) -> f32 {
+    let extent = minimum.abs().max(maximum.abs());
+    if extent == 0 {
+        return 0.0;
+    }
+    (value as f32 / extent as f32).clamp(-1.0, 1.0)
+}
+
+/// One HID device as the Windows and macOS scanners describe it, reduced to
+/// what decides whether it is a stylus.
+///
+/// Platform independent so the verdicts and the `--tablets` wording are
+/// tested here, on the machine that has the test suite, rather than only on
+/// the machine that has the tablet. Compiled for Windows, which reads it, and
+/// for every test build, which is where it is exercised; a release build on
+/// Linux or macOS has no use for it and `-D warnings` would say so.
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HidSummary {
+    pub vendor: u16,
+    pub product: u16,
+    pub usage_page: u16,
+    pub usage: u16,
+    /// The tip pressure range the descriptor declares, if it declares one.
+    pub pressure: Option<(i32, i32)>,
+    pub has_tilt: bool,
+    pub has_eraser: bool,
+    pub path: String,
+}
+
+/// The HID digitizer page, and the two top-level usages a pen arrives as.
+#[cfg(any(target_os = "windows", test))]
+pub(crate) const HID_PAGE_DIGITIZER: u16 = 0x0D;
+#[cfg(any(target_os = "windows", test))]
+pub(crate) const HID_USAGE_DIGITIZER: u16 = 0x01;
+#[cfg(any(target_os = "windows", test))]
+pub(crate) const HID_USAGE_PEN: u16 = 0x02;
+#[cfg(any(target_os = "windows", test))]
+const HID_USAGE_TOUCH_SCREEN: u16 = 0x04;
+#[cfg(any(target_os = "windows", test))]
+const HID_USAGE_TOUCH_PAD: u16 = 0x05;
+
+#[cfg(any(target_os = "windows", test))]
+impl HidSummary {
+    /// A name a person can read, from the vendor id when it is one this
+    /// application knows and the raw ids otherwise.
+    pub fn name(&self) -> String {
+        let vendor = match self.vendor {
+            0x056A => "Wacom",
+            0x256C => "Huion or Gaomon",
+            0x28BD => "XP-Pen",
+            0x2D1F => "Wacom (Intuos)",
+            0x04F3 => "Elan",
+            0x1B96 => "N-Trig",
+            _ => "",
+        };
+        if vendor.is_empty() {
+            format!("HID {:04X}:{:04X}", self.vendor, self.product)
+        } else {
+            format!("{vendor} {:04X}:{:04X}", self.vendor, self.product)
+        }
+    }
+
+    /// `Ok` with what will be read from it, or `Err` with why it is not a
+    /// stylus. Mirrors the Linux scanner's rules: a pen without pressure is
+    /// not worth opening, and a touch device is not a pen however much
+    /// pressure it reports.
+    pub fn verdict(&self) -> Result<&'static str, &'static str> {
+        if self.usage_page != HID_PAGE_DIGITIZER {
+            return Err("ignored: not a digitizer");
+        }
+        match self.usage {
+            HID_USAGE_TOUCH_SCREEN | HID_USAGE_TOUCH_PAD => {
+                Err("ignored: a touch device, not a pen")
+            }
+            HID_USAGE_PEN | HID_USAGE_DIGITIZER => match self.pressure {
+                Some(_) => Ok("STYLUS, pressure will be read from this"),
+                None => {
+                    Err("ignored: a digitizer that declares no tip pressure -- the driver is in \
+                     mouse mode, or this collection is the tablet's buttons")
+                }
+            },
+            _ => Err("ignored: a digitizer collection that is not a pen"),
+        }
+    }
+}
+
+/// The `--tablets` report for a scanner that sees HID devices: what it found
+/// and what it made of each. Whether anything is HEARD from them is
+/// [`listen`]'s job, which runs the pipe for real; this used to end with a line
+/// about the pipe that was printed before the pipe existed and so always said
+/// the same thing.
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn hid_report(devices: &[HidSummary]) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let _ = writeln!(out, "HID devices, as the tablet scanner sees them.\n");
+    if devices.is_empty() {
+        let _ = writeln!(out, "No HID devices at all, which usually means the enumeration failed.");
+    }
+    let mut found = 0usize;
+    for device in devices {
+        let range = device
+            .pressure
+            .map(|(low, high)| format!("{low} to {high}"))
+            .unwrap_or_else(|| "none".into());
+        let mut extras = Vec::new();
+        if device.has_tilt {
+            extras.push("tilt");
+        }
+        if device.has_eraser {
+            extras.push("eraser");
+        }
+        let also =
+            if extras.is_empty() { String::new() } else { format!(", {}", extras.join(", ")) };
+        let verdict = match device.verdict() {
+            Ok(verdict) => {
+                found += 1;
+                verdict
+            }
+            Err(why) => why,
+        };
+        let _ = writeln!(
+            out,
+            "{}\n  usage page {:#04X} usage {:#04X}\n  pressure range {range}{also}\n  {verdict}\n",
+            if device.path.is_empty() {
+                device.name()
+            } else {
+                format!("{} at {}", device.name(), device.path)
+            },
+            device.usage_page,
+            device.usage
+        );
+    }
+    let _ = writeln!(out, "{found} stylus device(s) usable.");
+    if found == 0 {
+        let _ = writeln!(
+            out,
+            "No stylus found. A tablet whose driver is in mouse-only mode does not appear as a\n\
+             pen at all: switch on Windows Ink in the driver's settings (Huion, Gaomon and\n\
+             XP-Pen call it that; Wacom calls it \"Use Windows Ink\"), then unplug and replug."
+        );
+    }
+    out
+}
+
+/// Print what every input device looks like to the scanner, and why each was
+/// accepted or rejected.
+///
+/// A tablet that does not work is otherwise a black box: the interface can say
+/// "no tablet found", but not whether the device is missing, unreadable, or
+/// present but reporting no pressure because it is in mouse mode. This answers
+/// that without needing a debugger or a second tool.
+pub fn report() -> String {
+    backend::report()
+}
+
+/// Run the real pipe for `patience` and say whether the pen reported.
+///
+/// **This is the half of `--tablets` that answers the question.** The scan
+/// above reads descriptors, which a device publishes whether or not its driver
+/// will ever send a report on them -- a tablet in mouse mode lists its pen
+/// collection, pressure range and all, and is silent on it. Only running the
+/// pipe and pressing the pen tells that apart from a pipe that works, and the
+/// old report claimed to while doing neither: it returned before the pipe was
+/// ever started, so its last line was a constant.
+///
+/// The advice for silence is the backend's, because the likely cause differs
+/// per platform.
+pub fn listen(patience: std::time::Duration) -> String {
+    use std::fmt::Write;
+    let tablet = Tablet::start();
+    std::thread::sleep(patience);
+
+    let mut out = String::new();
+    let devices = tablet.devices();
+    match tablet.diagnosis() {
+        Diagnosis::Listening => {
+            let pen = tablet.state();
+            let _ = writeln!(
+                out,
+                "The pen reported. Peak pressure {:.2} of full range{}.",
+                tablet.peak(),
+                if pen.in_proximity { ", pen in range now" } else { "" }
+            );
+            if tablet.peak() <= 0.0 {
+                let _ = writeln!(
+                    out,
+                    "Reports arrived but every pressure read zero: the pen was not pressed, or \
+                     the device reports pressure on a collection this does not read."
+                );
+            }
+        }
+        Diagnosis::Found => {
+            let _ = writeln!(
+                out,
+                "{} stylus device(s) open, and nothing arrived from them in {} seconds.",
+                devices.len(),
+                patience.as_secs()
+            );
+            let _ = writeln!(out, "{}", backend::SILENT_ADVICE);
+        }
+        Diagnosis::PipeFailed => {
+            let _ = writeln!(out, "{}", tablet.describe());
+            let _ = writeln!(
+                out,
+                "Nothing can arrive through a pipe that did not open. This output is what to \
+                 send."
+            );
+        }
+        Diagnosis::NoTabletFound => {
+            let _ = writeln!(out, "No stylus device to listen to.");
+        }
+        other => {
+            let _ = writeln!(out, "{}", other.explain());
+        }
+    }
+    out
+}
+
+#[cfg(target_os = "linux")]
+mod backend {
+    use super::{Shared, TabletDevice, normalise, normalise_signed};
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    use evdev::{AbsInfo, AbsoluteAxisCode, Device, EventType, KeyCode};
+    use glam::Vec2;
+
+    pub const SUPPORTED: bool = true;
+
+    /// What to try when a stylus is open and silent. See [`super::listen`].
+    pub const SILENT_ADVICE: &str = "The device is open but sent nothing. Check that the pen \
+                                     draws in another application, and that this is the pen's \
+                                     own event node rather than the tablet's pad or buttons.";
+
+    /// How often to look for a tablet that was plugged in after startup.
+    ///
+    /// A pen display is routinely switched on after the application, so
+    /// scanning once at startup would mean restarting to use it.
+    const RESCAN: Duration = Duration::from_secs(2);
+
+    /// A device is a stylus if it can report pressure and identifies a pen tool.
+    ///
+    /// Pressure alone is not enough: plenty of touchscreens report
+    /// `ABS_PRESSURE` for finger contact, and some pressure sensitive pads do
+    /// too. `BTN_TOOL_PEN` is what the kernel uses to mean "this is a pen", and
+    /// every tablet driver sets it.
+    /// Range of an absolute axis, if the device has it.
+    fn axis_range(device: &Device, axis: AbsoluteAxisCode) -> Option<(i32, i32)> {
+        device
+            .get_absinfo()
+            .ok()?
+            .find(|(code, _)| *code == axis)
+            .map(|(_, info): (_, AbsInfo)| (info.minimum(), info.maximum()))
+    }
+
+    fn is_stylus(device: &Device) -> bool {
+        let has_pressure = device
+            .supported_absolute_axes()
+            .is_some_and(|axes| axes.contains(AbsoluteAxisCode::ABS_PRESSURE));
+        let has_pen =
+            device.supported_keys().is_some_and(|keys| keys.contains(KeyCode::BTN_TOOL_PEN));
+        has_pressure && has_pen
+    }
+
+    pub fn report() -> String {
+        use std::fmt::Write;
+        let mut out = String::new();
+        let _ = writeln!(out, "Input devices, as the tablet scanner sees them.\n");
+
+        // The same set the scanner walks, so the report and the scanner can
+        // never disagree about which devices exist.
+        let mut entries: Vec<PathBuf> = crate::input_watch::event_nodes();
+        entries.sort();
+
+        if entries.is_empty() {
+            let _ = writeln!(out, "No /dev/input/event* nodes at all.");
+            return out;
+        }
+
+        let mut found = 0usize;
+        let mut unreadable = 0usize;
+        for path in &entries {
+            match Device::open(path) {
+                Ok(device) => {
+                    let name = device.name().unwrap_or("unnamed").to_string();
+                    let pressure = device
+                        .supported_absolute_axes()
+                        .is_some_and(|axes| axes.contains(AbsoluteAxisCode::ABS_PRESSURE));
+                    let pen = device
+                        .supported_keys()
+                        .is_some_and(|keys| keys.contains(KeyCode::BTN_TOOL_PEN));
+
+                    if !pressure && !pen {
+                        // Keyboards, mice and gamepads. Listing every one buries
+                        // the interesting lines.
+                        continue;
+                    }
+
+                    let range = device
+                        .get_absinfo()
+                        .ok()
+                        .and_then(|mut axes| {
+                            axes.find(|(axis, _)| *axis == AbsoluteAxisCode::ABS_PRESSURE)
+                        })
+                        .map(|(_, info)| format!("{} to {}", info.minimum(), info.maximum()))
+                        .unwrap_or_else(|| "unknown".into());
+
+                    let mut extras = Vec::new();
+                    if device
+                        .supported_absolute_axes()
+                        .is_some_and(|axes| axes.contains(AbsoluteAxisCode::ABS_TILT_X))
+                    {
+                        extras.push("tilt");
+                    }
+                    if device
+                        .supported_keys()
+                        .is_some_and(|keys| keys.contains(KeyCode::BTN_TOOL_RUBBER))
+                    {
+                        extras.push("eraser");
+                    }
+
+                    let verdict = match (pressure, pen) {
+                        (true, true) => {
+                            found += 1;
+                            "STYLUS, pressure will be read from this"
+                        }
+                        (true, false) => {
+                            "ignored: reports pressure but no pen tool, so it is a touch device"
+                        }
+                        (false, true) => "ignored: identifies a pen but reports no pressure",
+                        (false, false) => unreachable!("filtered above"),
+                    };
+                    let also = if extras.is_empty() {
+                        String::new()
+                    } else {
+                        format!(", {}", extras.join(", "))
+                    };
+                    let _ = writeln!(
+                        out,
+                        "{}\n  {name}\n  pressure range {range}{also}\n  {verdict}\n",
+                        path.display()
+                    );
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                    unreadable += 1;
+                }
+                Err(_) => {}
+            }
+        }
+
+        let _ = writeln!(out, "{found} stylus device(s) usable.");
+        if unreadable > 0 {
+            let _ = writeln!(
+                out,
+                "{unreadable} device(s) could not be opened. If your tablet is missing above, \n\
+                 add your user to the input group and log back in:\n\
+                 \n    sudo usermod -aG input $USER\n"
+            );
+        }
+        if found == 0 && unreadable == 0 {
+            let _ = writeln!(
+                out,
+                "No stylus found. Check the tablet is plugged in and not in a mouse only mode,\n\
+                 and that a driver bound to it: look for hid-uclogic (Huion, XP-Pen) or wacom\n\
+                 in the output of lsmod."
+            );
+        }
+        out
+    }
+
+    pub fn spawn(shared: Arc<Shared>) {
+        crate::input_watch::spawn("hani-tablet-scan", RESCAN, Stylus { shared });
+    }
+
+    /// The tablet's half of the shared `/dev/input` scanner. The scanning,
+    /// caching and permission bookkeeping live in [`crate::input_watch`],
+    /// because the SpaceMouse needs exactly the same thing.
+    struct Stylus {
+        shared: Arc<Shared>,
+    }
+
+    impl crate::input_watch::Adopter for Stylus {
+        fn wants(&self, device: &Device) -> bool {
+            is_stylus(device)
+        }
+
+        fn adopt(&self, path: &Path, device: Device) -> bool {
+            let Some(info) = adopt(&self.shared, path, device) else {
+                return false;
+            };
+            log::info!(
+                "tablet: reading {} at {} with {} pressure levels{}{}",
+                info.name,
+                info.path,
+                info.pressure_max,
+                if info.has_tilt { ", tilt" } else { "" },
+                if info.has_eraser { ", eraser" } else { "" },
+            );
+            true
+        }
+
+        fn still_reading(&self, path: &Path) -> bool {
+            let live = self.shared.devices.lock().expect("tablet state poisoned");
+            live.iter().any(|device| device.path == path.to_string_lossy())
+        }
+
+        fn set_permission_denied(&self, denied: bool) {
+            self.shared.permission_denied.store(denied, Ordering::Relaxed);
+        }
+    }
+
+    /// Everything about one device's axes that the reader needs.
+    #[derive(Debug, Clone, Copy)]
+    struct Axes {
+        pressure: (i32, i32),
+        tilt_x: Option<(i32, i32)>,
+        tilt_y: Option<(i32, i32)>,
+    }
+
+    /// Take ownership of a stylus device and start a thread reading it.
+    fn adopt(shared: &Arc<Shared>, path: &Path, mut device: Device) -> Option<TabletDevice> {
+        let axes = Axes {
+            pressure: axis_range(&device, AbsoluteAxisCode::ABS_PRESSURE)?,
+            tilt_x: axis_range(&device, AbsoluteAxisCode::ABS_TILT_X),
+            tilt_y: axis_range(&device, AbsoluteAxisCode::ABS_TILT_Y),
+        };
+
+        let info = TabletDevice {
+            name: device.name().unwrap_or("unnamed tablet").to_string(),
+            path: path.to_string_lossy().into_owned(),
+            pressure_max: axes.pressure.1,
+            has_tilt: axes.tilt_x.is_some() && axes.tilt_y.is_some(),
+            has_eraser: device
+                .supported_keys()
+                .is_some_and(|keys| keys.contains(KeyCode::BTN_TOOL_RUBBER)),
+        };
+
+        shared.devices.lock().expect("tablet state poisoned").push(info.clone());
+
+        let shared = Arc::clone(shared);
+        let registered = info.clone();
+        std::thread::Builder::new()
+            .name("hani-tablet-read".into())
+            .spawn(move || {
+                read_loop(&shared, &mut device, axes);
+                // Unplugged, or the read failed. Drop the registration so the
+                // scanner can pick the device up again if it comes back.
+                shared
+                    .devices
+                    .lock()
+                    .expect("tablet state poisoned")
+                    .retain(|device| *device != registered);
+                shared.set_proximity(false);
+                log::info!("tablet: {} disconnected", registered.name);
+            })
+            .ok()?;
+
+        Some(info)
+    }
+
+    fn read_loop(shared: &Arc<Shared>, device: &mut Device, axes: Axes) {
+        // Tilt arrives one axis at a time, so the other half has to be
+        // remembered in order to publish a complete vector.
+        let mut tilt = Vec2::ZERO;
+
+        loop {
+            let events = match device.fetch_events() {
+                Ok(events) => events,
+                Err(error) => {
+                    log::debug!("tablet read ended: {error}");
+                    return;
+                }
+            };
+            for event in events {
+                match event.event_type() {
+                    EventType::ABSOLUTE if event.code() == AbsoluteAxisCode::ABS_PRESSURE.0 => {
+                        let (minimum, maximum) = axes.pressure;
+                        shared.set_pressure(normalise(event.value(), minimum, maximum));
+                    }
+                    EventType::ABSOLUTE if event.code() == AbsoluteAxisCode::ABS_TILT_X.0 => {
+                        if let Some((minimum, maximum)) = axes.tilt_x {
+                            tilt.x = normalise_signed(event.value(), minimum, maximum);
+                            shared.set_tilt(tilt);
+                        }
+                    }
+                    EventType::ABSOLUTE if event.code() == AbsoluteAxisCode::ABS_TILT_Y.0 => {
+                        if let Some((minimum, maximum)) = axes.tilt_y {
+                            tilt.y = normalise_signed(event.value(), minimum, maximum);
+                            shared.set_tilt(tilt);
+                        }
+                    }
+                    // The two ends of the stylus are separate tools and are
+                    // never in range together, so each only updates its own.
+                    EventType::KEY if event.code() == KeyCode::BTN_TOOL_PEN.0 => {
+                        shared.set_tool(Some(event.value() != 0), None);
+                    }
+                    EventType::KEY if event.code() == KeyCode::BTN_TOOL_RUBBER.0 => {
+                        shared.set_tool(None, Some(event.value() != 0));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+/// Windows: the pen comes from Raw Input, on the digitizer page.
+///
+/// The scaffolding -- the sink window, the pump, and asking Windows what a
+/// report says -- is [`crate::raw_input`], shared with the puck. What is here
+/// is only which usages a pen has and what they mean.
+#[cfg(target_os = "windows")]
+mod backend {
+    use super::Shared;
+    use crate::raw_input::{self, PAGE_DIGITIZER};
+    use glam::Vec2;
+    use std::sync::Arc;
+    use windows_sys::Win32::Devices::HumanInterfaceDevice::PHIDP_PREPARSED_DATA;
+
+    pub const SUPPORTED: bool = true;
+
+    /// Usage 0x02 on the digitizer page is a pen; the rest are what it reports.
+    const USAGE_PEN: u16 = 0x02;
+    const USAGE_TIP_PRESSURE: u16 = 0x30;
+    const USAGE_IN_RANGE: u16 = 0x32;
+    const USAGE_X_TILT: u16 = 0x3D;
+    const USAGE_Y_TILT: u16 = 0x3E;
+    const USAGE_TIP_SWITCH: u16 = 0x42;
+    const USAGE_ERASER: u16 = 0x45;
+
+    /// What to try when a stylus is listed and silent. See [`super::listen`].
+    ///
+    /// Mouse mode first, because it is the common case and the user's to fix:
+    /// a driver with Windows Ink off routes the pen through its mouse
+    /// collection and never reports on the pen collection it still lists. The
+    /// pipe itself is the other possibility, and the one this code cannot
+    /// rule out blind.
+    pub const SILENT_ADVICE: &str = "A tablet whose driver is in mouse-only mode still lists \
+                                     its pen collection but never reports on it. Switch on \
+                                     Windows Ink in the driver's settings (Huion, Gaomon and \
+                                     XP-Pen call it that; Wacom calls it \"Use Windows Ink\"), \
+                                     unplug and replug, and run this again. If it still \
+                                     reports nothing, the Raw Input pipe is at fault and this \
+                                     output is what to send.";
+
+    pub fn report() -> String {
+        super::hid_report(&scan())
+    }
+
+    /// Every HID device, reduced to what decides whether it is a stylus.
+    ///
+    /// The tip pressure range and the tilt and eraser usages are read out of
+    /// the preparsed descriptor, which Raw Input hands over without the
+    /// device being opened, so this needs no permission and no report.
+    fn scan() -> Vec<super::HidSummary> {
+        raw_input::devices()
+            .into_iter()
+            .map(|device| {
+                let preparsed = raw_input::preparsed(device.handle);
+                let data = preparsed.as_ref().map(|bytes| bytes.as_ptr() as PHIDP_PREPARSED_DATA);
+                let range =
+                    |usage| data.and_then(|data| raw_input::range(data, PAGE_DIGITIZER, usage));
+                super::HidSummary {
+                    vendor: device.vendor,
+                    product: device.product,
+                    usage_page: device.usage_page,
+                    usage: device.usage,
+                    pressure: range(USAGE_TIP_PRESSURE),
+                    has_tilt: range(USAGE_X_TILT).is_some(),
+                    has_eraser: data.is_some_and(|data| {
+                        raw_input::has_button(data, PAGE_DIGITIZER, USAGE_ERASER)
+                    }),
+                    path: device.path,
+                }
+            })
+            .collect()
+    }
+
+    pub fn spawn(shared: Arc<Shared>) {
+        // The device list first, on the caller's thread, so the panel and
+        // the bug report have something to say from the first frame. Read
+        // once: Windows raises no event this code listens for when a tablet
+        // is plugged in later, and a relaunch is the answer until it does.
+        {
+            let mut devices = shared.devices.lock().expect("tablet state poisoned");
+            for device in scan() {
+                if device.verdict().is_err() {
+                    continue;
+                }
+                devices.push(super::TabletDevice {
+                    name: device.name(),
+                    path: device.path.clone(),
+                    pressure_max: device.pressure.map_or(0, |(_, high)| high),
+                    has_tilt: device.has_tilt,
+                    has_eraser: device.has_eraser,
+                });
+            }
+        }
+        let spawned = std::thread::Builder::new().name("hani-pen".to_string()).spawn({
+            let shared = Arc::clone(&shared);
+            move || {
+                // The pump returns only when it could not be set up, and
+                // silently -- it must never stop the application starting. What
+                // it could not do is recorded here, so the panel says "the
+                // pipe failed" over the device name instead of "found" over a
+                // pipe that will never deliver.
+                if let Err(failure) = raw_input::pump(
+                    "HaniPenSink",
+                    &[(PAGE_DIGITIZER, USAGE_PEN), (PAGE_DIGITIZER, super::HID_USAGE_DIGITIZER)],
+                    |data, report| {
+                        decode(&shared, data, report);
+                    },
+                ) {
+                    shared.set_pipe_failure(failure.to_string());
+                }
+            }
+        });
+        if let Err(error) = spawned {
+            shared.set_pipe_failure(format!("the pen thread could not start: {error}"));
+        }
+    }
+
+    fn decode(shared: &Arc<Shared>, data: PHIDP_PREPARSED_DATA, report: &[u8]) {
+        let at = |usage| raw_input::button(data, report, PAGE_DIGITIZER, usage);
+        let (tip, eraser, in_range) = (at(USAGE_TIP_SWITCH), at(USAGE_ERASER), at(USAGE_IN_RANGE));
+        let pressure = scaled(data, report, USAGE_TIP_PRESSURE);
+
+        // Proximity FIRST: `set_tool` clears pressure and tilt when the pen
+        // leaves, so doing it afterwards would wipe the values just written.
+        match (in_range, tip, eraser) {
+            (Some(false), _, _) => shared.set_tool(Some(false), Some(false)),
+            (_, tip, eraser) if tip.is_some() || eraser.is_some() => shared.set_tool(tip, eraser),
+            // **No switch this device can be asked about, so contact is
+            // proximity.** `HidP_GetUsages` fails for a report whose id
+            // carries no digitizer buttons, and a device that puts its
+            // switches on another collection answers `None` for all three on
+            // every report. Leaving proximity alone there kept it false for
+            // ever, and `stamp_pressure` reads "not in proximity" as a mouse:
+            // full pressure, no tilt, no eraser, with the panel saying "pen
+            // away" while its peak climbed. A pen that is pressing is in
+            // range, and one reading zero has lifted; the timeout covers a
+            // pen that leaves without a last report.
+            _ => {
+                if let Some(pressure) = pressure {
+                    shared.set_tool(Some(pressure > 0.0), None);
+                }
+            }
+        }
+
+        if let Some(pressure) = pressure {
+            shared.set_pressure(pressure);
+        }
+
+        let x = signed(data, report, USAGE_X_TILT);
+        let y = signed(data, report, USAGE_Y_TILT);
+        if x.is_some() || y.is_some() {
+            shared.set_tilt(Vec2::new(x.unwrap_or(0.0), y.unwrap_or(0.0)));
+        }
+    }
+
+    /// A usage normalised to 0..1 against the range the device declares.
+    fn scaled(data: PHIDP_PREPARSED_DATA, report: &[u8], usage: u16) -> Option<f32> {
+        let raw = raw_input::value(data, report, PAGE_DIGITIZER, usage)?;
+        let (minimum, maximum) = raw_input::range(data, PAGE_DIGITIZER, usage)?;
+        Some(super::normalise(raw, minimum, maximum))
+    }
+
+    /// The same, for a usage that swings both ways, like tilt.
+    fn signed(data: PHIDP_PREPARSED_DATA, report: &[u8], usage: u16) -> Option<f32> {
+        let raw = raw_input::value(data, report, PAGE_DIGITIZER, usage)?;
+        let (minimum, maximum) = raw_input::range(data, PAGE_DIGITIZER, usage)?;
+        Some(super::normalise_signed(raw, minimum, maximum))
+    }
+}
+
+/// macOS: the pen comes from IOKit, matched on the digitizer page.
+///
+/// The scaffolding -- the manager, the run loop and the per element callback --
+/// is [`crate::raw_hid`], shared with the puck. What is here is only which
+/// usages a pen has and what they mean, and they are the same usages Windows
+/// reads because they are the HID specification's rather than either
+/// platform's.
+///
+/// **IOKit hands over elements, not reports**, so unlike Windows there is no
+/// report to pull apart: each callback already says which usage changed and
+/// what range it declares. The cost is that tip, eraser and proximity arrive
+/// as separate callbacks rather than together, so the tool state is assembled
+/// from whichever arrives.
+#[cfg(target_os = "macos")]
+mod backend {
+    use super::Shared;
+    use crate::raw_hid::{self, PAGE_DIGITIZER, Sample};
+    use glam::Vec2;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+    pub const SUPPORTED: bool = true;
+
+    /// What to try when a stylus is open and silent. See [`super::listen`].
+    pub const SILENT_ADVICE: &str = "The device is open but sent nothing. macOS may need Input \
+                                     Monitoring for HaniSculpt in Privacy & Security; check \
+                                     that the pen draws in another application.";
+
+    const USAGE_PEN: u32 = 0x02;
+    const USAGE_TIP_PRESSURE: u32 = 0x30;
+    const USAGE_IN_RANGE: u32 = 0x32;
+    const USAGE_X_TILT: u32 = 0x3D;
+    const USAGE_Y_TILT: u32 = 0x3E;
+    const USAGE_TIP_SWITCH: u32 = 0x42;
+    const USAGE_ERASER: u32 = 0x45;
+
+    static SAW_A_REPORT: AtomicBool = AtomicBool::new(false);
+    /// Tilt arrives one axis at a time, so the other axis has to be remembered
+    /// or every X callback would zero the Y the user is still holding.
+    static TILT_X: AtomicU32 = AtomicU32::new(0);
+    static TILT_Y: AtomicU32 = AtomicU32::new(0);
+
+    pub fn report() -> String {
+        if SAW_A_REPORT.load(Ordering::Relaxed) {
+            "Reading the pen through IOKit.".to_string()
+        } else {
+            "Listening for a pen through IOKit; none has reported yet. macOS may need \
+             Input Monitoring for HaniSculpt in Privacy & Security."
+                .to_string()
+        }
+    }
+
+    pub fn spawn(shared: Arc<Shared>) {
+        std::thread::Builder::new()
+            .name("hani-pen".to_string())
+            .spawn(move || {
+                raw_hid::pump(PAGE_DIGITIZER, USAGE_PEN, move |sample| {
+                    decode(&shared, sample);
+                });
+            })
+            .ok();
+    }
+
+    fn decode(shared: &Arc<Shared>, sample: Sample) {
+        if sample.page != PAGE_DIGITIZER {
+            return;
+        }
+        let down = sample.value != 0;
+        match sample.usage {
+            USAGE_TIP_SWITCH => shared.set_tool(Some(down), None),
+            USAGE_ERASER => shared.set_tool(None, Some(down)),
+            // Out of range clears both ends, which is what drops pressure and
+            // tilt; in range on its own says nothing about which end it is.
+            USAGE_IN_RANGE if !down => shared.set_tool(Some(false), Some(false)),
+            USAGE_IN_RANGE => {}
+            USAGE_TIP_PRESSURE => {
+                shared.set_pressure(scaled(&sample));
+                SAW_A_REPORT.store(true, Ordering::Relaxed);
+            }
+            USAGE_X_TILT | USAGE_Y_TILT => {
+                let value = signed(&sample);
+                let slot = if sample.usage == USAGE_X_TILT { &TILT_X } else { &TILT_Y };
+                slot.store(value.to_bits(), Ordering::Relaxed);
+                shared.set_tilt(Vec2::new(
+                    f32::from_bits(TILT_X.load(Ordering::Relaxed)),
+                    f32::from_bits(TILT_Y.load(Ordering::Relaxed)),
+                ));
+                SAW_A_REPORT.store(true, Ordering::Relaxed);
+            }
+            _ => {}
+        }
+    }
+
+    fn scaled(sample: &Sample) -> f32 {
+        super::normalise(sample.value as i32, sample.minimum as i32, sample.maximum as i32)
+    }
+
+    fn signed(sample: &Sample) -> f32 {
+        super::normalise_signed(sample.value as i32, sample.minimum as i32, sample.maximum as i32)
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+mod backend {
+    use super::Shared;
+    use std::sync::Arc;
+
+    pub const SUPPORTED: bool = false;
+
+    /// Never printed: `listen` reaches for it only from `Diagnosis::Found`,
+    /// which an unsupported backend never reports.
+    pub const SILENT_ADVICE: &str = "";
+
+    /// macOS would use `IOHIDManager`, which is a milestone away, and the
+    /// application degrades to full pressure in the meantime -- which is what
+    /// it already does for a mouse.
+    pub fn spawn(_shared: Arc<Shared>) {}
+
+    pub fn report() -> String {
+        "Pen pressure is not implemented for this platform.".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pressure_is_normalised_against_the_device_range() {
+        // The ranges real tablets actually report.
+        for maximum in [1023, 2047, 4095, 8191, 65535] {
+            assert_eq!(normalise(0, 0, maximum), 0.0, "zero should be zero at max {maximum}");
+            assert_eq!(normalise(maximum, 0, maximum), 1.0, "full should be one at max {maximum}");
+            let half = normalise(maximum / 2, 0, maximum);
+            assert!((half - 0.5).abs() < 0.001, "half of {maximum} came out at {half}");
+        }
+    }
+
+    #[test]
+    fn a_non_zero_minimum_is_honoured() {
+        assert_eq!(normalise(100, 100, 1100), 0.0);
+        assert_eq!(normalise(600, 100, 1100), 0.5);
+        assert_eq!(normalise(1100, 100, 1100), 1.0);
+    }
+
+    #[test]
+    fn out_of_range_values_are_clamped_rather_than_trusted() {
+        assert_eq!(normalise(-50, 0, 1000), 0.0);
+        assert_eq!(normalise(9999, 0, 1000), 1.0);
+    }
+
+    #[test]
+    fn a_degenerate_range_reads_as_full_pressure() {
+        // Better to sculpt at full strength than to divide by zero or leave the
+        // user with a brush that silently does nothing.
+        assert_eq!(normalise(0, 0, 0), 1.0);
+        assert_eq!(normalise(5, 10, 3), 1.0);
+    }
+
+    #[test]
+    fn the_response_curve_keeps_its_end_points() {
+        for curve in [0.4, 1.0, 2.5] {
+            assert_eq!(shape(0.0, curve), 0.0);
+            assert_eq!(shape(1.0, curve), 1.0);
+        }
+        // Below one lifts the middle, above one lowers it.
+        assert!(shape(0.5, 0.5) > 0.5);
+        assert!((shape(0.5, 1.0) - 0.5).abs() < 1.0e-6);
+        assert!(shape(0.5, 2.0) < 0.5);
+    }
+
+    #[test]
+    fn the_response_curve_never_leaves_the_unit_range() {
+        for curve in [0.05, 0.5, 1.0, 3.0] {
+            for step in 0..=20 {
+                let value = shape(step as f32 / 20.0, curve);
+                assert!((0.0..=1.0).contains(&value), "shape({step}, {curve}) was {value}");
+            }
+        }
+        // A zero or negative exponent would make everything full pressure.
+        assert!(shape(0.5, 0.0).is_finite());
+    }
+
+    #[test]
+    fn a_mouse_sculpts_at_full_strength() {
+        // The failure this guards against is the worst possible one: a user
+        // with no tablet finding that the brush does nothing.
+        let tablet = Tablet::inert();
+        assert_eq!(tablet.state(), PenState::NONE);
+        assert_eq!(tablet.stamp_pressure(true, 1.0), 1.0);
+        assert_eq!(tablet.stamp_pressure(false, 1.0), 1.0);
+    }
+
+    #[test]
+    fn a_pen_in_proximity_drives_the_stamp_pressure() {
+        let tablet = Tablet::inert();
+        tablet.shared.set_proximity(true);
+        tablet.shared.set_pressure(0.25);
+
+        assert_eq!(tablet.stamp_pressure(true, 1.0), 0.25);
+        // Turning the feature off must ignore the pen entirely.
+        assert_eq!(tablet.stamp_pressure(false, 1.0), 1.0);
+    }
+
+    #[test]
+    fn lifting_the_pen_out_of_range_returns_to_full_strength() {
+        let tablet = Tablet::inert();
+        tablet.shared.set_proximity(true);
+        tablet.shared.set_pressure(0.5);
+        assert_eq!(tablet.stamp_pressure(true, 1.0), 0.5);
+
+        tablet.shared.set_proximity(false);
+        assert_eq!(tablet.state().pressure, 0.0, "leaving proximity must clear the pressure");
+        assert_eq!(tablet.stamp_pressure(true, 1.0), 1.0);
+    }
+
+    #[test]
+    fn a_pen_that_stops_reporting_is_forgotten() {
+        // Some drivers do not send a clean release when the tablet is
+        // unplugged. Without the timeout every later mouse stroke would be
+        // scaled by whatever pressure the pen last had.
+        let tablet = Tablet::inert();
+        tablet.shared.set_proximity(true);
+        tablet.shared.set_pressure(0.5);
+
+        let last = tablet.shared.last_event_ms.load(Ordering::Relaxed);
+        // Still present a moment later.
+        assert!(tablet.shared.state_at(last + PEN_TIMEOUT_MS).in_proximity);
+        // Gone once the timeout has passed with nothing further from the pen.
+        assert_eq!(tablet.shared.state_at(last + PEN_TIMEOUT_MS + 1), PenState::NONE);
+    }
+
+    #[test]
+    fn the_peak_records_the_hardest_press_seen() {
+        let tablet = Tablet::inert();
+        tablet.shared.set_pressure(0.3);
+        tablet.shared.set_pressure(0.9);
+        tablet.shared.set_pressure(0.4);
+        assert_eq!(tablet.peak(), 0.9);
+
+        tablet.reset_peak();
+        assert_eq!(tablet.peak(), 0.0);
+    }
+
+    #[test]
+    fn signed_axes_keep_zero_at_zero() {
+        // A lopsided range like -64 to 63 is normal for tilt. Mapping it across
+        // the whole span would leave an upright pen reporting a small lean, and
+        // every stroke would drift.
+        assert_eq!(normalise_signed(0, -64, 63), 0.0);
+        assert_eq!(normalise_signed(-64, -64, 63), -1.0);
+        assert_eq!(normalise_signed(64, -64, 63), 1.0);
+        assert!((normalise_signed(32, -64, 63) - 0.5).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn signed_axes_clamp_and_survive_a_degenerate_range() {
+        assert_eq!(normalise_signed(999, -60, 60), 1.0);
+        assert_eq!(normalise_signed(-999, -60, 60), -1.0);
+        assert_eq!(normalise_signed(5, 0, 0), 0.0);
+    }
+
+    #[test]
+    fn the_eraser_end_counts_as_a_pen_being_present() {
+        // The bug this guards against: the kernel reports the tip and the
+        // eraser as separate tools that are never in range together, so
+        // checking only for the tip made every eraser stroke look like a mouse
+        // and silently run at full pressure.
+        let tablet = Tablet::inert();
+        tablet.shared.set_tool(None, Some(true));
+        tablet.shared.set_pressure(0.4);
+
+        let pen = tablet.state();
+        assert!(pen.in_proximity, "the eraser end must count as a pen in range");
+        assert!(pen.eraser);
+        assert!(
+            (tablet.stamp_pressure(true, 1.0) - 0.4).abs() < 1.0e-6,
+            "eraser strokes must be pressure sensitive too"
+        );
+    }
+
+    #[test]
+    fn the_pen_is_only_gone_once_both_ends_are_out_of_range() {
+        let tablet = Tablet::inert();
+        tablet.shared.set_tool(Some(true), None);
+        assert!(tablet.state().in_proximity);
+
+        // Flipping the pen over: the tip leaves and the eraser arrives.
+        tablet.shared.set_tool(None, Some(true));
+        tablet.shared.set_tool(Some(false), None);
+        assert!(tablet.state().in_proximity, "the eraser is still in range");
+        assert!(tablet.state().eraser);
+
+        tablet.shared.set_tool(None, Some(false));
+        assert!(!tablet.state().in_proximity);
+    }
+
+    #[test]
+    fn lifting_the_pen_clears_the_tilt_as_well_as_the_pressure() {
+        // A stale tilt would keep steering strokes after the pen was put down.
+        let tablet = Tablet::inert();
+        tablet.shared.set_tool(Some(true), None);
+        tablet.shared.set_tilt(Vec2::new(0.7, -0.3));
+        assert_eq!(tablet.state().tilt, Vec2::new(0.7, -0.3));
+
+        tablet.shared.set_tool(Some(false), None);
+        assert_eq!(tablet.state().tilt, Vec2::ZERO);
+    }
+
+    fn hid(usage_page: u16, usage: u16, pressure: Option<(i32, i32)>) -> HidSummary {
+        HidSummary {
+            vendor: 0x256C,
+            product: 0x006D,
+            usage_page,
+            usage,
+            pressure,
+            has_tilt: true,
+            has_eraser: false,
+            path: String::new(),
+        }
+    }
+
+    /// The verdicts the Windows and macOS scanners hand out, pinned here where
+    /// they can run: a pen with pressure is a stylus whichever of the two
+    /// top-level usages its driver chose, a touch device never is, and a
+    /// digitizer without pressure is named as the mouse-mode case it usually
+    /// is rather than silently skipped.
+    #[test]
+    fn a_hid_device_is_a_stylus_only_when_it_is_a_pen_with_pressure() {
+        assert!(hid(HID_PAGE_DIGITIZER, HID_USAGE_PEN, Some((0, 8191))).verdict().is_ok());
+        assert!(hid(HID_PAGE_DIGITIZER, HID_USAGE_DIGITIZER, Some((0, 4095))).verdict().is_ok());
+        assert!(hid(HID_PAGE_DIGITIZER, 0x04, Some((0, 255))).verdict().is_err(), "touch");
+        assert!(hid(0x01, 0x02, Some((0, 255))).verdict().is_err(), "a mouse is not a pen");
+        let mouse_mode = hid(HID_PAGE_DIGITIZER, HID_USAGE_PEN, None).verdict().unwrap_err();
+        assert!(mouse_mode.contains("mouse mode"), "{mouse_mode}");
+    }
+
+    #[test]
+    fn the_hid_report_names_the_device_and_says_what_to_do_when_none_is_a_stylus() {
+        let report = hid_report(&[hid(HID_PAGE_DIGITIZER, HID_USAGE_PEN, Some((0, 8191)))]);
+        assert!(report.contains("Huion or Gaomon 256C:006D"), "{report}");
+        assert!(report.contains("0 to 8191"), "{report}");
+        assert!(report.contains("1 stylus device(s) usable."), "{report}");
+        assert!(!report.contains("Windows Ink"), "advice given when a stylus was found");
+        assert!(
+            !report.contains("Listening") && !report.contains("reported"),
+            "the scan claimed to know whether the pipe delivers: {report}"
+        );
+
+        let none = hid_report(&[hid(HID_PAGE_DIGITIZER, HID_USAGE_PEN, None)]);
+        assert!(none.contains("0 stylus device(s) usable"), "{none}");
+        assert!(none.contains("Windows Ink"), "{none}");
+        let empty = hid_report(&[]);
+        assert!(empty.contains("No HID devices at all"), "{empty}");
+    }
+
+    #[test]
+    fn an_inert_tablet_reports_why_it_is_silent() {
+        let tablet = Tablet::inert();
+        let diagnosis = tablet.diagnosis();
+        if backend::SUPPORTED {
+            assert_eq!(diagnosis, Diagnosis::NoTabletFound);
+        } else {
+            assert_eq!(diagnosis, Diagnosis::Unsupported);
+        }
+        assert!(!diagnosis.explain().is_empty());
+    }
+}
+
+/// End to end tests against a synthetic tablet.
+///
+/// These build a real device with `uinput`, let the ordinary scanner find it
+/// through `/dev/input` like any other tablet, and check that pressure comes
+/// out the far end. Nothing here is a mock: the same code path runs for a Huion
+/// Kamvas, and the only thing the test supplies is the hardware.
+///
+/// They skip when `/dev/uinput` is not writable, which is the case on most
+/// build machines. A skip is printed rather than passing quietly, because a
+/// green tick from a test that never ran is worse than no test.
+#[cfg(all(test, target_os = "linux"))]
+mod uinput_tests {
+    use super::*;
+    use evdev::uinput::VirtualDevice;
+    use evdev::{
+        AbsInfo, AbsoluteAxisCode, AttributeSet, EventType, InputEvent, KeyCode, UinputAbsSetup,
+    };
+    use glam::Vec2;
+    use std::time::Duration;
+
+    /// What a Huion Kamvas 13 reports. Chosen so the test would catch a
+    /// hard coded 0 to 1 or 0 to 255 assumption anywhere in the chain.
+    const PRESSURE_MAX: i32 = 8191;
+
+    /// The tilt range a real tablet reports: lopsided, which is exactly the
+    /// case that would leave an upright pen reporting a small lean if the
+    /// normalisation mapped across the whole span.
+    const TILT_MIN: i32 = -64;
+    const TILT_MAX: i32 = 63;
+
+    fn build(name: &str, pen_tool: bool) -> Option<VirtualDevice> {
+        let mut keys = AttributeSet::<KeyCode>::new();
+        keys.insert(KeyCode::BTN_TOUCH);
+        if pen_tool {
+            keys.insert(KeyCode::BTN_TOOL_PEN);
+            keys.insert(KeyCode::BTN_TOOL_RUBBER);
+        }
+
+        let axis = |code, maximum| UinputAbsSetup::new(code, AbsInfo::new(0, 0, maximum, 0, 0, 0));
+        let signed_axis =
+            |code| UinputAbsSetup::new(code, AbsInfo::new(0, TILT_MIN, TILT_MAX, 0, 0, 0));
+
+        let mut builder = VirtualDevice::builder()
+            .ok()?
+            .name(name)
+            .with_keys(&keys)
+            .ok()?
+            .with_absolute_axis(&axis(AbsoluteAxisCode::ABS_X, 1920))
+            .ok()?
+            .with_absolute_axis(&axis(AbsoluteAxisCode::ABS_Y, 1080))
+            .ok()?
+            .with_absolute_axis(&axis(AbsoluteAxisCode::ABS_PRESSURE, PRESSURE_MAX))
+            .ok()?;
+        if pen_tool {
+            builder = builder
+                .with_absolute_axis(&signed_axis(AbsoluteAxisCode::ABS_TILT_X))
+                .ok()?
+                .with_absolute_axis(&signed_axis(AbsoluteAxisCode::ABS_TILT_Y))
+                .ok()?;
+        }
+        builder.build().ok()
+    }
+
+    fn emit(device: &mut VirtualDevice, events: &[InputEvent]) {
+        device.emit(events).expect("could not emit to the virtual tablet");
+    }
+
+    fn pressure_event(raw: i32) -> InputEvent {
+        InputEvent::new(EventType::ABSOLUTE.0, AbsoluteAxisCode::ABS_PRESSURE.0, raw)
+    }
+
+    fn pen_tool_event(down: bool) -> InputEvent {
+        InputEvent::new(EventType::KEY.0, KeyCode::BTN_TOOL_PEN.0, i32::from(down))
+    }
+
+    fn eraser_tool_event(down: bool) -> InputEvent {
+        InputEvent::new(EventType::KEY.0, KeyCode::BTN_TOOL_RUBBER.0, i32::from(down))
+    }
+
+    fn tilt_event(axis: AbsoluteAxisCode, raw: i32) -> InputEvent {
+        InputEvent::new(EventType::ABSOLUTE.0, axis.0, raw)
+    }
+
+    /// Poll until `predicate` holds, up to roughly twelve seconds. The scanner
+    /// rescans every two, and udev takes a moment to apply permissions to a
+    /// freshly created node.
+    fn wait_for(mut predicate: impl FnMut() -> bool) -> bool {
+        for _ in 0..120 {
+            if predicate() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        false
+    }
+
+    /// Whether this process can actually OPEN the node of a device it created.
+    ///
+    /// This is what tells "the scanner is broken" apart from "this machine
+    /// cannot do the test", and the two are indistinguishable at the assertion
+    /// itself. Two things have to go right and only the first is obvious:
+    ///
+    /// 1. Write access to `/dev/uinput`, which is enough to CREATE a device --
+    ///    so `build` succeeds and the earlier skip never fires.
+    /// 2. Read access to the `/dev/input/eventN` node udev then makes for it,
+    ///    which is what the scanner opens. On a CI runner the node appears and
+    ///    is owned by root, so opening it fails and no scanner however correct
+    ///    could ever have seen the device. (Checking only that the node EXISTS
+    ///    is not enough, and was measured not to be: it came back true on the
+    ///    runner and the test failed anyway.)
+    ///
+    /// **A node this process cannot open is a fact about the machine and is
+    /// worth skipping over; a node it CAN open that the scanner still missed is
+    /// a real failure and must stay one.**
+    fn can_read_own_node(device: &mut VirtualDevice) -> bool {
+        device
+            .enumerate_dev_nodes_blocking()
+            .is_ok_and(|nodes| nodes.flatten().any(|path| std::fs::File::open(path).is_ok()))
+    }
+
+    #[test]
+    fn a_virtual_tablet_is_found_and_its_pressure_reaches_the_brush() {
+        let Some(mut stylus) = build("HaniSculpt test stylus", true) else {
+            eprintln!(
+                "skipping: cannot create a uinput device. Needs write access to /dev/uinput, \
+                 usually via the input group."
+            );
+            return;
+        };
+        // A touchscreen reports pressure too but is not a stylus. If this got
+        // adopted, every touch would drive the brush.
+        let _touchscreen = build("HaniSculpt test touchscreen", false);
+
+        let tablet = Tablet::start();
+
+        let found = wait_for(|| {
+            tablet.devices().iter().any(|device| device.name == "HaniSculpt test stylus")
+        });
+        if !found {
+            if !can_read_own_node(&mut stylus) {
+                eprintln!(
+                    "skipping: the virtual stylus was created but its /dev/input node cannot be opened by \
+                     this process, so nothing could have seen it. That needs udev and \
+                     membership of the input group, which a CI container has not got."
+                );
+                return;
+            }
+            panic!("the scanner never picked up the virtual stylus");
+        }
+
+        let devices = tablet.devices();
+        let stylus_info = devices
+            .iter()
+            .find(|device| device.name == "HaniSculpt test stylus")
+            .expect("just found it");
+        assert_eq!(
+            stylus_info.pressure_max, PRESSURE_MAX,
+            "the device's own pressure range was not read from it"
+        );
+        assert!(stylus_info.has_tilt, "tilt axes were not detected");
+        assert!(stylus_info.has_eraser, "the eraser end was not detected");
+        assert!(
+            !devices.iter().any(|device| device.name == "HaniSculpt test touchscreen"),
+            "a device with pressure but no pen tool was mistaken for a stylus"
+        );
+        // Open and silent is "found", not "reading": nothing has arrived yet.
+        assert_eq!(tablet.diagnosis(), Diagnosis::Found);
+
+        // Pen enters range and presses to half of its range.
+        emit(&mut stylus, &[pen_tool_event(true), pressure_event(PRESSURE_MAX / 2)]);
+        assert!(
+            wait_for(|| {
+                let pen = tablet.state();
+                pen.in_proximity && (pen.pressure - 0.5).abs() < 0.01
+            }),
+            "half pressure never arrived, got {:?}",
+            tablet.state()
+        );
+        assert_eq!(
+            tablet.diagnosis(),
+            Diagnosis::Listening,
+            "a report arrived and it still said found"
+        );
+        // The number the brush would actually use.
+        assert!((tablet.stamp_pressure(true, 1.0) - 0.5).abs() < 0.01);
+
+        // Pressed all the way down.
+        emit(&mut stylus, &[pressure_event(PRESSURE_MAX)]);
+        assert!(
+            wait_for(|| tablet.state().pressure > 0.99),
+            "full pressure never arrived, got {:?}",
+            tablet.state()
+        );
+        assert!(tablet.peak() > 0.99, "the peak did not record the hardest press");
+
+        // A light touch, which is the end of the range that matters most for
+        // sculpting and the one a wrong normalisation would ruin.
+        emit(&mut stylus, &[pressure_event(PRESSURE_MAX / 100)]);
+        assert!(
+            wait_for(|| tablet.state().pressure < 0.02 && tablet.state().pressure > 0.0),
+            "a light touch did not come through as a small pressure, got {:?}",
+            tablet.state()
+        );
+
+        // Tilt. A lopsided device range must still put an upright pen at zero.
+        emit(&mut stylus, &[tilt_event(AbsoluteAxisCode::ABS_TILT_X, 0)]);
+        emit(&mut stylus, &[tilt_event(AbsoluteAxisCode::ABS_TILT_Y, 0)]);
+        assert!(
+            wait_for(|| tablet.state().tilt == Vec2::ZERO),
+            "an upright pen should report no tilt, got {:?}",
+            tablet.state().tilt
+        );
+
+        emit(
+            &mut stylus,
+            &[
+                tilt_event(AbsoluteAxisCode::ABS_TILT_X, TILT_MAX),
+                tilt_event(AbsoluteAxisCode::ABS_TILT_Y, TILT_MIN / 2),
+            ],
+        );
+        assert!(
+            wait_for(|| {
+                let tilt = tablet.state().tilt;
+                tilt.x > 0.9 && (tilt.y + 0.5).abs() < 0.02
+            }),
+            "tilt did not come through normalised, got {:?}",
+            tablet.state().tilt
+        );
+
+        // Flip to the eraser end. The kernel reports the two ends as separate
+        // tools that are never in range together, so this is the case where
+        // only checking for the tip would silently drop back to full pressure.
+        emit(&mut stylus, &[pen_tool_event(false), eraser_tool_event(true)]);
+        emit(&mut stylus, &[pressure_event(PRESSURE_MAX / 4)]);
+        assert!(
+            wait_for(|| {
+                let pen = tablet.state();
+                pen.in_proximity && pen.eraser && (pen.pressure - 0.25).abs() < 0.01
+            }),
+            "the eraser end did not report as a pen with pressure, got {:?}",
+            tablet.state()
+        );
+        assert!(
+            (tablet.stamp_pressure(true, 1.0) - 0.25).abs() < 0.01,
+            "eraser strokes must be pressure sensitive, not full strength"
+        );
+
+        emit(&mut stylus, &[eraser_tool_event(false), pen_tool_event(true)]);
+        assert!(
+            wait_for(|| !tablet.state().eraser && tablet.state().in_proximity),
+            "flipping back to the tip did not register"
+        );
+
+        // Pen lifted out of range: the brush must go back to full strength so a
+        // mouse still works.
+        emit(&mut stylus, &[pen_tool_event(false)]);
+        assert!(
+            wait_for(|| !tablet.state().in_proximity),
+            "the pen never left proximity, got {:?}",
+            tablet.state()
+        );
+        assert_eq!(
+            tablet.stamp_pressure(true, 1.0),
+            1.0,
+            "with the pen away the brush must run at full strength"
+        );
+        assert_eq!(tablet.state().tilt, Vec2::ZERO, "a lifted pen must not leave a stale tilt");
+
+        // Unplugging must deregister the device rather than leaving a ghost.
+        drop(stylus);
+        assert!(
+            wait_for(|| { !tablet.devices().iter().any(|d| d.name == "HaniSculpt test stylus") }),
+            "the device was still listed after being removed"
+        );
+    }
+}

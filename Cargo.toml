@@ -2,18 +2,18 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/brokkr-core", "crates/brokkr-gpu", "crates/brokkr-app"]
+members = ["crates/hani-core", "crates/hani-gpu", "crates/hani-app"]
 
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
 license = "AGPL-3.0-only"
-repository = "https://github.com/MakerViking/brokkrsculpt"
+repository = "https://github.com/DanielJoyce/hanisculpt"
 rust-version = "1.90"
 
 [workspace.dependencies]
-brokkr-core = { path = "crates/brokkr-core" }
-brokkr-gpu = { path = "crates/brokkr-gpu" }
+hani-core = { path = "crates/hani-core" }
+hani-gpu = { path = "crates/hani-gpu" }
 
 bytemuck = { version = "1", features = ["derive"] }
 fast-surface-nets = "0.2"
@@ -39,6 +39,19 @@ windows-sys = { version = "0.61", features = [
 # same trade the nonce made, where a dependency has to be doing something hard
 # to be worth it, and retain/release is hard while ten signatures are not.
 core-foundation = "0.10"
+# Contracts: what a function requires and what it promises, written on the
+# function and checked when it runs. Only the `debug_` and `test_` forms are
+# used, so a release build compiles none of it and a stamp costs what it
+# cost. A procedural macro and nothing at run time; its own dependencies
+# (proc-macro2, quote, syn) were in the lockfile already. MPL-2.0, which
+# AGPL-3.0 may be combined with.
+contracts = "0.6"
+# Where a user's settings, data and state belong on each platform, by the
+# XDG base directory specification where it is set and each platform's own
+# convention where it is not. `paths.rs` did this by hand, correctly, and
+# this is here because the maintainer asked for the crate by name: one
+# small file an operating system, MIT, and no dependencies of its own.
+dir_spec = "0.5"
 glam = { version = "0.33", features = ["bytemuck"] }
 iced = "0.14"
 iced_wgpu = "0.14"
@@ -47,14 +60,25 @@ env_logger = "0.11"
 evdev = "0.13"
 # Native file dialogs. On Linux this is the XDG desktop portal, which is what a
 # sandboxed app needs anyway. Its entire dependency set was already in this
-# lockfile before it was added -- see the note in brokkr-app/Cargo.toml.
+# lockfile before it was added -- see the note in hani-app/Cargo.toml.
 rfd = "0.17"
 pollster = "0.4"
+# Property tests: a rule stated for every input and tried on a few hundred
+# drawn at random, shrunk to the smallest that breaks it. A dev-dependency
+# of hani-core and never part of the application. Without its default
+# features, which are a persistence file and a forking runner this has no
+# use for.
+proptest = { version = "1", default-features = false, features = ["std"] }
 rayon = "1"
+# `Instant` and `SystemTime` that work in a browser, where the standard
+# library's panic on first use. On every other target it re-exports the
+# standard library's own, so a native build is unchanged. **Already in the
+# graph**: winit pulls this same version. See `docs/WEB.md`.
+web-time = "1.1"
 # XML and raw DEFLATE, both needed to read a 3MF and both already compiled for
 # this workspace before they were named here: roxmltree arrives through
 # fontconfig-parser -> fontdb -> cosmic-text, and yazi through swash ->
-# cosmic-text, so making them direct dependencies of brokkr-core costs zero new
+# cosmic-text, so making them direct dependencies of hani-core costs zero new
 # crates. Each has no dependencies of its own, so the worst case if Iced ever
 # changes its text stack is that we compile two small leaf crates ourselves.
 # Pinned to 0.20 rather than 0.21 because 0.21 is both a new compile and yanked.

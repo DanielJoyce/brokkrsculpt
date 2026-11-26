@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Screenshot the running BrokkrSculpt window on a KDE Wayland session.
+# Screenshot the running HaniSculpt window on a KDE Wayland session.
 #
 # `spectacle -a` captures the *active* window, and on this two screen desktop
 # that is usually the terminal that launched the build -- which is how a
@@ -13,11 +13,11 @@
 # Usage: scripts/shot.sh [output.png]
 set -euo pipefail
 
-OUT="${1:-/tmp/brokkr-shot.png}"
-CLASS="${BROKKR_WINDOW_CLASS:-brokkrsculpt}"
+OUT="${1:-/tmp/hani-shot.png}"
+CLASS="${HANI_WINDOW_CLASS:-hanisculpt}"
 
-if ! pgrep -x brokkrsculpt >/dev/null; then
-    echo "brokkrsculpt is not running" >&2
+if ! pgrep -x hanisculpt >/dev/null; then
+    echo "hanisculpt is not running" >&2
     exit 1
 fi
 
@@ -37,7 +37,7 @@ EOF
 
 # The script name has to be unique per load: KWin refuses to load a second
 # script under a name it already knows, and silently keeps the old one.
-NAME="brokkr-activate-$$-$RANDOM"
+NAME="hani-activate-$$-$RANDOM"
 ID=$(qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "$SCRIPT" "$NAME")
 qdbus6 org.kde.KWin "/Scripting/Script${ID}" org.kde.kwin.Script.run
 qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript "$NAME" >/dev/null
@@ -53,10 +53,10 @@ sleep 1.5
 # as reading a stale window position out of `journalctl`.
 kwin_ask() {
     local body="$1" marker script name id
-    marker="brokkr-ask-$$-$RANDOM"
+    marker="hani-ask-$$-$RANDOM"
     script=$(mktemp /tmp/kwin-ask-XXXXXX.js)
     printf 'const MARKER = "%s";\n%s\n' "$marker" "$body" >"$script"
-    name="brokkr-ask-$$-$RANDOM"
+    name="hani-ask-$$-$RANDOM"
     id=$(qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "$script" "$name")
     qdbus6 org.kde.KWin "/Scripting/Script${id}" org.kde.kwin.Script.run
     qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript "$name" >/dev/null

@@ -2,12 +2,12 @@
 
 # Third-Party Notices
 
-BrokkrSculpt is built on Rust crates. This file records their licensing and
+HaniSculpt is built on Rust crates. This file records their licensing and
 satisfies their attribution requirements.
 
-**Nothing here imposes a copyleft obligation on BrokkrSculpt.** The project is
+**Nothing here imposes a copyleft obligation on HaniSculpt.** The project is
 AGPL-3.0-only by its own choice, not because a dependency forced it. Every one
-of the **305 crates** compiled into a Linux build is permissively licensed —
+of the **309 crates** compiled into a Linux build is permissively licensed —
 MIT, Apache-2.0, BSD-2/3-Clause, ISC, Zlib, Unlicense, CC0-1.0,
 CDLA-Permissive-2.0, or Unicode-3.0. There is no GPL, no LGPL, no MPL and no
 EUPL in the graph. That is worth stating plainly because it is unusual: it
@@ -21,26 +21,26 @@ Full license texts are not vendored here. Each crate ships its own under
 
 From `cargo metadata`, filtered to `x86_64-unknown-linux-gnu`, walking the
 `normal` and `build` dependency edges from the three workspace crates —
-`brokkr-core`, `brokkr-gpu` and `brokkr-app` — and **excluding
+`hani-core`, `hani-gpu` and `hani-app` — and **excluding
 `dev-dependencies`**, which are used to test the software and are not
 distributed in a build of it. Re-run it whenever `Cargo.lock` changes.
 
-Counts by declared license expression, over those 305 crates:
+Counts by declared license expression, over those 309 crates:
 
 | Crates | Expression |
 | ---: | --- |
-| 136 | `MIT OR Apache-2.0` |
+| 137 | `MIT OR Apache-2.0` |
 | 77 | `MIT` |
 | 33 | `Apache-2.0 OR MIT` |
 | 10 | `Apache-2.0` |
 | 9 | `MIT/Apache-2.0` |
-| 7 | `MIT OR Apache-2.0 OR Zlib` |
+| 8 | `MIT OR Apache-2.0 OR Zlib` |
 | 5 | `Unlicense OR MIT` |
 | 4 | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` |
 | 3 | `Zlib OR Apache-2.0 OR MIT` |
 | 3 | `Zlib` |
 | 3 | `ISC` |
-| 3 | `BSD-3-Clause` |
+| 5 | `BSD-3-Clause` |
 | 2 | `Apache-2.0/MIT` |
 | 2 | `BSD-2-Clause OR Apache-2.0 OR MIT` |
 | 1 each | `BSD-2-Clause`, `Apache-2.0 AND ISC`, `Apache-2.0 AND MIT`, `Apache-2.0 OR ISC OR MIT`, `Apache-2.0 OR GPL-2.0-only`, `(MIT OR Apache-2.0) AND Unicode-3.0`, `CDLA-Permissive-2.0`, `CC0-1.0` |
@@ -49,7 +49,7 @@ Counts by declared license expression, over those 305 crates:
 
 **`self_cell` 1.3.0** — `Apache-2.0 OR GPL-2.0-only` —
 <https://github.com/Voultapher/self_cell>. This is a *disjunction*: a
-downstream user picks one. **BrokkrSculpt takes it under Apache-2.0**, so no
+downstream user picks one. **HaniSculpt takes it under Apache-2.0**, so no
 GPL-2.0 term applies to this project or to anything built from it. It is
 recorded here rather than left for someone to find in a license scan and worry
 about. It arrives transitively through the text stack — `iced` → `iced_wgpu` →
@@ -77,6 +77,13 @@ to be worth naming:
   <https://github.com/pop-os/cosmic-text>. Text shaping, via iced.
 - **tiny-skia** and **tiny-skia-path** — BSD-3-Clause —
   <https://github.com/RazrFalcon/tiny-skia>. Vector rasterisation, via iced.
+- **exr** and **lebe** — BSD-3-Clause —
+  <https://github.com/johannesvollmer/exrs> and
+  <https://github.com/johannesvollmer/lebe>. Reading OpenEXR pictures, which
+  is the file a vector displacement map comes in. A direct choice, for the
+  brushes that stamp one; it brings `bit_field`, `zune-inflate` and
+  `multiversion` (with `multiversion-macros` and `target-features`), all
+  MIT OR Apache-2.0, the second also Zlib.
 - **bytemuck** — Zlib OR Apache-2.0 OR MIT —
   <https://github.com/Lokathor/bytemuck>. Taken under Apache-2.0. Getting Rust
   structs safely to the GPU as bytes.
@@ -86,8 +93,13 @@ to be worth naming:
 ### Engine
 
 - **fast-surface-nets** — MIT OR Apache-2.0 —
-  <https://github.com/bonsairobo/fast-surface-nets-rs>. The isosurface
-  extraction each brick's mesh comes out of.
+  <https://github.com/bonsairobo/fast-surface-nets-rs>. **No longer in a
+  build**, since 2026-11-24: it was the isosurface extraction each brick's
+  mesh came out of, and is now a `dev-dependency`, what this project's own
+  mesher (`hani-core/src/mesh/nets.rs`) is tested against bit for bit. Its
+  method and its arithmetic are what that mesher follows, which is why it is
+  still named here. It took `ndshape` and a second copy of `glam` out of the
+  build with it, which is where the count above went from 312 to 309.
 - **rayon** — MIT OR Apache-2.0 — <https://github.com/rayon-rs/rayon>. The
   parallel path in `edit_voxels`.
 - **rustc-hash** — Apache-2.0 OR MIT —
@@ -139,14 +151,14 @@ made for it, and there are no third-party fonts, icons, textures or sample
 models to attribute.
 
 - `docs/images/*.jpg` — screenshots of the application, taken from it.
-- `docs/images/brokkr-dwarf.png` — the Brokkr character illustration,
-  commissioned for this project and generated with Google Gemini. Copyright
+- `docs/images/dwarf.png` — the dwarven smith illustration of the project's
+  first name, commissioned for it and generated with Google Gemini. Copyright
   holder as for the rest of the repository.
-- `assets/brand/*.svg` — the BrokkrSculpt lockup and mark, hand-written SVG.
-  They deliberately share the molten gradient of SindriCAD's mark, which is the
-  same author's.
+- `assets/brand/haniko/` — Haniko, HaniSculpt's mascot: the badge, the
+  mascot and the lockup, given by the maintainer, and the PNGs
+  `scripts/brand-assets.py` makes from them. See `docs/HANIKO.md`.
 - `assets/icons/*.svg` — the user-interface icon set, **generated** from
-  `crates/brokkr-app/src/icon.rs`, which is where the drawings live. Original
+  `crates/hani-app/src/icon.rs`, which is where the drawings live. Original
   work, drawn for this project. They follow the same house style as SindriCAD's
   icons — a 24 by 24 grid, 1.6 stroke, round caps, `currentColor` throughout —
   because that is the same author's set too; no third-party icon library is
@@ -158,7 +170,15 @@ the wordmark to outlines before it goes anywhere it must render identically is
 noted in the files themselves.
 
 The clay matcap the model is shaded with is *generated in code*
-(`brokkr-gpu/src/matcap.rs`) rather than shipped, which keeps the largest asset
+(`hani-gpu/src/matcap.rs`) rather than shipped, which keeps the largest asset
 the application needs out of the repository entirely — that was the reasoning
 before any of the above existed, and it still holds for anything the renderer
 consumes.
+
+**The paint index is third-party data.** `assets/paints/index.tsv` is
+generated from the tables of
+[miniature-paints](https://github.com/Arcturus5404/miniature-paints),
+copyright 2022 Rick Fleuren, under the MIT licence, whose text is beside
+it as `assets/paints/LICENSE-miniature-paints`. The kinds in it are this
+project's own (`scripts/paint_index.py`). The paint names and brands are
+the makers' trademarks, used to name their products.

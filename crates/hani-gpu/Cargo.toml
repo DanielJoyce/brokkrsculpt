@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[package]
+name = "hani-gpu"
+description = "wgpu device resources, buffer pools and the sculpt render pipeline for HaniSculpt."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hani-core.workspace = true
+bytemuck.workspace = true
+glam.workspace = true
+log.workspace = true
+rustc-hash.workspace = true
+wgpu.workspace = true
+
+[dev-dependencies]
+hani-core.workspace = true
+glam.workspace = true
+pollster.workspace = true
+
+[[bench]]
+name = "render"
+harness = false

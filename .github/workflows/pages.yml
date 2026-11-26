@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The web version, built and published to GitHub Pages whenever the `pages`
+# branch moves: merge into `pages` (or push to it) and the site follows.
+# See docs/WEB.md, which also says the one setting this needs once:
+# Settings, Pages, Source: GitHub Actions.
+name: Web version to GitHub Pages
+
+on:
+  push:
+    branches: [pages]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer push replaces one still building.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build the web version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-bindgen at the version Cargo.lock names
+        run: |
+          version=$(awk '$0=="name = \"wasm-bindgen\""{getline; gsub(/"/,"",$3); print $3}' Cargo.lock)
+          cargo install wasm-bindgen-cli --version "$version" --locked
+
+      - name: Build
+        run: scripts/web-build.sh site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
