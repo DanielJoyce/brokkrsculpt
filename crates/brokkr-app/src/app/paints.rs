@@ -358,23 +358,36 @@ impl Brokkr {
         // See `brokkr_core::export::glb`.
         let margin = brokkr_core::export::unwrap::UnwrapSpec::default().margin;
         let mut finishes = Vec::with_capacity(bodies.len());
+        // And the sculpt's own surface direction, so that a thinned mesh is
+        // lit as the model is. See `brokkr_core::export::normal_map`.
+        let mut normal_maps = Vec::with_capacity(bodies.len());
         for ((meta, mesh, _), (unwrap, _)) in bodies.iter().zip(&textures) {
-            finishes.push(match self.doc.volume(meta.id) {
-                Some(volume) => Some(encoded(&unwrap.finish_baked(mesh, volume, margin))?),
-                None => None,
-            });
+            match self.doc.volume(meta.id) {
+                Some(volume) => {
+                    finishes.push(Some(encoded(&unwrap.finish_baked(mesh, volume, margin))?));
+                    normal_maps.push(Some(encoded(&unwrap.normals_baked(mesh, volume, margin))?));
+                }
+                None => {
+                    finishes.push(None);
+                    normal_maps.push(None);
+                }
+            }
         }
         let parts: Vec<brokkr_core::export::glb::Body<'_>> = bodies
             .iter()
             .zip(&textures)
             .zip(&pictures)
             .zip(&finishes)
-            .map(|((((meta, mesh, _), (unwrap, _)), png), finish)| brokkr_core::export::glb::Body {
-                name: meta.name.as_str(),
-                mesh,
-                unwrap,
-                png,
-                finish_png: finish.as_deref(),
+            .zip(&normal_maps)
+            .map(|(((((meta, mesh, _), (unwrap, _)), png), finish), normal)| {
+                brokkr_core::export::glb::Body {
+                    name: meta.name.as_str(),
+                    mesh,
+                    unwrap,
+                    png,
+                    finish_png: finish.as_deref(),
+                    normal_png: normal.as_deref(),
+                }
             })
             .collect();
         brokkr_core::export::glb::write(&parts, out)
@@ -1046,6 +1059,18 @@ mod tests {
         let occlusion = image::load_from_memory(&bin[offset..offset + length])
             .expect("the packed picture is a picture")
             .into_rgba8();
+        // Its normal picture: on a ball exported at full detail the mesh is
+        // the surface, so the baked texels are near the flat blue.
+        let normal = &material["normalTexture"]["index"];
+        let image = &json["images"][index(&json["textures"][index(normal)]["source"])];
+        let view = &json["bufferViews"][index(&image["bufferView"])];
+        let (offset, length) = (index(&view["byteOffset"]), index(&view["byteLength"]));
+        let normals = image::load_from_memory(&bin[offset..offset + length])
+            .expect("the normal picture is a picture")
+            .into_rgba8();
+        let flat = normals.pixels().filter(|pixel| pixel.0[2] >= 240).count();
+        assert!(flat > 100_000, "only {flat} texels face along the mesh's normal");
+
         // Of the texels baked, which are the matte's roughness in green;
         // the rest of the picture is the unwrap's grey background.
         let matte = (brokkr_core::paint::Finish::Matte.roughness_and_metal().0 * 255.0).round();

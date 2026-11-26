@@ -20,7 +20,7 @@ was built and what was measured.
 | S2 Mini painting | **Done but for broad occlusion**, 2026-11-23 (section 8), which waits for S4. Its painting by filament slot and *Mix paints* were removed on 2026-11-25 at the maintainer's word; the colour paint and the paint rack (`PAINT-RACK.md`) are what paints now | Paint brush: *Mix paints* (removed), then a rack of paints, each with a wash, an edge highlight and a zenithal undercoat; *Loaded*, *Drybrush*, *Sponge* and *Fill*; a flat view; export as PLY in colour, and 3MF by the filament each paint prints in |
 | S3 Brush engine, surfaced | **Mostly done**, 2026-11-23 (section 6.3). A textured tip and the gesture warps remain. Its Crease button and PRESETS block became the palette of milestone B | *Stamp* with six images or any picture, one at a time or in a row *Along the stroke*, *Lazy*, *Size from pressure* |
 | S4 Form tools | **Begun**, 2026-11-23 (section 9): bulk the body and the detail gain. The bulk brush and form smooth remain. Posing is not planned (section 9.3) | A FORM block: thicken or thin a body by millimetres, soften or exaggerate its detail, with the surface texture kept |
-| S5 Unwrap and bake | **Done but for the normal map**, 2026-11-23 (sections 10.4 and 10.5), and the occlusion with the finish in one picture on 2026-11-26 (10.6): unwrap, the base colour bake, OBJ with a picture, and GLB. The normal map remains | Export as *OBJ+PNG* or *GLB*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
+| S5 Unwrap and bake | **Done**, 2026-11-23 (sections 10.4 and 10.5), and the occlusion and normal maps on 2026-11-26 (10.6 and 10.7): unwrap, the base colour bake, OBJ with a picture, and GLB with occlusion, roughness, metal and normals | Export as *OBJ+PNG* or *GLB*: the paint, washes and all, as a texture that stays sharp however far the mesh is decimated |
 | P Painting engine | **Usable**, 2026-11-23 (section 15): the storage, the view and the brush. Painted colour is on screen, in the project file and in every export that carries colour | The paint brush lays a colour: *Paint*, *Glaze* or *Erase*, put on *Loaded*, as a *Wash*, with a *Drybrush* or a *Sponge*, at any opacity, with a soft edge. *Pick from model* takes a colour back off it |
 | B A brush is its settings | **Done but for B5**, 2026-11-23 (section 16): files in the right directories, one generic brush, the palette, a picture across the tip, build-up on or off, lines or dabs. Brushes that stamp a shape (B5) are a later stage | BRUSHES: twenty-one that come with the application, upstream's six among them, and the user's own, a file each. *What it does* shows a brush as five amounts to change. *Profile*: five shapes and a flat middle. *Picture across the tip*, *Builds up* or *One layer*, and *Set down* as a line or every so many widths |
 | M Reading sizes | **Done**, 2026-11-23 (section 17) | A scale bar in the corner of the viewport that follows the zoom, and *Measure*: two clicks on the model, and the straight-line distance between them drawn and read out |
@@ -1870,7 +1870,42 @@ s, the packed picture 0.25 to 0.29 s. The occlusion is most of that: six
 rays of four steps a texel.
 
 **Not built:** the normal map, which a decimated GLB wants most and which
-needs tangents written beside the normals.
+needs tangents written beside the normals. Built in 10.7.
+
+### 10.7 Built, 2026-11-26: the normal map
+
+`brokkr-core/src/export/normal_map.rs`. A GLB's third picture is the
+sculpt's surface direction in the frame of the triangle under each texel,
+so that a mesh thinned to a few thousand triangles is lit as the model is.
+
+**The frame is written, not assumed.** glTF builds a texel's frame from a
+vertex's `NORMAL` and `TANGENT`, the bitangent `cross(normal, tangent) *
+w`. A file without `TANGENT` has its frame made up by the viewer, by
+MikkTSpace, which a bake would have to match exactly. So `tangents` works
+one out for each pairing of a position with a place on the picture (the
+glTF vertex): the way `u` runs across the triangles round it, made square
+to the normal, with `w` the sign that makes the bitangent run the way `v`
+does as glTF reads the picture, from its top left down. The writer puts it
+in every body's mesh as `TANGENT`, and the bake uses the same tangents,
+interpolated across each triangle as a viewer interpolates them. Each
+texel's point is stepped onto the surface as every bake here is, and its
+normal is the field's gradient there.
+
+Tests: the tangents are unit, square to their normals, and run the way the
+picture's `u` and `v` do; on a ball rippled finer than its thinned
+triangles, a texel decoded through the frame a viewer builds gives back
+the field's normal to within 0.995 in cosine, and at least a quarter of
+them lean off the mesh's own normal (the first fixture, a plain ball, had
+none that leaned: a smooth ball thinned is still lit right by its own
+normals, so it carried nothing to check); the GLB names the normal picture
+and reads back a tangent a vertex; the application's GLB of a ball at full
+detail is near the flat blue.
+
+**Not checked:** against the Khronos validator, which could not be run
+here, or in a viewer, for want of one; that is the first thing to do with
+a file from this writer anywhere it can be. The cost of the bake was not
+measured; it is a gradient a texel, which is less than the occlusion's
+twenty-four samples.
 
 ---
 

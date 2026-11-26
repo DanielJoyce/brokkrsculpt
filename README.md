@@ -530,7 +530,7 @@ true of it too, and what it adds is this.
   paint prints in, and *OBJ+PNG* or *GLB*, where the paint is baked to a
   texture that stays sharp however far the mesh is thinned. A GLB also
   carries the recesses' shade as an occlusion map, beside the varnish's
-  roughness.
+  roughness, and a normal map, so a thinned mesh is lit as the sculpt is.
 
 <p align="center">
   <img alt="A ball painted with the colour brush: a red stroke and a blue one, a yellow sponge speckle, a dark glaze drawn down across all three that darkens each where it crosses, and a stripe of white at half opacity that the red and the blue show through. Beside it the panel: Colour or Filaments, Paint, Glaze or Erase, Loaded, Wash, Drybrush, Sponge or Fill, the colour in hand, its opacity, the machine's filaments and a range of swatches" src="docs/images/studio-colour-brush.png" width="760">

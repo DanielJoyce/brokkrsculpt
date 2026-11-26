@@ -11,8 +11,10 @@
 //!
 //! A twelve byte header, a chunk of JSON that says what everything is, and
 //! a chunk of bytes that is everything: for each body its positions,
-//! normals, places on its picture and triangle indices, and then the
-//! picture itself, as the PNG the caller made. Each chunk is padded to a
+//! normals, places on its picture, tangents and triangle indices, and then
+//! its pictures, as the PNGs the caller made. The tangents are written so
+//! that a normal picture is read in the frame it was baked in
+//! ([`super::normal_map`]). Each chunk is padded to a
 //! multiple of four bytes, the JSON with spaces and the bytes with zeros,
 //! as the format requires.
 //!
@@ -58,8 +60,11 @@ pub struct Body<'a> {
     pub mesh: &'a ExportMesh,
     pub unwrap: &'a Unwrap,
     pub png: &'a [u8],
-    /// Its roughness and metal picture, as a PNG, where a varnish was laid.
+    /// Its occlusion, roughness and metal picture, as a PNG.
     pub finish_png: Option<&'a [u8]>,
+    /// Its normal picture, as a PNG, baked in the frame of
+    /// [`super::normal_map::tangents`], which is the frame written.
+    pub normal_png: Option<&'a [u8]>,
 }
 
 /// Millimetres to metres.
@@ -142,7 +147,7 @@ pub fn write(bodies: &[Body<'_>], out: &mut impl Write) -> io::Result<()> {
     // For each body: its first view, and the views of its pictures, base
     // colour and then roughness and metal if it has one.
     let mut firsts: Vec<usize> = Vec::new();
-    let mut pictures: Vec<(usize, Option<usize>)> = Vec::new();
+    let mut pictures: Vec<(usize, Option<usize>, Option<usize>)> = Vec::new();
     let mut view = |bin: &mut Vec<u8>, bytes: &[u8], target: Option<u32>| {
         while !bin.len().is_multiple_of(4) {
             bin.push(0);
@@ -158,11 +163,15 @@ pub fn write(bodies: &[Body<'_>], out: &mut impl Write) -> io::Result<()> {
         } else {
             Cow::Owned(faced(mesh))
         };
+        // The frame a normal picture is baked in, written so that a viewer
+        // does not make up its own. See `super::normal_map`.
+        let unit: Vec<Vec3> = facing.iter().map(|normal| normal.normalize_or(Vec3::Y)).collect();
+        let frames = super::normal_map::tangents(mesh, unwrap, &unit);
         let size = unwrap.size as f32;
         // One vertex for each pairing of a position with a place.
         let mut made: HashMap<(u32, u32), u32> = HashMap::new();
-        let (mut positions, mut normals, mut places, mut indices) =
-            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let (mut positions, mut normals, mut places, mut tangents, mut indices) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let (mut low, mut high) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
         let mut count = 0_u32;
         for (triangle, corners) in mesh.triangles.iter().zip(&unwrap.corners) {
@@ -185,42 +194,63 @@ pub fn write(bodies: &[Body<'_>], out: &mut impl Write) -> io::Result<()> {
                     for value in [at.x, at.y] {
                         places.extend_from_slice(&value.to_le_bytes());
                     }
+                    let frame = frames
+                        .get(&(*vertex, *place))
+                        .copied()
+                        .unwrap_or(glam::Vec4::new(1.0, 0.0, 0.0, 1.0));
+                    for value in frame.to_array() {
+                        tangents.extend_from_slice(&value.to_le_bytes());
+                    }
                     count += 1;
                     count - 1
                 });
                 indices.extend_from_slice(&index.to_le_bytes());
             }
         }
+        // Six views a body, then one for each of its two optional pictures.
         let first = firsts.last().map_or(0, |was: &usize| {
-            let (_, finish) = pictures[firsts.len() - 1];
-            was + 5 + usize::from(finish.is_some())
+            let (_, finish, normal) = pictures[firsts.len() - 1];
+            was + 6 + usize::from(finish.is_some()) + usize::from(normal.is_some())
         });
         firsts.push(first);
         view(&mut bin, &positions, Some(34962));
         view(&mut bin, &normals, Some(34962));
         view(&mut bin, &places, Some(34962));
+        view(&mut bin, &tangents, Some(34962));
         view(&mut bin, &indices, Some(34963));
         view(&mut bin, body.png, None);
+        let mut next = first + 6;
         let finish = body.finish_png.map(|png| {
             view(&mut bin, png, None);
-            first + 5
+            next += 1;
+            next - 1
         });
-        pictures.push((first + 4, finish));
+        let normal = body.normal_png.map(|png| {
+            view(&mut bin, png, None);
+            next += 1;
+            next - 1
+        });
+        pictures.push((first + 5, finish, normal));
         shapes.push((count as usize, mesh.triangles.len() * 3, low, high));
     }
     while !bin.len().is_multiple_of(4) {
         bin.push(0);
     }
 
-    // The JSON. Five views a body, in the order they were made: positions,
-    // normals, places, indices, picture; and a sixth, the roughness and
-    // metal picture, for a body that has one. Four accessors a body, for
-    // the first four. An image and a texture for each picture, in order.
+    // The JSON. Six views a body, in the order they were made: positions,
+    // normals, places, tangents, indices, picture; then the occlusion,
+    // roughness and metal picture and the normal picture, for a body that
+    // has them. Five accessors a body, for the first five. An image and a
+    // texture for each picture, in order.
     let mut images: Vec<usize> = Vec::new();
     let mut materials: Vec<String> = Vec::new();
-    for (base, finish) in &pictures {
+    for (base, finish, normal) in &pictures {
         images.push(*base);
         let colour = images.len() - 1;
+        let normal = normal.map_or(String::new(), |view| {
+            images.push(view);
+            format!(",\"normalTexture\":{{\"index\":{}}}", images.len() - 1)
+        });
         materials.push(match finish {
             Some(view) => {
                 images.push(*view);
@@ -230,7 +260,7 @@ pub fn write(bodies: &[Body<'_>], out: &mut impl Write) -> io::Result<()> {
                     "{{\"pbrMetallicRoughness\":{{\"baseColorTexture\":{{\"index\":{colour}}},\
                      \"metallicRoughnessTexture\":{{\"index\":{packed}}},\
                      \"metallicFactor\":1,\"roughnessFactor\":1}},\
-                     \"occlusionTexture\":{{\"index\":{packed}}}}}",
+                     \"occlusionTexture\":{{\"index\":{packed}}}{normal}}}",
                     packed = images.len() - 1
                 )
             }
@@ -238,7 +268,7 @@ pub fn write(bodies: &[Body<'_>], out: &mut impl Write) -> io::Result<()> {
             // opens it.
             None => format!(
                 "{{\"pbrMetallicRoughness\":{{\"baseColorTexture\":{{\"index\":{colour}}},\
-                 \"metallicFactor\":0,\"roughnessFactor\":0.9}}}}"
+                 \"metallicFactor\":0,\"roughnessFactor\":0.9}}{normal}}}"
             ),
         });
     }
@@ -268,14 +298,15 @@ pub fn write(bodies: &[Body<'_>], out: &mut impl Write) -> io::Result<()> {
         meshes = list(
             (0..bodies.len())
                 .map(|index| {
-                    let first = index * 4;
+                    let first = index * 5;
                     format!(
                         "{{\"primitives\":[{{\"attributes\":{{\"POSITION\":{},\"NORMAL\":{},\
-                         \"TEXCOORD_0\":{}}},\"indices\":{},\"material\":{index}}}]}}",
+                         \"TEXCOORD_0\":{},\"TANGENT\":{}}},\"indices\":{},\"material\":{index}}}]}}",
                         first,
                         first + 1,
                         first + 2,
-                        first + 3
+                        first + 3,
+                        first + 4
                     )
                 })
                 .collect()
@@ -315,9 +346,14 @@ pub fn write(bodies: &[Body<'_>], out: &mut impl Write) -> io::Result<()> {
                             view + 2
                         ),
                         format!(
+                            "{{\"bufferView\":{},\"componentType\":5126,\"count\":{vertices},\
+                             \"type\":\"VEC4\"}}",
+                            view + 3
+                        ),
+                        format!(
                             "{{\"bufferView\":{},\"componentType\":5125,\"count\":{corners},\
                              \"type\":\"SCALAR\"}}",
-                            view + 3
+                            view + 4
                         ),
                     ]
                 })
@@ -614,6 +650,7 @@ mod tests {
             let offset = self.json.get("bufferViews").list()[view].get("byteOffset").index();
             assert_eq!(offset % 4, 0, "accessor {index}'s numbers start on a four byte boundary");
             let width = match kind {
+                "VEC4" => 16,
                 "VEC3" => 12,
                 "VEC2" => 8,
                 _ => 4,
@@ -665,6 +702,13 @@ mod tests {
                 .iter()
                 .map(|three| Vec3::new(three[0], three[1], three[2]))
                 .collect();
+            let tangents: Vec<glam::Vec4> = self
+                .floats(attributes.get("TANGENT").index(), "VEC4")
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|four| glam::Vec4::from_array(*four))
+                .collect();
             let places: Vec<Vec2> = self
                 .floats(attributes.get("TEXCOORD_0").index(), "VEC2")
                 .as_chunks::<2>()
@@ -693,6 +737,7 @@ mod tests {
                 low: corner("min"),
                 high: corner("max"),
                 normals,
+                tangents,
                 places,
                 indices,
                 picture: picture.to_vec(),
@@ -706,6 +751,7 @@ mod tests {
         low: Vec3,
         high: Vec3,
         normals: Vec<Vec3>,
+        tangents: Vec<glam::Vec4>,
         places: Vec<Vec2>,
         indices: Vec<u32>,
         picture: Vec<u8>,
@@ -737,6 +783,13 @@ mod tests {
         for normal in &read.normals {
             assert!((normal.length() - 1.0).abs() < 1e-4, "a normal {normal} is not unit");
         }
+        // A tangent a vertex: unit, square to its normal, signed by one.
+        assert_eq!(read.tangents.len(), read.positions.len());
+        for (tangent, normal) in read.tangents.iter().zip(&read.normals) {
+            assert!((tangent.truncate().length() - 1.0).abs() < 1e-4, "a tangent is not unit");
+            assert!(tangent.truncate().dot(*normal).abs() < 1e-3, "a tangent is not square");
+            assert!(tangent.w == 1.0 || tangent.w == -1.0, "a tangent's sign is {}", tangent.w);
+        }
         for place in &read.places {
             assert!(place.min_element() >= 0.0 && place.max_element() <= 1.0, "{place}");
         }
@@ -758,6 +811,7 @@ mod tests {
                 unwrap: &first_unwrap,
                 png: first_png,
                 finish_png: None,
+                normal_png: None,
             },
             Body {
                 name: "Left hand",
@@ -765,6 +819,7 @@ mod tests {
                 unwrap: &second_unwrap,
                 png: second_png,
                 finish_png: None,
+                normal_png: None,
             },
         ];
         let mut bytes = Vec::new();
@@ -775,8 +830,8 @@ mod tests {
         for list in ["nodes", "meshes", "materials", "textures", "images"] {
             assert_eq!(glb.json.get(list).list().len(), 2, "{list}");
         }
-        assert_eq!(glb.json.get("accessors").list().len(), 8);
-        assert_eq!(glb.json.get("bufferViews").list().len(), 10);
+        assert_eq!(glb.json.get("accessors").list().len(), 10);
+        assert_eq!(glb.json.get("bufferViews").list().len(), 12);
 
         let (head, hand) = (glb.body(0), glb.body(1));
         assert_eq!((head.name.as_str(), hand.name.as_str()), ("Head", "Left hand"));
@@ -803,6 +858,7 @@ mod tests {
                 unwrap: &first_unwrap,
                 png: b"colour",
                 finish_png: Some(b"finish!"),
+                normal_png: None,
             },
             Body {
                 name: "Bare",
@@ -810,13 +866,14 @@ mod tests {
                 unwrap: &second_unwrap,
                 png: b"other",
                 finish_png: None,
+                normal_png: None,
             },
         ];
         let mut bytes = Vec::new();
         write(&bodies, &mut bytes).expect("writing to memory");
         let glb = open(&bytes);
         assert_eq!(glb.json.get("images").list().len(), 3);
-        assert_eq!(glb.json.get("bufferViews").list().len(), 11);
+        assert_eq!(glb.json.get("bufferViews").list().len(), 13);
         let material = &glb.json.get("materials").list()[0];
         let pbr = material.get("pbrMetallicRoughness");
         assert_eq!(pbr.get("metallicFactor").number(), 1.0);
@@ -840,6 +897,37 @@ mod tests {
         assert_reads_back(&glb.body(1), &second, &second_unwrap, b"other");
     }
 
+    /// A body with a normal picture names it as its material's normal
+    /// texture, and the bytes it names are that picture's.
+    #[test]
+    fn a_body_with_a_normal_picture_names_it() {
+        let mesh = ball(8.0);
+        let unwrap = mesh.unwrapped(UnwrapSpec { size: 256, ..UnwrapSpec::default() });
+        let bodies = [Body {
+            name: "Bumpy",
+            mesh: &mesh,
+            unwrap: &unwrap,
+            png: b"colour",
+            finish_png: Some(b"packed"),
+            normal_png: Some(b"normals!"),
+        }];
+        let mut bytes = Vec::new();
+        write(&bodies, &mut bytes).expect("writing to memory");
+        let glb = open(&bytes);
+        assert_eq!(glb.json.get("images").list().len(), 3);
+        let material = &glb.json.get("materials").list()[0];
+        let texture =
+            &glb.json.get("textures").list()[material.get("normalTexture").get("index").index()];
+        let image = &glb.json.get("images").list()[texture.get("source").index()];
+        let (picture, _) = glb.view(image.get("bufferView").index());
+        assert_eq!(picture, b"normals!");
+        let packed = material.get("occlusionTexture").get("index").index();
+        let image = &glb.json.get("images").list()
+            [glb.json.get("textures").list()[packed].get("source").index()];
+        assert_eq!(glb.view(image.get("bufferView").index()).0, b"packed");
+        assert_reads_back(&glb.body(0), &mesh, &unwrap, b"colour");
+    }
+
     /// Millimetres in, metres out, and nothing turned: a ball 8 mm in
     /// radius is 0.008 across each way from its middle, and the vertex
     /// that was highest in Y still is.
@@ -854,7 +942,14 @@ mod tests {
         let unwrap = mesh.unwrapped(UnwrapSpec { size: 256, ..UnwrapSpec::default() });
         let mut bytes = Vec::new();
         write(
-            &[Body { name: "Egg", mesh: &mesh, unwrap: &unwrap, png: b"png", finish_png: None }],
+            &[Body {
+                name: "Egg",
+                mesh: &mesh,
+                unwrap: &unwrap,
+                png: b"png",
+                finish_png: None,
+                normal_png: None,
+            }],
             &mut bytes,
         )
         .expect("writing to memory");
@@ -879,7 +974,14 @@ mod tests {
         }
         let mut bytes = Vec::new();
         write(
-            &[Body { name: "Ball", mesh: &mesh, unwrap: &unwrap, png: b"png", finish_png: None }],
+            &[Body {
+                name: "Ball",
+                mesh: &mesh,
+                unwrap: &unwrap,
+                png: b"png",
+                finish_png: None,
+                normal_png: None,
+            }],
             &mut bytes,
         )
         .expect("writing to memory");
@@ -898,7 +1000,14 @@ mod tests {
         let unwrap = mesh.unwrapped(UnwrapSpec { size: 256, ..UnwrapSpec::default() });
         let mut bytes = Vec::new();
         write(
-            &[Body { name: "Ball", mesh: &mesh, unwrap: &unwrap, png: b"png", finish_png: None }],
+            &[Body {
+                name: "Ball",
+                mesh: &mesh,
+                unwrap: &unwrap,
+                png: b"png",
+                finish_png: None,
+                normal_png: None,
+            }],
             &mut bytes,
         )
         .expect("writing to memory");
@@ -922,7 +1031,14 @@ mod tests {
         let unwrap = mesh.unwrapped(UnwrapSpec { size: 256, ..UnwrapSpec::default() });
         let mut bytes = Vec::new();
         write(
-            &[Body { name: "Ball", mesh: &mesh, unwrap: &unwrap, png: b"png", finish_png: None }],
+            &[Body {
+                name: "Ball",
+                mesh: &mesh,
+                unwrap: &unwrap,
+                png: b"png",
+                finish_png: None,
+                normal_png: None,
+            }],
             &mut bytes,
         )
         .expect("writing to memory");
@@ -939,7 +1055,14 @@ mod tests {
         let name = "The \"left\" hand\\arm\n\ttab \u{1} and Brokkr's own: Brokkr \u{00e9}\u{4e16}";
         let mut bytes = Vec::new();
         write(
-            &[Body { name, mesh: &mesh, unwrap: &unwrap, png: b"png", finish_png: None }],
+            &[Body {
+                name,
+                mesh: &mesh,
+                unwrap: &unwrap,
+                png: b"png",
+                finish_png: None,
+                normal_png: None,
+            }],
             &mut bytes,
         )
         .expect("writing to memory");
@@ -966,8 +1089,16 @@ mod tests {
                 unwrap: &no_unwrap,
                 png: b"png",
                 finish_png: None,
+                normal_png: None,
             },
-            Body { name: "Ball", mesh: &mesh, unwrap: &unwrap, png: b"ball", finish_png: None },
+            Body {
+                name: "Ball",
+                mesh: &mesh,
+                unwrap: &unwrap,
+                png: b"ball",
+                finish_png: None,
+                normal_png: None,
+            },
         ];
         let mut bytes = Vec::new();
         write(&bodies, &mut bytes).expect("writing to memory");
@@ -989,8 +1120,14 @@ mod tests {
         let mut broken = mesh.clone();
         broken.positions[3].y = f32::NAN;
 
-        let good =
-            Body { name: "Ball", mesh: &mesh, unwrap: &unwrap, png: b"png", finish_png: None };
+        let good = Body {
+            name: "Ball",
+            mesh: &mesh,
+            unwrap: &unwrap,
+            png: b"png",
+            finish_png: None,
+            normal_png: None,
+        };
         let refused: [(&str, Vec<Body<'_>>); 5] = [
             ("no bodies", Vec::new()),
             ("only an empty body", vec![Body { mesh: &nothing, unwrap: &no_unwrap, ..good }]),
