@@ -19,6 +19,11 @@ What that covers, as it has been used:
 - Opening pull requests into **`feature/studio`** and merging them, without
   asking first, once the gate below has passed.
 - Carrying on to the next stage of the plan without waiting for a reply.
+- Merging `feature/studio` into **`main`**, by a pull request with a merge
+  commit, once the gate has passed, and publishing to GitHub Pages by
+  fast-forwarding the **`pages`** branch to it. Given by the maintainer on
+  2026-11-26: *"You have my full permission to merge to main and publish
+  on pages too."*
 
 ## Run every task to completion
 
@@ -39,8 +44,8 @@ completion instead of pausing or stopping. In practice:
 
 What it does not cover, and still wants asking:
 
-- Anything on `main`. (On 2026-11-26 the maintainer said *"we can merge to
-  main"*, for merging `feature/studio` into it that day.)
+- Anything on `main` other than merging `feature/studio` into it as above:
+  no commits made on `main` itself, and no changes to its settings.
 - Force pushes, history rewrites, deleting branches or files that are not
   this work's own.
 - Removing a feature the maintainer has said to keep. (Filament painting
@@ -53,6 +58,10 @@ What it does not cover, and still wants asking:
 2. Open a pull request into `feature/studio`.
 3. Merge it with a merge commit (not squash, not rebase).
 4. Fast-forward the session branch to `feature/studio` and push it.
+5. Open a pull request from `feature/studio` into `main` and merge it with
+   a merge commit, then fast-forward `pages` to `main`
+   (`git push origin origin/main:refs/heads/pages`), which builds and
+   publishes the web version.
 
 One stage of the plan a pull request. Keep `docs/STUDIO-PLAN.md` and the
 README current in the same pull request as the code.
