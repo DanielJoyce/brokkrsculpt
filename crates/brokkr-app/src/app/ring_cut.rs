@@ -38,9 +38,11 @@ pub enum CutWay {
 struct Press {
     pixel: Vec2,
     body: NodeId,
-    /// The point of the surface under the press, and the view's way there.
+    /// The point of the surface under the press, the view's way there,
+    /// and the way the surface faces there.
     at: Vec3,
     along: Vec3,
+    facing: Vec3,
 }
 
 /// The cut a ring proposes.
@@ -90,7 +92,8 @@ impl Brokkr {
             return;
         };
         let (_, along) = self.ray_through(pixel);
-        self.ring_cut.press = Some(Press { pixel, body, at: hit.position, along });
+        self.ring_cut.press =
+            Some(Press { pixel, body, at: hit.position, along, facing: hit.normal });
         self.refresh_overlay();
     }
 
@@ -128,7 +131,15 @@ impl Brokkr {
             return;
         };
         let radius = px * self.world_per_pixel(near.centre);
-        let disc = volume.disc_across(press.at, press.along, radius).unwrap_or(near);
+        // The narrowest cut round what the ring is round, fitted to the
+        // pieces it crosses. See `brokkr_core::sever::Volume::propose_cut`.
+        let Some(disc) = volume.propose_cut(press.at, press.along, press.facing, radius) else {
+            self.ring_cut.proposal = None;
+            self.status =
+                "the ring is not round a part: draw it round a limb or a spur".to_string();
+            self.refresh_overlay();
+            return;
+        };
         let width = BAND_PX * self.world_per_pixel(disc.centre);
         let contour = contour(volume, &disc, width);
         self.ring_cut.proposal = Some(Proposal { body: press.body, disc, contour });
@@ -189,7 +200,10 @@ impl Brokkr {
                 self.history.push(outcome.entry);
                 self.unsaved = true;
                 self.record_history(before);
-                self.status = format!("split {name} in two at the ring");
+                self.status = match outcome.pieces {
+                    1 => format!("split {name} in two at the ring"),
+                    pieces => format!("split {pieces} pieces off {name} at the ring"),
+                };
                 self.tool = super::Tool::Sculpt;
                 self.refresh_model_radius();
                 self.remesh_dirty();
@@ -356,38 +370,25 @@ mod tests {
         update(app, Message::Pointer(PointerEvent::Released { button: PointerButton::Left }));
     }
 
-    /// The cut tool reads a drag as a ring unless told Line. A small ring
-    /// over the ball it opens with proposes a disc wholly inside the ball:
-    /// no contour, and a split is refused, the disc not going round
-    /// anything. A ring wider than the ball proposes a disc that crosses
-    /// it, drawn with its contour, and splits it in two. Drop and Escape
-    /// drop a proposal.
+    /// The cut tool reads a drag as a ring unless told Line. A ring over
+    /// the ball it opens with, small or wider than the ball, is round no
+    /// part of it, proposes nothing, and says so.
     #[test]
-    fn a_ring_proposes_a_cut_and_splits_only_what_it_goes_round() {
+    fn a_ring_over_a_lone_ball_proposes_nothing() {
         let mut app = Brokkr::with_tablet(crate::tablet::Tablet::inert());
         update(&mut app, Message::ToolChanged(super::super::Tool::Cut));
         assert!(app.rings());
         let middle = Vector { x: 400.0, y: 300.0 };
         ring(&mut app, middle, Vector { x: 430.0, y: 300.0 });
-        let proposal = app.ring_cut.proposal.clone().expect("a ring over the ball proposes a cut");
-        assert!(proposal.contour.is_empty(), "a disc inside the ball has a contour");
-        update(&mut app, Message::Ring(RingMessage::Split));
-        assert_eq!(app.doc.bodies().count(), 1, "a disc inside the ball split it");
-        assert!(app.status.contains("all the way round"), "{}", app.status);
-        update(&mut app, Message::Ring(RingMessage::Dropped));
-        assert!(app.ring_cut.proposal.is_none());
+        // A ring over the middle of the ball is round no part of it: the
+        // ball's cross-section runs far past it.
+        assert!(app.ring_cut.proposal.is_none(), "a ring inside the ball proposed a cut");
+        assert!(app.status.contains("not round a part"), "{}", app.status);
 
+        // Nor is a ring round the whole ball: a ball alone has no neck,
+        // and halving it is the line cut's.
         ring(&mut app, middle, Vector { x: 790.0, y: 590.0 });
-        let proposal = app.ring_cut.proposal.clone().expect("a wide ring proposes a cut");
-        assert!(!proposal.contour.is_empty(), "a disc across the ball traced no contour");
-        let mut batch = brokkr_gpu::OverlayBatch::default();
-        app.add_ring_preview(&mut batch);
-        assert!(!batch.surfaces.is_empty(), "the band was not drawn");
-        drop(app.ring_cut_bar());
-        update(&mut app, Message::Ring(RingMessage::Split));
-        assert_eq!(app.doc.bodies().count(), 2, "{}", app.status);
-        update(&mut app, Message::Undo);
-        assert_eq!(app.doc.bodies().count(), 1);
+        assert!(app.ring_cut.proposal.is_none(), "a ring round a lone ball proposed a cut");
 
         update(&mut app, Message::ToolChanged(super::super::Tool::Cut));
         update(&mut app, Message::Ring(RingMessage::Way(CutWay::Line)));
@@ -411,15 +412,25 @@ mod tests {
         });
         app.doc.replace_active_volume(figure);
         update(&mut app, Message::ToolChanged(super::super::Tool::Cut));
-        // The disc a ring round the arm would propose, set as if proposed:
-        // where the arm is on the screen depends on the camera.
+        // The cut a ring round the arm proposes, set as if proposed: where
+        // the arm is on the screen depends on the camera.
         let body = app.doc.active();
-        let disc = app
-            .doc
-            .active_volume()
-            .disc_across(Vec3::new(16.0, 0.0, 2.0), -Vec3::Z, 4.0)
-            .expect("solid under the ring");
-        app.ring_cut.proposal = Some(Proposal { body, disc, contour: Vec::new() });
+        let volume = app.doc.active_volume();
+        let disc = volume
+            .propose_cut(Vec3::new(16.0, 0.0, 2.0), -Vec3::Z, Vec3::Z, 4.0)
+            .expect("a cut round the arm");
+        assert!(
+            disc.normal.dot(Vec3::X).abs() > 0.9,
+            "the cut is not across the arm: {:?}",
+            disc.normal
+        );
+        let band = contour(volume, &disc, 0.3);
+        assert!(!band.is_empty(), "no band round the arm");
+        app.ring_cut.proposal = Some(Proposal { body, disc, contour: band });
+        let mut batch = brokkr_gpu::OverlayBatch::default();
+        app.add_ring_preview(&mut batch);
+        assert!(!batch.surfaces.is_empty(), "the band was not drawn");
+        drop(app.ring_cut_bar());
         update(&mut app, Message::Ring(RingMessage::Split));
         assert_eq!(app.doc.bodies().count(), 2, "{}", app.status);
         assert!(
@@ -445,7 +456,7 @@ mod tests {
             }
             update(&mut app, Message::Frame);
             let body = app.doc.active();
-            let disc = Disc { centre: Vec3::new(0.1, 0.2, 0.3), normal: Vec3::X, radius: 40.0 };
+            let disc = Disc::round(Vec3::new(0.1, 0.2, 0.3), Vec3::X, 40.0);
             app.ring_cut.proposal = Some(Proposal { body, disc, contour: Vec::new() });
             let started = std::time::Instant::now();
             update(&mut app, Message::Ring(RingMessage::Split));

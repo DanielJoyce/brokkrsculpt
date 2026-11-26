@@ -383,9 +383,11 @@ true of it too, and what it adds is this.
   of the surface that is. Seen while sculpting, when there is still time
   to do something about a chin.
 - **The ring cut.** With the cut tool, drag a ring round what to cut, an
-  arm, a head, a spur: it proposes a cut across it, drawn as a band on
-  the surface where it would part the model, and *Split in two* makes
-  that piece a body of its own and leaves the rest alone, so a cut across
+  arm, a head, a spur: it finds the narrowest place to cut it off (a neck,
+  or where it meets the body), sized to the part however roughly the ring
+  was drawn, drawn as a band on the surface, and *Split in two* makes that
+  piece a body of its own and leaves the rest alone (a ring over both legs
+  takes both, each a body), so a cut across
   an arm no longer takes the torso beside it. *Line* on the bar is the
   cut that goes straight through everything. See
   [`docs/CUT-RING.md`](docs/CUT-RING.md).

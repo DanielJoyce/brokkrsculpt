@@ -154,11 +154,50 @@ ghost; a knob, barely longer than it is wide, gets a disc across its top
 rather than round its neck, which turning it will put right; the split's
 cost at a fine voxel when both sides are large.
 
+## The cut sized to what it cuts (2026-11-26)
+
+The maintainer's answers to the open questions: a ring over both legs
+**splits both**; the cut "should be the size that allows it to cut" (not
+the ring's circle); and a ring with X on "should only cut one leg" (it
+does not mirror).
+
+**Fitted to the islands** (`Volume::fit_to_islands`). The disc's plane
+crosses the solid in islands, each a cross-section. Each island with a
+cell inside the ring is followed out, three ring radii at most; one that
+runs further, or has less than two fifths of itself inside the ring, is
+not a piece the ring is round. The cut is the islands that qualify, whole,
+two voxels round, and nothing else in the plane: a leg a little wider than
+the ring is cut whole, a torso the same plane crosses beside it is not, and
+two legs are two islands, both cut. A piece of two real parts is split into
+a body each in the same undo entry (`Entry::followed_by`, and `split.rs`'s
+own split); a speck is not a part and makes no body.
+
+**The narrowest cut round the part** (`Volume::propose_cut`). Directions
+tried: the solid's three axes under the ring, the surface's normal where it
+was pressed, the view, and the way the piece grows out of the body (from
+the middle of the solid within three radii toward the ring's middle, where
+that is clear). Each is slid a quarter radius at a time, a radius either
+way, and fitted. A slice qualifies as a **neck** (no wider than the slices
+beside it) or a **base** (the last that fits before the body, with the
+slices the other way running out to a tip), and not as a **graze** (the
+body past it on both sides), and only when it is through the ring's middle
+or has the middle on the piece's side. Of those, the one taking the most
+piece through the least section, a little against sliding far or slanting
+off the way out of the body, is proposed. What led there, each seen on the
+screen or in a test: the long axis alone put a diagonal over a knob; the
+smallest section took a sliver off a knob's tip, then a cap off its flank,
+then a strip down a leg's flank; a dome blended onto a ball has no neck at
+all; and the smallest section that qualified was still a sliver off a
+dome's flank. A lone ball has no neck and no base: a ring over it proposes
+nothing, and halving it is the line cut's.
+
+Tests: a ring round both legs severs both, two bodies and the figure, one
+undo; a ring smaller than a leg cuts that leg whole and only it; a slab the
+plane crosses beside a rod, reaching into the ring and far past it, is left
+out; a knob on a stalk is cut round its neck; a dome blended on is cut at
+its base; a wide ring pressed on one leg cuts across both. On the screen: a
+dome on the ball, the band round its base, the dome split off as one body.
+
 ## Open questions
 
-1. A ring over two limbs at once (both legs): two pieces, or refused?
-2. The ring on the screen and the disc in the model can disagree on a
-   foreshortened limb; should the ring's radius be the disc's, or should the
-   disc grow to the limb's cross-section?
-3. Mirror: should a ring cut with X on cut the mirrored limb too, as the
-   line cut does?
+None open.

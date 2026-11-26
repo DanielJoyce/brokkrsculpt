@@ -712,6 +712,13 @@ impl Entry {
     /// Both byte counts are summed once, here, because a `NodeRemoved` costs a
     /// walk of a whole brick map to measure and the budget asks for it on every
     /// push, trim and eviction.
+    /// This entry, then `next`, as one: undone together, `next` first.
+    pub fn followed_by(self, next: Entry) -> Self {
+        let mut changes = self.changes;
+        changes.extend(next.changes);
+        Self::new(changes)
+    }
+
     pub fn new(changes: Vec<Change>) -> Self {
         let stroke_bytes = changes.iter().map(Change::stroke_bytes).sum();
         let reclaim_bytes = changes.iter().map(Change::reclaim_bytes).sum();
