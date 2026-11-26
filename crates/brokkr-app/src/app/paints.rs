@@ -354,16 +354,14 @@ impl Brokkr {
         for (_, texture) in &textures {
             pictures.push(encoded(texture)?);
         }
-        // A varnished body's roughness and metal, as a second picture. See
-        // `brokkr_core::export::glb`.
+        // Every body's occlusion, roughness and metal, as a second picture.
+        // See `brokkr_core::export::glb`.
         let margin = brokkr_core::export::unwrap::UnwrapSpec::default().margin;
         let mut finishes = Vec::with_capacity(bodies.len());
         for ((meta, mesh, _), (unwrap, _)) in bodies.iter().zip(&textures) {
             finishes.push(match self.doc.volume(meta.id) {
-                Some(volume) if volume.has_varnish() => {
-                    Some(encoded(&unwrap.finish_baked(mesh, volume, margin))?)
-                }
-                _ => None,
+                Some(volume) => Some(encoded(&unwrap.finish_baked(mesh, volume, margin))?),
+                None => None,
             });
         }
         let parts: Vec<brokkr_core::export::glb::Body<'_>> = bodies
@@ -1034,6 +1032,31 @@ mod tests {
         let (painted, clay) = (count(colour), count(UNPAINTED));
         assert!(painted > 200, "only {painted} texels are the paint's colour");
         assert!(clay > painted, "the unpainted ball is not clay: {clay} texels");
+
+        // Its occlusion, in the red of its roughness and metal picture: a
+        // ball is open to the sky everywhere, so the red is nearly full.
+        let packed = &material["occlusionTexture"]["index"];
+        assert_eq!(
+            packed, &material["pbrMetallicRoughness"]["metallicRoughnessTexture"]["index"],
+            "the occlusion is not the packed picture"
+        );
+        let image = &json["images"][index(&json["textures"][index(packed)]["source"])];
+        let view = &json["bufferViews"][index(&image["bufferView"])];
+        let (offset, length) = (index(&view["byteOffset"]), index(&view["byteLength"]));
+        let occlusion = image::load_from_memory(&bin[offset..offset + length])
+            .expect("the packed picture is a picture")
+            .into_rgba8();
+        // Of the texels baked, which are the matte's roughness in green;
+        // the rest of the picture is the unwrap's grey background.
+        let matte = (brokkr_core::paint::Finish::Matte.roughness_and_metal().0 * 255.0).round();
+        let baked: Vec<u8> = occlusion
+            .pixels()
+            .filter(|pixel| f32::from(pixel.0[1]) == matte)
+            .map(|pixel| pixel.0[0])
+            .collect();
+        let open = baked.iter().filter(|red| **red >= 240).count();
+        assert!(baked.len() > 100_000, "only {} texels were baked", baked.len());
+        assert!(open * 10 > baked.len() * 9, "a ball reads shut in: {open} of {}", baked.len());
 
         // Metres. The body is as wide in the file, times a thousand, as
         // it is in the document, in millimetres.

@@ -80,18 +80,28 @@ impl Unwrap {
         self.baked_by(mesh, volume, margin, |point| bake.surface_colour(volume, point))
     }
 
-    /// The finish a varnish laid, baked onto this unwrap as a glTF wants a
-    /// roughness and metal picture: green the roughness and blue the
-    /// metalness, red left full. Where no varnish is, the matte non-metal
-    /// every material here was before. Stage 6 of `docs/PAINT-RACK.md`.
+    /// The surface's occlusion, roughness and metal, baked onto this unwrap
+    /// as one picture the way glTF packs them: red how open the surface is
+    /// (1 open to the sky, toward 0 shut in a recess), green the roughness
+    /// and blue the metalness. The finish is the one a varnish laid, and
+    /// where none is the matte non-metal every material here was before
+    /// (stage 6 of `docs/PAINT-RACK.md`). The occlusion is the one a wash
+    /// pools by ([`Volume::occlusion_at`]), so a viewer's ambient light
+    /// darkens the recesses the paint already knows about.
     pub fn finish_baked(&self, mesh: &ExportMesh, volume: &Volume, margin: u32) -> Texture {
         let voxel_size = volume.voxel_size();
         self.baked_by(mesh, volume, margin, |point| {
-            let code = volume.finish_at((point / voxel_size).round().as_ivec3());
+            let voxel = (point / voxel_size).round().as_ivec3();
+            let code = volume.finish_at(voxel);
             let finish =
                 crate::paint::Finish::from_code(code).unwrap_or(crate::paint::Finish::Matte);
             let (rough, metal) = finish.roughness_and_metal();
-            [255, (rough * 255.0).round() as u8, (metal * 255.0).round() as u8]
+            let open = 1.0 - volume.occlusion_at(voxel);
+            [
+                (open * 255.0).round() as u8,
+                (rough * 255.0).round() as u8,
+                (metal * 255.0).round() as u8,
+            ]
         })
     }
 
@@ -453,6 +463,57 @@ mod tests {
             dark_vertices * 10 < pooled,
             "{dark_vertices} vertices hold the wash against {pooled} texels: the control shows \
              nothing"
+        );
+    }
+
+    /// The occlusion, roughness and metal picture: on a cube with a slot
+    /// cut in its top, the slot's floor is baked more shut in (less red)
+    /// than the open top, and with no varnish every texel is the matte
+    /// non-metal in green and blue.
+    #[test]
+    fn the_slot_floor_is_baked_shut_in_and_the_top_open() {
+        let half = 12.0;
+        let mut volume = Volume::new(0.5);
+        let reach = Vec3::splat(half + NARROW_BAND);
+        volume.edit_box(-reach, reach, |position, _| {
+            let outside = position.abs() - Vec3::splat(half);
+            let distance = outside.max(Vec3::ZERO).length() + outside.max_element().min(0.0);
+            (distance / 0.5).clamp(INSIDE, OUTSIDE)
+        });
+        volume.clip_convex(&[
+            ClipPlane { point: Vec3::new(-2.0, 0.0, 0.0), normal: Vec3::X },
+            ClipPlane { point: Vec3::new(2.0, 0.0, 0.0), normal: -Vec3::X },
+            ClipPlane { point: Vec3::new(0.0, 0.0, half - 5.0), normal: Vec3::Z },
+        ]);
+        let (mesh, _, _) = volume.export_mesh_decimated(DecimateSpec::within(0.25));
+        let spec = UnwrapSpec { size: 1024, ..UnwrapSpec::default() };
+        let unwrap = mesh.unwrapped(spec);
+        let packed = unwrap.finish_baked(&mesh, &volume, spec.margin);
+        let (mut floor, mut top) = (Vec::new(), Vec::new());
+        for (triangle, corners) in unwrap.corners.iter().enumerate() {
+            let flat = corners.map(|point| unwrap.points[point as usize]);
+            let solid = mesh.triangles[triangle].map(|vertex| mesh.positions[vertex as usize]);
+            let middle = (solid[0] + solid[1] + solid[2]) / 3.0;
+            let centre = (flat[0] + flat[1] + flat[2]) / 3.0;
+            let (x, y) = (centre.x as usize, centre.y as usize);
+            if !strictly_inside(Vec2::new(x as f32 + 0.5, y as f32 + 0.5), flat) {
+                continue;
+            }
+            let got = texel(&packed, x, y);
+            assert_eq!(got[1..3], [230, 0], "not a matte non-metal at {middle}");
+            if (middle.z - (half - 5.0)).abs() < 0.3 && middle.x.abs() < 1.0 {
+                floor.push(got[0]);
+            } else if (middle.z - half).abs() < 0.3 && middle.x.abs() > 6.0 {
+                top.push(got[0]);
+            }
+        }
+        assert!(!floor.is_empty() && !top.is_empty(), "{} floor, {} top", floor.len(), top.len());
+        let mean =
+            |values: &[u8]| values.iter().map(|v| f32::from(*v)).sum::<f32>() / values.len() as f32;
+        let (floor, top) = (mean(&floor), mean(&top));
+        assert!(
+            floor + 40.0 < top,
+            "the slot's floor ({floor}) is not darker than the top ({top})"
         );
     }
 
