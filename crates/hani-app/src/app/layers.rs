@@ -285,7 +285,11 @@ impl Hani {
     /// goes to is chosen here, as which body is in the bodies block.
     pub(super) fn layers_block(&self) -> Element<'_, Message> {
         column![
-            text("LAYERS").size(theme::HEADING_SIZE).color(theme::TEXT_MUTE),
+            // The hover line is in `app/help.rs`.
+            crate::ui::tip(
+                text("LAYERS").size(theme::HEADING_SIZE).color(theme::TEXT_MUTE),
+                super::help::LAYERS_TIP,
+            ),
             self.layers_panel()
         ]
         .spacing(theme::S2)
