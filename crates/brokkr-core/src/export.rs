@@ -39,6 +39,7 @@
 
 pub mod decimate;
 pub mod glb;
+pub mod normal_map;
 pub mod obj;
 pub mod ply;
 pub mod stl;

@@ -77,7 +77,7 @@ impl Unwrap {
         bake: &Bake<'_>,
         margin: u32,
     ) -> Texture {
-        self.baked_by(mesh, volume, margin, |point| bake.surface_colour(volume, point))
+        self.baked_by(mesh, volume, margin, |point, _, _| bake.surface_colour(volume, point))
     }
 
     /// The surface's occlusion, roughness and metal, baked onto this unwrap
@@ -90,7 +90,7 @@ impl Unwrap {
     /// darkens the recesses the paint already knows about.
     pub fn finish_baked(&self, mesh: &ExportMesh, volume: &Volume, margin: u32) -> Texture {
         let voxel_size = volume.voxel_size();
-        self.baked_by(mesh, volume, margin, |point| {
+        self.baked_by(mesh, volume, margin, |point, _, _| {
             let voxel = (point / voxel_size).round().as_ivec3();
             let code = volume.finish_at(voxel);
             let finish =
@@ -106,13 +106,16 @@ impl Unwrap {
     }
 
     /// Bake whatever `colour` says of each point of the surface onto this
-    /// unwrap of `mesh`, a mesh of `volume`.
-    fn baked_by(
+    /// unwrap of `mesh`, a mesh of `volume`. `colour` is also told which
+    /// triangle the texel is under and where in it, as weights of its three
+    /// corners that add to one, for a bake that needs the triangle's own
+    /// frame (`super::normal_map`).
+    pub(super) fn baked_by(
         &self,
         mesh: &ExportMesh,
         volume: &Volume,
         margin: u32,
-        colour: impl Fn(Vec3) -> [u8; 3] + Sync,
+        colour: impl Fn(Vec3, usize, [f32; 3]) -> [u8; 3] + Sync,
     ) -> Texture {
         let size = self.size as usize;
         let voxel_size = volume.voxel_size();
@@ -125,7 +128,8 @@ impl Unwrap {
             .corners
             .par_iter()
             .zip(mesh.triangles.par_iter())
-            .map(|(corners, triangle)| {
+            .enumerate()
+            .map(|(index, (corners, triangle))| {
                 let flat = corners.map(|point| self.points[point as usize]);
                 let solid = triangle.map(|vertex| mesh.positions[vertex as usize]);
                 let mut texels = Vec::new();
@@ -163,7 +167,9 @@ impl Unwrap {
                         let on_triangle =
                             (solid[0] * clamped[0] + solid[1] * clamped[1] + solid[2] * clamped[2])
                                 / total;
-                        let colour = colour(onto_surface(volume, on_triangle, voxel_size));
+                        let weights = clamped.map(|weight| weight / total);
+                        let colour =
+                            colour(onto_surface(volume, on_triangle, voxel_size), index, weights);
                         texels.push(((y * size + x) as u32, colour));
                     }
                 }
