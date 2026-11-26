@@ -19,6 +19,23 @@ What that covers, as it has been used:
   asking first, once the gate below has passed.
 - Carrying on to the next stage of the plan without waiting for a reply.
 
+## Run every task to completion
+
+Said by the maintainer on 2026-11-26: when given tasks, run each one to
+completion instead of pausing or stopping. In practice:
+
+- A request with several tasks in it is worked through in order, each one
+  built, gated, merged and written up, and then the next, in the same
+  session, without stopping between them to report or to ask whether to
+  go on.
+- Do not stop to ask a question that a sensible default answers. Pick the
+  default, say which in the pull request, and carry on.
+- Report once, at the end, with what was built, what was measured and
+  what is not done.
+- Stop early only for what the standing permission above does not cover,
+  or for a refusal from a tool or the environment that cannot be worked
+  round in a permitted way. Say which, and finish everything else first.
+
 What it does not cover, and still wants asking:
 
 - Anything on `main`, or on the upstream repository.

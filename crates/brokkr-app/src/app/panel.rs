@@ -180,6 +180,11 @@ impl Brokkr {
         // The scale bar and the measure, under the overlay's own buttons
         // and whatever menu is up. See `app/measure.rs`.
         let scene = stack![well, self.rulers(), self.measure_controls(), self.overlay()];
+        // The revolve's axis, while it is up. See `app/revolve.rs`.
+        let scene = match self.revolve_layer() {
+            Some(layer) => scene.push(layer),
+            None => scene,
+        };
         // What says a piece off the workbench is not the model. See
         // `app/workbench.rs`.
         let scene = match self.workbench_banner() {

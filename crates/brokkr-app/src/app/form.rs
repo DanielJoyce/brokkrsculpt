@@ -114,8 +114,28 @@ impl Brokkr {
         // there is nothing to fix.
         reshaped.redistance();
 
-        let Some(previous) = self.doc.replace_volume(body, reshaped) else {
+        if !self.swap_in(body, reshaped) {
             return;
+        }
+        let did = match what {
+            Reshape::Bulk if self.form.amount_mm < 0.0 => {
+                format!("slimmed by {:.2} mm", -self.form.amount_mm)
+            }
+            Reshape::Bulk => format!("bulked by {:.2} mm", self.form.amount_mm),
+            Reshape::DetailGain => format!("detail at {:.2} of what it was", self.form.gain),
+        };
+        self.status = format!(
+            "{did}, keeping detail finer than {used_mm:.2} mm ({:.0} ms)",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+
+    /// Put `reshaped` in place of `body`'s field as one undo entry holding
+    /// the body as it was, and remesh. False when there is no such body.
+    /// Shared with the shell (`hollow.rs`) and the deformers (`deform.rs`).
+    pub(super) fn swap_in(&mut self, body: brokkr_core::NodeId, reshaped: Volume) -> bool {
+        let Some(previous) = self.doc.replace_volume(body, reshaped) else {
+            return false;
         };
         // The bricks the old field occupied, marked in the new one, or the
         // renderer goes on drawing triangles nothing will overwrite.
@@ -130,17 +150,7 @@ impl Brokkr {
         self.unsaved = true;
         self.thumbs.geometry_changed(body);
         self.remesh_dirty();
-        let did = match what {
-            Reshape::Bulk if self.form.amount_mm < 0.0 => {
-                format!("slimmed by {:.2} mm", -self.form.amount_mm)
-            }
-            Reshape::Bulk => format!("bulked by {:.2} mm", self.form.amount_mm),
-            Reshape::DetailGain => format!("detail at {:.2} of what it was", self.form.gain),
-        };
-        self.status = format!(
-            "{did}, keeping detail finer than {used_mm:.2} mm ({:.0} ms)",
-            started.elapsed().as_secs_f64() * 1000.0
-        );
+        true
     }
 
     /// One undo entry holding the body as it was.
@@ -194,6 +204,8 @@ impl Brokkr {
             .step(0.05)
             .shown(format!("x {:.2}", form.gain))
             .trailing(apply(FormMessage::DetailGainApplied)),
+            // Hollowing. See `hollow.rs`.
+            self.shell_row(),
         ]
         .spacing(theme::S2)
         .into()

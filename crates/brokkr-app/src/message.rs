@@ -143,6 +143,38 @@ pub enum FormMessage {
     DetailGainApplied,
 }
 
+/// The revolve's controls. See `app/revolve.rs`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RevolveMessage {
+    /// Put the axis up for a line to be drawn, or away.
+    Armed(bool),
+}
+
+/// The deformers' controls. See `app/deform.rs`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DeformMessage {
+    Kind(brokkr_core::deform::DeformKind),
+    Axis(brokkr_core::deform::Axis),
+    /// Degrees for a twist or a bend, the far end's scale for a taper.
+    Amount(f32),
+    Applied,
+}
+
+/// The shell and extract controls. See `app/hollow.rs`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HollowMessage {
+    /// A shell's wall, in millimetres.
+    WallChanged(f32),
+    ShellApplied,
+    /// An extracted plate's thickness, in millimetres.
+    ThicknessChanged(f32),
+    /// The share of the thickness that goes into the body, nought to one.
+    InwardChanged(f32),
+    /// How far the plate is moved out along the normal, in millimetres.
+    OffsetChanged(f32),
+    ExtractApplied,
+}
+
 /// One change to the studio brushes, on [`KeySetting`]'s pattern: one
 /// message with a payload and not three entries in the message table.
 /// Settings of the application and not of the document.
@@ -847,6 +879,9 @@ pub enum PanelSection {
     Brush,
     Stroke,
     Form,
+    Extract,
+    Deform,
+    Revolve,
     Pattern,
     History,
     Detail,
@@ -856,7 +891,7 @@ pub enum PanelSection {
 
 impl PanelSection {
     /// In the order the panel draws them.
-    pub const ALL: [PanelSection; 12] = [
+    pub const ALL: [PanelSection; 15] = [
         PanelSection::Bodies,
         PanelSection::Brushes,
         PanelSection::Workbench,
@@ -864,6 +899,9 @@ impl PanelSection {
         PanelSection::Brush,
         PanelSection::Stroke,
         PanelSection::Form,
+        PanelSection::Extract,
+        PanelSection::Deform,
+        PanelSection::Revolve,
         PanelSection::Pattern,
         PanelSection::History,
         PanelSection::Detail,
@@ -880,6 +918,9 @@ impl PanelSection {
             PanelSection::Brush => "BRUSH",
             PanelSection::Stroke => "STROKE",
             PanelSection::Form => "FORM",
+            PanelSection::Extract => "EXTRACT",
+            PanelSection::Deform => "DEFORM",
+            PanelSection::Revolve => "REVOLVE",
             PanelSection::Pattern => "PATTERN",
             PanelSection::History => "HISTORY",
             PanelSection::Detail => "DETAIL",
@@ -905,7 +946,13 @@ impl PanelSection {
     /// FORM starts closed since every heading folds (`ui.rs`): it works on
     /// the whole body, which is done now and then and not stroke by stroke.
     pub fn open_by_default(self) -> bool {
-        !matches!(self, PanelSection::Detail | PanelSection::Filament | PanelSection::Form)
+        !matches!(
+            self,
+            PanelSection::Detail
+                | PanelSection::Filament
+                | PanelSection::Form
+                | PanelSection::Extract
+        )
     }
 }
 
@@ -1424,6 +1471,12 @@ pub enum Message {
     Studio(StudioMessage),
     /// One of the form tools' controls. See `app/form.rs`.
     Form(FormMessage),
+    /// Shell or extract. See `app/hollow.rs`.
+    Hollow(HollowMessage),
+    /// Twist, bend or taper. See `app/deform.rs`.
+    Deform(DeformMessage),
+    /// The revolve's axis up or away. See `app/revolve.rs`.
+    Revolve(RevolveMessage),
     /// One of the controls of the brushes that add. See `app/adding.rs`.
     Add(AddMessage),
     /// A vector displacement map asked for, taken in, or the maps read
