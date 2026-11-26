@@ -111,7 +111,8 @@
 //! splits a scan at a resin voxel size. That is an unfinished increment
 //! honestly labelled and not a real deferral.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use glam::IVec3;
 use rayon::prelude::*;

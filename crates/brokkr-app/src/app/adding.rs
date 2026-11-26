@@ -1213,7 +1213,7 @@ mod tests {
                 choose(&mut app, Insert::Shape(form));
                 press(&mut app, MIDDLE);
                 move_to(&mut app, MIDDLE + Vec2::new(pixels * 0.5, 0.0));
-                let started = std::time::Instant::now();
+                let started = web_time::Instant::now();
                 let moves = 6;
                 for step in 0..moves {
                     move_to(&mut app, MIDDLE + Vec2::new(pixels + step as f32, 0.0));

@@ -890,16 +890,16 @@ mod timing {
         let mut volume = Volume::new(0.25);
         volume.seed_sphere(Vec3::ZERO, 30.0);
         let level = level_for(0.25, 2.0);
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         let pyramid = FormPyramid::build(&volume, level + 2);
         let built = started.elapsed();
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         let mut bulked = volume.bulked(&pyramid, level, 1.0).expect("a bulk");
         let warped = started.elapsed();
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         bulked.redistance();
         let redistanced = started.elapsed();
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         let gained = volume.with_detail_gain(&pyramid, level, 1.5).expect("a gain");
         let gain = started.elapsed();
         // What taking all the detail off does to the size of a ball with

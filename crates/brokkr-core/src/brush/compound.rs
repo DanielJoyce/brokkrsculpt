@@ -1821,7 +1821,7 @@ mod timing {
                         let mut volume = Volume::new(1.0);
                         volume.seed_sphere(centre, 40.0);
                         let mut scratch = BrushScratch::new();
-                        let started = std::time::Instant::now();
+                        let started = web_time::Instant::now();
                         for _ in 0..rounds {
                             run(&mut volume, &mut scratch);
                         }

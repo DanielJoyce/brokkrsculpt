@@ -107,6 +107,7 @@ pub(crate) fn status(host: &str, port: u16) -> Result<Status, String> {
 /// read when a button is pressed. Dragging five filament arrays through every
 /// status poll would pay for a thing that changes when somebody walks over to
 /// the machine and changes it.
+#[cfg(not(target_arch = "wasm32"))]
 fn query(host: &str, port: u16, objects: &str) -> Result<String, String> {
     if !valid_host(host) {
         return Err(format!("{host:?} is not a host name"));
@@ -122,6 +123,12 @@ fn query(host: &str, port: u16, objects: &str) -> Result<String, String> {
         .body_mut()
         .read_to_string()
         .map_err(|why| format!("{host} answered something unreadable ({why})"))
+}
+
+/// In a browser the printer on the network cannot be asked.
+#[cfg(target_arch = "wasm32")]
+fn query(_host: &str, _port: u16, _objects: &str) -> Result<String, String> {
+    Err("the printer cannot be asked from the browser".to_string())
 }
 
 /// Pull the three interesting values out of Moonraker's reply.

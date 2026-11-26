@@ -20,6 +20,9 @@
 //! brushes are. Any picture can go on as a decal, in its own colours, or
 //! as a stamp, a stencil in the paint in hand.
 
+// A picked file has no path in a browser. See `web.rs`.
+#[cfg(target_arch = "wasm32")]
+use crate::web::NoPath;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -560,7 +563,7 @@ mod tests {
             );
             update(&mut app, Message::Frame);
             let moves = 8;
-            let started = std::time::Instant::now();
+            let started = web_time::Instant::now();
             for step in 0..moves {
                 let at = Vector { x: CENTRE.x + pulled + step as f32, y: CENTRE.y };
                 update(
@@ -570,7 +573,7 @@ mod tests {
                 update(&mut app, Message::Frame);
             }
             let per_move = started.elapsed().as_secs_f32() * 1000.0 / moves as f32;
-            let started = std::time::Instant::now();
+            let started = web_time::Instant::now();
             update(
                 &mut app,
                 Message::Pointer(PointerEvent::Released { button: PointerButton::Left }),

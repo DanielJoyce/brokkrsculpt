@@ -275,6 +275,15 @@ impl OverlayRenderer {
         // A ring drawn exactly on the surface it measures is coplanar with it,
         // so without a bias toward the viewer it is z-fought into dashes.
         let toward_viewer = wgpu::DepthBiasState { constant: -4, slope_scale: -1.0, clamp: 0.0 };
+        // WebGPU refuses any depth bias on a line list, and a pipeline it
+        // refuses takes every frame with it. In a browser the lines go
+        // without, and a ring on the surface may break into dashes there.
+        // See `docs/WEB.md`.
+        let lines_bias = if cfg!(target_arch = "wasm32") {
+            wgpu::DepthBiasState::default()
+        } else {
+            toward_viewer
+        };
 
         Self {
             lines_pipeline: build(
@@ -282,7 +291,7 @@ impl OverlayRenderer {
                 wgpu::PrimitiveTopology::LineList,
                 Some(wgpu::BlendState::ALPHA_BLENDING),
                 false,
-                toward_viewer,
+                lines_bias,
             ),
             surfaces_pipeline: build(
                 "brokkr overlay surfaces",

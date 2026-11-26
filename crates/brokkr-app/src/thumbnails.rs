@@ -21,7 +21,8 @@
 //! the geometry last changed.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use brokkr_core::{MAX_BODIES, NodeId};
 

@@ -28,7 +28,8 @@
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::io::Write;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 /// What the time was spent on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

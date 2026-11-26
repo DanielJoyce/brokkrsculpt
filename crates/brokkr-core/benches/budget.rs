@@ -11,7 +11,8 @@
 //! framework: the numbers that matter here are worst case per stroke step
 //! latencies against a fixed budget, not throughput distributions.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use brokkr_core::colour::ColourField;
 use brokkr_core::{

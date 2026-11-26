@@ -20,7 +20,8 @@
 //! BrokkrSculpt at 60 fps has polluted a measurement on this machine badly
 //! enough to look like a 10x regression.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use brokkr_core::Volume;
 use brokkr_core::voxelise::{VoxeliseOptions, voxelise};

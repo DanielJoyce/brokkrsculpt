@@ -20,6 +20,7 @@ rayon.workspace = true
 roxmltree.workspace = true
 rustc-hash.workspace = true
 yazi.workspace = true
+web-time.workspace = true
 
 [dev-dependencies]
 # The mesher this crate's own is held to, bit for bit. It was the mesher, and

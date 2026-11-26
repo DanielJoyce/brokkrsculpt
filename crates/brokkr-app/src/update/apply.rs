@@ -649,7 +649,7 @@ fn swap_windows(
     // 1. Wait for the scanner, with backoff, BEFORE anything moves. If this
     //    never succeeds the install is simply not attempted and nothing has
     //    changed.
-    let deadline = std::time::Instant::now() + EXCLUSIVE_BUDGET;
+    let deadline = web_time::Instant::now() + EXCLUSIVE_BUDGET;
     let mut wait = std::time::Duration::from_millis(50);
     loop {
         match probe(staged) {
@@ -659,7 +659,7 @@ fn swap_windows(
             // deletion is at least as likely as a sharing violation.
             Err(Refusal::Quarantined) => return Err(Refusal::Quarantined),
             Err(why) => {
-                if std::time::Instant::now() >= deadline {
+                if web_time::Instant::now() >= deadline {
                     return Err(why);
                 }
                 std::thread::sleep(wait);
@@ -822,7 +822,7 @@ pub fn relaunch_within(
     budget: std::time::Duration,
     path: &Path,
 ) -> Result<std::process::Child, Refused> {
-    let deadline = std::time::Instant::now() + budget;
+    let deadline = web_time::Instant::now() + budget;
     let mut wait = std::time::Duration::from_millis(20);
     let mut tries = 0u32;
     loop {
@@ -830,7 +830,7 @@ pub fn relaunch_within(
         match std::process::Command::new(path).spawn() {
             Ok(child) => return Ok(child),
             Err(error) => {
-                if launch_is_hopeless(error.kind()) || std::time::Instant::now() >= deadline {
+                if launch_is_hopeless(error.kind()) || web_time::Instant::now() >= deadline {
                     return Err(Refused { error, tries });
                 }
                 std::thread::sleep(wait);
@@ -849,13 +849,13 @@ fn retry<T>(
     budget: std::time::Duration,
     mut operation: impl FnMut() -> std::io::Result<T>,
 ) -> std::io::Result<T> {
-    let deadline = std::time::Instant::now() + budget;
+    let deadline = web_time::Instant::now() + budget;
     let mut wait = std::time::Duration::from_millis(20);
     loop {
         match operation() {
             Ok(value) => return Ok(value),
             Err(why) => {
-                if std::time::Instant::now() >= deadline {
+                if web_time::Instant::now() >= deadline {
                     return Err(why);
                 }
                 std::thread::sleep(wait);
@@ -952,6 +952,7 @@ pub fn revert(target: &Target, expected_sha256: &str) -> Result<(), Refusal> {
 }
 
 /// SHA-256 of a file on disk.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn sha256_of(path: &Path) -> Result<String, Refusal> {
     use std::io::Read;
     let mut file = std::fs::File::open(path).map_err(|why| {
@@ -969,6 +970,12 @@ pub fn sha256_of(path: &Path) -> Result<String, Refusal> {
         context.update(&buffer[..read]);
     }
     Ok(context.finish().as_ref().iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+/// In a browser there is no file to hash.
+#[cfg(target_arch = "wasm32")]
+pub fn sha256_of(_path: &Path) -> Result<String, Refusal> {
+    Err(Refusal::UnsupportedPlatform)
 }
 
 /// Remove `.part` and `.link` files left by an attempt that died.
@@ -1110,11 +1117,18 @@ pub fn finish_staging(file: &std::fs::File) -> Result<(), Refusal> {
 /// to touch it. That comparison is a thing someone can get wrong, and getting it
 /// wrong means one install reverting itself on the other's evidence. A filename
 /// makes the collision impossible rather than merely checked.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn marker_path(target: &Target) -> Option<PathBuf> {
     let digest =
         ring::digest::digest(&ring::digest::SHA256, target.path.as_os_str().as_encoded_bytes());
     let key: String = digest.as_ref()[..8].iter().map(|byte| format!("{byte:02x}")).collect();
     crate::paths::state_file(&format!("update-pending-{key}"))
+}
+
+/// In a browser there is no install to mark.
+#[cfg(target_arch = "wasm32")]
+pub fn marker_path(_target: &Target) -> Option<PathBuf> {
+    None
 }
 
 /// What the marker carries.
@@ -1797,7 +1811,7 @@ mod tests {
         let staged = dir.join("staged.exe");
         // Never written: the scanner took it.
 
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         let refusal = swap_windows(&target, &staged, "digest", &exclusive_probe)
             .expect_err("a vanished payload must refuse");
         assert_eq!(refusal, Refusal::Quarantined);
@@ -1848,7 +1862,7 @@ mod tests {
 
     #[test]
     fn the_retry_helper_gives_up_rather_than_spinning_for_ever() {
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         let outcome: std::io::Result<()> = retry(std::time::Duration::from_millis(120), || {
             Err(std::io::Error::other("never works"))
         });
@@ -1907,7 +1921,7 @@ mod tests {
         let dir = scratch("relaunch-missing");
         let missing = dir.join("was-never-there");
 
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         let Err(refused) = relaunch_within(std::time::Duration::from_secs(30), &missing) else {
             panic!("a path with no file was somehow spawned");
         };

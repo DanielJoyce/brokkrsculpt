@@ -714,7 +714,7 @@ mod tests {
             let mut volume = Volume::new(1.0);
             volume.seed_sphere(Vec3::splat(radius + 16.0), radius);
             let fine = volume.stats();
-            let started = std::time::Instant::now();
+            let started = web_time::Instant::now();
             let pyramid = FormPyramid::build(&volume, MAX_LEVELS);
             let took = started.elapsed();
             println!(

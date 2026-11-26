@@ -12,7 +12,7 @@
 //! the body alone and adds the plate as a new row directly below it, one
 //! undo entry, and makes it the active body.
 
-use std::time::Instant;
+use web_time::Instant;
 
 use brokkr_core::extract::Extraction;
 use brokkr_core::{Change, Entry, NodeId, Volume};

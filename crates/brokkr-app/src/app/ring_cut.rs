@@ -1327,11 +1327,11 @@ mod tests {
             let body = app.doc.active();
             let disc = Disc::round(Vec3::new(0.1, 0.2, 0.3), Vec3::X, 40.0);
             set_proposal(&mut app, body, &disc);
-            let started = std::time::Instant::now();
+            let started = web_time::Instant::now();
             update(&mut app, Message::Ring(RingMessage::Split));
             let split = started.elapsed().as_secs_f32() * 1000.0;
             assert_eq!(app.doc.bodies().count(), 2, "{}", app.status);
-            let started = std::time::Instant::now();
+            let started = web_time::Instant::now();
             update(&mut app, Message::Frame);
             let frame = started.elapsed().as_secs_f32() * 1000.0;
             eprintln!(

@@ -341,6 +341,7 @@ pub struct Floor {
 /// create a second channel of meaning running beside the manifest with nothing
 /// binding the two together. A trusted comment saying `build:1018` next to a
 /// manifest saying `build:1012` is a state no code here would notice.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn verify_manifest(body: &[u8], signature: &[u8]) -> Result<Manifest, Refusal> {
     if body.len() as u64 > MAX_MANIFEST_BYTES {
         return Err(Refusal::TooLarge { what: "update manifest", cap: MAX_MANIFEST_BYTES });
@@ -397,6 +398,13 @@ pub fn verify_manifest(body: &[u8], signature: &[u8]) -> Result<Manifest, Refusa
         return Err(Refusal::SeqImplausible(manifest.seq));
     }
     Ok(manifest)
+}
+
+/// In a browser nothing is verified: there is nothing to update. See
+/// `docs/WEB.md`.
+#[cfg(target_arch = "wasm32")]
+pub fn verify_manifest(_body: &[u8], _signature: &[u8]) -> Result<Manifest, Refusal> {
+    Err(Refusal::UnsupportedPlatform)
 }
 
 /// Parse a manifest that has already been verified.
@@ -578,6 +586,7 @@ pub fn payload_url(payload: &Payload) -> String {
 /// SHA-256 from `ring`, which is already compiled as rustls' backend. Hand
 /// rolling it here is forbidden: this is the check that decides whether network
 /// bytes get the execute bit.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn check_payload(
     mut reader: impl std::io::Read,
     payload: &Payload,
@@ -617,6 +626,16 @@ pub fn check_payload(
         return Err(Refusal::DigestMismatch { expected: payload.sha256.clone(), actual });
     }
     Ok(())
+}
+
+/// In a browser there is no payload to check.
+#[cfg(target_arch = "wasm32")]
+pub fn check_payload(
+    _reader: impl std::io::Read,
+    _payload: &Payload,
+    _sink: &mut impl std::io::Write,
+) -> Result<(), Refusal> {
+    Err(Refusal::UnsupportedPlatform)
 }
 
 /// Whether the running build is one the manifest marks as known-bad.
@@ -891,8 +910,8 @@ pub fn record_applied(seq: u64, key_epoch: u32, build: u64) {
 /// panel, never a refusal, so a machine with a wrong clock loses a sentence and
 /// not its updates.
 pub fn record_check_succeeded() {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let now = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|since| since.as_secs())
         .unwrap_or_default();
     record_state(None, None, Some(now));
@@ -935,8 +954,8 @@ pub fn installed_build() -> Option<u64> {
 /// would be absurd -- but it means a first run reads "no update check has
 /// succeeded yet" for the whole session even after one has.
 pub fn freshness_line() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let now = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|since| since.as_secs())
         .unwrap_or_default();
     let text = crate::paths::state_file("update.state")
@@ -1041,6 +1060,7 @@ fn host_of(url: &str) -> Option<&str> {
 ///
 /// Nothing stores the redirect target: it is a signed URL good for about an
 /// hour, so a cached one is a bug with a one-hour fuse.
+#[cfg(not(target_arch = "wasm32"))]
 fn follow_to_body(
     agent: &ureq::Agent,
     url: &str,
@@ -1080,6 +1100,7 @@ fn follow_to_body(
 }
 
 /// GET a small file whole, under an absolute cap.
+#[cfg(not(target_arch = "wasm32"))]
 fn get_capped(
     agent: &ureq::Agent,
     url: &str,
@@ -1111,6 +1132,7 @@ fn get_capped(
 /// Returns `Ok(None)` for "nothing to say", which is the common case and is not
 /// an error. Every refusal is named so the caller can decide what is worth a
 /// status line -- most are not.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn check(
     running: Option<u64>,
     settings: &Settings,
@@ -1169,6 +1191,17 @@ pub fn check(
     }))
 }
 
+/// In a browser the updater is inert, as it is on a build that is not a
+/// release: the page is the build.
+#[cfg(target_arch = "wasm32")]
+pub fn check(
+    _running: Option<u64>,
+    _settings: &Settings,
+    _floor: Floor,
+) -> Result<Option<Offer>, Refusal> {
+    Err(Refusal::NotAReleaseBuild)
+}
+
 /// Where a downloaded payload is put.
 ///
 /// The state directory, not `/tmp`: a cross-filesystem rename degrades to a
@@ -1189,6 +1222,7 @@ pub fn download_directory() -> Option<std::path::PathBuf> {
 ///
 /// Returns where the file landed, so the caller can tell the user. A user who
 /// is handed a verified file and not told where it is has been given nothing.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn download(offer: &Offer, into: &std::path::Path) -> Result<std::path::PathBuf, Refusal> {
     let payload = offer.payload.as_ref().ok_or(Refusal::UnsupportedPlatform)?;
     // **Which directory is a correctness question, not a tidiness one.**
@@ -1254,6 +1288,12 @@ pub fn download(offer: &Offer, into: &std::path::Path) -> Result<std::path::Path
         Refusal::Unreachable(format!("could not finish the download ({why})"))
     })?;
     Ok(final_path)
+}
+
+/// In a browser there is nothing to download into.
+#[cfg(target_arch = "wasm32")]
+pub fn download(_offer: &Offer, _into: &std::path::Path) -> Result<std::path::PathBuf, Refusal> {
+    Err(Refusal::UnsupportedPlatform)
 }
 
 #[cfg(test)]

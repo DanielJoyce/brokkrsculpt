@@ -15,7 +15,7 @@
 
 use brokkr_core::BrushDirection;
 use brokkr_core::paint::spray::Spray;
-use std::time::Instant;
+use web_time::Instant;
 
 use glam::{Vec2, Vec3};
 use iced::Element;
@@ -306,7 +306,7 @@ mod tests {
             let mut app = app();
             update(&mut app, Message::BrushRadiusChanged(radius));
             press(&mut app);
-            let started = std::time::Instant::now();
+            let started = web_time::Instant::now();
             for _ in 0..10 {
                 app.spray_for(0.016);
             }
@@ -320,7 +320,7 @@ mod tests {
             }
             update(&mut app, Message::PaintTouchChosen(PaintTouch::Loaded));
             press(&mut app);
-            let started = std::time::Instant::now();
+            let started = web_time::Instant::now();
             for step in 1..=10 {
                 let to = Vector { x: CENTRE.x + step as f32 * 25.0, y: CENTRE.y };
                 update(

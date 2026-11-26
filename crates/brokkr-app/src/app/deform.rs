@@ -8,7 +8,7 @@
 //! finds the twist as it was left. An apply is one undo entry holding the
 //! body as it was, the same as a bulk.
 
-use std::time::Instant;
+use web_time::Instant;
 
 use brokkr_core::deform::{Axis, DeformKind, Deformation, MAX_BEND_DEGREES, MIN_TAPER};
 use iced::Element;

@@ -1509,7 +1509,7 @@ mod timing {
                 let mut stroke = PaintStroke::new();
                 let lay = Lay::loaded(pigment);
                 volume.begin_stroke();
-                let started = std::time::Instant::now();
+                let started = web_time::Instant::now();
                 for step in 0..20 {
                     let centre = Vec3::new(step as f32 * radius * 0.25, 0.0, 30.0);
                     let stamp = Stamp::new(centre, Vec3::Z, BrushDirection::Add);
@@ -1526,7 +1526,7 @@ mod timing {
                 let rounds = 20;
                 let mut stroke = PaintStroke::new();
                 let lay = Lay { catch, seed: 1, ..Lay::loaded(pigment) };
-                let started = std::time::Instant::now();
+                let started = web_time::Instant::now();
                 for _ in 0..rounds {
                     // A new stroke each time, so that every stamp lays its
                     // paint: a second stamp in the same place in the same

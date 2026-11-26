@@ -65,9 +65,12 @@ mod swatch;
 mod workbench;
 pub use workbench::Piece;
 
+// A picked file has no path in a browser. See `web.rs`.
+#[cfg(target_arch = "wasm32")]
+use crate::web::NoPath;
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::Instant;
+use web_time::Instant;
 
 use brokkr_core::{
     BrickCoord, BrickMesh, Brush, BrushDirection, BrushKind, BrushScratch, Change, Document,
@@ -8714,7 +8717,7 @@ impl Brokkr {
             return;
         }
 
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         let mask = self.doc.active_volume().generated_mask(recipe);
         let elapsed = started.elapsed();
         if mask.is_free() {
@@ -8881,7 +8884,7 @@ impl Brokkr {
             return;
         }
 
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         let Some(outcome) = self.doc.split_masked(source) else {
             // The guard covers the two O(1) cases; this is the third, and it
             // needs the pass to find out: a mask that is neither empty nor

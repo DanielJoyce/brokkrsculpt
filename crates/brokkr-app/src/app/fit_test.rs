@@ -12,6 +12,9 @@
 //! and its depth) at the document's own voxel size, because that is the
 //! lattice the real keys will be cut on.
 
+// A picked file has no path in a browser. See `web.rs`.
+#[cfg(target_arch = "wasm32")]
+use crate::web::NoPath;
 use brokkr_core::part::coupon::{CLEARANCES_MM, coupon};
 use iced::Task;
 

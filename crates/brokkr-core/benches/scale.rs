@@ -12,7 +12,7 @@
 //!
 //! Run with `cargo bench -p brokkr-core --bench scale`.
 
-use std::time::Instant;
+use web_time::Instant;
 
 use brokkr_core::{
     BrickCoord, BrickMesh, Brush, BrushDirection, BrushKind, BrushScratch, DEFAULT_RECLAIM_BUDGET,
