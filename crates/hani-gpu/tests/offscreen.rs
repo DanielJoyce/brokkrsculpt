@@ -3564,12 +3564,14 @@ fn a_spread_body_is_drawn_moved_by_its_offset() {
     let before = middle(&plain);
 
     // Another body's offset moves nothing.
-    renderer.set_spread(&harness.queue, &[(NodeId(THE_ONLY_BODY.0 + 1), Vec3::splat(5.0))]);
+    renderer
+        .set_spread(&harness.queue, &[(NodeId(THE_ONLY_BODY.0 + 1), Vec3::splat(5.0).extend(0.0))]);
     assert_eq!(mask(&harness.frame(&renderer)), plain, "another body's offset moved this one");
 
     // This body's, to the right of the picture, moves it right.
     let right = view_matrix(distance).row(0).truncate().normalize();
-    renderer.set_spread(&harness.queue, &[(THE_ONLY_BODY, right * MODEL_RADIUS * 0.8)]);
+    renderer
+        .set_spread(&harness.queue, &[(THE_ONLY_BODY, (right * MODEL_RADIUS * 0.8).extend(0.0))]);
     let moved = harness.frame(&renderer);
     dump("spread", &moved);
     let after = middle(&mask(&moved));
@@ -3578,4 +3580,11 @@ fn a_spread_body_is_drawn_moved_by_its_offset() {
     // And none puts it back exactly.
     renderer.set_spread(&harness.queue, &[]);
     assert_eq!(mask(&harness.frame(&renderer)), plain, "with no offset it is not where it was");
+
+    // Three quarters screened away, where it is: about a quarter of its
+    // pixels drawn, the hierarchy's "others see-through".
+    renderer.set_spread(&harness.queue, &[(THE_ONLY_BODY, Vec3::ZERO.extend(0.75))]);
+    let lit = |drawn: &[bool]| drawn.iter().filter(|lit| **lit).count() as f64;
+    let share = lit(&mask(&harness.frame(&renderer))) / lit(&plain);
+    assert!((share - 0.25).abs() < 0.05, "a quarter screened in drew {share:.3} of it");
 }

@@ -154,6 +154,9 @@ struct VertexOutput {
     // The vertex in the model's own space, for the ring cut's see-through
     // view.
     @location(8) world: vec3<f32>,
+    // The share of this body screened away: the hierarchy's "others
+    // see-through", `hani_gpu::spread`. Nought draws it whole.
+    @location(9) @interpolate(flat) screened: f32,
 }
 
 // How rough and how metal a finish is, by its code.
@@ -184,11 +187,13 @@ fn vertex_main(
     // How far this body is drawn from where it is: the hierarchy's Explode,
     // `hani_gpu::spread`. Zero for every body not exploded. Only where it
     // is DRAWN moves: `world` and `height` stay the model's own, so the
-    // overhang tint and the ring cut's see-through read the real body.
-    @location(4) spread: vec3<f32>,
+    // overhang tint and the ring cut's see-through read the real body. In
+    // `w`, the share of the body screened away.
+    @location(4) spread: vec4<f32>,
 ) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = uniforms.view_projection * vec4<f32>(position + spread, 1.0);
+    out.clip_position = uniforms.view_projection * vec4<f32>(position + spread.xyz, 1.0);
+    out.screened = spread.w;
     // The view matrix is a rigid transform, so its upper 3x3 rotates normals
     // correctly without an inverse transpose.
     out.view_normal = (uniforms.view * vec4<f32>(normal, 0.0)).xyz;
@@ -214,12 +219,17 @@ fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) ->
     // The ring cut's see-through view: all but the piece being cut screened
     // by a 4x4 ordered dither, so what is behind (the cut's band and face)
     // shows through with no sorting and the depth buffer still right.
+    // A body the hierarchy draws see-through is screened the same way, by
+    // its own share.
+    var amount = in.screened;
     if (uniforms.ghost.x > 0.0) {
         let kept = dot(uniforms.ghost_plane.xyz, in.world) >= uniforms.ghost_plane.w
             && distance(in.world, uniforms.ghost_keep.xyz) <= uniforms.ghost_keep.w;
         // The piece screened by `ghost.y`, less than the rest, so the cut
         // face inside it and the keys on the face show through it too.
-        let amount = select(uniforms.ghost.x, uniforms.ghost.y, kept);
+        amount = max(amount, select(uniforms.ghost.x, uniforms.ghost.y, kept));
+    }
+    if (amount > 0.0) {
         var bayer = array<f32, 16>(
             0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
             3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0

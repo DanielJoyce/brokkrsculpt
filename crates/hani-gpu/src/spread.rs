@@ -10,21 +10,26 @@
 // draws pick their offset by the instance number they are issued with and the
 // mesh itself is never touched. Entry 0 is always zero: every body that is not
 // spread, and every thumbnail, draws with instance 0.
+//
+// The fourth component, which was padding, is how much of the body is
+// screened away: the hierarchy's "others see-through", which draws every
+// body but the active one translucent with the ring cut's 4x4 dither.
+// Nought draws the body whole.
 
-use glam::Vec3;
+use glam::{Vec3, Vec4};
 use hani_core::NodeId;
 
-/// Bytes per entry: a `vec3` padded to 16 so the stride is the one a uniform
-/// array would use and the buffer can be read as `Float32x3`.
+/// Bytes per entry: a `vec4`, the offset and the share screened away.
 pub const SPREAD_BYTES: u64 = 16;
 
 /// The offsets, and the buffer the shader reads them from.
 #[derive(Debug)]
 pub struct Spread {
     buffer: wgpu::Buffer,
-    /// Body and offset; the body's entry in the buffer is its index here plus
-    /// one. At most `MAX_BODIES`, and almost always empty.
-    entries: Vec<(NodeId, Vec3)>,
+    /// Body, and its offset with the share screened away in `w`; the body's
+    /// entry in the buffer is its index here plus one. At most `MAX_BODIES`,
+    /// and almost always empty.
+    entries: Vec<(NodeId, Vec4)>,
 }
 
 impl Spread {
@@ -41,7 +46,7 @@ impl Spread {
 
     /// Replace every offset. Writes the buffer only when something changed, so
     /// a caller may publish the same set every frame for nothing.
-    pub fn set(&mut self, queue: &wgpu::Queue, entries: &[(NodeId, Vec3)]) {
+    pub fn set(&mut self, queue: &wgpu::Queue, entries: &[(NodeId, Vec4)]) {
         debug_assert!(entries.len() <= hani_core::MAX_BODIES, "more offsets than bodies");
         if self.entries == entries {
             return;
@@ -53,7 +58,7 @@ impl Spread {
         }
         let mut bytes = Vec::with_capacity(entries.len() * SPREAD_BYTES as usize);
         for (_, offset) in entries {
-            for value in [offset.x, offset.y, offset.z, 0.0] {
+            for value in offset.to_array() {
                 bytes.extend_from_slice(&value.to_le_bytes());
             }
         }
@@ -66,7 +71,7 @@ impl Spread {
         self.entries
             .iter()
             .position(|(id, _)| *id == body)
-            .map_or((0, Vec3::ZERO), |index| (index as u32 + 1, self.entries[index].1))
+            .map_or((0, Vec3::ZERO), |index| (index as u32 + 1, self.entries[index].1.truncate()))
     }
 
     pub fn buffer(&self) -> &wgpu::Buffer {

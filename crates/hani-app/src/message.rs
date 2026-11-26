@@ -1497,6 +1497,9 @@ pub enum Message {
     /// Show only the active body, or everything again: solo on the active
     /// body, from the hierarchy's header. See `app/explode.rs`.
     SoloActiveToggled,
+    /// Draw every body but the active one see-through and out of reach of
+    /// the pointer, or whole again. See `app/explode.rs`.
+    OthersSeeThroughToggled,
     /// Show or hide the thumbnail column. Session state, so it must NOT dirty
     /// the document: nothing about it is written to the file.
     ThumbnailsToggled,

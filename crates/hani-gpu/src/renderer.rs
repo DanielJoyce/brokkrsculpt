@@ -459,7 +459,7 @@ impl SculptRenderer {
                     wgpu::VertexBufferLayout {
                         array_stride: crate::spread::SPREAD_BYTES,
                         step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &wgpu::vertex_attr_array![4 => Float32x3],
+                        attributes: &wgpu::vertex_attr_array![4 => Float32x4],
                     },
                 ],
             },
@@ -597,9 +597,11 @@ impl SculptRenderer {
         self.pool.set_opposite_polarity(opposite);
     }
 
-    /// Replace how far each body is drawn from where it is: the hierarchy's
-    /// Explode. A body not named is drawn where it is. See `crate::spread`.
-    pub fn set_spread(&mut self, queue: &wgpu::Queue, spread: &[(NodeId, glam::Vec3)]) {
+    /// Replace how far each body is drawn from where it is, the hierarchy's
+    /// Explode, and in `w` how much of it is screened away, its "others
+    /// see-through". A body not named is drawn where it is and whole. See
+    /// `crate::spread`.
+    pub fn set_spread(&mut self, queue: &wgpu::Queue, spread: &[(NodeId, glam::Vec4)]) {
         self.pool.spread.set(queue, spread);
     }
 

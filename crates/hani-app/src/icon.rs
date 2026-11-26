@@ -721,6 +721,15 @@ const SOLO: Glyph = Glyph {
     ],
 };
 
+/// Others see-through: a solid part in front of an outline one behind it,
+/// "this one, and the rest as glass". See `app/explode.rs`.
+const SEE_THROUGH: Glyph = Glyph {
+    subs: &[
+        Sub { segs: &[Seg::Rect { x: 3.5, y: 3.5, w: 11.0, h: 11.0, r: 1.5 }], ink: Ink::Stroke },
+        Sub { segs: &[Seg::Rect { x: 9.5, y: 9.5, w: 11.0, h: 11.0, r: 1.5 }], ink: Ink::Fill },
+    ],
+};
+
 /// Explode: a part in the middle and four arrows leaving it for the corners,
 /// "everything apart". The arrows carry it: without them it is a square,
 /// and a square is a body or a page everywhere else in this set.
@@ -866,6 +875,7 @@ pub enum IconName {
     Copy,
     Solo,
     Explode,
+    SeeThrough,
     MergeDown,
     Split,
 }
@@ -879,7 +889,7 @@ impl IconName {
     /// set's index, and anything that needs the whole set rather than one icon
     /// starts here.
     #[allow(dead_code)]
-    pub const ALL: [IconName; 34] = [
+    pub const ALL: [IconName; 35] = [
         IconName::Close,
         IconName::Minimise,
         IconName::Maximise,
@@ -912,6 +922,7 @@ impl IconName {
         IconName::Copy,
         IconName::Solo,
         IconName::Explode,
+        IconName::SeeThrough,
         IconName::MergeDown,
         IconName::Split,
     ];
@@ -985,6 +996,7 @@ impl IconName {
             IconName::Copy => &COPY,
             IconName::Solo => &SOLO,
             IconName::Explode => &EXPLODE,
+            IconName::SeeThrough => &SEE_THROUGH,
             IconName::MergeDown => &MERGE_DOWN,
             IconName::Split => &SPLIT,
         }

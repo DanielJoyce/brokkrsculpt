@@ -507,7 +507,53 @@ only ever moving out, and together again it is put back as it was
 (`apart_every_part_is_in_view_and_the_view_comes_back`): a model the view
 held whole had opened past its edges.
 
-Not done: the parts jump apart rather than moving; a part's offset is worked out from
-its box, so two parts on the same side of the largest at the same
-distance can still overlap each other; folders are not exploded as a
-group.
+Not done: a part's offset is worked out from its box, so two parts on
+the same side of the largest at the same distance can still overlap each
+other; folders are not exploded as a group.
+
+### Travelling, and the others see-through (2026-11-26)
+
+Asked for by the maintainer: *"Animate the explode, when clicking on a part
+in explode view that unexplodes the view and selects that part. Add a
+button next to hide all other parts to make them translucent and
+unselectable instead. And when its on, selecting a part in the hierarchy
+then makes that part active and all others translucent."* A click on a
+part already chose it and brought the parts back; what was missing was
+the travel.
+
+**The parts travel** apart and back over 320 ms, eased, and the view with
+them between where it was and the view framing them apart (both chosen
+on a screen, not measured). The layout is worked out whole and drawn
+scaled by how far the travel has got, so the pick, which marches each
+body moved back by its drawn offset, still hits what is drawn. On the
+way back nothing is where it ends up, so a press then is taken and does
+nothing; the gizmo comes back once they are together. Pressed again on
+the way back, they turn round where they are, the same way.
+
+**The others see-through** is a third button. Every body but the active
+one is screened by the ring cut's 4x4 dither, 70 per cent of its pixels
+discarded (chosen on a screen), so what is behind shows with no sorting
+and the depth buffer still right; the share rides in the fourth float of
+the body's entry in the Explode buffer, which was padding. The pick
+leaves those bodies out (`Hani::pick_mask`), so they cannot be chosen,
+hovered or carved through the viewport, and a ray passes through them to
+what is behind. Choosing another row makes that one solid and the rest
+see-through, since the rule is "all but the active one". Solo hides what
+this shows through, so turning either on turns the other off; escape
+leaves it.
+
+Tests: `the_parts_travel_apart_and_a_press_on_the_way_back_does_nothing`
+(the bead part of the way out, further, then all the way, and a press on it
+on the way back selects nothing);
+`the_others_see_through_cannot_be_picked_and_follow_the_active_body`
+(screened and not picked, following the row, one or the other with
+solo, escape); offscreen in `hani-gpu`, a body three quarters screened
+draws 0.25 of its pixels within 0.05 (llvmpipe). The tests above settle
+the travel before they look.
+
+On a screen, under Xvfb: a ball added on the starting body in Transform;
+see-through on drew the ball as glass over the solid body; choosing the
+ball's row made it solid and the body glass; Explode moved the ball out
+and pulled the view back, and pressed again brought it in over a run of
+frames. Llvmpipe draws a frame in about a fifth of a second, so the
+travel took longer there than it says.

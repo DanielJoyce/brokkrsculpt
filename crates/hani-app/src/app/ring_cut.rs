@@ -1135,6 +1135,7 @@ mod tests {
         let arm = app.doc.active();
         let body = app.doc.bodies().map(|(id, _)| id).find(|id| *id != arm).expect("the body");
         update(&mut app, Message::ExplodeToggled);
+        app.settle_explode();
         let spread = app.shared.spread_snapshot();
         let of = |id| spread.iter().find(|(at, _)| *at == id).map(|(_, offset)| *offset);
         assert_eq!(of(body), Some(Vec3::ZERO), "the body moved: {spread:?}");
