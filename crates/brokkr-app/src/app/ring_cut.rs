@@ -26,9 +26,19 @@
 //! and Split in two waits. While a cut is proposed, everything but the
 //! piece's side of it is screened (*See-through* on the bar), so the band
 //! can be seen where the rest of the model hides it.
+//!
+//! # Stage 4: bending it
+//!
+//! Eight points on the line the cut leaves on the model, at even angles
+//! round it, each dragged along the surface: the pointer's ray meets the
+//! body, and how far that point is along the cut's normal is the point's
+//! height. The cut is then the surface through the heights
+//! ([`brokkr_core::sever::Bend`]), a collar's line round a neck, fitted,
+//! drawn and keyed as the flat one is. The handles move a bent cut whole.
+//! *Flat* puts the points back on the plane.
 
 use brokkr_core::NodeId;
-use brokkr_core::sever::{Disc, Unsevered};
+use brokkr_core::sever::{Bend, Disc, Unsevered};
 use glam::{Vec2, Vec3};
 use iced::widget::{button, row, text};
 use iced::{Alignment, Element};
@@ -75,6 +85,12 @@ pub(super) struct Proposal {
     /// The keys a parting would put across the cut: planned when it is
     /// fitted, and each draggable across the cut face.
     pub keys: Vec<brokkr_core::part::Key>,
+    /// How far each of the points round the cut is along its normal from
+    /// the plane: all zero is flat. See stage 4 above.
+    pub lifts: [f32; POINTS],
+    /// Where each point is drawn: on the line the cut leaves, by its place
+    /// round the cut. A point whose way out meets no surface is left out.
+    points: Vec<(usize, Vec3)>,
 }
 
 /// A ring in the model: what the handles move.
@@ -94,6 +110,18 @@ impl Ring {
 
     fn disc(&self) -> Disc {
         Disc::round(self.centre, self.normal, self.radius)
+    }
+
+    /// The cut bent by `lifts`, with the heights at full value from
+    /// `reach` out; flat when every lift is zero.
+    fn bent(&self, lifts: &[f32; POINTS], reach: f32) -> Disc {
+        let bend = lifts.iter().any(|lift| *lift != 0.0).then(|| Bend {
+            u: self.across,
+            v: self.beside(),
+            heights: lifts.to_vec(),
+            reach,
+        });
+        self.disc().bent(bend)
     }
 
     /// Where each handle is.
@@ -138,6 +166,8 @@ enum Taken {
     Handle(Held),
     /// A key, by its place in the proposal's list.
     Key(usize),
+    /// A point round the cut, by its place round it.
+    Point(usize),
 }
 
 /// The ring cut's state.
@@ -175,6 +205,10 @@ const HANDLE_PX: f32 = 6.0;
 const HANDLE: [f32; 4] = [1.0, 0.85, 0.3, 1.0];
 const MISFIT: [f32; 4] = [0.9, 0.2, 0.15, 0.9];
 const KEY: [f32; 4] = [0.35, 0.8, 1.0, 1.0];
+
+/// Points round a cut, to bend it by.
+pub(super) const POINTS: usize = 8;
+const POINT: [f32; 4] = [0.4, 1.0, 0.45, 1.0];
 
 /// Segments round the ring and the disc as they are drawn.
 const SEGMENTS: usize = 64;
@@ -220,6 +254,21 @@ impl Brokkr {
                 self.ring_cut.held = Some(Taken::Handle(Held { which, pixel, ring }));
                 return;
             }
+            // A point round the cut, to bend it there.
+            let point = proposal
+                .points
+                .iter()
+                .filter_map(|(k, at)| {
+                    let on = super::measure::to_pixels(&self.camera, *at, self.viewport_size)?;
+                    Some((*k, on.distance(pixel)))
+                })
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+            if let Some((k, distance)) = point
+                && distance <= GRAB_PX
+            {
+                self.ring_cut.held = Some(Taken::Point(k));
+                return;
+            }
             // A key's middle, to drag it across the cut face.
             let key = proposal
                 .keys
@@ -257,6 +306,10 @@ impl Brokkr {
             }
             Some(Taken::Key(at)) => {
                 self.move_key(at, pixel);
+                return;
+            }
+            Some(Taken::Point(k)) => {
+                self.move_point(k, pixel);
                 return;
             }
             None => {}
@@ -317,6 +370,8 @@ impl Brokkr {
             disc: None,
             contour: Vec::new(),
             keys: Vec::new(),
+            lifts: [0.0; POINTS],
+            points: Vec::new(),
         });
         self.fit_the_ring();
         self.status = format!("a ring round {:.1} mm", radius * 2.0);
@@ -328,11 +383,27 @@ impl Brokkr {
         let Some(proposal) = &self.ring_cut.proposal else {
             return;
         };
-        let (body, ring) = (proposal.body, proposal.ring);
+        let (body, ring, lifts) = (proposal.body, proposal.ring, proposal.lifts);
         let Some(volume) = self.doc.volume(body) else {
             return;
         };
-        let disc = volume.fit_to_islands(&ring.disc());
+        // The bend comes in over most of the way out to where the flat cut
+        // meets the surface, so that the middle of the face stays flat.
+        let flat = volume.fit_to_islands(&ring.disc());
+        let reach = flat
+            .as_ref()
+            .map(|disc| rim_points(volume, disc, &ring))
+            .filter(|points| !points.is_empty())
+            .map_or(ring.radius * 0.5, |points| {
+                let sum: f32 = points.iter().map(|(_, at)| ring.centre.distance(*at)).sum();
+                sum / points.len() as f32 * 0.8
+            });
+        let disc = if lifts.iter().all(|lift| *lift == 0.0) {
+            flat
+        } else {
+            volume.fit_to_islands(&ring.bent(&lifts, reach))
+        };
+        let points = disc.as_ref().map(|disc| rim_points(volume, disc, &ring)).unwrap_or_default();
         let width = BAND_PX * self.world_per_pixel(ring.centre);
         let band = disc.as_ref().map(|disc| contour(volume, disc, width)).unwrap_or_default();
         // Planned again with the cut: a key moved by hand stays only until
@@ -343,7 +414,31 @@ impl Brokkr {
             proposal.disc = disc;
             proposal.contour = band;
             proposal.keys = keys;
+            proposal.points = points;
         }
+    }
+
+    /// A point round the cut dragged to `pixel`: its height is how far
+    /// along the cut's normal the surface under the pointer is. Off the
+    /// body, it stays where it was.
+    fn move_point(&mut self, k: usize, pixel: Vec2) {
+        let (origin, ray) = self.ray_through(pixel);
+        let Some(proposal) = &self.ring_cut.proposal else {
+            return;
+        };
+        let (body, ring) = (proposal.body, proposal.ring);
+        let Some(hit) = self.doc.pick_body(body, origin, ray, self.camera.far()) else {
+            return;
+        };
+        let height = (hit.position - ring.centre).dot(ring.normal);
+        let most = ring.radius * 2.0;
+        if let Some(proposal) = self.ring_cut.proposal.as_mut()
+            && let Some(lift) = proposal.lifts.get_mut(k)
+        {
+            *lift = height.clamp(-most, most);
+        }
+        self.fit_the_ring();
+        self.refresh_overlay();
     }
 
     /// A key dragged to `pixel`: to where the pointer's ray meets the cut's
@@ -438,6 +533,12 @@ impl Brokkr {
                 self.ring_cut.press = None;
             }
             RingMessage::SeeThrough(amount) => self.ring_cut.see_through = amount.clamp(0.0, 1.0),
+            RingMessage::Flat => {
+                if let Some(proposal) = self.ring_cut.proposal.as_mut() {
+                    proposal.lifts = [0.0; POINTS];
+                }
+                self.fit_the_ring();
+            }
         }
         self.refresh_overlay();
     }
@@ -576,6 +677,17 @@ impl Brokkr {
                 batch.push_triangle(corner(-1.0, -1.0), corner(1.0, -1.0), corner(1.0, 1.0), KEY);
                 batch.push_triangle(corner(-1.0, -1.0), corner(1.0, 1.0), corner(-1.0, 1.0), KEY);
             }
+            // The points round the cut, each lifted along its own line of
+            // sight as the handles are.
+            for (_, point) in &proposal.points {
+                let half = HANDLE_PX * 0.8 * self.world_per_pixel(*point);
+                let toward = (self.camera.eye() - *point).normalize_or(ring.normal);
+                let at = *point + toward * half * 3.0;
+                let (u, v) = toward.any_orthonormal_pair();
+                let corner = |a: f32, b: f32| at + (u * a + v * b) * half;
+                batch.push_triangle(corner(0.0, -1.3), corner(1.3, 0.0), corner(0.0, 1.3), POINT);
+                batch.push_triangle(corner(0.0, -1.3), corner(0.0, 1.3), corner(-1.3, 0.0), POINT);
+            }
         }
         self.publish_ghost();
     }
@@ -648,6 +760,12 @@ impl Brokkr {
                     "Drop",
                     Some(Message::Ring(RingMessage::Dropped)),
                 ));
+            if proposal.lifts.iter().any(|lift| *lift != 0.0) {
+                line = line.push(crate::ui::button_secondary(
+                    "Flat",
+                    Some(Message::Ring(RingMessage::Flat)),
+                ));
+            }
         }
         line.into()
     }
@@ -677,6 +795,37 @@ fn piece_is_in_front(volume: &brokkr_core::Volume, disc: &Disc, radius: f32) -> 
     front <= back
 }
 
+/// Where each of the points round a cut is: from the middle out along its
+/// angle, on the cut, the furthest place within it where solid gives way
+/// to air, which is where the line it leaves on the model is.
+fn rim_points(volume: &brokkr_core::Volume, disc: &Disc, ring: &Ring) -> Vec<(usize, Vec3)> {
+    let step = volume.voxel_size() * 0.5;
+    let beside = ring.beside();
+    (0..POINTS)
+        .filter_map(|k| {
+            let angle = std::f32::consts::TAU * k as f32 / POINTS as f32;
+            let way = ring.across * angle.cos() + beside * angle.sin();
+            let mut found = None;
+            let mut was_solid = false;
+            let mut r = 0.0;
+            while r <= disc.radius {
+                let flat = disc.centre + way * r;
+                if !disc.within(flat) && r > 0.0 {
+                    break;
+                }
+                let at = disc.on_cut(flat);
+                let solid = volume.sample_world(at) < 0.0;
+                if was_solid && !solid {
+                    found = Some(disc.on_cut(disc.centre + way * (r - step * 0.5)));
+                }
+                was_solid = solid;
+                r += step;
+            }
+            found.map(|at| (k, at))
+        })
+        .collect()
+}
+
 /// A circle of `radius` round `centre` in the plane of `u` and `v`.
 fn circle(
     batch: &mut brokkr_gpu::OverlayBatch,
@@ -702,9 +851,11 @@ fn contour(volume: &brokkr_core::Volume, disc: &Disc, width: f32) -> Vec<[Vec3; 
     let (u, v) = disc.axes();
     let cells = CONTOUR_CELLS;
     let pitch = disc.radius * 2.0 / cells as f32;
-    let point = |i: usize, j: usize| {
+    // On the cut, which is the plane only when it is not bent.
+    let flat = |i: usize, j: usize| {
         disc.centre + u * (i as f32 * pitch - disc.radius) + v * (j as f32 * pitch - disc.radius)
     };
+    let point = |i: usize, j: usize| disc.on_cut(flat(i, j));
     let values: Vec<f32> = (0..=cells)
         .flat_map(|j| (0..=cells).map(move |i| (i, j)))
         .map(|(i, j)| volume.sample_world(point(i, j)))
@@ -714,7 +865,7 @@ fn contour(volume: &brokkr_core::Volume, disc: &Disc, width: f32) -> Vec<[Vec3; 
     let mut band = Vec::new();
     for j in 0..cells {
         for i in 0..cells {
-            if !disc.within((point(i, j) + point(i + 1, j + 1)) * 0.5) {
+            if !disc.within((flat(i, j) + flat(i + 1, j + 1)) * 0.5) {
                 continue;
             }
             let corners = [(i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)];
@@ -767,6 +918,8 @@ mod tests {
             disc: Some(disc.clone()),
             contour: Vec::new(),
             keys: Vec::new(),
+            lifts: [0.0; POINTS],
+            points: Vec::new(),
         });
     }
 
@@ -881,6 +1034,102 @@ mod tests {
         set_proposal(&mut app, body, &Disc::round(Vec3::new(16.0, 0.0, 0.0), Vec3::X, 4.0));
         app.fit_the_ring();
         app
+    }
+
+    /// Stage 4: the points round the cut sit on the line it leaves; one
+    /// dragged along the arm through the pointer raises the cut on that
+    /// side, Split in two then leaves that side's sliver with the body and
+    /// takes the other side's with the arm, and Flat puts it back.
+    #[test]
+    fn a_point_dragged_along_the_arm_bends_the_cut() {
+        let mut app = armed_with_a_cut();
+        app.viewport_size = Vec2::new(SIZE.x, SIZE.y);
+        app.fit_the_ring();
+        let proposal = app.ring_cut.proposal.clone().expect("a cut");
+        assert_eq!(proposal.points.len(), POINTS, "a point round the arm is missing");
+        let volume = app.doc.active_volume();
+        for (_, at) in &proposal.points {
+            assert!((at.x - 16.0).abs() < 0.2, "a point off the cut at {at}");
+            assert!(volume.sample_world(*at).abs() < 0.5, "a point off the surface at {at}");
+        }
+        // The point facing the eye, so the ray along the arm from it meets
+        // that side of the arm first.
+        let eye = app.camera.eye();
+        let centre = proposal.ring.centre;
+        let (k, point) = *proposal
+            .points
+            .iter()
+            .max_by(|a, b| {
+                (a.1 - centre).dot(eye - centre).total_cmp(&(b.1 - centre).dot(eye - centre))
+            })
+            .expect("points");
+        let target = point + Vec3::X * 1.5;
+        let from = super::super::measure::to_pixels(&app.camera, point, app.viewport_size)
+            .expect("on screen");
+        let to = super::super::measure::to_pixels(&app.camera, target, app.viewport_size)
+            .expect("on screen");
+        update(
+            &mut app,
+            Message::Pointer(PointerEvent::Pressed {
+                button: PointerButton::Left,
+                position: Vector { x: from.x, y: from.y },
+                size: SIZE,
+            }),
+        );
+        update(
+            &mut app,
+            Message::Pointer(PointerEvent::Moved {
+                position: Vector { x: to.x, y: to.y },
+                size: SIZE,
+            }),
+        );
+        update(&mut app, Message::Frame);
+        update(&mut app, Message::Pointer(PointerEvent::Released { button: PointerButton::Left }));
+        let bent = app.ring_cut.proposal.clone().expect("a cut");
+        assert!((bent.lifts[k] - 1.5).abs() < 0.3, "the point's height is {}", bent.lifts[k]);
+        let disc = bent.disc.clone().expect("the bent cut fits");
+        assert!(disc.bend.is_some(), "the cut is not bent");
+        let moved = bent.points.iter().find(|(at, _)| *at == k).expect("the point").1;
+        assert!((moved.x - 17.5).abs() < 0.3, "the point is drawn at {moved}");
+
+        // Flat puts it back, and a bend again is what is split.
+        update(&mut app, Message::Ring(RingMessage::Flat));
+        let flat = app.ring_cut.proposal.clone().expect("a cut");
+        assert!(flat.lifts.iter().all(|lift| *lift == 0.0));
+        assert!(flat.disc.as_ref().is_some_and(|disc| disc.bend.is_none()));
+        app.ring_cut.proposal = Some(bent);
+
+        // Just inside the arm, a little past the plane: on the raised side
+        // that is the body's, on the opposite side the arm's.
+        let inward = (centre - point).normalize() * 0.4;
+        let raised = Vec3::new(16.6, 0.0, 0.0) + (point - centre).with_x(0.0) + inward;
+        let level = Vec3::new(16.6, 0.0, 0.0) - (point - centre).with_x(0.0) - inward;
+        update(&mut app, Message::Ring(RingMessage::Split));
+        assert_eq!(app.doc.bodies().count(), 2, "{}", app.status);
+        let arm = app.doc.active();
+        let body = app.doc.bodies().map(|(id, _)| id).find(|id| *id != arm).expect("the body");
+        let (arm, body) =
+            (app.doc.volume(arm).expect("the arm"), app.doc.volume(body).expect("the body"));
+        assert!(body.sample_world(raised) < 0.0, "the raised side went with the arm");
+        assert!(arm.sample_world(level) < 0.0, "the level side stayed with the body");
+    }
+
+    /// After a split, Explode keeps the body where it is and moves the arm
+    /// split off it. The piece's cached box is still the whole figure's,
+    /// and read from that it was taken for the largest part and the body
+    /// was pushed away instead (seen on the screen).
+    #[test]
+    fn explode_after_a_split_moves_the_piece_and_not_the_body() {
+        let mut app = armed_with_a_cut();
+        update(&mut app, Message::Ring(RingMessage::Split));
+        assert_eq!(app.doc.bodies().count(), 2, "{}", app.status);
+        let arm = app.doc.active();
+        let body = app.doc.bodies().map(|(id, _)| id).find(|id| *id != arm).expect("the body");
+        update(&mut app, Message::ExplodeToggled);
+        let spread = app.shared.spread_snapshot();
+        let of = |id| spread.iter().find(|(at, _)| *at == id).map(|(_, offset)| *offset);
+        assert_eq!(of(body), Some(Vec3::ZERO), "the body moved: {spread:?}");
+        assert!(of(arm).is_some_and(|offset| offset.x > 0.0), "the arm did not: {spread:?}");
     }
 
     /// Drag a handle of the proposed cut by `by` pixels, through the

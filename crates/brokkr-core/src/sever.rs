@@ -54,6 +54,87 @@ pub struct Disc {
     pub radius: f32,
     /// The cells of the plane the cut is made in, when it is fitted.
     pub region: Option<std::sync::Arc<Region>>,
+    /// How the cut is bent away from its plane, when it is: stage 4 of the
+    /// ring cut, a collar's line. `None` is flat.
+    pub bend: Option<std::sync::Arc<Bend>>,
+}
+
+/// A cut bent away from its plane by a height at each of a few angles round
+/// its middle, the line a shirt's collar makes round a neck.
+///
+/// The height at a point of the plane is the heights round the middle,
+/// interpolated smoothly and periodically by angle (Catmull-Rom), eased in
+/// from their mean at the middle to their full value at `reach` and beyond.
+/// The ease is what keeps the surface smooth where every angle meets: at the
+/// middle it is flat, at their mean height. World units.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Bend {
+    /// The angle 0 direction in the plane, and the quarter turn on from it.
+    pub u: Vec3,
+    pub v: Vec3,
+    /// A height along the normal at each of `heights.len()` even angles,
+    /// the first at `u`.
+    pub heights: Vec<f32>,
+    /// How far from the middle the heights take their full value.
+    pub reach: f32,
+}
+
+impl Bend {
+    /// The direction in the plane of the `k`th height.
+    pub fn direction(&self, k: usize) -> Vec3 {
+        let angle = std::f32::consts::TAU * k as f32 / self.heights.len().max(1) as f32;
+        self.u * angle.cos() + self.v * angle.sin()
+    }
+
+    /// The heights' mean, which is the height at the middle.
+    pub fn mean(&self) -> f32 {
+        if self.heights.is_empty() {
+            return 0.0;
+        }
+        self.heights.iter().sum::<f32>() / self.heights.len() as f32
+    }
+
+    /// The height round the middle at an angle, between the heights.
+    fn around(&self, angle: f32) -> f32 {
+        let count = self.heights.len();
+        if count == 0 {
+            return 0.0;
+        }
+        let at = angle.rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU * count as f32;
+        let first = at.floor() as usize % count;
+        let t = at - at.floor();
+        let height = |offset: isize| {
+            self.heights[(first as isize + offset).rem_euclid(count as isize) as usize]
+        };
+        let (p0, p1, p2, p3) = (height(-1), height(0), height(1), height(2));
+        0.5 * (2.0 * p1
+            + (p2 - p0) * t
+            + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t
+            + (3.0 * p1 - p0 - 3.0 * p2 + p3) * t * t * t)
+    }
+
+    /// The height at a point of the plane, given as its offset from the
+    /// middle within the plane.
+    pub fn lift(&self, across: Vec3) -> f32 {
+        let (x, y) = (across.dot(self.u), across.dot(self.v));
+        let r = (x * x + y * y).sqrt();
+        let mean = self.mean();
+        if r <= f32::EPSILON {
+            return mean;
+        }
+        let t = (r / self.reach.max(f32::EPSILON)).min(1.0);
+        let ease = t * t * (3.0 - 2.0 * t);
+        mean + (self.around(y.atan2(x)) - mean) * ease
+    }
+
+    /// The most any point of the cut is off the plane through the middle at
+    /// the mean height, an upper bound: Catmull-Rom can overshoot the
+    /// heights by up to an eighth of a step between them.
+    fn span(&self) -> f32 {
+        let mean = self.mean();
+        let most = self.heights.iter().map(|h| (h - mean).abs()).fold(0.0, f32::max);
+        most * 1.25
+    }
 }
 
 /// The part of a disc's plane a fitted cut is made in: a grid square to
@@ -86,14 +167,45 @@ impl Region {
 }
 
 impl Disc {
-    /// How far a point is in front of the plane, world units.
+    /// How far a point is in front of the cut, world units: of its plane,
+    /// less the bend's height there.
     pub fn side(&self, at: Vec3) -> f32 {
-        (at - self.centre).dot(self.normal)
+        (at - self.centre).dot(self.normal) - self.lift(at)
+    }
+
+    /// How far the cut is off its plane over a point: the bend's height
+    /// there, zero when it is flat.
+    pub fn lift(&self, at: Vec3) -> f32 {
+        match &self.bend {
+            None => 0.0,
+            Some(bend) => {
+                let offset = at - self.centre;
+                bend.lift(offset - self.normal * offset.dot(self.normal))
+            }
+        }
+    }
+
+    /// The point of the cut over a point: moved along the normal onto it.
+    pub fn on_cut(&self, at: Vec3) -> Vec3 {
+        let offset = at - self.centre;
+        let flat = at - self.normal * offset.dot(self.normal);
+        flat + self.normal * self.lift(flat)
+    }
+
+    /// How far the cut can be off its plane anywhere: the reach a test of
+    /// nearness to the plane is widened by.
+    fn bent_by(&self) -> f32 {
+        self.bend.as_ref().map_or(0.0, |bend| bend.mean().abs() + bend.span())
     }
 
     /// A disc of `radius` and no more.
     pub fn round(centre: Vec3, normal: Vec3, radius: f32) -> Self {
-        Self { centre, normal, radius, region: None }
+        Self { centre, normal, radius, region: None, bend: None }
+    }
+
+    /// The same cut, bent.
+    pub fn bent(self, bend: Option<Bend>) -> Self {
+        Self { bend: bend.map(std::sync::Arc::new), ..self }
     }
 
     /// Whether a point is within the cut, measured in its plane: within the
@@ -457,10 +569,19 @@ impl Volume {
     /// ([`Volume::part_plan`]), and of its keys those within the cut, so
     /// that a cross-section the plane makes elsewhere (a torso beside the
     /// arm) gets none.
+    ///
+    /// A bent cut is planned on the plane at its mean height, and each key
+    /// then moved along the normal onto the cut where it stands.
     pub fn plan_keys(&self, disc: &Disc, spec: crate::part::KeySpec) -> Vec<crate::part::Key> {
-        let plane = crate::clip::ClipPlane { point: disc.centre, normal: disc.normal };
+        let mean = disc.bend.as_ref().map_or(0.0, |bend| bend.mean());
+        let point = disc.centre + disc.normal * mean;
+        let plane = crate::clip::ClipPlane { point, normal: disc.normal };
         let plan = self.part_plan(plane, spec);
-        plan.keys.into_iter().filter(|key| disc.within(key.centre)).collect()
+        plan.keys
+            .into_iter()
+            .filter(|key| disc.within(key.centre))
+            .map(|key| crate::part::Key { centre: disc.on_cut(key.centre), ..key })
+            .collect()
     }
 
     /// The disc fitted to the pieces it is drawn round: the cross-sections
@@ -495,7 +616,8 @@ impl Volume {
         let mut seen = vec![false; side * side];
         let index = |i: i32, j: i32| ((j + half) as usize) * side + (i + half) as usize;
         let solid = |i: i32, j: i32| {
-            self.sample_world(disc.centre + (u * i as f32 + v * j as f32) * pitch) < 0.0
+            self.sample_world(disc.on_cut(disc.centre + (u * i as f32 + v * j as f32) * pitch))
+                < 0.0
         };
         let in_ring = |i: i32, j: i32| i * i + j * j <= ring * ring;
         let mut cells = vec![false; side * side];
@@ -566,6 +688,7 @@ impl Volume {
             normal,
             radius: (furthest + 1.0) * pitch,
             region: Some(std::sync::Arc::new(Region { u, v, pitch, half, cells: grown })),
+            bend: disc.bend.clone(),
         })
     }
 
@@ -594,6 +717,7 @@ impl Volume {
                 if !disc.within(on) {
                     continue;
                 }
+                let on = disc.on_cut(on);
                 // The voxels round the point within a voxel of the plane,
                 // on both sides: the eight corners of one cell found only
                 // one side where the plane lay exactly on a lattice plane.
@@ -1063,7 +1187,8 @@ fn near_disc(disc: &Disc, coord: BrickCoord, voxel: f32) -> bool {
     let half = BRICK_DIM as f32 * 0.5 * voxel;
     let middle = (coord.origin().as_vec3() + Vec3::splat(BRICK_DIM as f32 * 0.5)) * voxel;
     let reach = half * 3.0_f32.sqrt() + FACE_BAND * voxel;
-    disc.side(middle).abs() <= reach && {
+    // A bent cut's height changes across a brick: widened by all of it.
+    (disc.side(middle).abs() <= reach + disc.bent_by()) && {
         let offset = middle - disc.centre;
         let across = offset - disc.normal * offset.dot(disc.normal);
         across.length() <= disc.radius + reach
@@ -1186,6 +1311,64 @@ mod tests {
         for (part, what) in [(&piece, "the piece"), (&rest, "the rest")] {
             let (_, report) = part.export_mesh();
             assert!(report.is_printable(), "{what} is not printable: {}", report.summary());
+        }
+    }
+
+    /// A bent cut: across the arm at x = 9, its +y side raised 2 along the
+    /// arm. Near the arm's +y surface just past the plane is behind the cut
+    /// and stays with the rest; at -y, where the bend is level, the same
+    /// distance past the plane goes with the piece. Both are closed.
+    #[test]
+    fn a_bent_cut_severs_along_its_bend() {
+        let volume = figure();
+        let bend = Bend {
+            u: Vec3::Y,
+            v: Vec3::Z,
+            heights: vec![2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            reach: 1.0,
+        };
+        let disc = Disc::round(Vec3::new(9.0, 0.0, 0.0), Vec3::X, 3.0).bent(Some(bend));
+        let Severed::Apart { piece, rest, .. } = volume.sever(&disc) else {
+            panic!("the arm was not severed by the bent cut");
+        };
+        let (raised, level) = (Vec3::new(10.0, 1.2, 0.0), Vec3::new(10.0, -1.2, 0.0));
+        assert!(rest.sample_world(raised) < 0.0, "the raised side went with the piece");
+        assert!(piece.sample_world(raised) > 0.0, "the raised side is on the piece");
+        assert!(piece.sample_world(level) < 0.0, "the level side is not on the piece");
+        assert!(rest.sample_world(level) > 0.0, "the level side stayed with the rest");
+        for (part, what) in [(&piece, "the piece"), (&rest, "the rest")] {
+            let (_, report) = part.export_mesh();
+            assert!(report.is_printable(), "{what} is not printable: {}", report.summary());
+        }
+    }
+
+    /// Keys planned on a bent cut stand on it: each key's middle is on the
+    /// cut, not on the flat plane through the cut's middle.
+    #[test]
+    fn keys_on_a_bent_cut_stand_on_it() {
+        use crate::part::KeySpec;
+        let volume = figure();
+        let bend = Bend {
+            u: Vec3::Y,
+            v: Vec3::Z,
+            heights: vec![1.0, 0.5, 0.0, -0.5, -1.0, -0.5, 0.0, 0.5],
+            reach: 0.5,
+        };
+        let disc = volume
+            .fit_to_islands(&Disc::round(Vec3::new(10.0, 0.0, 0.0), Vec3::X, 3.0).bent(Some(bend)))
+            .expect("the arm's island");
+        assert!(disc.bend.is_some(), "the fit dropped the bend");
+        let spec = KeySpec {
+            radius_mm: 0.4,
+            depth_mm: 0.75,
+            clearance_mm: 0.1,
+            wall_mm: 0.3,
+            ..KeySpec::peg()
+        };
+        let keys = volume.plan_keys(&disc, spec);
+        assert!(!keys.is_empty(), "no key on the bent face");
+        for key in keys {
+            assert!(disc.side(key.centre).abs() < 1e-3, "a key off the cut at {}", key.centre);
         }
     }
 
@@ -1394,6 +1577,40 @@ mod tests {
         assert!(rest.sample_world(peg_tip) < 0.0, "the body has no peg");
         assert!(piece.sample_world(peg_tip) > 0.0, "the arm has no socket");
         assert!(rest.sample_world(behind) < 0.0, "the body's peg is not rooted");
+    }
+
+    proptest::proptest! {
+        /// A bend passes through its heights: past its reach, in the
+        /// direction of each, the height there is that height.
+        #[test]
+        fn a_bend_passes_through_its_heights(
+            heights in proptest::collection::vec(-5.0_f32..5.0, 3..12),
+            reach in 0.5_f32..4.0,
+        ) {
+            let bend = Bend { u: Vec3::X, v: Vec3::Y, heights: heights.clone(), reach };
+            for (k, height) in heights.iter().enumerate() {
+                let at = bend.direction(k) * reach * 1.5;
+                proptest::prop_assert!((bend.lift(at) - height).abs() < 1e-3);
+            }
+        }
+
+        /// A bend of one height everywhere is the plane moved along its
+        /// normal by that height: the same side for any point.
+        #[test]
+        fn a_level_bend_is_the_plane_moved(
+            height in -5.0_f32..5.0,
+            count in 3_usize..12,
+            point in proptest::array::uniform3(-10.0_f32..10.0),
+        ) {
+            let normal = Vec3::new(0.3, 0.8, -0.2).normalize();
+            let (u, v) = normal.any_orthonormal_pair();
+            let bend = Bend { u, v, heights: vec![height; count], reach: 2.0 };
+            let centre = Vec3::new(1.0, -2.0, 0.5);
+            let bent = Disc::round(centre, normal, 5.0).bent(Some(bend));
+            let moved = Disc::round(centre + normal * height, normal, 5.0);
+            let at = Vec3::from(point);
+            proptest::prop_assert!((bent.side(at) - moved.side(at)).abs() < 1e-3);
+        }
     }
 
     proptest::proptest! {
