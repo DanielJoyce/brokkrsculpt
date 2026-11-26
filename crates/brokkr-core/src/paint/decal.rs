@@ -23,7 +23,7 @@ use glam::{IVec3, Vec2, Vec3};
 use rayon::prelude::*;
 use rustc_hash::FxHashSet;
 
-use super::field::{PaintField, bricks_between};
+use super::field::{PaintField, PaintVisit, bricks_between};
 use super::stroke::{Mode, Pigment, laid};
 use crate::brick::{BRICK_VOXELS, Brick, BrickCoord, brick_index};
 use crate::mask::PROTECTED;
@@ -282,22 +282,24 @@ impl Volume {
         };
         let opacity = dab.stamp.map_or(1.0, |pigment| pigment.opacity);
         let mode = dab.stamp.map_or(Mode::Paint, |pigment| pigment.mode);
-        let mut done: FxHashSet<BrickCoord> = FxHashSet::default();
-        for (coord, take) in &takes {
-            let origin = coord.origin();
-            let (from, to) = (lo.max(origin), hi.min(coord.max_voxel()));
-            self.edit_paint_over(from, to, |voxel, _, _, before, protection| {
-                let local = voxel - origin;
-                let (colour, take) =
-                    take[brick_index(local.x as usize, local.y as usize, local.z as usize)];
-                if take <= 0.0 {
-                    return before;
-                }
-                let free = 1.0 - f32::from(protection) / f32::from(PROTECTED);
-                laid(before, Pigment { colour, opacity, mode }, (take * free).clamp(0.0, 1.0))
-            });
-            done.insert(*coord);
-        }
+        // Laid a brick at a time across every core, as a stroke is
+        // (`Volume::edit_paint_across_cores`).
+        let done: FxHashSet<BrickCoord> = takes.iter().map(|(coord, _)| *coord).collect();
+        let mut visits: Vec<PaintVisit<BrickTakes>> = takes
+            .into_iter()
+            .map(|(coord, take)| {
+                let origin = coord.origin();
+                PaintVisit { coord, lo: lo.max(origin), hi: hi.min(coord.max_voxel()), state: take }
+            })
+            .collect();
+        self.edit_paint_across_cores(&mut visits, |take, _, index, _, _, before, protection| {
+            let (colour, take) = take[index];
+            if take <= 0.0 {
+                return before;
+            }
+            let free = 1.0 - f32::from(protection) / f32::from(PROTECTED);
+            laid(before, Pigment { colour, opacity, mode }, (take * free).clamp(0.0, 1.0))
+        });
         // What the last dab of the gesture reached and this one does not is
         // given its paint back, as is the rest of a brick this one is in.
         if let Some((was_lo, was_hi)) = also {

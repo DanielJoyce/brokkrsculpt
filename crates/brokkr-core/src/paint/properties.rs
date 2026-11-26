@@ -411,6 +411,66 @@ proptest! {
         }
     }
 
+    /// An edit across cores leaves what the same edit a brick at a time on
+    /// one core leaves, to the bit, for any box over a part painted and a
+    /// part not, in or out of a stroke; and undone in a stroke, it is the
+    /// paint that was there.
+    #[test]
+    fn an_edit_across_cores_is_the_edit_on_one(
+        lo in (-14_i32..4, -14_i32..4, -14_i32..4),
+        span in (1_i32..30, 1_i32..30, 1_i32..30),
+        colour in rgba(),
+        under in rgba(),
+        stroke in any::<bool>(),
+    ) {
+        use crate::paint::field::PaintVisit;
+        let lo = IVec3::new(lo.0, lo.1, lo.2);
+        let hi = lo + IVec3::new(span.0, span.1, span.2);
+        // Some paint already there, over part of the box.
+        let mut serial = ball();
+        serial.edit_paint(IVec3::splat(-30), IVec3::new(0, 30, 30), |_, _, _, _| under);
+        let mut across = ball();
+        across.edit_paint(IVec3::splat(-30), IVec3::new(0, 30, 30), |_, _, _, _| under);
+        let before = ball_paint(&serial);
+        // A colour that depends on the voxel, the paint before and the
+        // paint held, so that a mix-up of any of them shows.
+        let paint = move |voxel: IVec3, held: Rgba, was: Rgba| -> Rgba {
+            if (voxel.x + voxel.y + voxel.z).rem_euclid(3) == 0 {
+                return held;
+            }
+            [colour[0] ^ was[0], colour[1], colour[2] ^ held[2], colour[3].max(1)]
+        };
+        if stroke {
+            serial.begin_stroke();
+            across.begin_stroke();
+        }
+        serial.edit_paint_over(lo, hi, |voxel, _, held, was, _| paint(voxel, held, was));
+        let mut visits: Vec<PaintVisit<u32>> =
+            super::field::bricks_between(BrickCoord::containing(lo).0, BrickCoord::containing(hi).0)
+                .filter_map(|coord| {
+                    let origin = coord.origin();
+                    let (from, to) = (lo.max(origin), hi.min(coord.max_voxel()));
+                    (!from.cmpgt(to).any())
+                        .then_some(PaintVisit { coord, lo: from, hi: to, state: 0 })
+                })
+                .collect();
+        across.edit_paint_across_cores(&mut visits, |count, voxel, _, _, held, was, _| {
+            *count += 1;
+            paint(voxel, held, was)
+        });
+        prop_assert!(same(serial.paint(), across.paint()), "the paint differs");
+        if stroke {
+            let (one, other) = (serial.end_stroke(), across.end_stroke());
+            prop_assert_eq!(one.is_some(), other.is_some());
+            if let (Some(one), Some(other)) = (one, other) {
+                serial.apply_edit(one);
+                across.apply_edit(other);
+                prop_assert_eq!(ball_paint(&across), before.clone());
+                prop_assert!(same(serial.paint(), across.paint()), "undone, the paint differs");
+            }
+        }
+    }
+
     /// A stroke undone is the paint that was there, and done again is the
     /// stroke.
     #[test]

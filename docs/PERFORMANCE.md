@@ -100,6 +100,16 @@ fixture against budgets set on upstream's machine, and exits non-zero over
 budget, which on this machine it does. `cargo bench -p brokkr-gpu` times the
 sculpt pass on a generated ball.
 
+### A paint stamp for a profiler
+
+```bash
+cargo run --release -p brokkr-core --example paint_profile
+```
+
+Paint stamps of 2, 5 and 10 mm round a ball at a sixteenth of a millimetre,
+each remeshed: milliseconds a stamp for the stamp and for the remesh, and
+how many bricks were remeshed.
+
 ### A stroke for a profiler
 
 ```bash
@@ -791,6 +801,118 @@ core, is laid when the button comes up (`app/decal.rs`,
 for a shape with no end, and a test that dragged 3,000 pixels past the model
 was killed by the kernel for memory. A shape is now held to 160 voxels from
 its middle, twice the largest brush (`MAX_INSERT_VOXELS`).
+
+## A pass over the cores and the graphics card (2026-11-26)
+
+Asked by the maintainer: are we using all our cores, is there a way to test
+how many a given PC should use, and are we doing all we can on the graphics
+card. Rayon reads `RAYON_NUM_THREADS`, so each instrument was run with 1, 2
+and 4 threads. Milliseconds; the sculpting rows are medians a frame of
+`what_a_stroke_costs` on the ball at a sixteenth of a millimetre.
+
+| Before this pass | 1 thread | 2 | 4 | 4 against 1 |
+|---|---|---|---|---|
+| Sculpting stroke, the edit | 8.77 | 4.52 | 2.46 | 3.6 times |
+| Sculpting stroke, the remesh | 4.71 | 2.25 | 1.35 | 3.5 times |
+| Paint brush, 10 mm, a move | 12.8 | 13.4 | 9.8 | 1.3 times |
+| Airbrush, 10 mm, a frame | 12.8 | 8.7 | 8.6 | 1.5 times |
+| Decal dragged, 41 mm, a move | 17.0 | 17.2 | 17.3 | none |
+| Decal laid, 41 mm | 68.7 | 40.4 | 30.5 | 2.3 times |
+
+Sculpting used the cores well. Painting did not: the paint brush wrote its
+bricks one after another on one thread, the airbrush and the decal worked
+out what to lay across cores and then wrote it on one, and the decal's
+preview cast its rays on one.
+
+**Paint written across cores** (`Volume::edit_paint_across_cores`,
+`paint/field.rs`). The sculpting edit's way: the paint bricks a stamp
+reaches are lifted out of the field, each written on whichever core with
+its own state (a stroke's coverage of it, a spray's amounts), and put back
+with the undo record. Each brick is written by one hand from what it held,
+so what it holds afterwards is what the serial edit leaves, to the bit: a
+property test holds the two to it for any box, in a stroke and out of one,
+undo included, and every stroke test that compares to the bit still holds.
+The drybrush's and the sponge's cache of the surface's curvature, which was
+in cells, is in atomics, so that a stamp that reads it can be shared out;
+two cores that work out the same cell at once get the same number. The
+stroke, the airbrush and the decal all take this path.
+
+**The decal's preview cast across cores.** 2401 casts along the view.
+
+**A paint edit marks only what it changed.** It marked the box round
+everything it changed, and every brick in that box was remeshed. Measured
+with `paint_profile` (below), 10 mm, four threads: 762 bricks remeshed a
+stamp before, 458 after, and the remesh 20.7 ms before and 16.4 after.
+
+**A stamp passes over a brick it cannot reach.** Nothing further than the
+radius times the square root of two from the path is reached (a radius
+across, a radius deep), so a brick whose middle is further than that and
+half its diagonal is not opened. It did not change these numbers, the
+corners of the box round a stamp on a ball holding little surface, and it
+is kept: it costs a subtraction a brick and the tests hold it to the bit.
+
+| After | 1 thread | 2 | 4 | 4 against 1 |
+|---|---|---|---|---|
+| Paint brush, 10 mm, a move | 11.3 | 8.3 | 5.1 | 2.2 times |
+| Airbrush, 10 mm, a frame | 12.5 | 6.7 | 4.2 | 3.0 times |
+| Decal dragged, 41 mm, a move | 18.4 | | 6.1 | 3.0 times |
+| Decal laid, 41 mm | 75.7 | 43.5 | 22.5 | 3.4 times |
+
+### How many threads a machine should use
+
+Unless told otherwise the pool has a worker for every thread the machine
+has. Nothing held one back for the window, and nothing needs to: the
+window's thread waits while the pool works. What cannot be known in advance
+is where more threads stop paying: a second thread on a core that has one
+(hyper-threading) gives far less than a core, and a small efficiency core
+less than a large one. So it is measured.
+
+`brokkr_core::calibrate` times a stroke's kind of work (a ring of
+sculpting stamps, each remeshed, and a ring of paint stamps, on a ball at
+a sixteenth of a millimetre) in a pool of 1, 2, 4 and so on up to every
+thread, after a warm-up, and recommends the fewest threads within three
+parts in a hundred of the fastest.
+
+```bash
+cargo run --release -p brokkr-core --example cores
+```
+
+On the build machine, twice: 1 thread 822 and 827 ms, 2 threads 490 and
+467, 4 threads 251 and 267; four recommended. In the application,
+*Measure* in Preferences runs it off the window's thread and sets *Worker
+threads* from it; on the same machine, a debug build drawing its own window
+on the CPU, it found 1042, 645 and 604 ms, a flatter curve than the bare
+core's, which is what measuring where the work is done is for. *Worker
+threads* is `cores.conf` in the settings, and the pool is sized from it
+once, as the application starts (`app/cores.rs`).
+
+### The graphics card
+
+It draws, and does nothing else: there are no compute shaders. Every edit,
+the meshing, the layers put together and the occlusion are on the CPU, and
+now spread across it. What could move, in the order it would be worth
+doing:
+
+1. **Paint looked up by the card, not carried by the mesh.** A paint stroke
+   changes no shape, yet the surface is meshed again to carry its colours
+   to the vertices. `paint_profile`, four threads, a 10 mm stamp at a
+   sixteenth of a millimetre: 40.7 ms of stamp and 16.4 ms of remesh;
+   2 mm, 2.9 and 2.1. A paint field the fragment shader reads, a brick at
+   a time, would drop that remesh and sharpen the paint, which is now as
+   fine as the mesh's vertices. Its cost is memory on the card: a dense
+   brick of paint is 128 KB, and a fully painted figure at that voxel is
+   thousands of them, so it wants the band packed and not whole bricks.
+   A piece of work in its own right; not begun.
+2. **The edits and the meshing as compute** (issue 59). Not attempted,
+   for the reasons in the section below, which stand: the CPU paths are
+   held to the bit by their tests, they now scale with the cores, and a
+   compute path here would run on the CPU and say nothing about a card.
+3. **Timing what the card does.** iced makes the device with no optional
+   features, so there is no timestamp query, and the card's share of a
+   frame is seen only as the interval between frames in the replay.
+
+Nothing in this section was measured on a graphics card; the build
+machine has none.
 
 ## The renderer: looked at, and not built
 

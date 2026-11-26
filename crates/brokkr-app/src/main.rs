@@ -136,6 +136,9 @@ fn main() -> iced::Result {
     // take the window and leave nothing behind but a backtrace on a terminal
     // the user had not launched from.
     crash::install();
+    // The worker threads, sized before anything asks the pool for work. See
+    // `app/cores.rs`.
+    app::cores::start_pool();
 
     // `brokkrsculpt`, not `brokkr_app`: env_logger filters on the MODULE PATH,
     // and the module path is the crate root name, which for a binary target is
