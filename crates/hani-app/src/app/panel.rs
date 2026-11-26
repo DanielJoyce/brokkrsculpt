@@ -243,6 +243,10 @@ impl Hani {
         if self.shortcuts {
             return stack![body, self.shortcuts_card(), self.resize_frame()].into();
         }
+        // Help, as those. See `app/help.rs`.
+        if self.help.open {
+            return stack![body, self.help_card(), self.resize_frame()].into();
+        }
         if self.preferences {
             return stack![body, self.preferences_card(), self.resize_frame()].into();
         }
@@ -445,6 +449,8 @@ impl Hani {
             space().width(Length::Fill),
             self.workspace_switcher(),
             space().width(Length::Fill),
+            // Help, before the window's own buttons. See `app/help.rs`.
+            self.help_button(),
             control(
                 icon::IconName::Minimise,
                 "Minimise",
@@ -1042,6 +1048,8 @@ impl Hani {
             ]
             .spacing(1),
             TopMenu::Help => column![
+                // See `app/help.rs`.
+                keyed("Help", "", Some(Message::Help(crate::message::HelpMessage::Opened))),
                 keyed("Keyboard shortcuts", "?", Some(Message::ShortcutsOpened)),
                 separator(),
                 text(format!("HaniSculpt {}", env!("CARGO_PKG_VERSION")))
@@ -2153,13 +2161,25 @@ impl Hani {
         // The SOLO badge goes beside the heading and not inside it: inside,
         // a press on the word would fold the section away, which is not
         // what a status indicator should do. See `ui::heading`.
-        crate::ui::section(
-            which.title(),
-            self.expanded[which as usize],
-            Message::SectionToggled(which),
-            self.solo_badge(which),
-            body,
-        )
+        self.section_with(which, self.solo_badge(which), body)
+    }
+
+    /// [`Self::section`] with something of the caller's beside the heading,
+    /// such as the name of the brush in hand.
+    pub(super) fn section_with<'a>(
+        &'a self,
+        which: PanelSection,
+        extra: Option<Element<'a, Message>>,
+        body: impl FnOnce() -> Element<'a, Message>,
+    ) -> Element<'a, Message> {
+        // The heading says what the section is for on hover. See
+        // `app/help.rs`.
+        let open = self.expanded[which as usize];
+        let heading = crate::ui::tip(
+            crate::ui::heading(which.title(), open, Message::SectionToggled(which), extra),
+            super::help::section_tip(which),
+        );
+        if open { column![heading, body()].spacing(theme::S2).into() } else { heading }
     }
 
     /// `SOLO: <name>  [exit]`, drawn beside the Bodies heading while the mode is

@@ -77,18 +77,6 @@ pub fn heading<'a>(
     }
 }
 
-/// A heading and, when it is open, what is under it.
-pub fn section<'a>(
-    title: &'a str,
-    open: bool,
-    on_toggle: Message,
-    extra: Option<Element<'a, Message>>,
-    body: impl FnOnce() -> Element<'a, Message>,
-) -> Element<'a, Message> {
-    let heading = heading(title, open, on_toggle, extra);
-    if open { column![heading, body()].spacing(theme::S2).into() } else { heading }
-}
-
 /// A smaller fold inside a section, for a block most people leave shut.
 pub fn disclosure<'a>(title: &'a str, open: bool, on_toggle: Message) -> Element<'a, Message> {
     button(

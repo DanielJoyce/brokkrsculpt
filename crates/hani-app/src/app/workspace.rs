@@ -440,45 +440,40 @@ impl Hani {
         .color(theme::TEXT_DIM);
         let field_brush = self.tool == Tool::Sculpt
             && !matches!(self.brush.kind, BrushKind::Paint | BrushKind::Move);
-        crate::ui::section(
-            PanelSection::Brush.title(),
-            self.expanded[PanelSection::Brush as usize],
-            Message::SectionToggled(PanelSection::Brush),
-            Some(in_hand.into()),
-            move || {
-                let mut block = column![self.radius_number(false)].spacing(theme::S3);
-                // A painter's brush sizes. See `app/airbrush.rs`.
-                if self.desk.now == Workspace::Paint && self.brush.kind == BrushKind::Paint {
-                    block = block.push(self.paint_sizes());
-                }
-                if let Some(weight) = self.weight_number(false) {
-                    block = block.push(weight);
-                }
-                block = block.push(
-                    iced::widget::checkbox(self.dynamic_radius)
-                        .label("scale with model")
-                        .on_toggle(Message::DynamicRadiusToggled)
-                        .text_size(theme::LABEL_SIZE),
-                );
-                // The edge drawn, as a cross-section from rim to rim: the
-                // weight a stamp gives at each distance from its middle.
-                // See `curve.rs` and issue 78.
-                let profile = if field_brush {
-                    self.studio.profile(self.brush.falloff)
-                } else {
-                    hani_core::brush::compound::Profile::of(self.brush.falloff)
-                };
-                let edge = crate::curve::curve(crate::curve::cross_section(move |distance| {
-                    profile.weight(distance)
-                }));
-                if field_brush {
-                    block = block.push(edge).push(self.profile_row()).push(self.studio_panel());
-                } else if let Some(falloff) = self.falloff_choice() {
-                    block = block.push(crate::ui::sub_label("Falloff")).push(edge).push(falloff);
-                }
-                block.into()
-            },
-        )
+        // The heading's hover line is in `app/help.rs`.
+        self.section_with(PanelSection::Brush, Some(in_hand.into()), move || {
+            let mut block = column![self.radius_number(false)].spacing(theme::S3);
+            // A painter's brush sizes. See `app/airbrush.rs`.
+            if self.desk.now == Workspace::Paint && self.brush.kind == BrushKind::Paint {
+                block = block.push(self.paint_sizes());
+            }
+            if let Some(weight) = self.weight_number(false) {
+                block = block.push(weight);
+            }
+            block = block.push(
+                iced::widget::checkbox(self.dynamic_radius)
+                    .label("scale with model")
+                    .on_toggle(Message::DynamicRadiusToggled)
+                    .text_size(theme::LABEL_SIZE),
+            );
+            // The edge drawn, as a cross-section from rim to rim: the
+            // weight a stamp gives at each distance from its middle.
+            // See `curve.rs` and issue 78.
+            let profile = if field_brush {
+                self.studio.profile(self.brush.falloff)
+            } else {
+                hani_core::brush::compound::Profile::of(self.brush.falloff)
+            };
+            let edge = crate::curve::curve(crate::curve::cross_section(move |distance| {
+                profile.weight(distance)
+            }));
+            if field_brush {
+                block = block.push(edge).push(self.profile_row()).push(self.studio_panel());
+            } else if let Some(falloff) = self.falloff_choice() {
+                block = block.push(crate::ui::sub_label("Falloff")).push(edge).push(falloff);
+            }
+            block.into()
+        })
     }
 }
 

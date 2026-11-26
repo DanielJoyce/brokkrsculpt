@@ -50,6 +50,8 @@ mod form;
 mod revolve;
 // Shell and extract. See `app/hollow.rs`.
 mod hollow;
+// Help: Markdown pages in a card. See `app/help.rs`.
+mod help;
 mod measure;
 mod overhang;
 mod painting;
@@ -809,6 +811,8 @@ pub struct Hani {
     key_menu: Option<usize>,
     /// The keyboard shortcuts card is up.
     shortcuts: bool,
+    /// Help, open or not. See `app/help.rs`.
+    help: help::HelpState,
     /// Whether it opens by itself next time.
     ///
     /// Held rather than read where it is drawn: the tick is inside `view()`,
@@ -2234,6 +2238,7 @@ impl Hani {
             keys: keys::Keys::default(),
             key_menu: None,
             shortcuts: false,
+            help: help::HelpState::default(),
             welcome_on_startup: true,
             palette: crate::palette::Palette::default(),
             account: None,
@@ -9198,6 +9203,8 @@ impl Hani {
         self.welcome
             || self.preferences
             || self.shortcuts
+            // See `app/help.rs`.
+            || self.help.open
             || self.confirm.is_some()
             || self.orient_prompt.is_some()
             || self.bug_report.is_some()
@@ -9240,6 +9247,10 @@ impl Hani {
                 if self.shortcuts || self.preferences {
                     self.shortcuts = false;
                     self.preferences = false;
+                    return Task::none();
+                }
+                // Help, as those. See `app/help.rs`.
+                if self.help_escaped() {
                     return Task::none();
                 }
                 self.update(Message::MenuClosed)
@@ -9970,6 +9981,8 @@ impl Hani {
                 self.shortcuts = true;
             }
             Message::ShortcutsClosed => self.shortcuts = false,
+            // See `app/help.rs`.
+            Message::Help(message) => self.help_changed(message),
             Message::WelcomeOpened => {
                 // The menu it was chosen from has to go, or it is left drawn
                 // beneath the scrim: reachable to nothing, and still there when
