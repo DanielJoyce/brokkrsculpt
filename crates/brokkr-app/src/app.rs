@@ -20,6 +20,8 @@ mod coats;
 mod decal;
 // The ring cut. See `app/ring_cut.rs`.
 mod ring_cut;
+// The hierarchy's Explode and Solo active. See `app/explode.rs`.
+mod explode;
 pub use ring_cut::CutWay;
 // How many worker threads, and a measurement of it. See `app/cores.rs`.
 pub(crate) mod cores;
@@ -998,6 +1000,8 @@ pub struct Brokkr {
     cores: cores::CoresState,
     /// The ring cut. See `app/ring_cut.rs`.
     ring_cut: ring_cut::RingCut,
+    /// The bodies drawn apart. See `app/explode.rs`.
+    explode: explode::Explode,
     /// What a drybrush would catch, under the ring. See `app/dry_preview.rs`.
     dry_preview: dry_preview::DryPreview,
     /// How many texels on a side a baked texture is. See `app/paints.rs`.
@@ -2282,6 +2286,7 @@ impl Brokkr {
             painting: painting::PaintingState::default(),
             cores: cores::CoresState::default(),
             ring_cut: ring_cut::RingCut::default(),
+            explode: explode::Explode::default(),
             dry_preview: dry_preview::DryPreview::default(),
             texture_size: paints::TEXTURE_SIZES[1],
             mask_tint: DEFAULT_MASK_TINT,
@@ -5225,7 +5230,8 @@ impl Brokkr {
         // same lie told about a different gesture. It is worse here than under
         // the gizmo, because a cut IS destructive and the ring is what a user
         // reads to decide whether it is safe to press.
-        if self.tool == Tool::Transform || self.tool == Tool::Cut {
+        // Apart, nothing is where it is drawn. See `app/explode.rs`.
+        if self.tool == Tool::Transform || self.tool == Tool::Cut || self.exploded() {
             self.hover = None;
             self.hover_body = None;
             return;
@@ -8195,6 +8201,8 @@ impl Brokkr {
             }
         }
         self.shared.set_hidden(&self.hidden_bodies);
+        // Explode lays the drawn bodies out again. See `app/explode.rs`.
+        self.publish_spread();
         self.publish_mask_view();
         // Cells ride along on the same walk, and for the same argument: adding
         // and removing a body happens in a handful of places, and a handful of
@@ -9390,6 +9398,11 @@ impl Brokkr {
                 if self.measure_press(button, position) {
                     return;
                 }
+                // A press while the bodies are apart picks one. See
+                // `app/explode.rs`.
+                if self.explode_pressed(button, position) {
+                    return;
+                }
 
                 // A press on the navigation cube belongs to the cube. Checked
                 // before anything else, or clicking it would also carve a divot
@@ -9855,8 +9868,10 @@ impl Brokkr {
         // whatever was in flight; this re-arms on whatever is active NOW, so
         // choosing a different row while the tool is up moves the gizmo there
         // rather than leaving the mode lit with nothing under it.
+        // Not while the bodies are drawn apart. See `app/explode.rs`.
         if self.tool == Tool::Transform
             && self.gizmo.is_none()
+            && !self.exploded()
             && let Err(why) = self.arm_gizmo()
         {
             self.status = why;
@@ -10455,6 +10470,12 @@ impl Brokkr {
                 if self.close_palette() || self.measure_escaped() {
                     return Task::none();
                 }
+                // The bodies drawn apart come back together. See
+                // `app/explode.rs`.
+                if self.exploded() {
+                    self.unexplode();
+                    return Task::none();
+                }
                 // And one further down again: solo, BEFORE the armed cut.
                 //
                 // The order is the point. Both are modes, and with both on, one
@@ -10828,6 +10849,9 @@ impl Brokkr {
             // that eye on and THAT is an ordinary edit.
             Message::SoloEntered(id) => self.enter_solo(id),
             Message::SoloExited => self.exit_solo(),
+            // See `app/explode.rs`.
+            Message::ExplodeToggled => self.toggle_explode(),
+            Message::SoloActiveToggled => self.toggle_solo_active(),
             Message::BodyRenameBegan(id) => return self.begin_rename(id),
             Message::BodyRenameEdited(text) => {
                 if let Some((_, held)) = &mut self.renaming {

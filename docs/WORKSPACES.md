@@ -444,3 +444,60 @@ On a screen: the row over the palette on a right click, a brush put on
 Not done: Paint's keys are its five touches and cannot be set; a brush
 of the user's renamed or forgotten leaves its key to the palette's
 place.
+
+## R3: Explode and show only the active body (2026-11-26)
+
+Asked for by the maintainer: *"the three d hierarchy needs a "explode"
+button which seperates all the parts temporarily to make it easier to pick
+on ( unexplode on pick ) and a quick button to hide / show all parts but
+the current active one."*
+
+`app/explode.rs`, and `brokkr_gpu::spread`. Two buttons over the bodies
+list, in every mode, each lit while on.
+
+**Explode** draws every drawn body apart. The largest, by the volume of
+its box, stays where it is; every other is moved along the line from the
+largest's middle through its own, to twice its distance or to where the
+two boxes' half-widths and a gap clear each other, whichever is further.
+A part centred on the largest has no line of its own and is sent across
+the view as it was when the button was pressed, each such part a
+different way round, so none hides behind the largest. Nothing moves but
+the picture: each body's offset is a per-instance vertex attribute the
+sculpt shader adds to where it draws the vertex, read from a small buffer
+by the instance number the body's draws are issued with (entry 0 is zero,
+and is what a body not apart and every thumbnail use). The frustum test
+shifts the brick's box by the same offset. The pick marches each body
+with the ray moved back by its offset, so what is pressed is what is
+drawn. A left press on a part chooses it and brings everything back; a
+press on nothing does nothing; escape and the button bring them back too.
+While apart there is no brush ring and no gizmo (both would be drawn
+where the body is, not where it is drawn); a move in hand when the button
+is pressed is kept, as choosing another tool keeps it, and the gizmo
+comes back on whatever is picked.
+
+**Show only the active body** is solo on the active body, from the
+header rather than the row: pressed again, or escape, everything is
+shown as it was.
+
+Tests: `a_spread_body_is_drawn_moved_by_its_offset` (offscreen: another
+body's offset moves nothing, this body's moves its picture across the
+screen, and none puts it back exactly);
+`explode_draws_the_parts_apart_and_moves_no_field` (the largest stays,
+the other is clear of it along the line between them, no undo entry);
+`a_press_on_a_part_apart_selects_it_and_brings_them_back` (and carves
+nothing); `a_part_inside_the_anchor_is_sent_across_the_view_and_clear_of_it`;
+`the_gizmo_goes_while_apart_and_comes_back_on_the_part_picked`;
+`one_body_does_not_explode`; `solo_active_shows_the_active_body_alone`.
+
+On a screen: a ball, a cube and a cylinder side by side in Transform,
+opened out along the row; the gizmo gone while apart; a click on the cube
+where it was drawn chose it, brought the three back and put the gizmo on
+the cube. Show only the active body drew the cube alone, SOLO in the
+header, and again drew all three.
+
+Not done: the view is not zoomed out to hold the parts apart, so a wide
+model can open past the edge of the view (the wheel brings it in); the
+parts jump apart rather than moving; a part's offset is worked out from
+its box, so two parts on the same side of the largest at the same
+distance can still overlap each other; folders are not exploded as a
+group.

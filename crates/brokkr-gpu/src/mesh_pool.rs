@@ -15,6 +15,8 @@ use glam::Vec3;
 use rustc_hash::FxHashMap;
 
 use crate::frustum::Frustum;
+// The hierarchy's Explode: per-body view offsets. See `crate::spread`.
+use crate::spread::Spread;
 
 /// Vertices ONE buffer of the pool holds. At 24 bytes each this is 264 MB.
 ///
@@ -488,6 +490,8 @@ pub struct MeshPool {
     /// the whole pool and so cannot be 16 bits (issue 57 of the fork). Kept
     /// for the reason `staging` is.
     index_staging: Vec<u32>,
+    /// How far each body is drawn from where it is; see `crate::spread`.
+    pub(crate) spread: Spread,
 }
 
 impl MeshPool {
@@ -523,6 +527,7 @@ impl MeshPool {
             skipped_as_hidden: AtomicUsize::new(0),
             staging: Vec::new(),
             index_staging: Vec::new(),
+            spread: Spread::new(device),
         }
     }
 
@@ -858,6 +863,8 @@ impl MeshPool {
         // are not grouped. That ceiling is `pairs x bodies`, which is the same
         // order as the hidden test above.
         let mut bound_polarity: Option<bool> = None;
+        // Explode's offsets, read per instance; see `crate::spread`.
+        pass.set_vertex_buffer(2, self.spread.buffer().slice(..));
         for (&(index, body), bucket) in &self.buckets {
             // Per bucket rather than per slot: a bucket is exactly one body, so
             // the test runs at most `pairs x bodies` times a frame instead of
@@ -868,12 +875,13 @@ impl MeshPool {
             }
             let pair = &self.buffers[index as usize];
             let opposite = self.opposite.contains(&body);
+            let (instance, shift) = self.spread.of(body);
             let mut bound = false;
             for slot in bucket.values() {
                 if slot.index_count == 0 {
                     continue;
                 }
-                if !frustum.intersects(slot.minimum, slot.maximum) {
+                if !frustum.intersects(slot.minimum + shift, slot.maximum + shift) {
                     culled += 1;
                     continue;
                 }
@@ -894,7 +902,8 @@ impl MeshPool {
                 drawn += 1;
                 let start = slot.indices.offset as u32;
                 // Base vertex zero: the indices were made absolute at upload.
-                pass.draw_indexed(start..start + slot.index_count, 0, 0..1);
+                // The instance is the body's spread entry, 0 for none.
+                pass.draw_indexed(start..start + slot.index_count, 0, instance..instance + 1);
             }
         }
         self.drawn.store(drawn, Ordering::Relaxed);
@@ -1080,6 +1089,8 @@ impl MeshPool {
     /// thumbnail pass that skipped hidden bodies would leave a blank square
     /// where the muting is the cue.
     pub fn draw_body(&self, pass: &mut wgpu::RenderPass<'_>, body: NodeId) {
+        // Entry 0 of the spread, which is zero: a thumbnail is never exploded.
+        pass.set_vertex_buffer(2, self.spread.buffer().slice(..));
         for index in 0..self.buffers.len() as u16 {
             let Some(bucket) = self.buckets.get(&(index, body)) else {
                 continue;

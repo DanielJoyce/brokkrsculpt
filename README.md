@@ -394,6 +394,12 @@ true of it too, and what it adds is this.
   an arm no longer takes the torso beside it. *Line* on the bar is the
   cut that goes straight through everything. See
   [`docs/CUT-RING.md`](docs/CUT-RING.md).
+- **Explode.** A button over the bodies list draws every part apart, each
+  pushed out from the largest along the line between them, so a small
+  part tucked among others can be seen; click one and it is chosen and
+  everything comes back together (escape does that too). Nothing moves
+  but the picture. Beside it, *Show only the active body*. See
+  [`docs/WORKSPACES.md`](docs/WORKSPACES.md).
 - **Parting with keys.** The plane cut with **alt** held makes two bodies
   with pegs and sockets that fit, for a model bigger than the bed or one
   that prints better in halves. *Print a fit test…* writes a plate of

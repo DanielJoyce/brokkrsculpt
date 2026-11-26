@@ -722,6 +722,35 @@ const SOLO: Glyph = Glyph {
     ],
 };
 
+/// Explode: a part in the middle and four arrows leaving it for the corners,
+/// "everything apart". The arrows carry it: without them it is a square,
+/// and a square is a body or a page everywhere else in this set.
+const EXPLODE: Glyph = Glyph {
+    subs: &[
+        Sub { segs: &[Seg::Rect { x: 9.0, y: 9.0, w: 6.0, h: 6.0, r: 1.0 }], ink: Ink::Stroke },
+        Sub { segs: &[Seg::Move(7.5, 7.5), Seg::Line(3.5, 3.5)], ink: Ink::Stroke },
+        Sub {
+            segs: &[Seg::Move(3.5, 7.5), Seg::Line(3.5, 3.5), Seg::Line(7.5, 3.5)],
+            ink: Ink::Stroke,
+        },
+        Sub { segs: &[Seg::Move(16.5, 7.5), Seg::Line(20.5, 3.5)], ink: Ink::Stroke },
+        Sub {
+            segs: &[Seg::Move(16.5, 3.5), Seg::Line(20.5, 3.5), Seg::Line(20.5, 7.5)],
+            ink: Ink::Stroke,
+        },
+        Sub { segs: &[Seg::Move(7.5, 16.5), Seg::Line(3.5, 20.5)], ink: Ink::Stroke },
+        Sub {
+            segs: &[Seg::Move(3.5, 16.5), Seg::Line(3.5, 20.5), Seg::Line(7.5, 20.5)],
+            ink: Ink::Stroke,
+        },
+        Sub { segs: &[Seg::Move(16.5, 16.5), Seg::Line(20.5, 20.5)], ink: Ink::Stroke },
+        Sub {
+            segs: &[Seg::Move(20.5, 16.5), Seg::Line(20.5, 20.5), Seg::Line(16.5, 20.5)],
+            ink: Ink::Stroke,
+        },
+    ],
+};
+
 /// Merge down: an arrow dropping onto the row beneath it.
 ///
 /// **A bar and not a second sheet**, which is what keeps this clear of [`COPY`]
@@ -837,6 +866,7 @@ pub enum IconName {
     Trash,
     Copy,
     Solo,
+    Explode,
     MergeDown,
     Split,
 }
@@ -850,7 +880,7 @@ impl IconName {
     /// set's index, and anything that needs the whole set rather than one icon
     /// starts here.
     #[allow(dead_code)]
-    pub const ALL: [IconName; 33] = [
+    pub const ALL: [IconName; 34] = [
         IconName::Close,
         IconName::Minimise,
         IconName::Maximise,
@@ -882,6 +912,7 @@ impl IconName {
         IconName::Trash,
         IconName::Copy,
         IconName::Solo,
+        IconName::Explode,
         IconName::MergeDown,
         IconName::Split,
     ];
@@ -954,6 +985,7 @@ impl IconName {
             IconName::Trash => &TRASH,
             IconName::Copy => &COPY,
             IconName::Solo => &SOLO,
+            IconName::Explode => &EXPLODE,
             IconName::MergeDown => &MERGE_DOWN,
             IconName::Split => &SPLIT,
         }
