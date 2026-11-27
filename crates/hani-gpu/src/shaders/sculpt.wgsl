@@ -157,6 +157,9 @@ struct VertexOutput {
     // The share of this body screened away: the hierarchy's "others
     // see-through", `hani_gpu::spread`. Nought draws it whole.
     @location(9) @interpolate(flat) screened: f32,
+    // A boolean group's row drawn see-through, tinted by what it does: 1 a
+    // cut, 2 a keep, nought none. `hani_gpu::tint`.
+    @location(10) @interpolate(flat) tint: u32,
 }
 
 // How rough and how metal a finish is, by its code.
@@ -205,7 +208,10 @@ fn vertex_main(
     let c = turn_z.xyz + vec3<f32>(0.0, 0.0, 1.0);
     let drawn = a * position.x + b * position.y + c * position.z + spread.xyz;
     out.clip_position = uniforms.view_projection * vec4<f32>(drawn, 1.0);
-    out.screened = spread.w;
+    // The share screened away, and above it the tint. `hani_gpu::tint`.
+    let tint = floor(spread.w * 0.5);
+    out.screened = spread.w - tint * 2.0;
+    out.tint = u32(tint);
     // The normal through the cofactors of that linear part, which is its
     // inverse transpose times its determinant: the right direction under
     // any scale, and the identity's for every body not being dragged.
@@ -380,6 +386,14 @@ fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) ->
         // Lit as the pixel was, so that the tint has the model's form in it.
         let lit = dot(colour, vec3<f32>(0.2126, 0.7152, 0.0722)) / MATCAP_BASE_LUMA;
         colour = mix(colour, OVERHANG_TINT * clamp(lit, 0.35, 1.3), OVERHANG_COVER * over);
+    }
+
+    // A boolean row that cuts drawn reddened, one that keeps bluer, lit as
+    // the pixel was. `hani_gpu::tint`.
+    if (in.tint != 0u) {
+        let luma = dot(colour, vec3<f32>(0.2126, 0.7152, 0.0722));
+        let hue = select(vec3<f32>(0.35, 0.65, 1.25), vec3<f32>(1.3, 0.4, 0.35), in.tint == 1u);
+        colour = mix(colour, luma * hue, 0.6);
     }
 
     // The mask, as a CHROMA shift toward a cool blue the matcap cannot produce,

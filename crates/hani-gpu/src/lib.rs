@@ -16,7 +16,9 @@ mod paints;
 pub mod reference;
 pub mod renderer;
 pub mod spread;
+// A boolean row tinted by what it does. See `tint.rs`.
 pub mod thumbnail;
+pub mod tint;
 
 pub use frustum::Frustum;
 pub use mesh_pool::{
