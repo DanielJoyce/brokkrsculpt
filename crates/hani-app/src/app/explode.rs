@@ -299,6 +299,8 @@ impl Hani {
                     .push((node.id, at.extend(if clear { SEE_THROUGH } else { 0.0 })));
             }
         }
+        // The rows that cut, drawn see-through. See `app/booleans.rs`.
+        self.add_boolean_ghosts();
         self.shared.set_spread(&self.explode.drawn);
     }
 

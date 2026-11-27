@@ -1337,6 +1337,8 @@ pub enum Message {
     Help(HelpMessage),
     /// The About card, opened or closed. See `app/about.rs`.
     About(bool),
+    /// A boolean group's controls. See `app/booleans.rs`.
+    Boolean(crate::app::BooleanMessage),
     /// The graphics adapter's name, asked when About is first opened. See
     /// `app/adapter.rs`.
     GraphicsNamed(String),

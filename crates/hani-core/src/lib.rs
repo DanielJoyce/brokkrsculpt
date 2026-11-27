@@ -29,6 +29,8 @@ pub mod calibrate;
 pub mod cavity;
 pub mod clip;
 pub mod colour;
+// Boolean groups. See `combine.rs`.
+pub mod combine;
 pub mod deform;
 pub mod export;
 pub mod extract;

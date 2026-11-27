@@ -450,6 +450,9 @@ pub enum Change {
     /// folder, never instead of it, and the order between them is worked
     /// through in [`crate::body::Document::group`].
     Outline { before: Vec<NodeMeta>, after: Vec<NodeMeta> },
+    /// A row's boolean state was changed. Applying puts this one back. See
+    /// `combine.rs`.
+    Boolean { id: NodeId, state: crate::combine::BoolState },
     /// The document's paint table was changed. Applying puts this one back.
     ///
     /// The whole table and not the one paint that changed, as
@@ -614,6 +617,10 @@ impl Change {
                 // The inverse is the pair swapped, which applies `after`.
                 Change::Outline { before: after, after: before }
             }
+            Change::Boolean { id, state } => {
+                let before = doc.put_bool_state(id, state);
+                Change::Boolean { id, state: before }
+            }
         }
     }
 
@@ -635,6 +642,7 @@ impl Change {
             | Change::LayerSettings { body, .. }
             | Change::LayersAdded { body, .. }
             | Change::LayersTaken { body, .. } => *body,
+            Change::Boolean { id, .. } => *id,
             Change::Outline { before, after } => {
                 before.iter().zip(after).find(|(was, now)| was != now).map_or_else(
                     || before.first().map_or(NodeId(0), |meta| meta.id),
@@ -651,7 +659,7 @@ impl Change {
             // Both hold a whole thing that was moved out of the document
             // rather than copied out of it. See `reclaim_bytes`.
             Change::NodeRemoved { .. } | Change::WholeMask { .. } | Change::WholeVolume { .. } => 0,
-            Change::NodeAdded { .. } => size_of::<Self>(),
+            Change::NodeAdded { .. } | Change::Boolean { .. } => size_of::<Self>(),
             Change::Outline { before, after } => {
                 before.iter().chain(after).map(NodeMeta::bytes).sum()
             }
@@ -804,7 +812,10 @@ impl Entry {
                 // The paint rack is on the panel whatever any eye says, as
                 // the outline is. The renumbered voxels that ride with a
                 // removed paint are `Bricks`, and are gated as bricks are.
-                Change::NodeRemoved { .. } | Change::Outline { .. } | Change::Paints { .. } => {
+                Change::NodeRemoved { .. }
+                | Change::Outline { .. }
+                | Change::Paints { .. }
+                | Change::Boolean { .. } => {
                     return None;
                 }
             };

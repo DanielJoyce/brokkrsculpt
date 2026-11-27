@@ -1037,6 +1037,14 @@ fn write_tail(out: &mut impl Write, doc: &Document, state: &ProjectState) -> Res
         write_u64(out, section.len() as u64)?;
         out.write_all(&section)?;
     }
+
+    // Which folders combine and how each row joins, last, where any does.
+    // See `combine.rs`.
+    if let Some(section) = crate::combine::encode(doc) {
+        out.write_all(crate::combine::TAG)?;
+        write_u64(out, section.len() as u64)?;
+        out.write_all(&section)?;
+    }
     Ok(())
 }
 
@@ -1529,6 +1537,8 @@ fn read_understanding_field_versions_to(
     // *declared* count before the stream it describes is entered at all.
     let mut bytes = 0u64;
     let mut loaded: Vec<(NodeMeta, Option<Volume>)> = Vec::with_capacity(rows.len());
+    // The boolean groups, by row, where the file has them. See `combine.rs`.
+    let mut booleans: Vec<(usize, crate::combine::BoolState)> = Vec::new();
     for row in rows {
         if !row.is_body {
             loaded.push((row.meta, None));
@@ -1681,10 +1691,32 @@ fn read_understanding_field_versions_to(
                     }
                 }
             }
+            tag = next_tag(input);
+        }
+        // The boolean groups, on the same terms: a section not taken leaves
+        // every folder a plain one. See `combine.rs`.
+        if tag.as_ref() == Some(crate::combine::TAG) {
+            let mut length = [0u8; 8];
+            if input.read_exact(&mut length).is_ok() {
+                let length = u64::from_le_bytes(length);
+                if length <= crate::combine::MOST_SECTION_BYTES {
+                    let mut bytes = Vec::new();
+                    let taken = input.take(length).read_to_end(&mut bytes);
+                    if taken.is_ok_and(|read| read as u64 == length) {
+                        booleans = crate::combine::decode(&bytes, loaded.len());
+                    }
+                }
+            }
         }
     }
 
+    let ids: Vec<NodeId> = loaded.iter().map(|(meta, _)| meta.id).collect();
     let mut doc = Document::from_table(header.voxel_size, loaded, active);
+    for (index, state) in booleans {
+        if let Some(id) = ids.get(index) {
+            doc.set_bool_state(*id, state);
+        }
+    }
     // Nothing has been meshed yet, and the renderer holds whatever the previous
     // model left. Marking everything dirty is what makes the load visible.
     doc.mark_everything_dirty();

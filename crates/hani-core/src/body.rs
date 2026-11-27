@@ -421,6 +421,9 @@ pub struct Document {
     /// Empty until the document uses paints at all. See [`crate::paint`],
     /// and [`Change::Paints`] for how a change to it is undone.
     paints: PaintTable,
+    /// Which folders combine their children, how each row joins, and the
+    /// results built from them. See `combine.rs`.
+    pub(crate) booleans: crate::combine::Booleans,
 }
 
 impl Document {
@@ -450,6 +453,7 @@ impl Document {
             active: id,
             next_id: 2,
             paints: PaintTable::default(),
+            booleans: Default::default(),
         };
         doc.assert_invariants();
         doc
@@ -513,8 +517,14 @@ impl Document {
         // `highest + 1` cannot overflow: the reader refuses an id of
         // `u32::MAX` for exactly this reason, so the highest id that can reach
         // here is `u32::MAX - 1`.
-        let doc =
-            Self { voxel_size, nodes, active, next_id: highest + 1, paints: PaintTable::default() };
+        let doc = Self {
+            voxel_size,
+            nodes,
+            active,
+            next_id: highest + 1,
+            paints: PaintTable::default(),
+            booleans: Default::default(),
+        };
         doc.assert_invariants();
         doc
     }
@@ -1518,6 +1528,8 @@ impl Document {
                 cache.take_in(coord, voxel_size);
             });
         }
+        // The boolean groups' results follow their operands. See `combine.rs`.
+        self.refresh_booleans(out);
     }
 
     /// Mark every brick of every body as needing a remesh.
@@ -1580,7 +1592,8 @@ impl Document {
         scratch: &mut MeshScratch,
         out: &mut BrickMesh,
     ) {
-        match self.volume(body) {
+        // A boolean group's result is meshed as a body is. See `combine.rs`.
+        match self.volume(body).or_else(|| self.boolean_result(body)) {
             Some(volume) => volume.mesh_brick(coord, scratch, out),
             None => out.clear(),
         }
