@@ -306,7 +306,7 @@ impl Hani {
 
         let modes =
             PaintMode::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, mode| {
-                assembled.push(
+                assembled.push(crate::ui::tip(
                     button(text(mode.label()).size(theme::LABEL_SIZE))
                         .width(Length::Fill)
                         .style(if mode == painting.mode {
@@ -315,7 +315,8 @@ impl Hani {
                             theme::tool_button
                         })
                         .on_press(Message::Painting(PaintingMessage::Mode(mode))),
-                )
+                    super::tips::paint_mode(mode),
+                ))
             });
 
         // The button is as wide as the row will let it be and no wider: at
@@ -335,14 +336,17 @@ impl Hani {
                 "New paint from this colour",
             ),
             reading(format!("{:3} {:3} {:3}", colour[0], colour[1], colour[2])),
-            button(text("Pick from model").size(theme::LABEL_SIZE))
-                .width(Length::Fill)
-                .style(if painting.picking {
-                    theme::tool_button_active
-                } else {
-                    theme::tool_button
-                })
-                .on_press(Message::Painting(PaintingMessage::PickArmed)),
+            crate::ui::tip(
+                button(text("Pick from model").size(theme::LABEL_SIZE))
+                    .width(Length::Fill)
+                    .style(if painting.picking {
+                        theme::tool_button_active
+                    } else {
+                        theme::tool_button
+                    })
+                    .on_press(Message::Painting(PaintingMessage::PickArmed)),
+                "Click the model to take the colour there",
+            ),
         ]
         .spacing(theme::S2)
         .align_y(Alignment::Center);
@@ -375,11 +379,12 @@ impl Hani {
                     .on_toggle(|_| Message::FlatPaintToggled)
                     .text_size(theme::LABEL_SIZE),
             )
-            .push(
+            .push(crate::ui::tip(
                 button(text("Coat the body").size(theme::LABEL_SIZE))
                     .style(theme::tool_button)
                     .on_press(Message::Painting(PaintingMessage::Coated)),
-            );
+                "Paints the whole body in this colour, in this mode and touch",
+            ));
         picker.into()
     }
 }

@@ -223,11 +223,17 @@ impl Hani {
             .align_y(Alignment::Center),
             preview(pending / applied.max(0.01)),
             row![
-                crate::ui::button_secondary(
-                    "Apply",
-                    differs.then_some(send(ScaleMessage::Applied))
+                crate::ui::tip(
+                    crate::ui::button_secondary(
+                        "Apply",
+                        differs.then_some(send(ScaleMessage::Applied))
+                    ),
+                    "Use this size for the whole interface",
                 ),
-                crate::ui::button_secondary("Reset to auto", Some(send(ScaleMessage::Reset))),
+                crate::ui::tip(
+                    crate::ui::button_secondary("Reset to auto", Some(send(ScaleMessage::Reset))),
+                    "Size the interface from the screen again",
+                ),
             ]
             .spacing(theme::S2),
         ]

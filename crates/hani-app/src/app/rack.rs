@@ -600,11 +600,14 @@ impl Hani {
             && let Some(paint) = state.rack().paints.get(at)
         {
             let len = state.rack().paints.len();
-            let word = |label: &'static str, message: Option<Message>| {
-                button(text(label).size(theme::LABEL_SIZE))
-                    .padding(theme::PAD_CHOICE)
-                    .style(theme::tool_button)
-                    .on_press_maybe(message)
+            let word = |label: &'static str, what: &'static str, message: Option<Message>| {
+                crate::ui::tip(
+                    button(text(label).size(theme::LABEL_SIZE))
+                        .padding(theme::PAD_CHOICE)
+                        .style(theme::tool_button)
+                        .on_press_maybe(message),
+                    what,
+                )
             };
             block = block.push(
                 row![
@@ -620,9 +623,21 @@ impl Hani {
                         .size(theme::LABEL_SIZE)
                         .color(theme::TEXT_DIM)
                         .width(Length::Fill),
-                    word("Up", (at > 0).then(|| Message::Rack(RackMessage::Raised(at)))),
-                    word("Down", (at + 1 < len).then(|| Message::Rack(RackMessage::Lowered(at)))),
-                    word("Edit", Some(Message::Designer(DesignerMessage::Edit(at)))),
+                    word(
+                        "Up",
+                        "Move this paint earlier on the rack",
+                        (at > 0).then(|| Message::Rack(RackMessage::Raised(at)))
+                    ),
+                    word(
+                        "Down",
+                        "Move this paint later on the rack",
+                        (at + 1 < len).then(|| Message::Rack(RackMessage::Lowered(at)))
+                    ),
+                    word(
+                        "Edit",
+                        "Open this paint in the designer",
+                        Some(Message::Designer(DesignerMessage::Edit(at)))
+                    ),
                     icon_button(
                         icon::IconName::Trash,
                         "Take off the rack",
@@ -636,15 +651,21 @@ impl Hani {
 
         block = block.push(
             row![
-                crate::ui::toggle(
-                    "Add paints",
-                    state.searching,
-                    Message::Rack(RackMessage::Searching),
+                crate::ui::tip(
+                    crate::ui::toggle(
+                        "Add paints",
+                        state.searching,
+                        Message::Rack(RackMessage::Searching),
+                    ),
+                    "Find paints by name, colour or brand to put on the rack",
                 ),
-                button(text("New paint").size(theme::LABEL_SIZE))
-                    .padding(theme::PAD_CHOICE)
-                    .style(theme::tool_button)
-                    .on_press(Message::Designer(DesignerMessage::New)),
+                crate::ui::tip(
+                    button(text("New paint").size(theme::LABEL_SIZE))
+                        .padding(theme::PAD_CHOICE)
+                        .style(theme::tool_button)
+                        .on_press(Message::Designer(DesignerMessage::New)),
+                    "Make a paint of your own in the designer",
+                ),
             ]
             .spacing(theme::S2)
             .align_y(Alignment::Center),

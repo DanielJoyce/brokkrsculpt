@@ -791,8 +791,15 @@ impl Hani {
     /// The ring cut's part of the bar: Ring or Line, and while a cut is
     /// proposed, Split in two.
     pub(super) fn ring_cut_bar(&self) -> Element<'_, Message> {
-        let mut line = row![crate::ui::segmented(
-            [(CutWay::Ring, "Ring"), (CutWay::Line, "Line")],
+        let mut line = row![crate::ui::segmented_tips(
+            [
+                (CutWay::Ring, "Ring", "Fit a ring round the part to cut along"),
+                (
+                    CutWay::Line,
+                    "Line",
+                    "Draw a line, curve or loop on the screen to cut through everything"
+                ),
+            ],
             self.ring_cut.way,
             |way| Message::Ring(RingMessage::Way(way)),
         )]
@@ -812,19 +819,21 @@ impl Hani {
                     .shown(format!("{:.0}%", self.ring_cut.see_through * 100.0))
                     .inline(),
                 )
-                .push(
+                .push(crate::ui::tip(
                     button(text("Split in two").size(theme::LABEL_SIZE))
                         .padding(theme::PAD_CHOICE)
                         .style(theme::tool_button_active)
                         .on_press_maybe(
                             proposal.disc.is_some().then_some(Message::Ring(RingMessage::Split)),
                         ),
-                )
+                    "Cut the body along the ring into two bodies, with no pegs",
+                ))
                 // The pegs' shape and size, here where they are seen, and
                 // planned again as they change. Their kind, depth and
                 // clearance are with the export settings, the printer's.
-                .push(crate::ui::segmented(
-                    hani_core::part::KeyShape::ALL.map(|shape| (shape, shape.label())),
+                .push(crate::ui::segmented_tips(
+                    hani_core::part::KeyShape::ALL
+                        .map(|shape| (shape, shape.label(), super::tips::key_shape(shape))),
                     self.key_spec.shape,
                     |shape| Message::KeySettingChanged(crate::message::KeySetting::Shape(shape)),
                 ))
@@ -841,7 +850,7 @@ impl Hani {
                     .shown(format!("{:.1} mm", self.key_spec.radius_mm))
                     .inline(),
                 )
-                .push(
+                .push(crate::ui::tip(
                     button(text("Part with pegs").size(theme::LABEL_SIZE))
                         .padding(theme::PAD_CHOICE)
                         .style(theme::tool_button)
@@ -849,15 +858,16 @@ impl Hani {
                             (proposal.disc.is_some() && !proposal.keys.is_empty())
                                 .then_some(Message::Ring(RingMessage::Part)),
                         ),
-                )
-                .push(crate::ui::button_secondary(
-                    "Drop",
-                    Some(Message::Ring(RingMessage::Dropped)),
+                    "Cut along the ring with pegs and sockets so the parts fit back",
+                ))
+                .push(crate::ui::tip(
+                    crate::ui::button_secondary("Drop", Some(Message::Ring(RingMessage::Dropped))),
+                    "Put the ring away without cutting",
                 ));
             if proposal.lifts.iter().any(|lift| *lift != 0.0) {
-                line = line.push(crate::ui::button_secondary(
-                    "Flat",
-                    Some(Message::Ring(RingMessage::Flat)),
+                line = line.push(crate::ui::tip(
+                    crate::ui::button_secondary("Flat", Some(Message::Ring(RingMessage::Flat))),
+                    "Make the ring a flat cut again",
                 ));
             }
         }

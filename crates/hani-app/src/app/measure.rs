@@ -366,12 +366,13 @@ impl Hani {
 
     pub(super) fn measure_controls(&self) -> Element<'_, Message> {
         let armed = self.measure.armed;
-        let mut controls = row![
+        let mut controls = row![crate::ui::tip(
             button(text("Measure").size(theme::CAPTION_SIZE))
                 .padding(theme::S2)
                 .style(if armed { theme::tool_button_active } else { theme::tool_button })
                 .on_press(Message::Measure(MeasureMessage::Armed(!armed))),
-        ]
+            "Click two points on the model for the distance between them",
+        ),]
         .spacing(theme::S2)
         .align_y(Alignment::Center);
         if let Some(distance) = self.measure.distance() {
@@ -382,12 +383,13 @@ impl Hani {
                         .font(theme::MONO)
                         .color(theme::TEXT),
                 )
-                .push(
+                .push(crate::ui::tip(
                     button(text("Clear").size(theme::CAPTION_SIZE))
                         .padding(theme::S2)
                         .style(theme::tool_button)
                         .on_press(Message::Measure(MeasureMessage::Cleared)),
-                );
+                    "Take the measurement away",
+                ));
         }
         // On a card, so that the words read over a pale model. Neither it
         // nor the `Fill` container round it takes presses, as the one that

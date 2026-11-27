@@ -71,6 +71,7 @@ mod paints;
 mod panel;
 mod shelf;
 mod snip;
+mod tips;
 // Where a frame's time goes. See `app/phases.rs`.
 mod phases;
 mod presets;

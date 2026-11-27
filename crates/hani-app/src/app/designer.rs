@@ -208,16 +208,17 @@ impl Hani {
         for slot in &self.palette.slots {
             let rgba = slot.swatch().into_rgba8();
             let rgb = [rgba[0], rgba[1], rgba[2]];
-            quick = quick.push(
+            quick = quick.push(crate::ui::tip(
                 button(container(text("")).width(14).height(14).style(theme::swatch(swatch(rgb))))
                     .padding(2)
                     .style(theme::tool_button)
                     .on_press(send(DesignerMessage::Colour(rgb))),
-            );
+                "Take this filament's colour",
+            ));
         }
 
         // The mixer: a rack paint to mix in, and how much.
-        let mut with = row![
+        let mut with = row![crate::ui::tip(
             button(text("None").size(theme::LABEL_SIZE))
                 .padding(theme::PAD_CHOICE)
                 .style(if designer.mix_with.is_none() {
@@ -225,8 +226,9 @@ impl Hani {
                 } else {
                     theme::tool_button
                 })
-                .on_press(send(DesignerMessage::MixWith(None)))
-        ]
+                .on_press(send(DesignerMessage::MixWith(None))),
+            "Mix in nothing",
+        )]
         .spacing(theme::S1)
         .align_y(Alignment::Center);
         for paint in self.painting.rack.rack().paints.iter().take(10) {

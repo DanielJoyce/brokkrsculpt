@@ -320,14 +320,19 @@ impl Hani {
                     .width(Length::Fill)
                     .into()
             } else {
-                button(text(meta.name.clone()).size(theme::LABEL_SIZE).color(ink))
-                    .width(Length::Fill)
-                    .padding(theme::PAD_CHOICE)
-                    .style(theme::tool_button)
-                    .on_press(send(LayersMessage::Chosen(index)))
-                    .into()
+                crate::ui::tip(
+                    button(text(meta.name.clone()).size(theme::LABEL_SIZE).color(ink))
+                        .width(Length::Fill)
+                        .padding(theme::PAD_CHOICE)
+                        .style(theme::tool_button)
+                        .on_press(send(LayersMessage::Chosen(index))),
+                    "Paint on this layer",
+                )
             };
-            let blend = text(meta.blend.label()).size(theme::LABEL_SIZE).color(theme::TEXT_MUTE);
+            let blend = crate::ui::tip(
+                text(meta.blend.label()).size(theme::LABEL_SIZE).color(theme::TEXT_MUTE),
+                super::tips::blend(meta.blend),
+            );
             let line = row![
                 crate::ui::tip(
                     button(icon::icon(eye, theme::ICON_INLINE, ink))
@@ -338,8 +343,11 @@ impl Hani {
                 ),
                 name,
                 blend,
-                crate::ui::toggle("Lock", meta.locked, send(LayersMessage::Locked(index)))
-                    .width(Length::Shrink),
+                crate::ui::tip(
+                    crate::ui::toggle("Lock", meta.locked, send(LayersMessage::Locked(index)))
+                        .width(Length::Shrink),
+                    "A locked layer takes no paint",
+                ),
             ]
             .spacing(theme::S2)
             .align_y(Alignment::Center);
@@ -353,11 +361,14 @@ impl Hani {
         let meta = &metas[active];
         let blend = row![
             text("Blend").size(theme::LABEL_SIZE).color(theme::TEXT_DIM),
-            pick_list(Blend::ALL, Some(meta.blend), move |blend| {
-                send(LayersMessage::Blended(active, blend))
-            })
-            .text_size(theme::LABEL_SIZE)
-            .width(Length::Fill),
+            crate::ui::tip(
+                pick_list(Blend::ALL, Some(meta.blend), move |blend| {
+                    send(LayersMessage::Blended(active, blend))
+                })
+                .text_size(theme::LABEL_SIZE)
+                .width(Length::Fill),
+                super::tips::blend(meta.blend),
+            ),
         ]
         .spacing(theme::S2)
         .align_y(Alignment::Center);
@@ -387,19 +398,23 @@ impl Hani {
                 tip,
             )
         };
-        let word = |label: &'static str, message: Option<Message>| {
+        let word = |label: &'static str, what: &'static str, message: Option<Message>| {
             let ink = if message.is_some() { theme::TEXT } else { theme::TEXT_MUTE };
-            button(
-                text(label)
-                    .size(theme::LABEL_SIZE)
-                    .color(ink)
-                    .align_x(Alignment::Center)
-                    .width(Length::Fill),
-            )
+            iced::widget::container(crate::ui::tip(
+                button(
+                    text(label)
+                        .size(theme::LABEL_SIZE)
+                        .color(ink)
+                        .align_x(Alignment::Center)
+                        .width(Length::Fill),
+                )
+                .width(Length::Fill)
+                .padding(theme::PAD_CHOICE)
+                .style(theme::tool_button)
+                .on_press_maybe(message),
+                what,
+            ))
             .width(Length::FillPortion(label.len() as u16))
-            .padding(theme::PAD_CHOICE)
-            .style(theme::tool_button)
-            .on_press_maybe(message)
         };
         let full = len >= hani_core::paint::layers::MAX_LAYERS;
         let actions = row![
@@ -413,14 +428,26 @@ impl Hani {
                 "Duplicate",
                 (!full).then(|| send(LayersMessage::Duplicated(active)))
             ),
-            word("Up", (active + 1 < len).then(|| send(LayersMessage::Raised(active)))),
-            word("Down", (active > 0).then(|| send(LayersMessage::Lowered(active)))),
+            word(
+                "Up",
+                "Move this layer over the one above it",
+                (active + 1 < len).then(|| send(LayersMessage::Raised(active)))
+            ),
+            word(
+                "Down",
+                "Move this layer under the one below it",
+                (active > 0).then(|| send(LayersMessage::Lowered(active)))
+            ),
             icon_button(
                 icon::IconName::MergeDown,
                 "Merge down",
                 (active > 0).then(|| send(LayersMessage::MergedDown(active))),
             ),
-            word("Flatten", (len > 1).then(|| send(LayersMessage::Flattened))),
+            word(
+                "Flatten",
+                "Merge every layer into one",
+                (len > 1).then(|| send(LayersMessage::Flattened))
+            ),
             icon_button(
                 icon::IconName::Trash,
                 "Delete layer",

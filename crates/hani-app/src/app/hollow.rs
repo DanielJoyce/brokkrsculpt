@@ -255,8 +255,11 @@ impl Hani {
             )
             .step(0.1)
             .shown(format!("{:+.2} mm", how.offset_mm)),
-            crate::ui::segmented(
-                [(false, "New part"), (true, "Peel off")],
+            crate::ui::segmented_tips(
+                [
+                    (false, "New part", "Make the shell a new part and keep the body whole"),
+                    (true, "Peel off", "Take the shell off the body as a part of its own"),
+                ],
                 self.hollow.peel,
                 move |peel| changed(HollowMessage::PeelChosen(peel)),
             ),

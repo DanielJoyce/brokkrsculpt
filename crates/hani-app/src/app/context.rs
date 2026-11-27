@@ -82,8 +82,8 @@ impl Hani {
     /// colour, and nothing for a filament slot, which has no edge.
     pub(super) fn falloff_choice(&self) -> Option<Element<'_, Message>> {
         if self.painting_now() || self.tool == Tool::Mask {
-            return Some(crate::ui::segmented(
-                FalloffCurve::ALL.map(|curve| (curve, curve.label())),
+            return Some(crate::ui::segmented_tips(
+                FalloffCurve::ALL.map(|curve| (curve, curve.label(), super::tips::falloff(curve))),
                 self.brush.falloff,
                 Message::FalloffChanged,
             ));

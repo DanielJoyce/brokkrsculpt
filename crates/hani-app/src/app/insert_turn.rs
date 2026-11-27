@@ -323,7 +323,10 @@ impl Hani {
                 shown,
                 row![
                     axes.width(Length::Fill),
-                    crate::ui::button_secondary("Reset", Some(send(TurnMessage::Reset)))
+                    crate::ui::tip(
+                        crate::ui::button_secondary("Reset", Some(send(TurnMessage::Reset))),
+                        "Turn it back as it came",
+                    )
                 ]
                 .spacing(theme::S1),
             ]
