@@ -3589,6 +3589,52 @@ fn a_spread_body_is_drawn_moved_by_its_offset() {
     assert!((share - 0.25).abs() < 0.05, "a quarter screened in drew {share:.3} of it");
 }
 
+/// A body the transform gizmo is dragging is drawn where the drag has it:
+/// moved, and scaled about a point, with nothing else of the frame changed
+/// and back exactly where it was with no map. See `spread.rs`.
+#[test]
+fn a_moving_body_is_drawn_through_its_map() {
+    let Some(harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the moving body test");
+        return;
+    };
+    let distance = MODEL_RADIUS * 3.0;
+    let mut renderer = SculptRenderer::new(&harness.device, &harness.queue, TARGET_FORMAT);
+    renderer.resize(&harness.device, WIDTH, HEIGHT);
+    let mut sphere = Volume::new(VOXEL_SIZE);
+    sphere.seed_sphere(Vec3::ZERO, MODEL_RADIUS * 0.5);
+    upload_all(&mut renderer, &harness.device, &harness.queue, &mut sphere);
+    renderer.write_uniforms(&harness.queue, &uniforms(distance));
+    let plain = mask(&harness.frame(&renderer));
+    let lit = |drawn: &[bool]| drawn.iter().filter(|lit| **lit).count() as f64;
+
+    // Another body's map moves nothing.
+    renderer.set_moving(
+        &harness.queue,
+        Some((NodeId(THE_ONLY_BODY.0 + 1), glam::Mat4::from_translation(Vec3::splat(5.0)))),
+    );
+    assert_eq!(mask(&harness.frame(&renderer)), plain, "another body's map moved this one");
+
+    // Half the size about its middle: a quarter of the pixels, near enough.
+    renderer.set_moving(
+        &harness.queue,
+        Some((THE_ONLY_BODY, glam::Mat4::from_scale(Vec3::splat(0.5)))),
+    );
+    let small = harness.frame(&renderer);
+    dump("moving", &small);
+    let share = lit(&mask(&small)) / lit(&plain);
+    assert!((share - 0.25).abs() < 0.05, "half the size drew {share:.3} of it");
+
+    // Turned about its middle, a ball covers what it covered.
+    renderer.set_moving(&harness.queue, Some((THE_ONLY_BODY, glam::Mat4::from_rotation_y(1.0))));
+    let share = lit(&mask(&harness.frame(&renderer))) / lit(&plain);
+    assert!((share - 1.0).abs() < 0.02, "turned, it drew {share:.3} of itself");
+
+    // And with none it is where it was, to the pixel.
+    renderer.set_moving(&harness.queue, None);
+    assert_eq!(mask(&harness.frame(&renderer)), plain, "with no map it is not where it was");
+}
+
 /// A reference picture shows round the model and never over it, even when
 /// its plane stands in front of the model. See `reference.rs`.
 #[test]

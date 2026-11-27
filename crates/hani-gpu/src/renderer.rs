@@ -462,7 +462,12 @@ impl SculptRenderer {
                     wgpu::VertexBufferLayout {
                         array_stride: crate::spread::SPREAD_BYTES,
                         step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &wgpu::vertex_attr_array![4 => Float32x4],
+                        attributes: &wgpu::vertex_attr_array![
+                            4 => Float32x4,
+                            5 => Float32x4,
+                            6 => Float32x4,
+                            7 => Float32x4
+                        ],
                     },
                 ],
             },
@@ -611,6 +616,12 @@ impl SculptRenderer {
     /// `crate::spread`.
     pub fn set_spread(&mut self, queue: &wgpu::Queue, spread: &[(NodeId, glam::Vec4)]) {
         self.pool.spread.set(queue, spread);
+    }
+
+    /// Draw a body the gizmo is dragging through `map`, or none so.
+    /// `crate::spread`.
+    pub fn set_moving(&mut self, queue: &wgpu::Queue, moving: Option<(NodeId, glam::Mat4)>) {
+        self.pool.spread.set_moving(queue, moving);
     }
 
     /// How many of one body's bricks the pool holds, for tests that have to

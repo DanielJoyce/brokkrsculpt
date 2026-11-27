@@ -65,6 +65,7 @@ mod hollow;
 // Help: Markdown pages in a card. See `app/help.rs`.
 mod help;
 mod measure;
+mod moving;
 mod overhang;
 mod painting;
 mod paints;
@@ -3030,6 +3031,8 @@ impl Hani {
         }
         self.shared.swap_gizmo(&mut batch);
         self.gizmo_batch = batch;
+        // The body itself, drawn where the drag has it: `app/moving.rs`.
+        self.shared.set_moving(moving::drawn(self.gizmo.as_ref()));
     }
 
     /// Take the active body under the gizmo, or say why not.
@@ -24407,6 +24410,50 @@ mod gizmo_tests {
     /// Escape during a LIVE drag cancels that drag and nothing more. "Not that
     /// one" is a different instruction from "not any of it", and the recovery
     /// is throwing the gesture away rather than inverting it.
+    /// While a handle is held the body is drawn where the drag has it, and
+    /// the release, which rebuilds the field there, stops drawing it moved;
+    /// so does an escape, which puts it back. See `app/moving.rs`.
+    #[test]
+    fn a_dragged_body_is_drawn_moved_until_the_release() {
+        let mut app = app();
+        arm(&mut app);
+        assert!(app.shared.moving_snapshot().is_none(), "drawn moved before any drag");
+        let (grip, along) = x_shaft_grip(&app);
+        moved(&mut app, grip);
+        app.on_pointer(PointerEvent::Pressed {
+            button: PointerButton::Left,
+            position: Vector::new(grip.x, grip.y),
+            size: SIZE,
+        });
+        moved(&mut app, grip + along * 90.0);
+        let gizmo = app.gizmo.expect("armed");
+        let (body, map) = app.shared.moving_snapshot().expect("held, the body is drawn moved");
+        assert_eq!(body, gizmo.body);
+        let from = gizmo.pinned.transform_point(gizmo.base_pivot);
+        let to = gizmo.placement.transform_point(gizmo.base_pivot);
+        assert!(to.distance(from) > 0.5, "the fixture's drag went nowhere");
+        assert!(
+            map.transform_point3(from).distance(to) < 1.0e-3,
+            "not drawn where the drag has it"
+        );
+
+        app.on_pointer(PointerEvent::Released { button: PointerButton::Left });
+        assert!(app.shared.moving_snapshot().is_none(), "still drawn moved after the release");
+
+        // Escaped mid-drag: back where it was, and drawn there.
+        let (grip, along) = x_shaft_grip(&app);
+        moved(&mut app, grip);
+        app.on_pointer(PointerEvent::Pressed {
+            button: PointerButton::Left,
+            position: Vector::new(grip.x, grip.y),
+            size: SIZE,
+        });
+        moved(&mut app, grip + along * 60.0);
+        assert!(app.shared.moving_snapshot().is_some());
+        update(&mut app, Message::MenuClosed);
+        assert!(app.shared.moving_snapshot().is_none(), "still drawn moved after the escape");
+    }
+
     #[test]
     fn escape_during_a_drag_cancels_the_drag_and_keeps_the_gizmo() {
         let mut app = app();

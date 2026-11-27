@@ -12,7 +12,8 @@ last one.
 - **Sculpt** is for shaping: the brushes, masking, cutting, the form tools
   Bulk, Detail and Shell, and Extract.
 - **Transform** is for parts: adding shapes as bodies of their own, the move,
-  turn and scale gizmo, Deform and Revolve.
+  turn and scale gizmo, Deform and Revolve. A part follows the gizmo while you
+  drag it, and is rebuilt where you let go.
 - **Paint** is for colour: the rack of paints, the ways of putting paint on,
   the one-press coats, and layers.
 - **Print** is for getting it out: export formats, detail, overhangs, parting
