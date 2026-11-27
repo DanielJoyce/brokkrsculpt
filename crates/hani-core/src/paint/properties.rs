@@ -149,7 +149,10 @@ proptest! {
         prop_assert_eq!(laid(before, pigment, amount), laid(before, at_full, amount * pigment.opacity));
     }
 
-    /// A glaze over a full coat hides none of it and lightens none of it.
+    /// A glaze over a full coat hides none of it, and is never lighter than
+    /// it: it is a film of its hue that gives back some of the lightness
+    /// it takes (`stroke.rs`'s `tinted`). A channel may rise; the whole
+    /// may not.
     #[test]
     fn a_glaze_never_lightens(
         under in any::<[u8; 3]>(),
@@ -159,9 +162,18 @@ proptest! {
         let glaze = Pigment { colour, opacity: 1.0, mode: Mode::Glaze };
         let after = laid([under[0], under[1], under[2], 255], glaze, amount);
         prop_assert_eq!(after[3], 255);
-        for channel in 0..3 {
-            prop_assert!(after[channel] <= under[channel], "channel {}: {:?}", channel, after);
-        }
+        let luma = |c: [u8; 3]| {
+            let c = crate::paint::linear(c);
+            0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+        };
+        // A byte's worth of rounding either way.
+        prop_assert!(
+            luma([after[0], after[1], after[2]]) <= luma(under) + 0.01,
+            "{:?} over {:?} came out lighter: {:?}",
+            colour,
+            under,
+            after
+        );
     }
 
     /// Paint comes back from a file's section as it went in, for any

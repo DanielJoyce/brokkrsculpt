@@ -372,6 +372,73 @@ impl PaintField {
         }
     }
 
+    /// The paint at each of `cells`, blended from the eight voxels at the
+    /// corners of the cell, each by its coverage: what a vertex there is
+    /// drawn with.
+    ///
+    /// [`PaintField::rgba_at_cells`] reads one voxel, the cell's own corner,
+    /// so where two paints meet the vertices of a triangle took one side or
+    /// the other a voxel at a time, and the triangles between drew the
+    /// steps as alternating wedges of the two colours. The maintainer found
+    /// it on 2026-11-27: "colored tris alternating with the other color
+    /// instead of just a nice blend". A stroke lays paint through the band,
+    /// every voxel on a line through it taking what the surface under it
+    /// takes (`stroke.rs`), so the eight corners of a cell on the surface
+    /// are painted alike where the paint is even, and this changes nothing
+    /// there; at a boundary it is a blend over a voxel.
+    ///
+    /// By cell and not by the vertex's position, for the reason the slot is
+    /// read by cell: two bricks that share a seam vertex derive the same
+    /// cell from it, and so the same eight voxels and the same blend.
+    ///
+    /// The colour is the coverage-weighted mean of the corners' colours, in
+    /// the stored sRGB, and the coverage the mean of their coverages: a cell
+    /// half painted is half covered, in the colour of the half that is.
+    pub(crate) fn rgba_blended_at_cells(
+        &self,
+        coord: BrickCoord,
+        cells: &[IVec3],
+        out: &mut Vec<Rgba>,
+    ) {
+        if self.bricks.is_empty() {
+            out.resize(out.len() + cells.len(), BARE);
+            return;
+        }
+        let slab = self.slab(coord);
+        let origin = coord.origin();
+        let dim = BRICK_DIM as i32;
+        out.reserve(cells.len());
+        for cell in cells {
+            let mut sum = [0_u32; 3];
+            let mut cover = 0_u32;
+            for corner in 0..8 {
+                let at = *cell + IVec3::new(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1);
+                let local = at - origin;
+                let [r, g, b, a] = if local.min_element() >= 0 && local.max_element() < dim {
+                    slab.rgba_at(brick_index(local.x as usize, local.y as usize, local.z as usize))
+                } else {
+                    self.at(at)
+                };
+                let a = u32::from(a);
+                sum[0] += u32::from(r) * a;
+                sum[1] += u32::from(g) * a;
+                sum[2] += u32::from(b) * a;
+                cover += a;
+            }
+            if cover == 0 {
+                out.push(BARE);
+                continue;
+            }
+            let colour = |channel: u32| ((channel + cover / 2) / cover) as u8;
+            out.push(stored([
+                colour(sum[0]),
+                colour(sum[1]),
+                colour(sum[2]),
+                ((cover + 4) / 8) as u8,
+            ]));
+        }
+    }
+
     #[debug_ensures(
         self.bricks.values().all(|brick| *brick != PaintBrick::Uniform(BARE)),
         "a brick of nothing is no brick"
@@ -1903,26 +1970,41 @@ mod tests {
         }
     }
 
-    /// A mesh carries the paint of each vertex's own cell, one for each
-    /// vertex, and a run of bare for a body nobody painted.
+    /// A mesh carries, for each vertex, the paint of its cell's eight
+    /// corners blended by their coverage: away from a boundary that is the
+    /// paint there, at one a mix of the two and not one or the other. And a
+    /// run of bare for a body nobody painted.
     #[test]
     fn a_mesh_carries_the_paint_of_each_vertex() {
         let volume = painted();
         let mut scratch = MeshScratch::default();
         let mut mesh = BrickMesh::default();
         let mut vertices = 0;
+        let mut mixed = 0;
         for coord in volume.brick_coords() {
             volume.mesh_brick(coord, &mut scratch, &mut mesh);
             assert_eq!(mesh.paint.len(), mesh.vertices.len());
             for (vertex, (cell, paint)) in mesh.cells.iter().zip(&mesh.paint).enumerate() {
-                assert_eq!(*paint, volume.paint().at(*cell), "vertex {vertex} of {coord:?}");
+                let mut alone = Vec::new();
+                volume.paint().rgba_blended_at_cells(coord, &[*cell], &mut alone);
+                assert_eq!(*paint, alone[0], "vertex {vertex} of {coord:?}");
                 let x = mesh.vertices[vertex].position[0];
                 if x.abs() > 2.0 {
                     assert_eq!(*paint, if x > 0.0 { RED } else { BLUE });
                 }
+                if *paint != RED && *paint != BLUE && paint[3] > 0 {
+                    // A mix: between the two in each channel.
+                    for channel in 0..3 {
+                        let (low, high) =
+                            (RED[channel].min(BLUE[channel]), RED[channel].max(BLUE[channel]));
+                        assert!((low..=high).contains(&paint[channel]), "{paint:?} is not between");
+                    }
+                    mixed += 1;
+                }
             }
             vertices += mesh.vertices.len();
         }
+        assert!(mixed > 0, "nothing at the boundary was a blend of the two");
         assert!(vertices > 1000, "the ball meshed to {vertices} vertices");
 
         let bare = ball(12.0);

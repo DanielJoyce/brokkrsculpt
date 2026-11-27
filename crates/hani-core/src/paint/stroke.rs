@@ -79,8 +79,9 @@ pub enum Mode {
     /// Covers.
     #[default]
     Paint,
-    /// Tints without hiding: what is under it is multiplied by the colour,
-    /// as light through a transparent film is.
+    /// Tints without hiding: what is under it is seen through a film of
+    /// the colour's hue, which gives back some of the lightness it takes.
+    /// See [`tinted`].
     Glaze,
     /// Takes paint off, back toward the clay. The colour is not read.
     Erase,
@@ -258,13 +259,18 @@ impl Ready {
                 ([mix(0), mix(1), mix(2)], coverage)
             }
             Mode::Glaze => {
-                // Over the part that is painted, a film: what is there
-                // times the colour, by how much of the film there is. Over
-                // the part that is bare, a thin coat of the colour itself.
+                // Over the part that is painted, the paint there seen
+                // through the glaze, by how much of the glaze there is.
+                // Over the part that is bare, a thin coat of the clay so
+                // seen. See `tinted`.
+                let clay = crate::paint::layers::CLAY.map(light);
+                let painted = tinted(under, over);
+                let bare = tinted(clay, over);
                 let thin = (1.0 - under_a) * a * GLAZE_BODY;
                 let coverage = under_a + thin;
                 let mix = |c: usize| {
-                    (under[c] * (1.0 - a + a * over[c]) * under_a + over[c] * thin) / coverage
+                    (under[c] * (1.0 - a) + painted[c] * a) * under_a / coverage.max(1.0e-6)
+                        + bare[c] * thin / coverage.max(1.0e-6)
                 };
                 ([mix(0), mix(1), mix(2)], coverage)
             }
@@ -274,6 +280,58 @@ impl Ready {
         let [r, g, b] = encode(colour);
         crate::paint::field::stored([r, g, b, alpha])
     }
+}
+
+/// `under` seen through a glaze of `glaze`, both linear.
+///
+/// A glaze multiplied what was under it by its colour until 2026-11-27,
+/// which is light through a film, and at a full touch is the film's whole
+/// filter: a red over a mid grey came out dark brown (88, 9, 9) and over a
+/// green nearly black (25, 8, 1), worked out with this file's own
+/// conversions. The maintainer found it "just seems to make everything
+/// darker without the color taking effect".
+///
+/// The first change kept the lightness under it and gave it the glaze's
+/// colour channel by channel. On a screen a dark blue glaze over white
+/// came out a bright cyan: the blue channel tops out at white's lightness
+/// and the rest of it went to green. So now a glaze is still a film, but
+/// a film of its hue only (its colour over its brightest channel, so a
+/// dark blue filters as a full blue does), and then [`GLAZE_KEEPS`] of the
+/// lightness the film took is given back, keeping the hue, as the
+/// W3C "color" blend sets a lightness. The red over the mid grey is
+/// (149, 84, 84), over the green (83, 76, 73), and the blue over white
+/// (189, 204, 255), worked out in this function's arithmetic.
+pub(crate) fn tinted(under: [f32; 3], glaze: [f32; 3]) -> [f32; 3] {
+    let brightest = glaze[0].max(glaze[1]).max(glaze[2]).max(1.0e-4);
+    let film: [f32; 3] = std::array::from_fn(|c| under[c] * (glaze[c] / brightest).min(1.0));
+    let dark = luma(film);
+    with_lightness(film, dark + (luma(under) - dark) * GLAZE_KEEPS)
+}
+
+/// How much of the lightness a glaze's film takes that it gives back.
+pub const GLAZE_KEEPS: f32 = 0.5;
+
+fn luma(c: [f32; 3]) -> f32 {
+    0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+}
+
+/// `colour` moved to `lightness` keeping its hue, brought back inside
+/// 0..=1 toward its own grey where moving it took a channel out: the
+/// SetLum and ClipColor of the W3C compositing note.
+fn with_lightness(colour: [f32; 3], lightness: f32) -> [f32; 3] {
+    let shift = lightness - luma(colour);
+    let moved = colour.map(|channel| channel + shift);
+    let grey = luma(moved);
+    let least = moved[0].min(moved[1]).min(moved[2]);
+    let most = moved[0].max(moved[1]).max(moved[2]);
+    let mut out = moved;
+    if least < 0.0 && grey - least > 1.0e-6 {
+        out = out.map(|channel| grey + (channel - grey) * grey / (grey - least));
+    }
+    if most > 1.0 && most - grey > 1.0e-6 {
+        out = out.map(|channel| grey + (channel - grey) * (1.0 - grey) / (most - grey));
+    }
+    out.map(|channel| channel.clamp(0.0, 1.0))
 }
 
 /// How much of a wash a point takes. `relief` is how far the surface
@@ -922,28 +980,44 @@ mod tests {
         }
     }
 
-    /// A glaze tints what is painted and leaves a thin coat of itself on
-    /// what is not; an eraser takes paint off and leaves its colour.
+    /// A glaze shows its hue over what is painted without taking it dark,
+    /// and over bare clay leaves a thin coat of the clay so tinted; an
+    /// eraser takes paint off and leaves its colour.
     #[test]
     fn a_glaze_tints_and_an_eraser_takes_off() {
         let glaze = Pigment { colour: RED, opacity: 1.0, mode: Mode::Glaze };
-        // Over white it is itself, and what was covered stays covered.
-        assert_eq!(laid([255, 255, 255, 255], glaze, 1.0), [200, 30, 20, 255]);
-        // Over a colour it is the two multiplied as light, which darkens
-        // every channel, and it hides nothing.
+        let encoded = |c: [f32; 3]| srgb(c);
+        let red = linear(RED);
+        let lightness = |c: [u8; 3]| luma(linear(c));
+        // Over white it is a light red, and what was covered stays covered.
+        let [r, g, b] = encoded(tinted([1.0; 3], red));
+        assert_eq!(laid([255, 255, 255, 255], glaze, 1.0), [r, g, b, 255]);
+        assert!(r == 255 && g.max(b) < 230 && g > RED[1], "red over white is {:?}", [r, g, b]);
+        // Over a mid grey, red, and a good deal lighter than multiplying
+        // left it ((88, 9, 9) in `tinted`).
+        let over_grey = laid([128, 128, 128, 255], glaze, 1.0);
+        assert!(over_grey[0] > over_grey[1].max(over_grey[2]) + 40, "{over_grey:?}");
+        let kept = lightness([over_grey[0], over_grey[1], over_grey[2]]) / lightness([128; 3]);
+        assert!(kept > 0.5, "the grey's lightness went to {kept} of itself");
+        // A dark blue over white is a pale blue, and not the cyan that
+        // giving it white's lightness channel by channel made.
+        let blue = [13, 61, 131];
+        let over_white = encoded(tinted([1.0; 3], linear(blue)));
+        assert!(over_white[2] > over_white[1] && over_white[1] > over_white[0], "{over_white:?}");
+        assert!(over_white[2] - over_white[0] > 40, "{over_white:?}");
+        // Over a green, redder and less green, and never lighter.
         let over_green = laid([GREEN[0], GREEN[1], GREEN[2], 255], glaze, 1.0);
-        let (green, red) = (linear(GREEN), linear(RED));
-        let [r, g, b] = srgb(std::array::from_fn(|c| green[c] * red[c]));
+        let [r, g, b] = encoded(tinted(linear(GREEN), red));
         assert_eq!(over_green, [r, g, b, 255]);
-        assert!(
-            (0..3).all(|c| over_green[c] < GREEN[c]) && g > 5,
-            "red over green is {over_green:?}"
-        );
-        // Half a glaze over white is half way to it.
-        let [r, g, b] = mixed([255; 3], RED, 0.5);
+        assert!(over_green[0] > GREEN[0] && over_green[1] < GREEN[1], "{over_green:?}");
+        assert!(lightness([r, g, b]) <= lightness(GREEN) + 1.0e-3);
+        // Half a glaze over white is half way to the whole one, in light.
+        let whole = tinted([1.0; 3], red);
+        let [r, g, b] = encoded(std::array::from_fn(|c| 0.5 + 0.5 * whole[c]));
         assert_eq!(laid([255, 255, 255, 255], glaze, 0.5), [r, g, b, 255]);
-        // Over bare clay, a thin coat of its own colour.
-        assert_eq!(laid(BARE, glaze, 1.0), [200, 30, 20, (GLAZE_BODY * 255.0).round() as u8]);
+        // Over bare clay, a thin coat of the clay tinted red.
+        let [r, g, b] = encoded(tinted(linear(crate::paint::layers::CLAY), red));
+        assert_eq!(laid(BARE, glaze, 1.0), [r, g, b, (GLAZE_BODY * 255.0).round() as u8]);
         assert_eq!(GLAZE_BODY, 0.5);
 
         let eraser = Pigment { colour: RED, opacity: 1.0, mode: Mode::Erase };

@@ -1387,7 +1387,10 @@ impl Volume {
         // vertex. Free for a body with no paint, as the slots are.
         // The stack put together, which for one plain layer is that layer.
         // See `paint/layers.rs`.
-        self.display_paint().rgba_at_cells(coord, &out.cells, &mut out.paint);
+        // Blended over each cell's eight corners, so a boundary between two
+        // paints is a blend and not a staircase of triangles. See
+        // `PaintField::rgba_blended_at_cells`.
+        self.display_paint().rgba_blended_at_cells(coord, &out.cells, &mut out.paint);
         // The finish a varnish laid, where one is shown. See
         // `paint/layers.rs`.
         if self.layers.has_varnish() && !self.layers.finish().is_empty() {
