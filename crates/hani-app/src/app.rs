@@ -2520,6 +2520,16 @@ impl Hani {
             // Destroying the last window is what ends a non-daemon iced
             // application (`iced_winit` sends `Control::Exit` once the window
             // manager is empty), so this really does quit.
+            // In a browser there is nothing to quit to: closing the drawing
+            // surface leaves a dead page. A tab closes itself; a hosting
+            // webview is told, with the leave warning taken down, since what
+            // was not saved has just been saved or let go. See
+            // `web::tell_host`.
+            PendingAction::Quit(_) if cfg!(target_arch = "wasm32") => {
+                crate::web::warn_on_leaving(false);
+                crate::web::tell_host("close");
+                Task::none()
+            }
             PendingAction::Quit(id) => iced::window::close(id),
             PendingAction::Restart(id) => self.install_and_restart(id),
         }
@@ -10949,6 +10959,14 @@ impl Hani {
             Message::TitleBarDragged => {
                 return iced::window::latest().and_then(iced::window::drag);
             }
+            // In a browser the host has the window: told, and the page left
+            // alone. See `web::tell_host`.
+            Message::TitleBarDoubleClicked if cfg!(target_arch = "wasm32") => {
+                crate::web::tell_host("maximise");
+            }
+            Message::WindowMinimise if cfg!(target_arch = "wasm32") => {
+                crate::web::tell_host("minimise");
+            }
             Message::TitleBarDoubleClicked => {
                 return iced::window::latest().and_then(iced::window::toggle_maximize);
             }
@@ -10966,6 +10984,10 @@ impl Hani {
                 return iced::window::latest()
                     .and_then(|id| Task::done(Message::CloseRequested(id)));
             }
+            // Not asked in a browser tab, where there is no quitting: see the
+            // `Quit` arm of `run_pending`. A hosting webview is asked for.
+            Message::CloseRequested(_)
+                if cfg!(target_arch = "wasm32") && !crate::web::window_buttons() => {}
             Message::CloseRequested(id) => return self.guard(PendingAction::Quit(id)),
             Message::ConfirmAnswered(choice) => return self.answer_confirm(choice),
             Message::SavedThenContinue(path) => {

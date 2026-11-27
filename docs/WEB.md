@@ -135,6 +135,41 @@ imported through *Import and replace…* (542,556 triangles, 5.6 s on one
 core), and the browser asking before the page was left after a stroke and
 not before it.
 
+## The window's buttons, and a page in a webview
+
+In a browser tab the title bar has no Minimise, Maximise or Close: the
+tab is the window and has its own, and the leave warning (above) covers
+unsaved work. They were there until 2026-11-27, when the maintainer found
+that Close, then Discard, left the page drawing nothing: it had closed
+the drawing surface inside the page, which is not a window that can be
+closed.
+
+A page hosted in a webview (a desktop shell around the web build, with no
+tab) wants them, and asks:
+
+- `?window-buttons=1` in the page's address, or
+- `window.hanisculpt = { windowButtons: true }` set by the host before
+  the module loads (a script the webview injects at document start).
+
+Then the three buttons are drawn, and pressing one tells the host and
+leaves the page as it is. Close asks about unsaved work first, as on the
+desktop, and tells the host only once it has been saved or let go (the
+leave warning is taken down at the same moment, so the host can close
+the page without the browser asking again). The message is
+`{ source: "hanisculpt", action }`, `action` being `close`, `minimise` or
+`maximise`, sent every way a webview listens:
+
+| Host | How it hears |
+|---|---|
+| Any | `window.hanisculpt.onWindow(action)`, if the host set that function |
+| WebView2 (Windows) | `window.chrome.webview.postMessage(message)` |
+| WKWebView (macOS, iOS) | `window.webkit.messageHandlers.hanisculpt.postMessage(message)` |
+| A parent page (iframe) | `window.parent.postMessage(message, "*")` |
+| Any | a `hanisculpt-window` event on `window`, `detail` the action |
+
+What the host does with it is the host's: close its window, minimise it,
+maximise it. Dragging the title bar to move the window is not sent.
+
 ## Fonts
 
 A browser has no system fonts: there are only the faces the application
