@@ -95,6 +95,17 @@ pub struct Pigment {
     /// How much of it a full touch of the brush lays, 0..=1.
     pub opacity: f32,
     pub mode: Mode,
+    /// For a glaze: how much of the lightness its film takes it gives back,
+    /// 0..=1. Nought is the whole film, as dark as light through the
+    /// colour; one keeps every shade under it. [`GLAZE_KEEPS`] unless the
+    /// paint panel says otherwise. Read by no other mode.
+    pub glaze: f32,
+}
+
+impl Default for Pigment {
+    fn default() -> Self {
+        Self { colour: [0, 0, 0], opacity: 1.0, mode: Mode::Paint, glaze: GLAZE_KEEPS }
+    }
 }
 
 /// What of the surface under the brush the paint comes off on.
@@ -235,11 +246,17 @@ struct Ready {
     over: [f32; 3],
     opacity: f32,
     mode: Mode,
+    glaze: f32,
 }
 
 impl Ready {
     fn of(pigment: Pigment) -> Self {
-        Self { over: pigment.colour.map(light), opacity: pigment.opacity, mode: pigment.mode }
+        Self {
+            over: pigment.colour.map(light),
+            opacity: pigment.opacity,
+            mode: pigment.mode,
+            glaze: pigment.glaze.clamp(0.0, 1.0),
+        }
     }
 
     /// [`laid`], which is this.
@@ -264,8 +281,8 @@ impl Ready {
                 // Over the part that is bare, a thin coat of the clay so
                 // seen. See `tinted`.
                 let clay = crate::paint::layers::CLAY.map(light);
-                let painted = tinted(under, over);
-                let bare = tinted(clay, over);
+                let painted = tinted_keeping(under, over, self.glaze);
+                let bare = tinted_keeping(clay, over, self.glaze);
                 let thin = (1.0 - under_a) * a * GLAZE_BODY;
                 let coverage = under_a + thin;
                 let mix = |c: usize| {
@@ -302,13 +319,21 @@ impl Ready {
 /// (149, 84, 84), over the green (83, 76, 73), and the blue over white
 /// (189, 204, 255), worked out in this function's arithmetic.
 pub(crate) fn tinted(under: [f32; 3], glaze: [f32; 3]) -> [f32; 3] {
+    tinted_keeping(under, glaze, GLAZE_KEEPS)
+}
+
+/// [`tinted`], giving back `keeps` of the lightness the film takes, 0..=1:
+/// the paint panel's glaze setting ([`Pigment::glaze`]).
+pub(crate) fn tinted_keeping(under: [f32; 3], glaze: [f32; 3], keeps: f32) -> [f32; 3] {
     let brightest = glaze[0].max(glaze[1]).max(glaze[2]).max(1.0e-4);
     let film: [f32; 3] = std::array::from_fn(|c| under[c] * (glaze[c] / brightest).min(1.0));
     let dark = luma(film);
-    with_lightness(film, dark + (luma(under) - dark) * GLAZE_KEEPS)
+    with_lightness(film, dark + (luma(under) - dark) * keeps.clamp(0.0, 1.0))
 }
 
-/// How much of the lightness a glaze's film takes that it gives back.
+/// How much of the lightness a glaze's film takes that it gives back, unless
+/// the paint panel says otherwise ([`Pigment::glaze`]); the layer blend's
+/// always.
 pub const GLAZE_KEEPS: f32 = 0.5;
 
 fn luma(c: [f32; 3]) -> f32 {
@@ -875,7 +900,7 @@ mod tests {
     }
 
     fn pigment(colour: [u8; 3], opacity: f32) -> Pigment {
-        Pigment { colour, opacity, mode: Mode::Paint }
+        Pigment { colour, opacity, mode: Mode::Paint, ..Pigment::default() }
     }
 
     fn on(centre: Vec3, normal: Vec3) -> Stamp {
@@ -939,14 +964,17 @@ mod tests {
             assert_eq!(srgb(linear([byte; 3])), [byte; 3], "byte {byte} does not survive");
             let before = [byte, 255 - byte, byte / 2, 200];
             for mode in [Mode::Paint, Mode::Glaze, Mode::Erase] {
-                let brush = Pigment { colour: RED, opacity: 1.0, mode };
+                let brush = Pigment { colour: RED, opacity: 1.0, mode, ..Pigment::default() };
                 assert_eq!(laid(before, brush, 0.0), before);
                 assert_eq!(laid(before, Pigment { opacity: 0.0, ..brush }, 1.0), before);
                 assert_eq!(laid(BARE, brush, 0.0), BARE, "nothing over nothing, {mode:?}");
             }
             // Half of it taken off again: the colour is kept as it was.
-            let erased =
-                laid(before, Pigment { colour: RED, opacity: 1.0, mode: Mode::Erase }, 0.5);
+            let erased = laid(
+                before,
+                Pigment { colour: RED, opacity: 1.0, mode: Mode::Erase, ..Pigment::default() },
+                0.5,
+            );
             assert_eq!(erased, [byte, 255 - byte, byte / 2, 100]);
         }
     }
@@ -1024,7 +1052,7 @@ mod tests {
     /// eraser takes paint off and leaves its colour.
     #[test]
     fn a_glaze_tints_and_an_eraser_takes_off() {
-        let glaze = Pigment { colour: RED, opacity: 1.0, mode: Mode::Glaze };
+        let glaze = Pigment { colour: RED, opacity: 1.0, mode: Mode::Glaze, ..Pigment::default() };
         let encoded = |c: [f32; 3]| srgb(c);
         let red = linear(RED);
         let lightness = |c: [u8; 3]| luma(linear(c));
@@ -1059,10 +1087,43 @@ mod tests {
         assert_eq!(laid(BARE, glaze, 1.0), [r, g, b, (GLAZE_BODY * 255.0).round() as u8]);
         assert_eq!(GLAZE_BODY, 0.5);
 
-        let eraser = Pigment { colour: RED, opacity: 1.0, mode: Mode::Erase };
+        let eraser = Pigment { colour: RED, opacity: 1.0, mode: Mode::Erase, ..Pigment::default() };
         assert_eq!(laid([GREEN[0], GREEN[1], GREEN[2], 255], eraser, 1.0), BARE);
         assert_eq!(laid(BARE, eraser, 1.0), BARE);
         assert_eq!(laid([30, 160, 40, 200], eraser, 0.25), [30, 160, 40, 150]);
+    }
+
+    /// The glaze setting: nought is the whole film, one keeps the lightness
+    /// under it, and between is between, never lighter for keeping less.
+    #[test]
+    fn a_glaze_keeps_as_much_light_as_it_is_set_to() {
+        let lightness = |c: [u8; 4]| luma(linear([c[0], c[1], c[2]]));
+        let under = [180, 170, 150, 255];
+        let laid_keeping = |keeps: f32| {
+            let glaze = Pigment { colour: RED, opacity: 1.0, mode: Mode::Glaze, glaze: keeps };
+            laid(under, glaze, 1.0)
+        };
+        let whole = laid_keeping(0.0);
+        let all = laid_keeping(1.0);
+        let film = linear(RED);
+        let brightest = film[0].max(film[1]).max(film[2]);
+        let filtered: [f32; 3] = std::array::from_fn(|c| {
+            linear([under[0], under[1], under[2]])[c] * film[c] / brightest
+        });
+        assert!((lightness(whole) - luma(filtered)).abs() < 0.01, "{whole:?}");
+        assert!((lightness(all) - lightness(under)).abs() < 0.01, "{all:?}");
+        let mut last = 0.0;
+        for step in 0..=10 {
+            let now = lightness(laid_keeping(step as f32 / 10.0));
+            assert!(now + 1.0e-3 >= last, "keeping {step} tenths went darker");
+            last = now;
+        }
+        // Red at every setting: the hue is the glaze's.
+        for keeps in [0.0, 0.5, 1.0] {
+            let [r, g, b, _] = laid_keeping(keeps);
+            assert!(r > g && r > b, "{keeps}: {:?}", [r, g, b]);
+        }
+        assert_eq!(Pigment::default().glaze, GLAZE_KEEPS);
     }
 
     /// A stroke lays one coat: each voxel takes the most any stamp gave it,
@@ -1306,7 +1367,8 @@ mod tests {
         let wide = Brush { falloff: FalloffCurve::Wide, ..brush(9.0) };
         let centre = Vec3::new(0.0, 0.0, HALF - SLOT_DEPTH * 0.5);
         let stamp = on(centre, Vec3::Z);
-        let wash = Pigment { colour: [40, 30, 20], opacity: 1.0, mode: Mode::Glaze };
+        let wash =
+            Pigment { colour: [40, 30, 20], opacity: 1.0, mode: Mode::Glaze, ..Pigment::default() };
         let mut washed = slotted();
         dab(&mut washed, &wide, &stamp, &lay(wash, Catch::Recesses));
         let mut loaded = slotted();
@@ -1614,7 +1676,12 @@ mod timing {
             let brush = Brush { kind: BrushKind::Paint, radius, ..Brush::default() };
             let stamp = Stamp::new(Vec3::new(0.0, 0.0, 30.0), Vec3::Z, BrushDirection::Add)
                 .with_tangent(Vec3::X);
-            let pigment = Pigment { colour: [200, 30, 20], opacity: 0.8, mode: Mode::Paint };
+            let pigment = Pigment {
+                colour: [200, 30, 20],
+                opacity: 0.8,
+                mode: Mode::Paint,
+                ..Pigment::default()
+            };
             // As a stroke lays them: twenty stamps a quarter of a radius
             // apart, where most of what a stamp covers the one before it has
             // covered already.

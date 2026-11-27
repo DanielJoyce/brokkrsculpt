@@ -85,7 +85,7 @@ stack is put together, not baked into the layer:
 | Multiply | Darkens what is under it by its colour | A wash's tint, shading |
 | Wash | Multiply, thicker in recesses and thinner on edges, by the cavity | Washes |
 | Contrast | Tints by the value of what is under it: strong over light, nearly gone over dark; pools in recesses, thins on edges | Contrast and speed paints |
-| Glaze | A film of the colour's hue over everything, that gives back half the lightness it takes: the hue shows over white, and over a colour the two mix as light through a film | Stains, inks, glazes |
+| Glaze | A film of the colour's hue over everything, that gives back half the lightness it takes: the hue shows over white, and over a colour the two mix as light through a film. A glaze stroke's share is its **Keeps light** setting | Stains, inks, glazes |
 | Screen | Lightens | Glows, a highlight |
 
 A paint's kind (section 4) picks the layer's blend when a coat is made or
