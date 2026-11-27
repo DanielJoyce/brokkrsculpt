@@ -7,10 +7,10 @@ satisfies their attribution requirements.
 
 **Nothing here imposes a copyleft obligation on HaniSculpt.** The project is
 AGPL-3.0-only by its own choice, not because a dependency forced it. Every one
-of the **309 crates** compiled into a Linux build is permissively licensed —
-MIT, Apache-2.0, BSD-2/3-Clause, ISC, Zlib, Unlicense, CC0-1.0,
-CDLA-Permissive-2.0, or Unicode-3.0. There is no GPL, no LGPL, no MPL and no
-EUPL in the graph. That is worth stating plainly because it is unusual: it
+of the **240 crates** compiled into a Linux build is permissively licensed
+(MIT, Apache-2.0, BSD-2/3-Clause, ISC, Zlib, 0BSD, Unlicense, CC0-1.0 or
+Unicode-3.0) but one, the `contracts` macro, which is MPL-2.0 and runs only
+while compiling (below). There is no GPL, no LGPL and no EUPL in the graph. That is worth stating plainly because it is unusual: it
 means nobody taking this code on inherits a linking question, a written offer,
 or a relinking obligation from us.
 
@@ -25,25 +25,30 @@ From `cargo metadata`, filtered to `x86_64-unknown-linux-gnu`, walking the
 `dev-dependencies`**, which are used to test the software and are not
 distributed in a build of it. Re-run it whenever `Cargo.lock` changes.
 
-Counts by declared license expression, over those 309 crates:
+Counts by declared license expression, over those 240 crates (counted on
+2026-11-27 with `cargo tree -e normal,build --target x86_64-unknown-linux-gnu
+-f '{p}|{l}'` from each workspace crate, `hani-evdev` included, workspace
+crates left out):
 
 | Crates | Expression |
 | ---: | --- |
-| 137 | `MIT OR Apache-2.0` |
-| 77 | `MIT` |
-| 33 | `Apache-2.0 OR MIT` |
-| 10 | `Apache-2.0` |
-| 9 | `MIT/Apache-2.0` |
+| 107 | `MIT OR Apache-2.0` |
+| 63 | `MIT` |
+| 12 | `Apache-2.0 OR MIT` |
+| 9 | `Apache-2.0` |
+| 8 | `MIT/Apache-2.0` |
 | 8 | `MIT OR Apache-2.0 OR Zlib` |
-| 5 | `Unlicense OR MIT` |
 | 4 | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` |
 | 3 | `Zlib OR Apache-2.0 OR MIT` |
 | 3 | `Zlib` |
-| 3 | `ISC` |
-| 5 | `BSD-3-Clause` |
-| 2 | `Apache-2.0/MIT` |
+| 3 | `BSD-2-Clause` |
+| 2 | `Unlicense OR MIT` |
+| 2 | `ISC` |
+| 2 | `BSD-3-Clause OR Apache-2.0` |
+| 2 | `BSD-3-Clause` |
 | 2 | `BSD-2-Clause OR Apache-2.0 OR MIT` |
-| 1 each | `BSD-2-Clause`, `Apache-2.0 AND ISC`, `Apache-2.0 AND MIT`, `Apache-2.0 OR ISC OR MIT`, `Apache-2.0 OR GPL-2.0-only`, `(MIT OR Apache-2.0) AND Unicode-3.0`, `CDLA-Permissive-2.0`, `CC0-1.0` |
+| 2 | `Apache-2.0/MIT` |
+| 1 each | `MPL-2.0`, `MIT OR Zlib OR Apache-2.0`, `CC0-1.0`, `Apache-2.0 OR GPL-2.0-only`, `Apache-2.0 AND MIT`, `Apache-2.0 AND ISC`, `0BSD OR MIT OR Apache-2.0`, `(MIT OR Apache-2.0) AND Unicode-3.0` |
 
 ## The one line that mentions the GPL, and why it is not a problem
 
@@ -54,6 +59,14 @@ GPL-2.0 term applies to this project or to anything built from it. It is
 recorded here rather than left for someone to find in a license scan and worry
 about. It arrives transitively through the text stack — `iced` → `iced_wgpu` →
 `cryoglyph` → `cosmic-text` → `self_cell` — not by direct choice.
+
+**`contracts`** 0.6 (MPL-2.0, <https://gitlab.com/karroffel/contracts>) is
+the one crate under a weak copyleft. It is a procedural macro: it runs inside
+the compiler, writes the `debug_requires` and `debug_ensures` checks into this
+project's own functions, and is not itself linked into the program. MPL-2.0 is
+a per-file licence, its obligations attach to its own source files, and those
+are neither modified nor distributed here. Earlier counts in this file left it
+out because they walked only the crates linked into the binary.
 
 Two other expressions are conjunctions rather than choices, so *both* terms
 apply and both are permissive: **`ring`** (`Apache-2.0 AND ISC`) and
@@ -76,14 +89,20 @@ to be worth naming:
 - **cosmic-text** — MIT OR Apache-2.0 —
   <https://github.com/pop-os/cosmic-text>. Text shaping, via iced.
 - **tiny-skia** and **tiny-skia-path** — BSD-3-Clause —
-  <https://github.com/RazrFalcon/tiny-skia>. Vector rasterisation, via iced.
-- **exr** and **lebe** — BSD-3-Clause —
-  <https://github.com/johannesvollmer/exrs> and
-  <https://github.com/johannesvollmer/lebe>. Reading OpenEXR pictures, which
-  is the file a vector displacement map comes in. A direct choice, for the
-  brushes that stamp one; it brings `bit_field`, `zune-inflate` and
-  `multiversion` (with `multiversion-macros` and `target-features`), all
-  MIT OR Apache-2.0, the second also Zlib.
+  <https://github.com/RazrFalcon/tiny-skia>. On Linux only, where winit's
+  Wayland window decorations (`sctk-adwaita`) are drawn with it. iced's own
+  software renderer is no longer built.
+- **miniz_oxide** — MIT OR Zlib OR Apache-2.0 —
+  <https://github.com/Frommi/miniz_oxide>. Inflating the ZIP blocks of an
+  OpenEXR picture, the file a vector displacement map comes in. The OpenEXR
+  reader itself is this project's own (`hani-app/src/openexr.rs`) since
+  2026-11-27. **exr** and **lebe** (BSD-3-Clause,
+  <https://github.com/johannesvollmer/exrs>) are now a `dev-dependency` only:
+  the reader's tests read what exr writes.
+- **arboard** — MIT OR Apache-2.0 — <https://github.com/1Password/arboard>.
+  The clipboard, for the snip's picture and the report's text; it brings the
+  `image` crate's PNG path and `moxcms` and `pxfm` (BSD-3-Clause OR
+  Apache-2.0).
 - **bytemuck** — Zlib OR Apache-2.0 OR MIT —
   <https://github.com/Lokathor/bytemuck>. Taken under Apache-2.0. Getting Rust
   structs safely to the GPU as bytes.
@@ -99,7 +118,7 @@ to be worth naming:
   mesher (`hani-core/src/mesh/nets.rs`) is tested against bit for bit. Its
   method and its arithmetic are what that mesher follows, which is why it is
   still named here. It took `ndshape` and a second copy of `glam` out of the
-  build with it, which is where the count above went from 312 to 309.
+  build with it, which took the count of that day from 312 to 309.
 - **rayon** — MIT OR Apache-2.0 — <https://github.com/rayon-rs/rayon>. The
   parallel path in `edit_voxels`.
 - **rustc-hash** — Apache-2.0 OR MIT —
@@ -117,26 +136,25 @@ to be worth naming:
 
 ### Devices
 
-- **evdev** — Apache-2.0 OR MIT — <https://github.com/cmr/evdev>. Stylus
-  pressure and tilt, and the SpaceMouse, read below the display server.
+- **hani-evdev**, this project's own (`crates/hani-evdev`), over **libc**
+  (MIT OR Apache-2.0, <https://github.com/rust-lang/libc>). Stylus pressure
+  and tilt, and the SpaceMouse, read below the display server. It replaced
+  the `evdev` crate (Apache-2.0 OR MIT, <https://github.com/cmr/evdev>) on
+  2026-11-27, and keeps its names for what it covers.
 
 ### Network
 
-The bug reporter is the only outbound HTTPS in the application, and TLS is
-where most of the dependency count went.
+There is no TLS library in the application. The updater fetches over HTTPS
+with the system's own `curl`, run as a program; the printer is spoken to over
+plain HTTP on the local network with the standard library; a bug report is a
+link opened in the browser. `ureq`, `rustls`, `rustls-webpki` and
+`webpki-roots` left the build on 2026-11-27.
 
-- **ureq** — MIT OR Apache-2.0 — <https://github.com/algesten/ureq>. Built
-  with `default-features = false` and `rustls` only.
-- **rustls** — Apache-2.0 OR ISC OR MIT — <https://github.com/rustls/rustls>.
-- **ring** — Apache-2.0 AND ISC — <https://github.com/briansmith/ring>. The
-  cryptography under rustls. Both terms apply; both are permissive. Contains
-  code derived from BoringSSL, which carries its own permissive notices in the
-  crate's own `LICENSE`.
-- **rustls-webpki** and **untrusted** — ISC — certificate path validation.
-- **webpki-roots** — CDLA-Permissive-2.0 —
-  <https://github.com/rustls/webpki-roots>. Mozilla's CA trust store, packaged
-  as data. It is redistributed unmodified; the CDLA-Permissive-2.0 terms cover
-  it as a *data* set rather than as code.
+- **ring** — Apache-2.0 AND ISC — <https://github.com/briansmith/ring>.
+  SHA-256 and signature checks on a downloaded update. Both terms apply; both
+  are permissive. Contains code derived from BoringSSL, which carries its own
+  permissive notices in the crate's own `LICENSE`. It brings **untrusted**
+  (ISC).
 
 ### Logging
 

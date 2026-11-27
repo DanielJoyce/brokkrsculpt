@@ -150,43 +150,20 @@ pub(super) fn read_file(path: &Path) -> Result<VectorMap, String> {
     read_bytes(&bytes).map_err(|why| format!("{name}: {why}"))
 }
 
-/// What is kept of a file as it is read: every `step`th pixel each way.
-struct Kept {
-    step: usize,
-    width: usize,
-    height: usize,
-    vectors: Vec<[f32; 3]>,
-}
-
 pub(super) fn read_bytes(bytes: &[u8]) -> Result<VectorMap, String> {
-    use exr::prelude::{ReadChannels, ReadLayers};
-    let image = exr::prelude::read()
-        .no_deep_data()
-        .largest_resolution_level()
-        .rgb_channels(
-            |resolution, _| {
-                let step =
-                    resolution.width().max(resolution.height()).div_ceil(MAX_MAP_SIZE).max(1);
-                let (width, height) =
-                    (resolution.width().div_ceil(step), resolution.height().div_ceil(step));
-                Kept { step, width, height, vectors: vec![[0.0; 3]; width * height] }
-            },
-            |kept: &mut Kept, at, (red, green, blue): (f32, f32, f32)| {
-                if at.x() % kept.step == 0 && at.y() % kept.step == 0 {
-                    let index = at.x() / kept.step + at.y() / kept.step * kept.width;
-                    if let Some(vector) = kept.vectors.get_mut(index) {
-                        *vector = [red, green, blue];
-                    }
-                }
-            },
-        )
-        .first_valid_layer()
-        .all_attributes()
-        .non_parallel()
-        .from_buffered(std::io::Cursor::new(bytes))
+    // Our own reader (`openexr.rs`), then every `step`th pixel each way, so
+    // a map is at most `MAX_MAP_SIZE` across.
+    let picture = crate::openexr::read(bytes)
         .map_err(|why| format!("not an OpenEXR picture with red, green and blue in it ({why})"))?;
-    let kept = image.layer_data.channel_data.pixels;
-    VectorMap::from_vectors(kept.width, kept.height, &kept.vectors).map_err(|why| why.to_string())
+    let step = picture.width.max(picture.height).div_ceil(MAX_MAP_SIZE).max(1);
+    let (width, height) = (picture.width.div_ceil(step), picture.height.div_ceil(step));
+    let mut vectors = Vec::with_capacity(width * height);
+    for y in 0..height {
+        for x in 0..width {
+            vectors.push(picture.pixels[y * step * picture.width + x * step]);
+        }
+    }
+    VectorMap::from_vectors(width, height, &vectors).map_err(|why| why.to_string())
 }
 
 /// Take a map in: read it, to know that it is one, and copy its file

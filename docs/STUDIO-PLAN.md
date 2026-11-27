@@ -3928,9 +3928,10 @@ exactly as it was.
 blue: red across the square, green up it, blue out of it, in
 half-widths of the square, which is how Blender's vector displacement
 brushes are baked. A file of up to 512 megabytes, read at no more than
-512 pixels a side. The `exr` crate, taken directly with no default
-features: seven crates (measured against the lockfile), all permissive,
-recorded in `NOTICE.md`.
+512 pixels a side. Read by the `exr` crate at first; since 2026-11-27 by
+a reader of our own (`hani-app/src/openexr.rs`, on `miniz_oxide`), which
+reads uncompressed, RLE, ZIPS and ZIP, scanline or tiled, and refuses PIZ,
+PXR24, B44 and DWA by name. See proposal 6 in `docs/DEPENDENCIES.md`.
 
 **What it costs**, in the development build, one run each: making a map
 a shape at its three sizes, 210 to 230 ms, once for as long as the

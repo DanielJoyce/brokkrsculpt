@@ -1146,6 +1146,7 @@ dependencies = [
  "js-sys",
  "log",
  "minisign-verify",
+ "miniz_oxide",
  "pollster",
  "proptest",
  "rayon",
