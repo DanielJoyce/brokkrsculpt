@@ -20,10 +20,10 @@
 //! `offset` moves the whole plate out (or in) along the normal.
 //!
 //! The plate stops at the edge of the mask. A point is in the plate's
-//! footprint when the nearest surface to it is masked: `lateral` is the
-//! distance to the nearest unmasked surface, negated, there, and the
-//! distance to the nearest masked surface elsewhere, so it crosses zero at
-//! the mask's edge and the plate's side wall stands square to the surface.
+//! footprint when the nearest surface to it is masked: `lateral` is half
+//! the distance to the nearest masked surface less the distance to the
+//! nearest unmasked one, so it crosses zero, continuously, where the two
+//! are equal, and the plate's side wall stands square to the surface.
 //! The plate is `max(slab, lateral)`.
 //!
 //! Distances deeper than the band come from [`crate::reach`], spread twice:
@@ -42,6 +42,7 @@
 
 use glam::Vec3;
 use rayon::prelude::*;
+use rustc_hash::FxHashMap;
 
 use crate::brick::{BRICK_DIM, Brick, BrickCoord, INSIDE, NARROW_BAND, OUTSIDE, brick_index};
 use crate::reach::{Reach, limit_for, surface_seeds};
@@ -119,12 +120,16 @@ impl Volume {
         let near_rest = Reach::spread(rest, limit, |_| true);
 
         let coords: Vec<BrickCoord> = near_masked.bricks().collect();
-        let built: Vec<(BrickCoord, Brick)> = coords
+        let built: Vec<(BrickCoord, Brick, Vec<bool>)> = coords
             .par_iter()
             .filter_map(|&coord| {
                 let origin = coord.origin();
                 let mut brick = Brick::dense_filled(OUTSIDE);
                 let data = brick.make_dense();
+                // Which voxels the front face decides, where the plate is the
+                // body's own surface, exact, and is left as it is by the
+                // smoothing below.
+                let mut exact = vec![false; crate::brick::BRICK_VOXELS];
                 for z in 0..BRICK_DIM {
                     for y in 0..BRICK_DIM {
                         for x in 0..BRICK_DIM {
@@ -141,27 +146,117 @@ impl Volume {
                                 to_masked.min(to_rest).copysign(stored)
                             };
                             let slab = (s - outer).max(inner - s);
-                            let lateral = if to_masked <= to_rest { -to_rest } else { to_masked };
+                            // Half the difference of the two distances: nought
+                            // where they are equal, the wall square to the
+                            // surface, and about the distance to that wall on
+                            // either side. Until 2026-11-28 this was `-to_rest`
+                            // on one side and `to_masked` on the other, which
+                            // jumps from one to the other at the wall rather
+                            // than crossing nought there, so the mesher put the
+                            // wall wherever the voxels fell: a jagged rim,
+                            // 0.066 mm root mean square round a cap where this
+                            // is 0.022 (`what_the_faces_of_a_plate_measure`).
+                            let to_rest = to_rest.min(limit);
+                            let lateral = (to_masked - to_rest) * 0.5;
+                            let front = s - outer;
+                            exact[brick_index(x, y, z)] = stored.abs() < NARROW_BAND - 0.5
+                                && front >= inner - s
+                                && front >= lateral;
                             data[brick_index(x, y, z)] = slab.max(lateral).clamp(INSIDE, OUTSIDE);
                         }
                     }
                 }
-                settled(brick).map(|brick| (coord, brick))
+                settled(brick).map(|brick| (coord, brick, exact))
             })
             .collect();
 
         let mut out = Volume::new(voxel_size);
-        for (coord, brick) in built {
+        let mut exact: FxHashMap<BrickCoord, Vec<bool>> = FxHashMap::default();
+        for (coord, brick, kept) in built {
             out.insert_brick(coord, brick);
+            exact.insert(coord, kept);
         }
+        smooth_off_the_front(&mut out, &exact);
         out.mark_everything_dirty();
         Ok(out)
     }
 }
 
+/// How many times the faces a plate's reach built are smoothed.
+const SMOOTHING_PASSES: usize = 2;
+
+/// Smooth what of a plate the reach built, its back face and its side wall:
+/// each voxel near the surface becomes half itself and half the mean of its
+/// six neighbours, [`SMOOTHING_PASSES`] times. Not a voxel `exact` marks,
+/// where the plate is the body's own surface.
+///
+/// Asked for by the maintainer on 2026-11-28: "when you do peel / and
+/// possibly extract the back face is very rough and voxelized". The reach
+/// measures a distance to the nearest of a cloud of surface points, each a
+/// fraction of a voxel out, so what it builds is bumpy at the voxel's own
+/// scale where the stored field is smooth. Measured with
+/// `what_the_faces_of_a_plate_measure`: see the commit and
+/// `docs/STUDIO-PLAN.md`.
+fn smooth_off_the_front(plate: &mut Volume, exact: &FxHashMap<BrickCoord, Vec<bool>>) {
+    for _ in 0..SMOOTHING_PASSES {
+        let coords: Vec<BrickCoord> = exact.keys().copied().collect();
+        let read = &*plate;
+        let changed: Vec<(BrickCoord, Brick)> = coords
+            .par_iter()
+            .filter_map(|&coord| {
+                let mut brick = read.brick(coord)?.clone();
+                let kept = &exact[&coord];
+                let origin = coord.origin();
+                let data = brick.make_dense();
+                let mut any = false;
+                for z in 0..BRICK_DIM {
+                    for y in 0..BRICK_DIM {
+                        for x in 0..BRICK_DIM {
+                            let index = brick_index(x, y, z);
+                            let held = data[index];
+                            if kept[index] || held.abs() >= NARROW_BAND {
+                                continue;
+                            }
+                            let voxel = voxel_of(origin, x, y, z);
+                            let around = [
+                                glam::IVec3::X,
+                                -glam::IVec3::X,
+                                glam::IVec3::Y,
+                                -glam::IVec3::Y,
+                                glam::IVec3::Z,
+                                -glam::IVec3::Z,
+                            ]
+                            .iter()
+                            .map(|step| read.sample_voxel(voxel + *step))
+                            .sum::<f32>()
+                                / 6.0;
+                            data[index] = (held + around) * 0.5;
+                            any = true;
+                        }
+                    }
+                }
+                any.then_some((coord, brick))
+            })
+            .collect();
+        for (coord, brick) in changed {
+            plate.insert_brick(coord, brick);
+        }
+    }
+}
+
+/// How much bigger, in voxels, a plate is taken out of the body than it is:
+/// a quarter of a voxel. Where the plate's front face is the body's own
+/// surface (all of it inward), the two fields are nought there together,
+/// and `max(body, -plate)` touched nought without crossing it: a sliver of
+/// surface the mesher drew as sparkles round the rim of the cut, seen on a
+/// screen on 2026-11-28. Grown this much, the cut crosses nought cleanly,
+/// and the two parts stand a quarter of a voxel apart.
+pub const PEEL_GROWTH: f32 = 0.25;
+
 impl Volume {
     /// This body with `plate` taken out of it: the field
-    /// `max(self, -plate)`, the difference of the two solids. For an
+    /// `max(self, PEEL_GROWTH - plate)`, the difference of the two solids,
+    /// the plate grown by [`PEEL_GROWTH`]. For an
     /// extract that peels the plate off the body rather than laying it over
     /// it, so the two fit together with no material in both.
     ///
@@ -191,10 +286,12 @@ impl Volume {
             };
             let data = brick.make_dense();
             match cut {
-                Brick::Uniform(value) => data.iter_mut().for_each(|held| *held = held.max(-value)),
+                Brick::Uniform(value) => {
+                    data.iter_mut().for_each(|held| *held = held.max(PEEL_GROWTH - value));
+                }
                 Brick::Dense(values) => {
                     for (held, value) in data.iter_mut().zip(values.iter()) {
-                        *held = held.max(-value);
+                        *held = held.max(PEEL_GROWTH - value);
                     }
                 }
             }
@@ -237,8 +334,117 @@ mod tests {
         volume
     }
 
+    /// [`capped_ball`] with the mask feathered, as a brush leaves it: from
+    /// none at 5.25 mm up to full at 6.75, half at 6.
+    fn feathered_ball() -> Volume {
+        let mut volume = Volume::new(0.25);
+        volume.seed_sphere(Vec3::ZERO, 10.0);
+        let coords: Vec<BrickCoord> = volume.brick_coords().collect();
+        for coord in coords {
+            volume.edit_mask(coord.origin(), coord.max_voxel(), |_, world, _| {
+                (((world.y - 6.0) / 1.5 + 0.5).clamp(0.0, 1.0) * 255.0).round() as u8
+            });
+        }
+        volume
+    }
+
     fn solid(volume: &Volume, at: Vec3) -> bool {
         volume.sample_world(at) < 0.0
+    }
+
+    /// How bumpy a face of a ball-shaped solid is, between `low` and `high`
+    /// millimetres from the middle, over a cap round +Y: the face's radius
+    /// along a grid of directions, and the root mean square of each one
+    /// against the mean of its four neighbours, in millimetres. A smooth
+    /// sphere's is nought, near enough.
+    pub(super) fn bumpiness(solid: &Volume, low: f32, high: f32) -> f32 {
+        let (rows, columns) = (16, 48);
+        let radius = |row: usize, column: usize| {
+            let polar = (row as f32 + 2.0) / rows as f32 * 0.45;
+            let azimuth = column as f32 / columns as f32 * std::f32::consts::TAU;
+            let way =
+                Vec3::new(polar.sin() * azimuth.cos(), polar.cos(), polar.sin() * azimuth.sin());
+            let (mut inside, mut outside) = (low, high);
+            let inside_is_solid = solid.sample_world(way * low) < 0.0;
+            for _ in 0..30 {
+                let middle = (inside + outside) * 0.5;
+                if (solid.sample_world(way * middle) < 0.0) == inside_is_solid {
+                    inside = middle;
+                } else {
+                    outside = middle;
+                }
+            }
+            (inside + outside) * 0.5
+        };
+        let grid: Vec<Vec<f32>> =
+            (0..rows).map(|row| (0..columns).map(|column| radius(row, column)).collect()).collect();
+        let mut sum = 0.0;
+        let mut count = 0;
+        for row in 1..rows - 1 {
+            for column in 0..columns {
+                let left = grid[row][(column + columns - 1) % columns];
+                let right = grid[row][(column + 1) % columns];
+                let mean = (left + right + grid[row - 1][column] + grid[row + 1][column]) * 0.25;
+                sum += (grid[row][column] - mean).powi(2);
+                count += 1;
+            }
+        }
+        (sum / count as f32).sqrt()
+    }
+
+    /// How jagged the side wall of a plate cut from [`capped_ball`] is: the
+    /// polar angle where the plate ends, 9 mm out, round 96 directions, and
+    /// the root mean square of each against the mean of its two neighbours,
+    /// in millimetres along the surface.
+    pub(super) fn wall_jaggedness(solid: &Volume) -> f32 {
+        let count = 96;
+        let at = |column: usize| {
+            let azimuth = column as f32 / count as f32 * std::f32::consts::TAU;
+            let point = |polar: f32| {
+                Vec3::new(polar.sin() * azimuth.cos(), polar.cos(), polar.sin() * azimuth.sin())
+                    * 9.0
+            };
+            let (mut inside, mut outside) = (0.6_f32, 1.2_f32);
+            for _ in 0..30 {
+                let middle = (inside + outside) * 0.5;
+                if solid.sample_world(point(middle)) < 0.0 {
+                    inside = middle;
+                } else {
+                    outside = middle;
+                }
+            }
+            (inside + outside) * 0.5 * 9.0
+        };
+        let edge: Vec<f32> = (0..count).map(at).collect();
+        let sum: f32 = (0..count)
+            .map(|i| {
+                let mean = (edge[(i + count - 1) % count] + edge[(i + 1) % count]) * 0.5;
+                (edge[i] - mean).powi(2)
+            })
+            .sum();
+        (sum / count as f32).sqrt()
+    }
+
+    #[test]
+    #[ignore]
+    fn what_the_faces_of_a_plate_measure() {
+        let volume = capped_ball();
+        let plate = volume
+            .extracted(Extraction { thickness_mm: 2.0, inward: 1.0, offset_mm: 0.0 })
+            .expect("extracted");
+        println!(
+            "front {:.4} mm, back {:.4} mm",
+            bumpiness(&plate, 9.0, 11.0),
+            bumpiness(&plate, 7.0, 9.0)
+        );
+        let rest = volume.without(&plate);
+        println!("the body's peeled face {:.4} mm", bumpiness(&rest, 6.5, 9.0));
+        println!("the plate's wall {:.4} mm", wall_jaggedness(&plate));
+        let feathered = feathered_ball();
+        let soft = feathered
+            .extracted(Extraction { thickness_mm: 2.0, inward: 1.0, offset_mm: 0.0 })
+            .expect("extracted");
+        println!("the plate's wall, from a feathered mask {:.4} mm", wall_jaggedness(&soft));
     }
 
     #[test]
@@ -293,7 +499,11 @@ mod tests {
             for voxel in voxels_of(coord) {
                 let (kept, peeled) = (rest.sample_voxel(voxel), plate.sample_voxel(voxel));
                 assert!(!(kept < 0.0 && peeled < 0.0), "solid in both at {voxel}");
-                assert_eq!(kept, volume.sample_voxel(voxel).max(-peeled), "at {voxel}");
+                assert_eq!(
+                    kept,
+                    volume.sample_voxel(voxel).max(PEEL_GROWTH - peeled),
+                    "at {voxel}"
+                );
             }
         }
     }
@@ -310,7 +520,7 @@ mod tests {
         /// For any two balls on one lattice, the difference is
         /// `max(a, -b)` at every voxel of `b`'s bricks and `a` elsewhere.
         #[test]
-        fn without_is_the_max_of_the_body_and_the_negated_plate(
+        fn without_is_the_max_of_the_body_and_the_grown_plate_negated(
             x in -6.0f32..6.0, y in -6.0f32..6.0, r in 1.0f32..6.0,
         ) {
             let mut body = Volume::new(0.5);
@@ -320,7 +530,7 @@ mod tests {
             let rest = body.without(&plate);
             for coord in plate.brick_coords() {
                 for voxel in voxels_of(coord) {
-                    let wanted = body.sample_voxel(voxel).max(-plate.sample_voxel(voxel));
+                    let wanted = body.sample_voxel(voxel).max(PEEL_GROWTH - plate.sample_voxel(voxel));
                     proptest::prop_assert_eq!(rest.sample_voxel(voxel), wanted);
                 }
             }
