@@ -48,6 +48,9 @@ last one.
 - **M** picks the mask: masked parts are protected from brushes, and a softly
   painted mask protects softly.
 - **Right click** brings up the tool's own settings where the pointer is.
+- A brush changed from the one on the palette says so beside its name.
+  *Save* keeps the change in it, *Save as new…* keeps it under a new name,
+  and *Revert* puts the brush back as it was kept.
 - A brush can lay a picture across its tip, or press one as a stamp. *Add a
   picture…* takes in a PNG or JPEG of your own: bright is high. It is kept
   and listed with the others from then on, and a brush you keep with it in

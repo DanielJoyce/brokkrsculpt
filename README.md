@@ -542,8 +542,10 @@ true of it too, and what it adds is this.
   Change them, choose the *Profile* of the stroke (five shapes, and a flat
   middle), lay a *Picture across the tip*, have it *Build up* or lay *One
   layer* however long you scrub, set it down as a line or in separate
-  dabs. Then *+ Add a brush*, at the top of the palette, and *Keep* it
-  under a name. A brush you keep is one small
+  dabs. The top of the brush's section then offers *Save* (over the brush
+  it was taken up as; one that came with the application becomes your
+  version of it), *Save as new…* under a name, and *Revert*. Or *+ Add a
+  brush*, at the top of the palette, and *Keep* it under a name. A brush you keep is one small
   file in your data directory (`~/.local/share/hanisculpt/brushes` on
   Linux), so a brush can be handed to somebody else, and *Import*, behind
   the same button, takes one in. Press **b** for the palette under the

@@ -256,6 +256,22 @@ pub enum DeformMessage {
     Applied,
 }
 
+/// Save, Save as new and Revert for the brush in hand. See
+/// `app/keeping.rs`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum KeepMessage {
+    /// Over the brush it was taken up as.
+    Save,
+    /// Open the name field for a new brush.
+    SaveAsOpened,
+    SaveAsNamed(String),
+    /// Keep it under the name typed.
+    SaveAsKept,
+    SaveAsClosed,
+    /// Take up the brush it was taken up as, as it was kept.
+    Revert,
+}
+
 /// The reference pictures and the floor. See `app/references.rs`.
 #[derive(Debug, Clone)]
 pub enum ReferenceMessage {
@@ -1585,6 +1601,8 @@ pub enum Message {
     Deform(DeformMessage),
     /// The reference pictures and the floor. See `app/references.rs`.
     Reference(ReferenceMessage),
+    /// Save, Save as new or Revert the brush in hand. See `app/keeping.rs`.
+    Keep(KeepMessage),
     /// The revolve's axis up or away. See `app/revolve.rs`.
     Revolve(RevolveMessage),
     /// One of the controls of the brushes that add. See `app/adding.rs`.
