@@ -161,16 +161,22 @@ pub enum Foam {
     Coarse,
     /// Specks with ragged edges, as a piece of foam torn off a pack.
     Torn,
+    /// No specks: an even coat, thinned by the share the sponge's other
+    /// settings give a point. Asked for by the maintainer on 2026-11-27:
+    /// "You should be able to turn off the sponge and drybrush
+    /// speckles/bristles/etc entirely".
+    Smooth,
 }
 
 impl Foam {
-    pub const ALL: [Foam; 3] = [Foam::Fine, Foam::Coarse, Foam::Torn];
+    pub const ALL: [Foam; 4] = [Foam::Fine, Foam::Coarse, Foam::Torn, Foam::Smooth];
 
     pub fn label(self) -> &'static str {
         match self {
             Foam::Fine => "Fine",
             Foam::Coarse => "Coarse",
             Foam::Torn => "Torn",
+            Foam::Smooth => "Smooth",
         }
     }
 }
@@ -440,6 +446,10 @@ impl Sponge {
     /// still nothing.
     #[debug_ensures((0.0..=1.0).contains(&ret), "a share of a full touch")]
     pub fn amount(&self, relief: f32, facing: f32, speck: f32) -> f32 {
+        if self.foam == Foam::Smooth {
+            // No specks: the share itself, as a thinner coat.
+            return self.share(relief, facing).clamp(0.0, 1.0);
+        }
         ((self.share(relief, facing) * (1.0 + SPECK_RIM) - speck) / SPECK_RIM).clamp(0.0, 1.0)
     }
 }
@@ -507,6 +517,8 @@ impl Frame {
                 let warp = Vec3::new(push(101), push(202), push(303)) * 2.5;
                 evened(value_noise(at + warp, seed))
             }
+            // No texture: everywhere the sponge's share reaches is caught.
+            Foam::Smooth => 0.0,
         }
     }
 }
@@ -1275,6 +1287,28 @@ mod tests {
 
     /// A sponge leaves more on edges when asked to, and at full bias an edge
     /// is covered whatever the density.
+    /// Either texture can be turned off entirely: a smooth sponge lays its
+    /// share of a coat whatever the speck, and a drybrush with no streaks
+    /// lays the same whatever bristle a point is under.
+    #[test]
+    fn the_sponge_and_drybrush_textures_turn_off() {
+        let smooth = Sponge { foam: Foam::Smooth, ..Sponge::default() };
+        for (relief, facing) in [(0.0, 1.0), (0.8, 0.3), (-0.5, 1.0)] {
+            let share = smooth.share(relief, facing);
+            for speck in [0.0, 0.3, 0.7, 0.99] {
+                assert_eq!(smooth.amount(relief, facing, speck), share.clamp(0.0, 1.0));
+            }
+        }
+        assert_eq!(Frame::speck(Vec3::new(1.0, 2.0, 3.0), smooth, 7), 0.0);
+
+        let even = Drybrush { streak: 0.0, ..Drybrush::default() };
+        let at = |bristle: f32| even.amount(0.9, 1.0, bristle, 1.0);
+        assert!(at(0.5) > 0.0, "a raised edge is caught");
+        for bristle in [0.0, 0.2, 0.8, 1.0] {
+            assert_eq!(at(bristle), at(0.5), "bristle {bristle}");
+        }
+    }
+
     #[test]
     fn a_sponge_can_favour_the_edges() {
         let brush = paint_brush(8.0);
@@ -1525,7 +1559,7 @@ mod timing {
         use proptest::prelude::*;
 
         fn foam() -> impl Strategy<Value = Foam> {
-            prop_oneof![Just(Foam::Fine), Just(Foam::Coarse), Just(Foam::Torn)]
+            prop_oneof![Just(Foam::Fine), Just(Foam::Coarse), Just(Foam::Torn), Just(Foam::Smooth)]
         }
 
         proptest! {
@@ -1555,17 +1589,24 @@ mod timing {
             }
 
             /// Whatever the foam, the share of a flat a sponge catches is
-            /// its density, near enough.
+            /// its density, near enough; with no specks, the paint it lays.
             #[test]
             fn every_foam_covers_its_density(density in 0.1f32..0.9, foam in foam(), seed in 0u32..1000) {
                 let sponge = Sponge { density, grain_mm: 1.0, foam, ..Sponge::PLAIN };
-                let mut caught = 0;
+                let mut caught = 0.0;
                 let samples = 4000;
                 for at in 0..samples {
                     let world = Vec3::new((at % 80) as f32 * 0.9, 0.0, (at / 80) as f32 * 0.9);
-                    caught += usize::from(sponge.catches(0.0, 1.0, Frame::speck(world, sponge, seed)));
+                    let speck = Frame::speck(world, sponge, seed);
+                    caught += if foam == Foam::Smooth {
+                        // No specks: every point takes the share as a thinner
+                        // coat, so the paint laid is what is counted.
+                        sponge.amount(0.0, 1.0, speck)
+                    } else {
+                        f32::from(u8::from(sponge.catches(0.0, 1.0, speck)))
+                    };
                 }
-                let share = caught as f32 / samples as f32;
+                let share = caught / samples as f32;
                 prop_assert!((share - density).abs() < 0.12, "{:?} at {} caught {}", foam, density, share);
             }
         }

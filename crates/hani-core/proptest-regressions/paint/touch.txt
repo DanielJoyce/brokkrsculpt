@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 883a9ab29bb12ad5abaab3d27d57e9a4f4a71a018717a7dc2cc9f19f73d24372 # shrinks to density = 0.5422548, foam = Coarse, seed = 494
+cc 5cb670e9763b5e09f24768e32c4385db95e314a60eb9efd47a2675b828e77475 # shrinks to density = 0.1, foam = Smooth, seed = 0
