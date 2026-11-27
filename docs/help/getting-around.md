@@ -15,7 +15,8 @@ last one.
   turn and scale gizmo, Deform and Revolve. A part follows the gizmo while you
   drag it, and is rebuilt where you let go.
 - **Paint** is for colour: the rack of paints, the ways of putting paint on,
-  the one-press coats, and layers.
+  the one-press coats, and layers. Sculpting over paint afterwards keeps it on
+  the surface the brush makes.
 - **Print** is for getting it out: export formats, detail, overhangs, parting
   keys and the fit test.
 

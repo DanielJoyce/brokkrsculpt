@@ -178,6 +178,13 @@ impl PaintField {
         self.revision
     }
 
+    /// Whether any voxel of the brick at `coord` holds paint. For
+    /// `carry.rs`, to pass over a brick with none near it.
+    #[inline]
+    pub(crate) fn has_brick(&self, coord: BrickCoord) -> bool {
+        self.bricks.contains_key(&coord)
+    }
+
     fn touch(&mut self) {
         self.revision = self.revision.wrapping_add(1);
     }

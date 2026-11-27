@@ -67,6 +67,7 @@ mod help;
 mod measure;
 mod moving;
 mod overhang;
+mod paint_carry;
 mod painting;
 mod paints;
 mod panel;
@@ -6071,6 +6072,8 @@ impl Hani {
             self.perf.stamps = self.stamp_centres.len();
             self.count_stamps();
         }
+        // Paint carried onto the surface the stamps made: `app/paint_carry.rs`.
+        self.carry_paint_after_stamps(brush, pressure);
         self.perf.pressure = pressure;
         self.perf.edit_ms = started.elapsed().as_secs_f32() * 1000.0;
 
