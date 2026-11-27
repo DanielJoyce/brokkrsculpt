@@ -875,13 +875,14 @@ impl MeshPool {
             }
             let pair = &self.buffers[index as usize];
             let opposite = self.opposite.contains(&body);
-            let (instance, shift) = self.spread.of(body);
+            let (instance, map) = self.spread.of(body);
             let mut bound = false;
             for slot in bucket.values() {
                 if slot.index_count == 0 {
                     continue;
                 }
-                if !frustum.intersects(slot.minimum + shift, slot.maximum + shift) {
+                let (low, high) = crate::spread::drawn_box(&map, slot.minimum, slot.maximum);
+                if !frustum.intersects(low, high) {
                     culled += 1;
                     continue;
                 }

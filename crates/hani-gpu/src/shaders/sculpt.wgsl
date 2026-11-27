@@ -189,14 +189,32 @@ fn vertex_main(
     // is DRAWN moves: `world` and `height` stay the model's own, so the
     // overhang tint and the ring cut's see-through read the real body. In
     // `w`, the share of the body screened away.
-    @location(4) spread: vec4<f32>,
+    //
+    // And a body the transform gizmo is dragging, turned and scaled where
+    // the drag has it: three columns of a linear part, each less the
+    // identity's so that the zeroed entry every other body draws with is
+    // the identity. `hani_gpu::spread`.
+    @location(4) turn_x: vec4<f32>,
+    @location(5) turn_y: vec4<f32>,
+    @location(6) turn_z: vec4<f32>,
+    @location(7) spread: vec4<f32>,
 ) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = uniforms.view_projection * vec4<f32>(position + spread.xyz, 1.0);
+    let a = turn_x.xyz + vec3<f32>(1.0, 0.0, 0.0);
+    let b = turn_y.xyz + vec3<f32>(0.0, 1.0, 0.0);
+    let c = turn_z.xyz + vec3<f32>(0.0, 0.0, 1.0);
+    let drawn = a * position.x + b * position.y + c * position.z + spread.xyz;
+    out.clip_position = uniforms.view_projection * vec4<f32>(drawn, 1.0);
     out.screened = spread.w;
+    // The normal through the cofactors of that linear part, which is its
+    // inverse transpose times its determinant: the right direction under
+    // any scale, and the identity's for every body not being dragged.
+    let turned_normal = normalize(
+        cross(b, c) * normal.x + cross(c, a) * normal.y + cross(a, b) * normal.z,
+    );
     // The view matrix is a rigid transform, so its upper 3x3 rotates normals
     // correctly without an inverse transpose.
-    out.view_normal = (uniforms.view * vec4<f32>(normal, 0.0)).xyz;
+    out.view_normal = (uniforms.view * vec4<f32>(turned_normal, 0.0)).xyz;
     out.world_normal = normal;
     out.world = position;
     out.height = position.y;

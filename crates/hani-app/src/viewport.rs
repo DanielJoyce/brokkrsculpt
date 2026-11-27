@@ -252,6 +252,9 @@ pub struct SharedFrame {
     /// How far each body is drawn from where it is: the hierarchy's
     /// Explode, `app/explode.rs`. See [`SharedFrame::set_spread`].
     spread: Mutex<Vec<(NodeId, glam::Vec4)>>,
+    /// The body the transform gizmo is dragging, and where the drag has it
+    /// drawn. See `app/moving.rs`.
+    moving: Mutex<Option<(NodeId, glam::Mat4)>>,
     /// Reference pictures waiting to go to the GPU, by slot, and where the
     /// pictures are drawn. See `app/references.rs`.
     reference_pictures: Mutex<Vec<(usize, Option<Arc<hani_gpu::ReferencePicture>>)>>,
@@ -531,6 +534,18 @@ impl SharedFrame {
         held.extend_from_slice(spread);
     }
 
+    /// Draw a body the gizmo is dragging through `map`, or none so. See
+    /// `app/moving.rs`.
+    pub fn set_moving(&self, moving: Option<(NodeId, glam::Mat4)>) {
+        *self.moving.lock().expect("shared frame poisoned") = moving;
+    }
+
+    /// What the renderer will be told of a body being dragged.
+    #[cfg(test)]
+    pub fn moving_snapshot(&self) -> Option<(NodeId, glam::Mat4)> {
+        *self.moving.lock().expect("shared frame poisoned")
+    }
+
     /// Put a reference picture in a slot, or empty it, at the next frame.
     pub fn set_reference_picture(
         &self,
@@ -787,6 +802,8 @@ impl SharedFrame {
             // Explode's offsets; see `app/explode.rs`.
             let spread = self.spread.lock().expect("shared frame poisoned");
             renderer.set_spread(queue, &spread);
+            // And a body the gizmo is dragging; see `app/moving.rs`.
+            renderer.set_moving(queue, *self.moving.lock().expect("shared frame poisoned"));
         }
 
         if reset_happened || !pool_was_quiet {
