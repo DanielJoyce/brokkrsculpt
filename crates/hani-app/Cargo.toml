@@ -17,7 +17,6 @@ path = "src/main.rs"
 hani-core.workspace = true
 hani-gpu.workspace = true
 contracts.workspace = true
-env_logger.workspace = true
 glam.workspace = true
 # `canvas` is the icon set, and it is the one feature of iced this project pays
 # for. Measured against this lockfile: canvas adds SIX crates -- the `lyon`
@@ -30,7 +29,14 @@ glam.workspace = true
 # six. See `icon.rs`.
 # `markdown` is Help's pages (`app/help.rs`): pulldown-cmark, and nothing else
 # new.
-iced = { workspace = true, features = ["advanced", "wgpu", "debug", "canvas", "image-without-codecs", "markdown"] }
+#
+# iced's defaults are off in the workspace, and what is used of them is named
+# here: wgpu, the X11 and Wayland backends, the thread pool tasks run on,
+# crisp edges and the web colours. Left off: `linux-theme-detection` (41
+# packages on Linux, a D-Bus stack, and the theme here is always our own),
+# `tiny-skia` (a software renderer the viewport cannot draw with) and
+# `debug` (iced's devtools, unused). See `docs/DEPENDENCIES.md`.
+iced = { workspace = true, features = ["advanced", "wgpu", "canvas", "image-without-codecs", "markdown", "x11", "wayland", "thread-pool", "crisp", "web-colors"] }
 # Pictures taken in: decals, stamps and a picture across a brush's tip.
 # `default-features = false` is the whole point: iced's own `image` feature is `image-without-codecs` PLUS
 # `image/default`, and it is the second half that brings AVIF, EXR, AV1 grain
@@ -59,6 +65,8 @@ web-time.workspace = true
 # `docs/WEB.md`.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 dir_spec.workspace = true
+# Not in a browser, where it is never started (`main.rs`).
+env_logger.workspace = true
 # A picture on the clipboard, for Snip and report (`app/snip.rs`): iced's
 # own clipboard carries text only. Wayland's data-control protocol as well
 # as X11, so a paste works in either session.

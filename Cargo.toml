@@ -53,10 +53,16 @@ contracts = "0.6"
 # small file an operating system, MIT, and no dependencies of its own.
 dir_spec = "0.5"
 glam = { version = "0.33", features = ["bytemuck"] }
-iced = "0.14"
+# Without iced's defaults, and the features used named in `hani-app`'s
+# manifest: three of the defaults were unused and cost 54 packages on Linux
+# (`docs/DEPENDENCIES.md`, proposal 1).
+iced = { version = "0.14", default-features = false }
 iced_wgpu = "0.14"
 log = "0.4"
-env_logger = "0.11"
+# Without its defaults (regex filters, terminal colour, a date library: 13
+# packages) to print log lines. `RUST_LOG=info` and `module=level` filters
+# still work (`docs/DEPENDENCIES.md`, proposal 2).
+env_logger = { version = "0.11", default-features = false }
 evdev = "0.13"
 # Native file dialogs. On Linux this is the XDG desktop portal, which is what a
 # sandboxed app needs anyway. Its entire dependency set was already in this
