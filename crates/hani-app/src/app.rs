@@ -3,6 +3,8 @@
 //! Application state, input handling and the widget tree.
 
 mod about;
+// The graphics adapter, for the About card. See `app/adapter.rs`.
+mod adapter;
 mod adding;
 // The crash net, written without stopping the drawing. See `app/autosave.rs`.
 mod autosave;
@@ -559,9 +561,6 @@ pub struct Hani {
     /// the first drawn frame; still present on the next launch means the build
     /// installed here died before drawing anything.
     update_pending_marker: Option<std::path::PathBuf>,
-    /// One line for the Help panel saying how stale the last successful check
-    /// is. Computed at startup rather than per frame: it changes once a day.
-    update_freshness: String,
     /// A build to offer going back to, when a crash report and the update
     /// state agree that the build which crashed is the one we installed.
     crash_revert: Option<u64>,
@@ -834,6 +833,8 @@ pub struct Hani {
     help: help::HelpState,
     /// Whether the About card is up. See `app/about.rs`.
     about_open: bool,
+    /// The graphics adapter's name, once asked. See `app/adapter.rs`.
+    graphics: Option<String>,
     /// The fingers on a touch screen. See `app/touch.rs`.
     touches: touch::Touches,
     /// What is typed in the printer's and the slicer's fields. See
@@ -2161,7 +2162,6 @@ impl Hani {
             app.crash_revert = crate::update::installed_build();
         }
 
-        app.update_freshness = crate::update::freshness_line();
         let settings = crate::update::settings();
         app.update_settings = settings.clone();
         let floor = crate::update::floor();
@@ -2229,7 +2229,6 @@ impl Hani {
             downloaded_update: None,
             exe: None,
             update_pending_marker: None,
-            update_freshness: String::new(),
             crash_revert: None,
             crashed_last_session: false,
             doc,
@@ -2307,6 +2306,7 @@ impl Hani {
             shortcuts: false,
             help: help::HelpState::default(),
             about_open: false,
+            graphics: None,
             touches: touch::Touches::default(),
             kept: kept_settings::KeptSettings::read(),
             shelf: shelf::ShelfState::default(),
@@ -10116,7 +10116,8 @@ impl Hani {
             Message::ShortcutsClosed => self.shortcuts = false,
             // See `app/help.rs`.
             Message::Help(message) => self.help_changed(message),
-            Message::About(open) => self.about_open = open,
+            Message::About(open) => return self.about_changed(open),
+            Message::GraphicsNamed(name) => self.graphics = Some(name),
             Message::Kept(message) => self.kept_changed(message),
             Message::Shelf(message) => return self.shelf_changed(message),
             Message::Snip(message) => return self.snip_changed(message),

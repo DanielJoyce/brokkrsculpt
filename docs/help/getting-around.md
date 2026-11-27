@@ -32,7 +32,8 @@ Rest the pointer on a button to see what it does.
   its settings in blocks that fold, and the list of bodies at the foot.
 - **The status bar**, along the bottom, says what the last action did.
 - **Help, About HaniSculpt** says which version and build this is, where it
-  runs and what it was built with: what to give in a bug report.
+  runs, which graphics adapter it draws with and what it was built with:
+  what to give in a bug report.
 
 ## Moving round the model
 

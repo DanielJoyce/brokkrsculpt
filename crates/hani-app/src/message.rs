@@ -1337,6 +1337,9 @@ pub enum Message {
     Help(HelpMessage),
     /// The About card, opened or closed. See `app/about.rs`.
     About(bool),
+    /// The graphics adapter's name, asked when About is first opened. See
+    /// `app/adapter.rs`.
+    GraphicsNamed(String),
     /// A setting kept in a file that had no control. See
     /// `app/kept_settings.rs`.
     Kept(crate::app::KeptMessage),
