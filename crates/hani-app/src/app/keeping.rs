@@ -167,8 +167,17 @@ impl Hani {
                         .padding(theme::PAD_FIELD)
                         .size(theme::LABEL_SIZE)
                         .width(Length::Fill),
-                    crate::ui::button_secondary("Keep", Some(keep(KeepMessage::SaveAsKept))),
-                    crate::ui::button_secondary("Cancel", Some(keep(KeepMessage::SaveAsClosed))),
+                    crate::ui::tip(
+                        crate::ui::button_secondary("Keep", Some(keep(KeepMessage::SaveAsKept))),
+                        "Keep it as a new one under this name"
+                    ),
+                    crate::ui::tip(
+                        crate::ui::button_secondary(
+                            "Cancel",
+                            Some(keep(KeepMessage::SaveAsClosed))
+                        ),
+                        "Keep nothing new"
+                    ),
                 ]
                 .spacing(theme::S1)
                 .into(),

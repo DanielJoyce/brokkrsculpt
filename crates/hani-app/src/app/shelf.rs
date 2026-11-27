@@ -245,11 +245,14 @@ impl Hani {
     /// The card, over everything below it.
     pub(super) fn shelf_card(&self) -> Element<'_, Message> {
         let send = |message: ShelfMessage| Message::Shelf(message);
-        let small = |label: &'static str, message: Option<Message>| {
-            button(text(label).size(theme::LABEL_SIZE))
-                .padding(theme::PAD_BUTTON)
-                .style(theme::tool_button)
-                .on_press_maybe(message)
+        let small = |label: &'static str, what: &'static str, message: Option<Message>| {
+            crate::ui::tip(
+                button(text(label).size(theme::LABEL_SIZE))
+                    .padding(theme::PAD_BUTTON)
+                    .style(theme::tool_button)
+                    .on_press_maybe(message),
+                what,
+            )
         };
         let saving = row![
             text_input("Name", &self.shelf.name)
@@ -258,7 +261,11 @@ impl Hani {
                 .size(theme::LABEL_SIZE)
                 .padding(theme::S2)
                 .width(Length::Fill),
-            small("Save", fit_name(&self.shelf.name).map(|_| send(ShelfMessage::SaveHere))),
+            small(
+                "Save",
+                "Keep the sculpt in this browser under this name",
+                fit_name(&self.shelf.name).map(|_| send(ShelfMessage::SaveHere))
+            ),
         ]
         .spacing(theme::S2)
         .align_y(Alignment::Center);
@@ -285,13 +292,19 @@ impl Hani {
                             ]
                             .spacing(2)
                             .width(Length::Fill),
-                            small("Open", Some(send(ShelfMessage::Open(each.name.clone())))),
+                            small(
+                                "Open",
+                                "Open this sculpt",
+                                Some(send(ShelfMessage::Open(each.name.clone())))
+                            ),
                             small(
                                 "Download",
+                                "Download this sculpt as a .hani file",
                                 Some(send(ShelfMessage::Download(each.name.clone())))
                             ),
                             small(
                                 if armed { "Delete it" } else { "Delete" },
+                                "Delete it from this browser: press twice",
                                 Some(send(ShelfMessage::Delete(each.name.clone())))
                             ),
                         ]
@@ -307,7 +320,7 @@ impl Hani {
                 row![
                     text("Sculpts in this browser").size(theme::TITLE_SIZE).color(theme::TEXT),
                     space().width(Length::Fill),
-                    small("Close", Some(send(ShelfMessage::Closed))),
+                    small("Close", "Back to the sculpt", Some(send(ShelfMessage::Closed))),
                 ]
                 .align_y(Alignment::Center),
                 saving,
@@ -318,8 +331,16 @@ impl Hani {
                 .height(Length::Fill)
                 .width(Length::Fill),
                 row![
-                    small("Open from computer…", Some(Message::OpenRequested)),
-                    small("Save to computer", Some(send(ShelfMessage::ToComputer))),
+                    small(
+                        "Open from computer…",
+                        "Open a .hani file from the computer",
+                        Some(Message::OpenRequested)
+                    ),
+                    small(
+                        "Save to computer",
+                        "Download the sculpt as a .hani file",
+                        Some(send(ShelfMessage::ToComputer))
+                    ),
                 ]
                 .spacing(theme::S2),
             ]

@@ -110,7 +110,10 @@ impl Hani {
                 row![
                     text("Preferences").size(theme::TITLE_SIZE).color(theme::TEXT),
                     space().width(Length::Fill),
-                    crate::ui::button_secondary("Close", Some(Message::PreferencesClosed)),
+                    crate::ui::tip(
+                        crate::ui::button_secondary("Close", Some(Message::PreferencesClosed)),
+                        "Back to the sculpt; every setting is kept as it is changed"
+                    ),
                 ]
                 .align_y(Alignment::Center),
                 scrollable(
@@ -152,10 +155,13 @@ impl Hani {
                 row![
                     text("Keyboard shortcuts").size(theme::TITLE_SIZE).color(theme::TEXT),
                     space().width(Length::Fill),
-                    button(text("Close").size(theme::LABEL_SIZE))
-                        .padding(theme::PAD_BUTTON)
-                        .style(theme::tool_button)
-                        .on_press(Message::ShortcutsClosed),
+                    crate::ui::tip(
+                        button(text("Close").size(theme::LABEL_SIZE))
+                            .padding(theme::PAD_BUTTON)
+                            .style(theme::tool_button)
+                            .on_press(Message::ShortcutsClosed),
+                        "Back to the sculpt"
+                    ),
                 ]
                 .align_y(Alignment::Center),
                 row![

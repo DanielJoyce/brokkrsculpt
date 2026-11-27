@@ -493,11 +493,14 @@ impl Hani {
             return None;
         };
         let send = |message: SnipMessage| Message::Snip(message);
-        let small = |label: &'static str, message: SnipMessage| {
-            button(text(label).size(theme::LABEL_SIZE))
-                .padding(theme::PAD_BUTTON)
-                .style(theme::tool_button)
-                .on_press(send(message))
+        let small = |label: &'static str, what: &'static str, message: SnipMessage| {
+            crate::ui::tip(
+                button(text(label).size(theme::LABEL_SIZE))
+                    .padding(theme::PAD_BUTTON)
+                    .style(theme::tool_button)
+                    .on_press(send(message)),
+                what,
+            )
         };
         let scale =
             (SHOWN.width / card.width as f32).min(SHOWN.height / card.height as f32).min(1.0);
@@ -512,8 +515,12 @@ impl Hani {
                 .width(Length::Fixed(shown.width))
                 .height(Length::Fixed(shown.height)),
         ];
-        let inks = crate::ui::segmented(
-            [(SnipInk::Orange, "Orange"), (SnipInk::White, "White"), (SnipInk::Black, "Black")],
+        let inks = crate::ui::segmented_tips(
+            [
+                (SnipInk::Orange, "Orange", "Mark the picture in orange"),
+                (SnipInk::White, "White", "Mark the picture in white"),
+                (SnipInk::Black, "Black", "Mark the picture in black"),
+            ],
             card.ink,
             move |ink| send(SnipMessage::Ink(ink)),
         );
@@ -521,13 +528,16 @@ impl Hani {
             row![
                 text("Snip and report").size(theme::TITLE_SIZE).color(theme::TEXT),
                 space().width(Length::Fill),
-                small("Close", SnipMessage::Closed),
+                small("Close", "Put the snip away", SnipMessage::Closed),
             ]
             .align_y(Alignment::Center),
             container(pad).width(Length::Fill).center_x(Length::Fill),
-            row![container(inks).width(Length::Fixed(240.0)), small("Undo", SnipMessage::Undone),]
-                .spacing(theme::S2)
-                .align_y(Alignment::Center),
+            row![
+                container(inks).width(Length::Fixed(240.0)),
+                small("Undo", "Take back the last mark", SnipMessage::Undone),
+            ]
+            .spacing(theme::S2)
+            .align_y(Alignment::Center),
             text_input("Title", &card.title)
                 .on_input(move |title| send(SnipMessage::TitleTyped(title)))
                 .size(theme::LABEL_SIZE)
@@ -538,13 +548,20 @@ impl Hani {
                 .size(theme::LABEL_SIZE)
                 .height(Length::Fixed(110.0)),
             row![
-                small("Copy picture", SnipMessage::PictureCopied),
-                small("Save picture…", SnipMessage::PictureSaved),
+                small("Copy picture", "Copy the marked picture", SnipMessage::PictureCopied),
+                small(
+                    "Save picture…",
+                    "Save the marked picture as a file",
+                    SnipMessage::PictureSaved
+                ),
                 space().width(Length::Fill),
-                button(text("Open an issue on GitHub").size(theme::LABEL_SIZE))
-                    .padding(theme::PAD_BUTTON)
-                    .style(theme::tool_button_active)
-                    .on_press(send(SnipMessage::IssueOpened)),
+                crate::ui::tip(
+                    button(text("Open an issue on GitHub").size(theme::LABEL_SIZE))
+                        .padding(theme::PAD_BUTTON)
+                        .style(theme::tool_button_active)
+                        .on_press(send(SnipMessage::IssueOpened)),
+                    "Open a new issue with the title and comment; paste the picture into it"
+                ),
             ]
             .spacing(theme::S2)
             .align_y(Alignment::Center),

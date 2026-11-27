@@ -18,7 +18,7 @@ use hani_core::MaskFilter;
 use hani_core::paint::layers::Blend;
 use hani_core::paint::touch::Foam;
 
-use crate::message::{MaskGenerator, PaintMode, PaintTouch};
+use crate::message::{ExportFormat, MaskGenerator, PaintMode, PaintTouch, TopMenu};
 
 pub(super) fn paint_mode(mode: PaintMode) -> &'static str {
     match mode {
@@ -104,6 +104,112 @@ pub(super) fn side(side: hani_core::brush::compound::Side) -> &'static str {
     }
 }
 
+pub(super) fn reference_plane(plane: hani_core::reference::Plane) -> &'static str {
+    use hani_core::reference::Plane;
+    match plane {
+        Plane::Front => "The picture the Front view looks straight at",
+        Plane::Side => "The picture the Right view looks straight at",
+        Plane::Top => "The picture the Top view looks straight at",
+    }
+}
+
+pub(super) fn dock_tab(tab: crate::message::DockTab) -> &'static str {
+    match tab {
+        crate::message::DockTab::Library => "What this workspace offers to pick from",
+        crate::message::DockTab::Inspector => "The settings of what is in hand",
+    }
+}
+
+pub(super) fn cable_end(end: hani_core::solid::End) -> &'static str {
+    use hani_core::solid::End;
+    match end {
+        End::Round => "The tube's own round end",
+        End::Collar => "A short sleeve wider than the cable: a ferrule, a plug",
+        End::Ball => "A ball: a knob, a joint",
+        End::Flange => "A thin wide disc: a flange, a washer",
+    }
+}
+
+pub(super) fn top_menu(menu: TopMenu) -> &'static str {
+    match menu {
+        TopMenu::File => "New, open, save, import and export",
+        TopMenu::Edit => "Undo, the mask and Preferences",
+        TopMenu::View => "What is drawn over the model, and framing it",
+        TopMenu::Help => "Help, the keys, a bug report, About and updates",
+    }
+}
+
+pub(super) fn export(format: ExportFormat) -> &'static str {
+    match format {
+        ExportFormat::Stl => "A mesh any slicer reads, without units or colour",
+        ExportFormat::Obj => "A mesh for other 3D programs, without colour",
+        ExportFormat::ThreeMf => "A mesh for a slicer, in millimetres",
+        ExportFormat::Ply => "A mesh with the paint as a colour at every corner",
+        ExportFormat::Textured => "A small mesh with the paint as a picture beside it",
+        ExportFormat::Glb => "One file: a small mesh and the paint as a picture inside",
+    }
+}
+
+pub(super) fn pattern(kind: hani_core::PatternKind) -> &'static str {
+    use hani_core::PatternKind;
+    match kind {
+        PatternKind::None => "The brush as it is, with no pattern",
+        PatternKind::Noise => "Roughens the surface",
+        PatternKind::Scales => "Domed scales in offset rows",
+        PatternKind::Hair => "Combed strands along the stroke",
+        PatternKind::Weave => "A basket weave of bands over and under",
+        PatternKind::Cracks => "A thin network of lines, for crazing",
+    }
+}
+
+pub(super) fn primitive(kind: hani_core::PrimitiveKind) -> &'static str {
+    use hani_core::PrimitiveKind;
+    match kind {
+        PrimitiveKind::Cube => "A new body: a cube",
+        PrimitiveKind::Sphere => "A new body: a ball",
+        PrimitiveKind::Cylinder => "A new body: a cylinder",
+    }
+}
+
+pub(super) fn profile(shape: hani_core::brush::compound::Shape) -> &'static str {
+    use hani_core::brush::compound::Shape;
+    match shape {
+        Shape::Round => "A dome: full in the middle, rounding off to the rim",
+        Shape::Smooth => falloff(FalloffCurve::Smooth),
+        Shape::Linear => falloff(FalloffCurve::Linear),
+        Shape::Sharp => falloff(FalloffCurve::Sharp),
+        Shape::Wide => falloff(FalloffCurve::Wide),
+    }
+}
+
+pub(super) fn deform(kind: hani_core::deform::DeformKind) -> &'static str {
+    use hani_core::deform::DeformKind;
+    match kind {
+        DeformKind::Twist => "Turns each slice about the axis, more toward the far end",
+        DeformKind::Bend => "Curls the axis into an arc",
+        DeformKind::Taper => "Narrows or widens the body toward the far end",
+    }
+}
+
+pub(super) fn deform_axis(axis: hani_core::deform::Axis) -> &'static str {
+    use hani_core::deform::Axis;
+    match axis {
+        Axis::X => "Along the X axis",
+        Axis::Y => "Along the Y axis",
+        Axis::Z => "Along the Z axis",
+    }
+}
+
+pub(super) fn finish(finish: hani_core::paint::Finish) -> &'static str {
+    use hani_core::paint::Finish;
+    match finish {
+        Finish::Matte => "No shine",
+        Finish::Satin => "A soft sheen",
+        Finish::Gloss => "Wet-looking shine",
+        Finish::Metallic => "Shines as metal does",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,6 +227,19 @@ mod tests {
         all.extend(Blend::ALL.map(blend));
         all.extend(hani_core::part::KeyShape::ALL.map(key_shape));
         all.extend(hani_core::brush::compound::Side::ALL.map(side));
+        all.extend(hani_core::reference::Plane::ALL.map(reference_plane));
+        all.extend(
+            [crate::message::DockTab::Library, crate::message::DockTab::Inspector].map(dock_tab),
+        );
+        all.extend(hani_core::solid::End::ALL.map(cable_end));
+        all.extend(TopMenu::ALL.map(top_menu));
+        all.extend(ExportFormat::ALL.map(export));
+        all.extend(hani_core::PatternKind::ALL.map(pattern));
+        all.extend(hani_core::PrimitiveKind::ALL.map(primitive));
+        all.extend(hani_core::brush::compound::Shape::ALL.map(profile));
+        all.extend(hani_core::deform::DeformKind::ALL.map(deform));
+        all.extend(hani_core::deform::Axis::ALL.map(deform_axis));
+        all.extend(hani_core::paint::Finish::ALL.map(finish));
         for tip in all {
             assert!(!tip.is_empty() && tip.len() <= 80, "{tip:?}");
             assert!(!tip.contains('\u{2014}') && !tip.contains('\n'), "{tip:?}");

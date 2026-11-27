@@ -102,7 +102,10 @@ impl Hani {
             column![
                 row![
                     space().width(Length::Fill),
-                    crate::ui::button_secondary("Close", Some(Message::About(false))),
+                    crate::ui::tip(
+                        crate::ui::button_secondary("Close", Some(Message::About(false))),
+                        "Back to the sculpt"
+                    ),
                 ],
                 container(crate::logo::lockup(120.0)).center_x(Length::Fill),
                 facts,

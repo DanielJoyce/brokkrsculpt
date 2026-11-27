@@ -947,11 +947,14 @@ impl Hani {
             // in equal shares, seen on a screen, "Cylinder" ran past its
             // edges.
             let share = label.len() as u16 + 2;
-            button(text(label).size(theme::LABEL_SIZE).width(Length::Fill).center())
-                .width(Length::FillPortion(share))
-                .padding(theme::PAD_CHOICE)
-                .style(if live { theme::tool_button_active } else { theme::tool_button })
-                .on_press(changed(AddMessage::Chosen((!live).then_some(what))))
+            crate::ui::tip(
+                button(text(label).size(theme::LABEL_SIZE).width(Length::Fill).center())
+                    .width(Length::FillPortion(share))
+                    .padding(theme::PAD_CHOICE)
+                    .style(if live { theme::tool_button_active } else { theme::tool_button })
+                    .on_press(changed(AddMessage::Chosen((!live).then_some(what)))),
+                "Take it in hand and drag it out on the model; pressed again, put it away",
+            )
         };
         let mut panel = column![].spacing(theme::S1);
         // The bodies of the document, each to be lent as a shape: two to
@@ -1068,7 +1071,7 @@ impl Hani {
         if what.is_cable() {
             let ends = |live: End, chosen: fn(End) -> AddMessage| {
                 End::ALL.into_iter().fold(row![].spacing(theme::S1), |assembled, end| {
-                    assembled.push(
+                    assembled.push(crate::ui::tip(
                         button(
                             text(end.label()).size(theme::LABEL_SIZE).width(Length::Fill).center(),
                         )
@@ -1080,7 +1083,8 @@ impl Hani {
                             theme::tool_button
                         })
                         .on_press(changed(chosen(end))),
-                    )
+                        super::tips::cable_end(end),
+                    ))
                 })
             };
             panel = panel

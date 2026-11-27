@@ -692,8 +692,11 @@ impl Hani {
                 .map(|(at, distance)| (at, Some(distance)))
                 .collect(),
         };
-        let by = crate::ui::segmented(
-            [(SearchBy::Name, "By name"), (SearchBy::Colour, "Nearest colour")],
+        let by = crate::ui::segmented_tips(
+            [
+                (SearchBy::Name, "By name", "Paints whose name or brand has the words typed"),
+                (SearchBy::Colour, "Nearest colour", "Paints nearest the colour in hand"),
+            ],
             state.by,
             |by| Message::Rack(RackMessage::By(by)),
         );
@@ -730,11 +733,14 @@ impl Hani {
                         .width(14)
                         .height(14)
                         .style(theme::swatch(swatch(paint.rgb))),
-                    button(text(label).size(theme::LABEL_SIZE))
-                        .width(Length::Fill)
-                        .padding(theme::PAD_CHOICE)
-                        .style(theme::section_heading)
-                        .on_press(Message::Rack(RackMessage::Tried(at))),
+                    crate::ui::tip(
+                        button(text(label).size(theme::LABEL_SIZE))
+                            .width(Length::Fill)
+                            .padding(theme::PAD_CHOICE)
+                            .style(theme::section_heading)
+                            .on_press(Message::Rack(RackMessage::Tried(at))),
+                        "Try this paint in the brush"
+                    ),
                     text(paint.kind.label()).size(theme::LABEL_SIZE).color(theme::TEXT_MUTE),
                     crate::ui::tip(
                         button(icon::icon(icon::IconName::Plus, theme::ICON_INLINE, theme::TEXT))

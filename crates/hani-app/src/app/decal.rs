@@ -408,11 +408,14 @@ impl Hani {
         let send = Message::Decal;
         let tile = |label: String, pick: DecalPick| {
             let (style, _) = theme::tool_toggle(decal.chosen == pick);
-            button(text(label).size(theme::LABEL_SIZE).width(Length::Fill))
-                .width(Length::Fill)
-                .padding(theme::PAD_CHOICE)
-                .style(style)
-                .on_press(Message::Decal(DecalMessage::Chosen(pick)))
+            crate::ui::tip(
+                button(text(label).size(theme::LABEL_SIZE).width(Length::Fill))
+                    .width(Length::Fill)
+                    .padding(theme::PAD_CHOICE)
+                    .style(style)
+                    .on_press(Message::Decal(DecalMessage::Chosen(pick))),
+                "Dab this picture on where you click",
+            )
         };
         let mut picks: Vec<(String, DecalPick)> = BuiltInPicture::ALL
             .into_iter()
@@ -431,10 +434,18 @@ impl Hani {
         }
         column![
             grid,
-            crate::ui::button_secondary("Picture\u{2026}", Some(send(DecalMessage::TakeIn))),
-            crate::ui::segmented([(false, "Decal"), (true, "Stamp")], decal.as_stamp, |on| {
-                Message::Decal(DecalMessage::AsStamp(on))
-            },),
+            crate::ui::tip(
+                crate::ui::button_secondary("Picture\u{2026}", Some(send(DecalMessage::TakeIn))),
+                "Take in a picture of your own"
+            ),
+            crate::ui::segmented_tips(
+                [
+                    (false, "Decal", "The picture in its own colours"),
+                    (true, "Stamp", "The picture's shape in the paint in hand"),
+                ],
+                decal.as_stamp,
+                |on| Message::Decal(DecalMessage::AsStamp(on)),
+            ),
             crate::ui::number(
                 &self.drafts,
                 "decal.soft",

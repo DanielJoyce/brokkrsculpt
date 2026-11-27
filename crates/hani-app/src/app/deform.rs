@@ -127,13 +127,15 @@ impl Hani {
             DeformKind::Taper => "deform.taper",
         };
         column![
-            crate::ui::segmented(DeformKind::ALL.map(|each| (each, each.label())), kind, |each| {
-                Message::Deform(DeformMessage::Kind(each))
-            },),
+            crate::ui::segmented_tips(
+                DeformKind::ALL.map(|each| (each, each.label(), super::tips::deform(each))),
+                kind,
+                |each| Message::Deform(DeformMessage::Kind(each)),
+            ),
             row![
                 crate::ui::sub_label("Axis"),
-                crate::ui::segmented(
-                    Axis::ALL.map(|each| (each, each.label())),
+                crate::ui::segmented_tips(
+                    Axis::ALL.map(|each| (each, each.label(), super::tips::deform_axis(each))),
                     state.axis,
                     |each| { Message::Deform(DeformMessage::Axis(each)) }
                 ),

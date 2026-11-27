@@ -388,7 +388,7 @@ impl Hani {
     /// The hierarchy's view buttons, in every mode: Explode and Solo active,
     /// each lit while on.
     pub(super) fn hierarchy_view_buttons(&self) -> Element<'_, Message> {
-        let toggle = |name: icon::IconName, on: bool, message: Message, tip: &'static str| {
+        let icon_toggle = |name: icon::IconName, on: bool, message: Message, tip: &'static str| {
             crate::ui::tip(
                 // Bigger than an inline icon, and a fixed square to hit:
                 // `theme::HIT`.
@@ -405,19 +405,19 @@ impl Hani {
             )
         };
         row![
-            toggle(
+            icon_toggle(
                 icon::IconName::Explode,
                 self.explode.on,
                 Message::ExplodeToggled,
                 "Explode: draw the parts apart to pick one"
             ),
-            toggle(
+            icon_toggle(
                 icon::IconName::Solo,
                 self.solo.is_some(),
                 Message::SoloActiveToggled,
                 "Show only the active body"
             ),
-            toggle(
+            icon_toggle(
                 icon::IconName::SeeThrough,
                 self.explode.see_through,
                 Message::OthersSeeThroughToggled,

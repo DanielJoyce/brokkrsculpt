@@ -300,11 +300,17 @@ impl Hani {
                 row![
                     text(title).size(theme::TITLE_SIZE).color(theme::TEXT),
                     space().width(Length::Fill),
-                    crate::ui::button_secondary("Cancel", Some(send(DesignerMessage::Close))),
-                    button(text("Save").size(theme::LABEL_SIZE))
-                        .padding(theme::PAD_CHOICE)
-                        .style(theme::tool_button_active)
-                        .on_press(send(DesignerMessage::Save)),
+                    crate::ui::tip(
+                        crate::ui::button_secondary("Cancel", Some(send(DesignerMessage::Close))),
+                        "Close without keeping the changes"
+                    ),
+                    crate::ui::tip(
+                        button(text("Save").size(theme::LABEL_SIZE))
+                            .padding(theme::PAD_CHOICE)
+                            .style(theme::tool_button_active)
+                            .on_press(send(DesignerMessage::Save)),
+                        "Keep the changes"
+                    ),
                 ]
                 .spacing(theme::S2)
                 .align_y(Alignment::Center),

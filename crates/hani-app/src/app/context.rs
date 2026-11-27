@@ -90,12 +90,14 @@ impl Hani {
         }
         use hani_core::brush::compound::Shape;
         let live = self.studio.profile(self.brush.falloff).shape;
-        Some(crate::ui::segmented(Shape::ALL.map(|shape| (shape, shape.label())), live, |shape| {
-            match shape.curve() {
+        Some(crate::ui::segmented_tips(
+            Shape::ALL.map(|shape| (shape, shape.label(), super::tips::profile(shape))),
+            live,
+            |shape| match shape.curve() {
                 Some(curve) => Message::FalloffChanged(curve),
                 None => Message::Studio(StudioMessage::RoundChosen),
-            }
-        }))
+            },
+        ))
     }
 
     /// The bar over the viewport.

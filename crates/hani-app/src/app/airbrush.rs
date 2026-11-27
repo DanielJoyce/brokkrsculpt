@@ -195,8 +195,10 @@ impl Hani {
             if self.touch.kind == PaintTouch::Drybrush { &DRY_SIZES } else { &SIZES };
         let radius = self.brush.radius;
         let lit = sizes.iter().position(|(_, size)| (size - radius).abs() < 1e-3);
-        crate::ui::segmented(
-            sizes.iter().enumerate().map(|(at, (name, _))| (Some(at), *name)),
+        crate::ui::segmented_tips(
+            sizes.iter().enumerate().map(|(at, (name, size))| {
+                (Some(at), *name, format!("A brush of radius {size} mm"))
+            }),
             lit,
             move |at| Message::BrushRadiusChanged(at.map_or(radius, |at| sizes[at].1)),
         )
