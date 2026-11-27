@@ -85,6 +85,10 @@ result at once. A folder inside a combining folder is a bracket, standing
 for its own result. Hover the **∪** chip to see the whole fold written out,
 as `((Body 1 − Hole) + Boss)`.
 
+With the Transform tool up, press a folder's row to move, turn or scale
+everything in it at once with the gizmo; press a body's row to go back to
+moving that body alone.
+
 In Transform, **+**, **−** and **∩** under the list put the active body and
 the body below it into a new combining folder. While you work on a row of
 one, the rows that cut or keep are drawn see-through so you can see and

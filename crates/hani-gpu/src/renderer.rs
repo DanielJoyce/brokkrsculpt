@@ -624,6 +624,11 @@ impl SculptRenderer {
         self.pool.spread.set_moving(queue, moving);
     }
 
+    /// Draw several bodies through their maps: the gizmo on a folder.
+    pub fn set_moving_rows(&mut self, queue: &wgpu::Queue, moving: &[(NodeId, glam::Mat4)]) {
+        self.pool.spread.set_moving_rows(queue, moving);
+    }
+
     /// How many of one body's bricks the pool holds, for tests that have to
     /// tell "gone" from "still there but not drawn".
     pub fn body_bricks(&self, body: NodeId) -> usize {

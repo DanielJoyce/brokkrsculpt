@@ -119,10 +119,19 @@ distances held in the narrow band. The cut and the keep are exact only near
 the surface they make, which is all the band holds anywhere. The joins are
 hard: there is no blend between rows.
 
+## Moving a folder
+
+With the Transform tool up, pressing a folder's row puts the gizmo on the
+folder, about the middle of every body under it; pressing a body's row, or
+picking a body on the model, puts it back on that body. A drag draws every
+body under the folder, and a combining folder's result, through the drag's
+map while the handle is held, and on the release each body is built again
+at the whole placement from its field as it was when the gizmo armed, so
+drags do not compound. Putting the gizmo away commits one undo entry for
+the whole folder; Escape puts every body back. See `app/group_gizmo.rs`.
+
 ## Not done
 
-- A folder cannot yet be moved, turned or scaled with the gizmo as one; its
-  rows can, one at a time.
 - The see-through rows are drawn in the clay's colour, not tinted for a cut
   or a keep.
 - A result is drawn in clay: the rows' paint is not shown on it until it is

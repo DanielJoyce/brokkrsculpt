@@ -167,6 +167,25 @@ pub fn tip<'a>(
     .into()
 }
 
+/// [`tip`], shown to the right of `content` rather than under it: for the
+/// menu bar and the menus, where a tip underneath covered the menu that
+/// opens there (seen on a screen, 2026-11-28: Edit's tip over Undo).
+pub fn side_tip<'a>(
+    content: impl Into<Element<'a, Message>>,
+    name: impl text::IntoFragment<'a>,
+) -> Element<'a, Message> {
+    tooltip(
+        content,
+        container(text(name).size(theme::LABEL_SIZE).color(theme::TEXT))
+            .padding(theme::PAD_TIP)
+            .style(theme::menu_card),
+        tooltip::Position::Right,
+    )
+    .gap(theme::S2)
+    .snap_within_viewport(true)
+    .into()
+}
+
 /// A number: a label, a field that takes typing, and a slider.
 ///
 /// Built with [`number`] and given to a column like any element. `key` names

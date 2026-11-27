@@ -39,8 +39,9 @@ pub struct Spread {
     /// Body, and its offset with the share screened away in `w`: Explode's.
     /// At most `MAX_BODIES`, and almost always empty.
     entries: Vec<(NodeId, Vec4)>,
-    /// The body the gizmo is dragging, and where the drag has it drawn.
-    moving: Option<(NodeId, Mat4)>,
+    /// The bodies the gizmo is dragging, and where the drag has them drawn:
+    /// one for a body, every one under a folder for a folder.
+    moving: Vec<(NodeId, Mat4)>,
     /// What is in the buffer. A body's entry is its index here plus one.
     written: Vec<Entry>,
 }
@@ -59,7 +60,7 @@ impl Spread {
         Self {
             buffer,
             entries: Vec::with_capacity(hani_core::MAX_BODIES),
-            moving: None,
+            moving: Vec::new(),
             written: Vec::with_capacity(hani_core::MAX_BODIES),
         }
     }
@@ -78,15 +79,22 @@ impl Spread {
 
     /// Draw `body` through `map` as well as its offset, or no body so.
     pub fn set_moving(&mut self, queue: &wgpu::Queue, moving: Option<(NodeId, Mat4)>) {
+        self.set_moving_rows(queue, moving.as_slice());
+    }
+
+    /// Draw each of `moving` through its map, and every other body as it
+    /// is: the gizmo on a folder.
+    pub fn set_moving_rows(&mut self, queue: &wgpu::Queue, moving: &[(NodeId, Mat4)]) {
         if self.moving == moving {
             return;
         }
-        self.moving = moving;
+        self.moving.clear();
+        self.moving.extend_from_slice(moving);
         self.write(queue);
     }
 
     fn write(&mut self, queue: &wgpu::Queue) {
-        self.written = combined(&self.entries, self.moving);
+        self.written = combined(&self.entries, &self.moving);
         if self.written.is_empty() {
             return;
         }
@@ -125,7 +133,7 @@ struct Entry {
 
 /// Every body that is drawn anywhere but where it is: Explode's offset after
 /// the gizmo's map, and the share screened away.
-fn combined(entries: &[(NodeId, Vec4)], moving: Option<(NodeId, Mat4)>) -> Vec<Entry> {
+fn combined(entries: &[(NodeId, Vec4)], moving: &[(NodeId, Mat4)]) -> Vec<Entry> {
     let mut out: Vec<Entry> = entries
         .iter()
         .map(|(body, entry)| Entry {
@@ -135,7 +143,7 @@ fn combined(entries: &[(NodeId, Vec4)], moving: Option<(NodeId, Mat4)>) -> Vec<E
             screened: entry.w,
         })
         .collect();
-    if let Some((body, map)) = moving {
+    for &(body, map) in moving {
         let map = Affine3A::from_mat4(map);
         match out.iter_mut().find(|entry| entry.body == body) {
             Some(entry) => entry.map *= map,
@@ -197,10 +205,9 @@ mod tests {
     /// is applied after the gizmo's map, to the same entry.
     #[test]
     fn an_entry_is_its_map_less_the_identity() {
-        assert!(bytes_of(&combined(&[], None)).is_empty());
+        assert!(bytes_of(&combined(&[], &[])).is_empty());
         let turned = Mat4::from_rotation_translation(Quat::from_rotation_z(0.5), Vec3::X);
-        let written =
-            combined(&[(body(3), Vec4::new(0.0, 2.0, 0.0, 0.25))], Some((body(3), turned)));
+        let written = combined(&[(body(3), Vec4::new(0.0, 2.0, 0.0, 0.25))], &[(body(3), turned)]);
         assert_eq!(written.len(), 1);
         let Entry { map, screened, explode, .. } = written[0];
         assert_eq!(screened, 0.25);
@@ -223,7 +230,7 @@ mod tests {
         assert_eq!(&floats[12..16], &[1.0, 2.0, 0.0, 0.25]);
 
         // A body only moving gets an entry of its own, screened not at all.
-        let alone = combined(&[], Some((body(4), Mat4::from_scale(Vec3::splat(2.0)))));
+        let alone = combined(&[], &[(body(4), Mat4::from_scale(Vec3::splat(2.0)))]);
         assert_eq!(alone.len(), 1);
         assert_eq!(alone[0].screened, 0.0);
         assert_eq!(alone[0].explode, Vec3::ZERO);
