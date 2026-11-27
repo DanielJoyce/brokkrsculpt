@@ -54,7 +54,9 @@ Rest the pointer on a button to see what it does.
 - **Shift** held smooths. **Ctrl** or **Alt** held carves instead of adding.
 - **[** and **]** change the brush size, and dragging with **S** or **U** held
   changes the size or the strength.
-- **X**, **Y** and **Z** mirror strokes across a plane.
+- **X**, **Y** and **Z** mirror strokes across a plane. Symmetry is each
+  body's own: the mirrors and the radial copies shown are the chosen
+  body's, choosing another shows its own, and a new body starts with none.
 - **Radial copies**, under Symmetry in the Settings tab, lays a stroke
   again at each even turn round the axis chosen beside it, X, Y or Z,
   through the middle of the room, or wherever the body has since been
@@ -63,7 +65,7 @@ Rest the pointer on a button to see what it does.
 - The planes and the axis belong to the body: moved or turned with the
   Transform tool, they go with it, while the handle is still held. A new
   shape's planes go through its own middle, and a copy, a shell or an
-  extract keeps those of the body it came from. **Recentre**, under
+  extract keeps the symmetry of the body it came from, settings and all. **Recentre**, under
   Symmetry, puts the body's back through the middle of the room, unturned.
 - Radial copies round an axis that misses the body are refused, as a
   mirror plane that misses it is.

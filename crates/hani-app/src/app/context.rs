@@ -189,7 +189,7 @@ impl Hani {
                     .spacing(theme::S1)
                     .align_y(Alignment::Center),
                 |assembled, axis| {
-                    let (style, _) = theme::tool_toggle(self.symmetry.axis(axis));
+                    let (style, _) = theme::tool_toggle(self.symmetry_settings().axis(axis));
                     assembled.push(crate::ui::tip(
                         button(text(axis.label()).size(theme::LABEL_SIZE))
                             .padding(theme::PAD_BUTTON)
