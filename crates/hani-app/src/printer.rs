@@ -111,17 +111,15 @@ fn query(host: &str, port: u16, objects: &str) -> Result<String, String> {
     if !valid_host(host) {
         return Err(format!("{host:?} is not a host name"));
     }
-    let url = format!("http://{host}:{port}/printer/objects/query?{objects}");
-
-    ureq::get(&url)
-        .config()
-        .timeout_global(Some(TIMEOUT))
-        .build()
-        .call()
-        .map_err(|why| format!("could not reach {host} ({why})"))?
-        .body_mut()
-        .read_to_string()
-        .map_err(|why| format!("{host} answered something unreadable ({why})"))
+    // Plain HTTP on the local network, over a socket of our own. See
+    // `net.rs`. A megabyte is far more than Moonraker's answer to this.
+    crate::net::get_local(
+        host,
+        port,
+        &format!("/printer/objects/query?{objects}"),
+        TIMEOUT,
+        1 << 20,
+    )
 }
 
 /// In a browser the printer on the network cannot be asked.

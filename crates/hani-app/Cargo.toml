@@ -92,20 +92,10 @@ minisign-verify = "=0.2.5"
 # single worst place in the codebase to be clever: it is the check that decides
 # whether network bytes get the execute bit.
 ring = "0.17"
-# The bug report's one and only network call. `default-features = false` with
-# just `rustls` is what keeps this to a measured 17 compiled crates for this
-# target: no proxy support, no cookies, no charset transcoding, no gzip, and
-# rustls with its bundled webpki-roots rather than a platform verifier, so
-# there is no system OpenSSL to link and the trust store is reproducible.
-#
-# The `~3.4` bound is a COOLDOWN, not a compatibility limit. Cargo has no
-# release-age gate the way npm and bun do here, so publish dates are checked by
-# hand. It was `~3.3` while 3.4 was ten days old; on 2026-11-26 it moved to
-# 3.4.2 (published 2026-09-13, 74 days), with ureq-proto 0.6.3 of the same day
-# and rustls and webpki-roots left where they were, which folds the second
-# base64 3.3 needed (`docs/DEPENDENCIES.md`). 3.5 was a fortnight old then.
-# Lift the bound to "3" once 3.5.x has aged.
-ureq = { version = "~3.4", default-features = false, features = ["rustls"] }
+# No HTTP library: the printer is asked over a socket of our own and the
+# updater runs the system's `curl` (`src/net.rs`). `ureq`, rustls and its
+# root certificates went on 2026-11-27 with the TinkerAtlas bug report, its
+# third user (`docs/DEPENDENCIES.md`, proposal 4).
 
 # Stylus pressure is read straight from the kernel's evdev interface. That sits
 # below the display server, so one code path covers X11, XWayland and Wayland,

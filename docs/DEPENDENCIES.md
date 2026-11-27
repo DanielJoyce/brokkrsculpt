@@ -236,6 +236,30 @@ Chromium both start and draw as before. Not seen: a native Wayland
 session, and a machine with no GPU adapter, which now gets iced's error
 where it got a window that could not draw the model.
 
+**Proposal 4**, 2026-11-27, with the TinkerAtlas bug report retired at
+the maintainer's word. `ureq` is gone, and with it rustls, its root
+certificates and the second `getrandom` that came through them:
+
+- The bug report opens a new issue on GitHub (`report.rs`): the title and
+  the body in the link, cut to fit from the end of the diagnostics, and the
+  whole body on the clipboard. `account.rs`, the TinkerAtlas sign-in it was
+  sent under, is deleted.
+- The printer is asked over a `TcpStream` of our own (`net.rs`): one GET,
+  the reply read by length, by chunks or to its end, under a cap. Tested
+  against a server on a real local socket.
+- The updater runs the system's `curl` one hop at a time (`--max-redirs 0`,
+  `--include`), so every redirect's host is still checked here before it is
+  asked, and streams the body through the existing digest check into the
+  same private staging file; the manifest under a 20 s deadline, the payload
+  under a 30 s stall timer. `-q` ignores a `.curlrc`. Tested by hand
+  (`--ignored`) against a public GitHub release asset, which redirects to
+  `release-assets.githubusercontent.com` as ours do; this repository's own
+  channel answered 404, having no `beta` release yet. The trust store is now
+  the system's, as a browser's is.
+
+Measured after: Linux 269 to 257, Windows 226 to 213, macOS 222 to 209, the
+browser unchanged at 165; the lockfile 431 packages to 419.
+
 ## Not done
 
 Compile time and binary size per crate were not measured. The Windows and macOS numbers are counts from the

@@ -24,9 +24,29 @@ pub const RELEASE_PAGE: &str = "https://github.com/DanielJoyce/hanisculpt/releas
 /// Help.
 pub const REPOSITORY: &str = "https://github.com/DanielJoyce/hanisculpt";
 
-/// GitHub's page for a new issue on it, which Snip and report opens with a
-/// title and a body in its query (`app/snip.rs`).
+/// GitHub's page for a new issue on it, which Snip and report and the bug
+/// report open with a title and a body in its query.
 pub const NEW_ISSUE: &str = "https://github.com/DanielJoyce/hanisculpt/issues/new";
+
+/// Text made safe for a URL's query: everything but the unreserved
+/// characters percent-encoded, byte by byte.
+pub(crate) fn encoded(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() * 3);
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// GitHub's new-issue page with a title and a body in it. Used by Snip and
+/// report (`app/snip.rs`) and the bug report (`report.rs`).
+pub(crate) fn new_issue(title: &str, body: &str) -> String {
+    format!("{NEW_ISSUE}?title={}&body={}", encoded(title), encoded(body))
+}
 
 /// Whether a link may be handed to the user's browser.
 ///

@@ -24,7 +24,6 @@
 // tested from this machine.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-mod account;
 mod app;
 mod breadcrumbs;
 mod camera;
@@ -46,7 +45,11 @@ mod links;
 mod input_watch;
 mod logo;
 mod message;
+// The printer's and the updater's requests, without an HTTP library. Not in a
+// browser, which makes neither.
 mod navcube;
+#[cfg(not(target_arch = "wasm32"))]
+mod net;
 mod paint_index;
 mod palette;
 mod paths;

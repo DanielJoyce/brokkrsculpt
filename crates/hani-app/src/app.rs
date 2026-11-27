@@ -831,11 +831,6 @@ pub struct Hani {
     /// Loaded once into state for the same reason `welcome_on_startup` is --
     /// the panel draws it every frame and must not open a file to do so.
     palette: crate::palette::Palette,
-    /// The signed-in TinkerAtlas account, if there is one. See
-    /// [`crate::account`]: optional throughout, and its only effect on
-    /// behaviour is that a bug report goes out under this name instead of
-    /// anonymously.
-    account: Option<crate::account::Account>,
     /// The cube part under the pointer, lit so a click's effect is visible
     /// before the click.
     cube_hover: Option<navcube::Part>,
@@ -1296,18 +1291,11 @@ pub(crate) struct BugReport {
     /// exactly what is attached can decide for themselves rather than being
     /// asked to trust a sentence about it.
     with_detail: bool,
-    /// True while the request is in flight, so the button cannot be pressed
-    /// twice and file two rows for one bug.
-    sending: bool,
 }
 
 impl BugReport {
     fn new() -> Self {
-        Self {
-            description: iced::widget::text_editor::Content::new(),
-            with_detail: true,
-            sending: false,
-        }
+        Self { description: iced::widget::text_editor::Content::new(), with_detail: true }
     }
 }
 
@@ -2021,11 +2009,7 @@ impl Hani {
         // be drawn underneath it and be unreachable.
         app.welcome_on_startup = crate::welcome::on_startup();
         app.welcome = app.welcome_on_startup;
-        // Read here for the same reason the welcome flag is: `with_devices` is
-        // what the tests build through, and a test that picked up whoever is
-        // signed in on the machine running it would pass or fail on that.
-        app.account = crate::account::load();
-        // And the palette, for exactly that reason again -- a suite that read
+        // The palette, read here for the reason the welcome flag is -- a suite that read
         // the developer's own `filaments.conf` would assert against whatever
         // happens to be loaded in their printer.
         app.palette = crate::palette::Palette::load();
@@ -2286,7 +2270,6 @@ impl Hani {
             snip: snip::SnipState::default(),
             welcome_on_startup: true,
             palette: crate::palette::Palette::default(),
-            account: None,
             cube_hover: None,
             flight: None,
             menu: None,
@@ -2398,7 +2381,7 @@ impl Hani {
         // said once; see `crash::take_pending`.
         if let Some(report) = crate::crash::take_pending() {
             app.status =
-                "the last session crashed — Help > Report a bug will send the report".to_string();
+                "the last session crashed — Help > Report a bug opens an issue for it".to_string();
             // The path goes to the log rather than the status line: it is long
             // enough to wrap the title bar onto two lines, and it is the one
             // part of the message a user does not need in order to act.
@@ -6862,7 +6845,6 @@ impl Hani {
             &description,
             &diagnostics,
             &trail,
-            None,
             &format!("{} ({})", env!("CARGO_PKG_VERSION"), build_commit()),
             &self.shared.adapter_summary(),
         ))
@@ -10410,40 +10392,33 @@ impl Hani {
                     return Task::none();
                 };
                 self.status = "report copied — paste it into an issue".to_string();
-                return iced::clipboard::write(report.to_json());
+                return iced::clipboard::write(report.body());
             }
+            // A new issue on GitHub, opened in the browser with as much of
+            // the report as a link carries, and the whole of it on the
+            // clipboard. See `report.rs`.
             Message::BugReportSubmitted => {
                 let Some(report) = self.assemble_report() else {
-                    self.status = "could not send: describe the problem first".to_string();
+                    self.status = "could not open an issue: describe the problem first".to_string();
                     return Task::none();
                 };
-                if let Some(draft) = &mut self.bug_report {
-                    draft.sending = true;
-                }
-                self.status = "sending the report…".to_string();
-                // Built here and not inside the task: the account lives on
-                // `self`, and the task has to own everything it touches.
-                let authorization = self.account.as_ref().map(|a| a.authorization());
-                return Task::perform(
-                    async move {
-                        crate::report::send(
-                            report,
-                            crate::report::TINKERATLAS,
-                            authorization.as_deref(),
-                        )
-                    },
-                    Message::BugReportFinished,
-                );
-            }
-            Message::BugReportFinished(outcome) => {
                 self.bug_report = None;
-                self.status = match outcome {
-                    Ok(note) => note,
-                    // The substring "could not" is what colours the status line
-                    // as an error -- see `panel.rs`. A failure worded without it
-                    // renders in muted grey as though it had worked.
-                    Err(why) => format!("could not send the report: {why}"),
+                let (link, cut) = report.link();
+                self.status = match crate::links::open_in_browser(&link) {
+                    Ok(()) if cut => {
+                        "opened a new issue on GitHub; it was cut to fit, and the whole report \
+                         is on the clipboard"
+                            .to_string()
+                    }
+                    Ok(()) => "opened a new issue on GitHub; the report is on the clipboard too"
+                        .to_string(),
+                    Err(why) => {
+                        format!(
+                            "could not open the issue page ({why}); the report is on the clipboard"
+                        )
+                    }
                 };
+                return iced::clipboard::write(report.body());
             }
             Message::KeyPressed { key, modifiers } => return self.on_key(key, modifiers),
             // **Deliberately empty, and it must stay empty.** The work this
