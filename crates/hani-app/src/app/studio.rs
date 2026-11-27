@@ -2850,6 +2850,9 @@ mod tests {
                 drag_by(&mut app, 10.0 * step as f32);
             }
             release(&mut app);
+            // A brush that adds places its shape; done, it is joined. See
+            // `app/placed.rs`.
+            app.finish_placed();
             assert!(!same_field(&app, &ridge), "{name} did nothing to the model");
             update(&mut app, Message::Undo);
             assert!(same_field(&app, &ridge), "{name} was not one undo");
