@@ -324,7 +324,10 @@ impl Hani {
                 }
                 continue;
             }
-            if *shown && self.doc.inside_boolean(node.id) && !ghosts.contains(&node.id) {
+            if *shown
+                && self.doc.inside_boolean(node.id)
+                && !ghosts.iter().any(|(ghost, _)| *ghost == node.id)
+            {
                 self.hidden_bodies.push(node.id);
             }
         }
@@ -333,7 +336,7 @@ impl Hani {
     /// The rows drawn see-through: those that cut or keep in the combining
     /// folder the body in hand is in, and the body in hand itself when it
     /// is one of them.
-    fn boolean_ghosts(&self) -> Vec<NodeId> {
+    fn boolean_ghosts(&self) -> Vec<(NodeId, BoolOp)> {
         let Some(folder) = self.folder_in_hand() else {
             return Vec::new();
         };
@@ -344,17 +347,19 @@ impl Hani {
             .filter(|(id, op)| {
                 *op != BoolOp::Add && self.doc.node(*id).is_some_and(|node| node.is_body())
             })
-            .map(|(id, _)| id)
             .collect()
     }
 
     /// Add the ghosts to what the spread draws. Called by `publish_spread`.
     pub(super) fn add_boolean_ghosts(&mut self) {
-        for id in self.boolean_ghosts() {
+        for (id, op) in self.boolean_ghosts() {
+            // Tinted by what the row does. See `hani_gpu::tint`.
+            let tint = if op == BoolOp::Cut { hani_gpu::tint::CUT } else { hani_gpu::tint::KEEP };
+            let w = hani_gpu::tint::screened_and_tinted(GHOST, tint);
             if let Some(drawn) = self.explode.drawn.iter_mut().find(|(drawn, _)| *drawn == id) {
-                drawn.1.w = GHOST;
+                drawn.1.w = w;
             } else {
-                self.explode.drawn.push((id, glam::Vec4::new(0.0, 0.0, 0.0, GHOST)));
+                self.explode.drawn.push((id, glam::Vec4::new(0.0, 0.0, 0.0, w)));
             }
         }
     }
@@ -424,6 +429,10 @@ mod tests {
             app.explode.drawn.iter().any(|(id, at)| *id == first && at.w > 0.0),
             "the cutter is not see-through"
         );
+        let drawn = app.explode.drawn.iter().find(|(id, _)| *id == first).expect("drawn");
+        let (share, tint) = hani_gpu::tint::untinted(drawn.1.w);
+        assert_eq!(tint, hani_gpu::tint::CUT, "the cutter is not tinted as one");
+        assert!((share - GHOST).abs() < 1.0e-6, "the tint changed how much is screened");
         // With the cube in hand the cutter is still drawn see-through.
         update(&mut app, Message::BodySelected(cube));
         assert!(app.explode.drawn.iter().any(|(id, _)| *id == first));

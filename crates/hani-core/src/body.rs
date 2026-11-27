@@ -1597,10 +1597,11 @@ impl Document {
         scratch: &mut MeshScratch,
         out: &mut BrickMesh,
     ) {
-        // A boolean group's result is meshed as a body is. See `combine.rs`.
-        match self.volume(body).or_else(|| self.boolean_result(body)) {
+        match self.volume(body) {
             Some(volume) => volume.mesh_brick(coord, scratch, out),
-            None => out.clear(),
+            // A boolean group's result, painted from its rows. See
+            // `result_paint.rs`.
+            None => self.mesh_result(body, coord, scratch, out),
         }
     }
 

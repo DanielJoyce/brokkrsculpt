@@ -31,6 +31,8 @@ pub mod clip;
 pub mod colour;
 // Boolean groups. See `combine.rs`.
 pub mod combine;
+// A boolean result drawn in its rows' paint. See `result_paint.rs`.
+mod result_paint;
 // Symmetry local to the body. See `symmetry_frames.rs`.
 pub mod deform;
 pub mod export;

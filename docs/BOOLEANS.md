@@ -81,10 +81,15 @@ implied:
 
 ## On the model
 
-- A combining folder's result is drawn in place of its rows.
+- A combining folder's result is drawn in place of its rows, in their paint
+  as a bake would leave it: the base's paint, and an added row's where that
+  row has material; a cut or a kept face bare. Worked out at each vertex as
+  a brick of the result is meshed (`result_paint.rs`), so nothing more is
+  kept, and a stroke of paint on a row shows on the result as it lands.
 - While the body in hand is inside it, the rows that cut or keep are drawn
   see-through, as the Others button draws bodies, so that what does the
-  cutting can be seen, picked and sculpted.
+  cutting can be seen, picked and sculpted: reddened for a cut, bluer for a
+  keep (`hani_gpu::tint`).
 - The result follows its rows as they change, a brick at a time: every body
   shares one lattice, so each operation is a pointwise `min` or `max` of two
   fields and a brick of the result depends on that brick of each row and
@@ -132,8 +137,6 @@ the whole folder; Escape puts every body back. See `app/group_gizmo.rs`.
 
 ## Not done
 
-- The see-through rows are drawn in the clay's colour, not tinted for a cut
-  or a keep.
-- A result is drawn in clay: the rows' paint is not shown on it until it is
+- A varnish's finish on a row is not drawn on the result until it is
   baked.
 - Picking a point on a result picks the row whose surface is there.
