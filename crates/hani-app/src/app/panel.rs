@@ -251,6 +251,10 @@ impl Hani {
         if self.help.open {
             return stack![body, self.help_card(), self.resize_frame()].into();
         }
+        // About, as those. See `app/about.rs`.
+        if self.about_open {
+            return stack![body, self.about_card(), self.resize_frame()].into();
+        }
         // The sculpts a browser keeps. See `app/shelf.rs`.
         if self.shelf.open {
             return stack![body, self.shelf_card(), self.resize_frame()].into();
@@ -1096,27 +1100,12 @@ impl Hani {
                     (!cfg!(target_arch = "wasm32"))
                         .then_some(Message::Snip(crate::message::SnipMessage::Started))
                 ),
+                // The version, the build (its ordinal and its commit), the
+                // licence and how fresh the update channel is were lines
+                // here; they are on the About card now, with the platform
+                // and what it was compiled with. See `app/about.rs`.
+                keyed("About HaniSculpt", "", Some(Message::About(true))),
                 separator(),
-                text(format!("HaniSculpt {}", env!("CARGO_PKG_VERSION")))
-                    .size(theme::TEXT_SIZE_SMALL)
-                    .color(theme::TEXT),
-                // **The ordinal first, then the commit.** This line said
-                // `build <commit>` back when there was no build number, which
-                // was merely imprecise -- and became actively misleading the day
-                // an ordinal existed, because a tester asked "which build are
-                // you on?" reads a git SHA and answers with that. Both are
-                // wanted: the ordinal is what the updater compares and what a
-                // user can say out loud, the commit is what a bug report needs.
-                text(super::build_label()).size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
-                text("AGPL-3.0-only").size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
-                separator(),
-                // Freshness, not enforcement. A channel that went quiet is
-                // indistinguishable from a maintainer who did, and this design
-                // refuses to guess which -- so it says how long it has been and
-                // stops there. Nothing anywhere expires on the user.
-                text(self.update_freshness.clone())
-                    .size(theme::CAPTION_SIZE)
-                    .color(theme::TEXT_MUTE),
                 // **The update tick's second home.** The default is `always`,
                 // so the switch has to be reachable without the welcome screen
                 // -- a control only on a screen the user turned off is not a
