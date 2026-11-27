@@ -645,6 +645,7 @@ impl Hani {
         {
             left = left.push(action(
                 "Sculpts in this browser…",
+                "The sculpts saved in this browser: open, download or delete",
                 Message::Shelf(crate::message::ShelfMessage::Opened),
                 theme::tool_button,
             ));
