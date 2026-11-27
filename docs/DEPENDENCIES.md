@@ -8,7 +8,9 @@ if we impl some things ourselves or maybe just vendor them ( turn them into
 a crate ) and strip out what we don't need. Make some proposals"*. Tracked
 in [DanielJoyce/hanisculpt#133](https://github.com/DanielJoyce/hanisculpt/issues/133).
 
-These are proposals. Nothing here is changed yet.
+These were proposals. On 2026-11-27 the maintainer said: *"Retire
+tinkeratlas bug report. Do 1 and 2 and 4 and 5"*. What has been done, and
+measured after, is under **Done** at the end.
 
 ## How it was measured
 
@@ -222,8 +224,19 @@ has aged, upgrading to it is the change that folds the most; its git
 3. Proposals 5 and 6 when there is hardware and sample files to test them
    with.
 
+## Done
+
+**Proposals 1 and 2**, 2026-11-27. iced's defaults are off in the
+workspace and `hani-app` names the ten features it uses; `env_logger` has
+no default features and is a native-only dependency. Measured after, with
+the same `cargo tree` count: Linux 340 to 269, Windows 259 to 226, macOS
+254 to 222, browser 188 to 165; the lockfile 505 packages to 431, none
+added. Seen: the desktop window on X11 (Xvfb) and the web version in
+Chromium both start and draw as before. Not seen: a native Wayland
+session, and a machine with no GPU adapter, which now gets iced's error
+where it got a window that could not draw the model.
+
 ## Not done
 
-Nothing is changed by this document. Compile time and binary size per
-crate were not measured. The Windows and macOS numbers are counts from the
+Compile time and binary size per crate were not measured. The Windows and macOS numbers are counts from the
 lockfile, not builds.
