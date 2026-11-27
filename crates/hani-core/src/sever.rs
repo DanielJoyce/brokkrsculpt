@@ -1665,7 +1665,8 @@ mod tests {
     fn a_disc_tilted_a_third_of_a_right_angle_next_to_the_ball_severs_the_arm() {
         let volume = figure();
         let most = (std::f32::consts::PI / 6.0).tan();
-        for (y, z) in [(1.0_f32, 0.0_f32), (0.0, -1.0), (0.7071, 0.7071), (-0.7071, 0.7071)] {
+        let half = std::f32::consts::FRAC_1_SQRT_2;
+        for (y, z) in [(1.0_f32, 0.0_f32), (0.0, -1.0), (half, half), (-half, half)] {
             let normal = Vec3::new(1.0, y * most, z * most).normalize();
             let disc = Disc::round(Vec3::new(7.0, 0.0, 0.0), normal, 3.5);
             assert!(
