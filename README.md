@@ -581,9 +581,12 @@ true of it too, and what it adds is this.
   the model with one drag, or a copy of any body (import a mesh, then
   stamp it wherever you like). Lay a *Cable* along the surface or hang
   one between two points, with a collar, ball or flange at each end.
-  Each is baked into the body in hand, or left as a body of its own.
-  Baked in, ctrl takes the shape out: a socket, a groove. *Soft join*
-  is the fillet where it meets the body, from none to eight voxels wide.
+  In Sculpt a shape is placed beside the body it was set down on, in a
+  folder that combines them, so it can still be moved with the Transform
+  tool, and is joined into the body when you set down the next or choose
+  another brush; in Transform it is a body of its own. Ctrl takes the
+  shape out: a socket, a groove. *Soft join* is the fillet where it meets
+  the body, from none to three voxels wide.
   They are brushes on the palette like the rest, and one you set up
   yourself can be kept under a name.
 - **Vector displacement brushes.** A stamp that can lean over itself,

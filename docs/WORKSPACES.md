@@ -374,8 +374,10 @@ mode. Decided in conversation on 2026-11-25:
 - **P** brings up the open mode's palette at the pointer: Sculpt's
   brushes, Transform's parts, Paint's touches; Print has none. It was
   `b` for the one palette there was.
-- **Shapes split by result**: a shape added in Sculpt is baked into the
-  body and is a brush of Sculpt's palette (its group is "Add, baked in");
+- **Shapes split by result**: a shape added in Sculpt is joined into the
+  body (since 2026-11-28 placed first, and joined when done: see
+  `app/placed.rs`) and is a brush of Sculpt's palette (its group is "Add,
+  baked in");
   the same shape in Transform is a part, a body of its own. The mode
   says which, whichever way it was chosen, and the Baked in / Its own
   body toggle is gone.

@@ -115,6 +115,12 @@ surface. Drag the picture to turn it, right drag to look round it. *+X* to
 back. *Held off* moves it up out of the surface or down into it; what is
 under the plane will be inside the model.
 
+In Sculpt, a shape you drag out is **placed**: it sits beside the body in a
+folder that combines them (see Boolean groups above), added, or cut where
+Ctrl was held, and you can still move, turn or scale it with the Transform
+tool. It is joined into the body when you set down the next one or choose
+another brush, or with Bake. Undo after that puts it back to placed.
+
 ## Interface size
 
 Edit, *Preferences…*, *Interface size*. *Auto* makes everything larger on a
