@@ -115,6 +115,12 @@ impl Recent {
         self.save();
     }
 
+    /// Forget every entry, and persist.
+    pub fn clear(&mut self) {
+        self.paths.clear();
+        self.save();
+    }
+
     pub fn paths(&self) -> &[PathBuf] {
         &self.paths
     }

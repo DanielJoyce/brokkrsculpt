@@ -535,6 +535,19 @@ pub enum Diagnosis {
 }
 
 impl Diagnosis {
+    /// What Preferences shows: a few words. The whole of [`Diagnosis::
+    /// explain`] is the tooltip over them, by the rule of 2026-11-28 that
+    /// what explains goes in a tooltip or in Help.
+    pub fn short(self) -> &'static str {
+        match self {
+            Diagnosis::Working => "Reading",
+            Diagnosis::Idle => "Found, still",
+            Diagnosis::PermissionDenied => "Not allowed to read input devices",
+            Diagnosis::NoDevice => "None found",
+            Diagnosis::Unsupported => "Not on this system",
+        }
+    }
+
     pub fn explain(self) -> &'static str {
         match self {
             Diagnosis::Working => "Reading the puck.",

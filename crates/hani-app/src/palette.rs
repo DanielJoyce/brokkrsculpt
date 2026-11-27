@@ -116,7 +116,7 @@ fn clean_field(text: &str) -> String {
 /// A three-digit `#RGB` is refused rather than expanded: it is not a form
 /// anything in this pipeline produces, and quietly doubling nibbles would make
 /// a typo look like a deliberate colour.
-fn normalise_colour(text: &str) -> Option<String> {
+pub(crate) fn normalise_colour(text: &str) -> Option<String> {
     let body = text.strip_prefix('#')?;
     if body.len() != 6 || !body.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
