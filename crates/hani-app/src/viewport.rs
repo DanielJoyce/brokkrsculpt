@@ -26,7 +26,7 @@ use iced::{Point, Rectangle, Vector};
 
 use crate::app::{SizingTarget, Tool};
 use crate::camera::OrbitCamera;
-use crate::message::{Message, PointerButton, PointerEvent};
+use crate::message::{Message, PointerButton, PointerEvent, TouchPhase};
 use crate::navcube;
 
 /// One brick's mesh on its way to the GPU.
@@ -1119,28 +1119,36 @@ fn route_pointer(
         // same path carries a finger on a touchscreen and is treated the same
         // way; a second finger while the first is down is a second left press,
         // which the application's drag guard refuses.
-        iced::Event::Touch(touch::Event::FingerPressed { position, .. }) => {
+        //
+        // **Each contact goes to the application as itself since 2026-11-28**,
+        // with its finger, and `app/touch.rs` makes one finger the left button
+        // and two the view's gestures. A Windows pen is one contact, and is
+        // the left button there as it was here.
+        iced::Event::Touch(touch::Event::FingerPressed { id, position }) => {
             // The same rule as a mouse press: only a contact that began inside
             // the viewport is ours, and only that may capture.
             if !bounds.contains(*position) {
                 return None;
             }
             let (position, size) = widget_local(bounds, *position);
-            (PointerEvent::Pressed { button: PointerButton::Left, position, size }, true)
+            (PointerEvent::Touch { finger: id.0, phase: TouchPhase::Down, position, size }, true)
         }
         // A move, wherever it is, and never a contact: a pen in range but off
         // the surface reports `FingerMoved` too (a `POINTER_FLAG_UPDATE` with
         // no contact), so hover and drag both come through here and the
         // press above is the only thing that starts a stroke.
-        iced::Event::Touch(touch::Event::FingerMoved { position, .. }) => {
+        iced::Event::Touch(touch::Event::FingerMoved { id, position }) => {
             let (position, size) = widget_local(bounds, *position);
-            (PointerEvent::Moved { position, size }, false)
+            (PointerEvent::Touch { finger: id.0, phase: TouchPhase::Moved, position, size }, false)
         }
         // Lost is Windows cancelling the contact -- the pen left range mid
         // stroke, or the window lost it -- and has to end the drag exactly as
         // a lift does, or the stroke would carry on under the next hover.
-        iced::Event::Touch(touch::Event::FingerLifted { .. } | touch::Event::FingerLost { .. }) => {
-            (PointerEvent::Released { button: PointerButton::Left }, false)
+        iced::Event::Touch(
+            touch::Event::FingerLifted { id, position } | touch::Event::FingerLost { id, position },
+        ) => {
+            let (position, size) = widget_local(bounds, *position);
+            (PointerEvent::Touch { finger: id.0, phase: TouchPhase::Up, position, size }, false)
         }
         iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(modifiers)) => (
             PointerEvent::Modifiers {
@@ -1504,11 +1512,12 @@ mod tests {
     }
 
     /// **The Windows pen.** It reaches the widget as a touch, so a touch has to
-    /// route exactly as the left mouse button does: press inside captures,
+    /// route as the left mouse button's events do: press inside captures,
     /// press outside is not ours, moves and lifts are routed wherever they are
-    /// and never capture.
+    /// and never capture. Each goes to the application as the finger it is,
+    /// and `app/touch.rs` makes one finger the left button (its tests).
     #[test]
-    fn a_pen_arriving_as_a_touch_is_the_left_button() {
+    fn a_pen_arriving_as_a_touch_is_routed_as_its_finger() {
         use iced::touch::{Event as Touch, Finger};
         let finger = Finger(7);
         // The cursor is irrelevant to a touch, which carries its own position;
@@ -1522,12 +1531,11 @@ mod tests {
         let (event, captures) = route_pointer(&pressed, bounds(), cursor).expect("a pen press");
         assert!(captures, "a pen press inside the viewport should be claimed");
         match event {
-            PointerEvent::Pressed { button, position, size } => {
-                assert_eq!(button, PointerButton::Left, "a pen is the left button");
+            PointerEvent::Touch { finger: 7, phase: TouchPhase::Down, position, size } => {
                 assert_eq!((position.x, position.y), (200.0, 150.0), "not widget local");
                 assert_eq!((size.x, size.y), (800.0, 600.0));
             }
-            other => panic!("expected a press, got {other:?}"),
+            other => panic!("expected finger 7 down, got {other:?}"),
         }
 
         let outside = iced::Event::Touch(Touch::FingerPressed {
@@ -1545,7 +1553,10 @@ mod tests {
         });
         let (event, captures) = route_pointer(&moved, bounds(), cursor).expect("moves are routed");
         assert!(!captures, "a pen move was captured");
-        assert!(matches!(event, PointerEvent::Moved { .. }), "got {event:?}");
+        assert!(
+            matches!(event, PointerEvent::Touch { finger: 7, phase: TouchPhase::Moved, .. }),
+            "got {event:?}"
+        );
 
         for ended in [
             Touch::FingerLifted { id: finger, position: Point::new(950.0, 690.0) },
@@ -1555,7 +1566,7 @@ mod tests {
                 route_pointer(&iced::Event::Touch(ended), bounds(), cursor).expect("routed");
             assert!(!captures, "a pen lift was captured");
             assert!(
-                matches!(event, PointerEvent::Released { button: PointerButton::Left }),
+                matches!(event, PointerEvent::Touch { finger: 7, phase: TouchPhase::Up, .. }),
                 "got {event:?}"
             );
         }

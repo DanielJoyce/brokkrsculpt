@@ -73,11 +73,35 @@ pub(super) enum Step {
 /// A pointer event, as [`PointerEvent`] with something to compare.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum Pointed {
-    Moved { at: [f32; 2], size: [f32; 2] },
-    Pressed { button: PointerButton, at: [f32; 2], size: [f32; 2] },
-    Released { button: PointerButton },
-    Scrolled { amount: f32, at: [f32; 2], size: [f32; 2] },
-    Modifiers { shift: bool, control: bool, alt: bool },
+    Moved {
+        at: [f32; 2],
+        size: [f32; 2],
+    },
+    Pressed {
+        button: PointerButton,
+        at: [f32; 2],
+        size: [f32; 2],
+    },
+    Released {
+        button: PointerButton,
+    },
+    Scrolled {
+        amount: f32,
+        at: [f32; 2],
+        size: [f32; 2],
+    },
+    Modifiers {
+        shift: bool,
+        control: bool,
+        alt: bool,
+    },
+    /// A finger: `app/touch.rs`.
+    Touch {
+        finger: u64,
+        phase: crate::message::TouchPhase,
+        at: [f32; 2],
+        size: [f32; 2],
+    },
 }
 
 impl From<PointerEvent> for Pointed {
@@ -96,6 +120,9 @@ impl From<PointerEvent> for Pointed {
             }
             PointerEvent::Modifiers { shift, control, alt } => {
                 Pointed::Modifiers { shift, control, alt }
+            }
+            PointerEvent::Touch { finger, phase, position, size } => {
+                Pointed::Touch { finger, phase, at: pair(position), size: pair(size) }
             }
         }
     }
@@ -117,6 +144,9 @@ impl From<Pointed> for PointerEvent {
             }
             Pointed::Modifiers { shift, control, alt } => {
                 PointerEvent::Modifiers { shift, control, alt }
+            }
+            Pointed::Touch { finger, phase, at, size } => {
+                PointerEvent::Touch { finger, phase, position: vector(at), size: vector(size) }
             }
         }
     }
@@ -165,6 +195,18 @@ impl Step {
             Step::Pointer(Pointed::Modifiers { shift, control, alt }) => {
                 format!("keys {} {} {}", flag(*shift), flag(*control), flag(*alt))
             }
+            Step::Pointer(Pointed::Touch { finger, phase, at, size }) => format!(
+                "touch {finger} {} {} {} {} {}",
+                match phase {
+                    crate::message::TouchPhase::Down => "down",
+                    crate::message::TouchPhase::Moved => "moved",
+                    crate::message::TouchPhase::Up => "up",
+                },
+                at[0],
+                at[1],
+                size[0],
+                size[1]
+            ),
             Step::Camera { target, distance, yaw, pitch, roll } => format!(
                 "camera {} {} {} {distance} {yaw} {pitch} {roll}",
                 target.x, target.y, target.z
@@ -210,6 +252,17 @@ impl Step {
                     control: control != 0.0,
                     alt: alt != 0.0,
                 })
+            }
+            "touch" => {
+                let finger = words.next()?.parse().ok()?;
+                let phase = match words.next()? {
+                    "down" => crate::message::TouchPhase::Down,
+                    "moved" => crate::message::TouchPhase::Moved,
+                    "up" => crate::message::TouchPhase::Up,
+                    _ => return None,
+                };
+                let [x, y, w, h] = numbers(&mut words)?;
+                Step::Pointer(Pointed::Touch { finger, phase, at: [x, y], size: [w, h] })
             }
             "camera" => {
                 let [x, y, z, distance, yaw, pitch, roll] = numbers(&mut words)?;

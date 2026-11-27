@@ -8,6 +8,9 @@
   <link rel="icon" type="image/png" href="icon.png">
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #16181d; }
+    /* Fingers are the application's (app/touch.rs): no pinch-zoom of the
+       page, no scroll, no pull-to-refresh under a two-finger gesture. */
+    html, body, canvas { touch-action: none; overscroll-behavior: none; }
     canvas { display: block; width: 100vw; height: 100vh; outline: none; }
     #note {
       position: fixed; inset: 0; display: grid; place-items: center;
