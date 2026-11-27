@@ -57,12 +57,23 @@ and shows a row, and rows can be dragged into folders. Above the list,
 *Explode* spreads the parts apart so a small one can be picked, and the button
 beside it shows only the active body.
 
+## Reference pictures and the floor
+
+REFERENCES, in Sculpt and Transform, holds a picture for each of the front,
+side and top planes. Choose the plane, then *Load picture…* (PNG or JPEG).
+It arrives as tall as the model, centred on it and standing behind it as
+that view sees it. Opacity, width, across, up and depth move it; *Flip*
+mirrors it; *Shown* hides it without losing it. The model is always drawn
+over the pictures, wherever they stand. *Floor* draws a grid under the
+lowest point of the model, a line every round number of millimetres.
+
 ## Undo, saving and files
 
 - **Ctrl+Z** undoes a whole stroke or action at a time, and **Ctrl+Shift+Z**
   redoes it.
 - A sculpt is saved as one `.hani` file holding everything: the bodies, the
-  mask, the paint and its layers. Older `.brokkr` files open too.
+  mask, the paint and its layers, and the reference pictures. Older `.brokkr`
+  files open too.
 - Your work is saved aside now and then while you sculpt, so a crash costs
   little.
 - In a browser, **Save** keeps the sculpt in the browser, and *Save to

@@ -12,6 +12,8 @@ pub mod matcap;
 pub mod mesh_pool;
 pub mod overlay;
 mod paints;
+// Reference pictures behind the sculpt.
+pub mod reference;
 pub mod renderer;
 pub mod spread;
 pub mod thumbnail;
@@ -23,5 +25,8 @@ pub use mesh_pool::{
 };
 pub use overlay::{OverlayBatch, OverlayRenderer, OverlayVertex};
 pub use paints::{PAINT_SLOTS, PaintBlock};
+pub use reference::{
+    MOST_PIXELS_ACROSS, REFERENCE_SLOTS, ReferencePicture, ReferenceQuad, ReferenceRenderer,
+};
 pub use renderer::{PALETTE_SLOTS, PixelRect, SculptRenderer, UNKNOWN_FILAMENT, Uniforms};
 pub use thumbnail::{THUMBNAIL_BACKGROUND, THUMBNAIL_SIZE, ThumbnailAtlas, background_texel};

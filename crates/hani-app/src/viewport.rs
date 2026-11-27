@@ -252,6 +252,10 @@ pub struct SharedFrame {
     /// How far each body is drawn from where it is: the hierarchy's
     /// Explode, `app/explode.rs`. See [`SharedFrame::set_spread`].
     spread: Mutex<Vec<(NodeId, glam::Vec4)>>,
+    /// Reference pictures waiting to go to the GPU, by slot, and where the
+    /// pictures are drawn. See `app/references.rs`.
+    reference_pictures: Mutex<Vec<(usize, Option<Arc<hani_gpu::ReferencePicture>>)>>,
+    reference_quads: Mutex<Vec<hani_gpu::ReferenceQuad>>,
     /// The one thumbnail waiting to be drawn.
     ///
     /// **Capacity one, so the per-frame cap IS the type.** "At most one body
@@ -525,6 +529,32 @@ impl SharedFrame {
         let mut held = self.spread.lock().expect("shared frame poisoned");
         held.clear();
         held.extend_from_slice(spread);
+    }
+
+    /// Put a reference picture in a slot, or empty it, at the next frame.
+    pub fn set_reference_picture(
+        &self,
+        slot: usize,
+        picture: Option<Arc<hani_gpu::ReferencePicture>>,
+    ) {
+        let mut held = self.reference_pictures.lock().expect("shared frame poisoned");
+        // Only the last word for a slot matters.
+        held.retain(|(each, _)| *each != slot);
+        held.push((slot, picture));
+    }
+
+    /// Where the reference pictures are drawn. Wholesale, as
+    /// [`SharedFrame::set_spread`] is.
+    pub fn set_reference_quads(&self, quads: &[hani_gpu::ReferenceQuad]) {
+        let mut held = self.reference_quads.lock().expect("shared frame poisoned");
+        held.clear();
+        held.extend_from_slice(quads);
+    }
+
+    /// What the renderer will be told of the reference pictures.
+    #[cfg(test)]
+    pub fn reference_quads(&self) -> Vec<hani_gpu::ReferenceQuad> {
+        self.reference_quads.lock().expect("shared frame poisoned").clone()
     }
 
     /// What the renderer will be told of the spread.
@@ -1254,6 +1284,18 @@ impl shader::Primitive for SculptPrimitive {
         {
             let overlay = shared.overlay.lock().expect("shared frame poisoned");
             pipeline.renderer.write_overlay(device, queue, &overlay, view_projection);
+        }
+        {
+            // The reference pictures: any new ones to the GPU, then where
+            // they are drawn. See `app/references.rs`.
+            let pictures = std::mem::take(
+                &mut *shared.reference_pictures.lock().expect("shared frame poisoned"),
+            );
+            for (slot, picture) in pictures {
+                pipeline.renderer.set_reference_picture(device, queue, slot, picture.as_deref());
+            }
+            let quads = shared.reference_quads.lock().expect("shared frame poisoned");
+            pipeline.renderer.write_references(queue, &quads, view_projection);
         }
         {
             let cube = shared.cube.lock().expect("shared frame poisoned");

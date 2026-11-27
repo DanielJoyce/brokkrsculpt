@@ -236,6 +236,9 @@ pub struct SculptRenderer {
     /// [`SculptRenderer::overlay_pass`], which the cube's own pass was
     /// generalised into rather than copied.
     gizmo: OverlayRenderer,
+    /// The reference pictures, drawn in a pass of their own before the
+    /// sculpt's. See [`crate::reference`].
+    references: crate::reference::ReferenceRenderer,
     bind_group: wgpu::BindGroup,
     uniform_buffer: wgpu::Buffer,
     /// The same uniforms with [`Uniforms::mask_inverted`] complemented, and the
@@ -499,6 +502,11 @@ impl SculptRenderer {
             overlay: OverlayRenderer::new(device, target_format, DEPTH_FORMAT),
             cube: OverlayRenderer::new(device, target_format, DEPTH_FORMAT),
             gizmo: OverlayRenderer::new(device, target_format, DEPTH_FORMAT),
+            references: crate::reference::ReferenceRenderer::new(
+                device,
+                target_format,
+                DEPTH_FORMAT,
+            ),
             bind_group,
             uniform_buffer,
             opposite_uniform_buffer,
@@ -912,6 +920,28 @@ impl SculptRenderer {
         self.pool.stats()
     }
 
+    /// Put a reference picture in a slot, or empty it. See
+    /// [`crate::reference`].
+    pub fn set_reference_picture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        slot: usize,
+        picture: Option<&crate::reference::ReferencePicture>,
+    ) {
+        self.references.set_picture(device, queue, slot, picture);
+    }
+
+    /// Where the reference pictures are drawn this frame.
+    pub fn write_references(
+        &mut self,
+        queue: &wgpu::Queue,
+        quads: &[crate::reference::ReferenceQuad],
+        view_projection: glam::Mat4,
+    ) {
+        self.references.upload(queue, quads, view_projection);
+    }
+
     /// Draw the sculpt into `target`, confined to `clip` in physical pixels.
     ///
     /// The colour attachment loads rather than clears, because the UI has
@@ -927,6 +957,41 @@ impl SculptRenderer {
     ) {
         if clip.width == 0 || clip.height == 0 {
             return;
+        }
+
+        // The reference pictures first, in a pass of their own, so the
+        // sculpt's pass, which clears depth again, draws the model over them
+        // wherever their planes stand. See `reference.rs`.
+        if !self.references.is_empty() {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("hani reference pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Discard,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_viewport(
+                clip.x as f32,
+                clip.y as f32,
+                clip.width as f32,
+                clip.height as f32,
+                0.0,
+                1.0,
+            );
+            pass.set_scissor_rect(clip.x, clip.y, clip.width, clip.height);
+            self.references.draw(&mut pass);
         }
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

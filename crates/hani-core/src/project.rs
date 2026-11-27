@@ -552,6 +552,8 @@ pub struct ProjectState {
     /// or transform consults it. The slot NUMBERS are in the voxels and are
     /// carried by all of those.
     pub paints: crate::paint::PaintTable,
+    /// The reference pictures and the floor. See [`crate::reference`].
+    pub references: crate::reference::References,
 }
 
 /// How far a read got before it returned.
@@ -1024,6 +1026,14 @@ fn write_tail(out: &mut impl Write, doc: &Document, state: &ProjectState) -> Res
         .collect();
     if let Some(section) = crate::paint::layer_file::encode(&stacks) {
         out.write_all(crate::paint::layer_file::TAG)?;
+        write_u64(out, section.len() as u64)?;
+        out.write_all(&section)?;
+    }
+
+    // The reference pictures and the floor, last, where there are any. See
+    // `reference.rs`.
+    if let Some(section) = state.references.encode() {
+        out.write_all(crate::reference::TAG)?;
         write_u64(out, section.len() as u64)?;
         out.write_all(&section)?;
     }
@@ -1504,7 +1514,7 @@ fn read_understanding_field_versions_to(
     newest_field: u16,
 ) -> Result<(Document, ProjectState)> {
     let header = read_header(input, newest_field)?;
-    let mut state = ProjectState { view: header.view, paints: crate::paint::PaintTable::default() };
+    let mut state = ProjectState { view: header.view, ..ProjectState::default() };
 
     let (rows, active) = read_table_or_synthesize(input, header.container, progress)?;
 
@@ -1647,6 +1657,27 @@ fn read_understanding_field_versions_to(
                         if let Some(stack) = stack {
                             volume.restore_layers(stack);
                         }
+                    }
+                }
+            }
+            tag = next_tag(input);
+        }
+        // The reference pictures and the floor, on the same terms again: a
+        // section not taken leaves the document with none. See
+        // `reference.rs`. The length is bounded before it is read, since a
+        // picture is the one section here whose size a user chooses.
+        if tag.as_ref() == Some(crate::reference::TAG) {
+            let mut length = [0u8; 8];
+            if input.read_exact(&mut length).is_ok() {
+                let length = u64::from_le_bytes(length);
+                let most = 3 * (crate::reference::MAX_PICTURE_BYTES as u64 + 1024);
+                if length <= most {
+                    let mut bytes = Vec::new();
+                    let taken = input.take(length).read_to_end(&mut bytes);
+                    if taken.is_ok_and(|read| read as u64 == length)
+                        && let Some(references) = crate::reference::References::decode(&bytes)
+                    {
+                        state.references = references;
                     }
                 }
             }
@@ -2648,7 +2679,11 @@ mod tests {
     fn a_version_3_file_with_keys_and_paints_opens_without_the_keys() {
         let mut paints = crate::paint::PaintTable::default();
         paints.add(crate::paint::Paint::flat("Ochre", [200, 140, 60]));
-        let state = ProjectState { view: View { camera_yaw: 1.5, ..View::default() }, paints };
+        let state = ProjectState {
+            view: View { camera_yaw: 1.5, ..View::default() },
+            paints,
+            ..ProjectState::default()
+        };
         let doc = sculpted_doc();
         let mut bytes = Vec::new();
         write(&mut bytes, &doc, &state).expect("write failed");
@@ -2668,6 +2703,34 @@ mod tests {
             read(&mut bytes.as_slice()).expect("a version 3 file with keys was refused");
         assert_eq!(loaded_state, state, "the view or the paints did not come back past the keys");
         assert_same_document(&doc, &loaded);
+    }
+
+    /// Reference pictures and the floor come back with the sculpt, after the
+    /// paint table, and a document without them gains no bytes.
+    #[test]
+    fn references_and_the_floor_survive_a_round_trip_beside_paints() {
+        use crate::reference::{Plane, Reference, References};
+        let mut paints = crate::paint::PaintTable::default();
+        paints.add(crate::paint::Paint::flat("Ochre", [200, 140, 60]));
+        let mut references = References { floor: true, ..References::default() };
+        let mut side = Reference::new(
+            "side.jpg".to_string(),
+            std::sync::Arc::from(vec![0xff, 0xd8, 0xff, 1, 2, 3]),
+            -30.0,
+            80.0,
+        );
+        side.flipped = true;
+        references.planes[Plane::Side.index()] = Some(side);
+        let state = ProjectState { paints, references, ..ProjectState::default() };
+        let (_, loaded) = round_trip(&sculpted_doc(), &state);
+        assert_eq!(loaded, state);
+
+        let mut plain = Vec::new();
+        write(&mut plain, &sculpted_doc(), &ProjectState::default()).expect("write failed");
+        assert!(
+            !plain.windows(8).any(|window| window == crate::reference::TAG),
+            "a document with no references wrote their section"
+        );
     }
 
     /// A version 4 file carries nothing after its geometry where there is no
