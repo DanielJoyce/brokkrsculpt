@@ -489,7 +489,7 @@ impl Hani {
         let mut picker = column![].spacing(theme::S1);
         for line in rows {
             let kinds = line.iter().fold(row![].spacing(theme::S1), |assembled, kind| {
-                assembled.push(
+                assembled.push(crate::ui::tip(
                     button(text(kind.label()).size(theme::LABEL_SIZE))
                         // A share of the row for each letter and two for
                         // the padding: in four equal buttons, seen on a
@@ -501,7 +501,8 @@ impl Hani {
                             theme::tool_button
                         })
                         .on_press(Message::PaintTouchChosen(*kind)),
-                )
+                    super::tips::touch(*kind),
+                ))
             });
             picker = picker.push(kinds);
         }
@@ -655,8 +656,9 @@ impl Hani {
                         .step(0.01)
                         .shown(format!("{:.2}", sponge.toward_light)),
                     )
-                    .push(crate::ui::segmented(
-                        hani_core::paint::touch::Foam::ALL.map(|foam| (foam, foam.label())),
+                    .push(crate::ui::segmented_tips(
+                        hani_core::paint::touch::Foam::ALL
+                            .map(|foam| (foam, foam.label(), super::tips::foam(foam))),
                         sponge.foam,
                         move |foam| changed(TouchSetting::SpongeFoam(foam)),
                     ));

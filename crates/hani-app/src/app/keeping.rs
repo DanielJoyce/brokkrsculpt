@@ -186,8 +186,17 @@ impl Hani {
         Some(
             row![
                 save,
-                crate::ui::button_secondary("Save as new…", Some(keep(KeepMessage::SaveAsOpened))),
-                crate::ui::button_secondary("Revert", place.map(|_| keep(KeepMessage::Revert))),
+                crate::ui::tip(
+                    crate::ui::button_secondary(
+                        "Save as new…",
+                        Some(keep(KeepMessage::SaveAsOpened))
+                    ),
+                    "Keep these settings as a new brush of their own",
+                ),
+                crate::ui::tip(
+                    crate::ui::button_secondary("Revert", place.map(|_| keep(KeepMessage::Revert))),
+                    "Put this brush back as it was kept",
+                ),
             ]
             .spacing(theme::S1)
             .into(),

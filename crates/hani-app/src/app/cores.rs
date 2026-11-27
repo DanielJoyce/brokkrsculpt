@@ -166,14 +166,17 @@ impl Hani {
             })
             .text_size(theme::LABEL_SIZE)
             .width(Length::Fill),
-            button(
-                text(if self.cores.measuring { "Measuring" } else { "Measure" })
-                    .size(theme::LABEL_SIZE)
-            )
-            .padding(theme::PAD_CHOICE)
-            .style(theme::tool_button)
-            .on_press_maybe(
-                (!self.cores.measuring).then_some(Message::Cores(CoresMessage::Measure))
+            crate::ui::tip(
+                button(
+                    text(if self.cores.measuring { "Measuring" } else { "Measure" })
+                        .size(theme::LABEL_SIZE)
+                )
+                .padding(theme::PAD_CHOICE)
+                .style(theme::tool_button)
+                .on_press_maybe(
+                    (!self.cores.measuring).then_some(Message::Cores(CoresMessage::Measure))
+                ),
+                "Time a stroke on each number of threads and choose the fastest",
             ),
         ]
         .spacing(theme::S2)

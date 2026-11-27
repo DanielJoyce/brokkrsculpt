@@ -1242,8 +1242,8 @@ impl Hani {
                         format!("{:+.2}", actions.plane)
                     }),
                 )
-                .push(crate::ui::segmented(
-                    Side::ALL.map(|side| (side, side.label())),
+                .push(crate::ui::segmented_tips(
+                    Side::ALL.map(|side| (side, side.label(), super::tips::side(side))),
                     actions.side,
                     move |side| {
                         Message::Studio(StudioMessage::ActionsChosen(Actions { side, ..actions }))
@@ -1643,8 +1643,11 @@ impl Hani {
             // Whether a stroke builds on itself, and whether it is a line
             // or the brush set down every so often.
             settings = settings
-                .push(crate::ui::segmented(
-                    [(true, "Builds up"), (false, "One layer")],
+                .push(crate::ui::segmented_tips(
+                    [
+                        (true, "Builds up", "Each pass over a place adds to the last"),
+                        (false, "One layer", "A stroke lays one layer, however often it passes"),
+                    ],
                     self.studio.build_up,
                     move |on| changed(StudioMessage::BuildUpToggled(on)),
                 ))

@@ -1281,12 +1281,13 @@ impl Hani {
             let card: Element<'_, Message> = if fragmented {
                 opaque(
                     container(
-                        card.push(
+                        card.push(crate::ui::tip(
                             button(text("Rebuild view").size(theme::CAPTION_SIZE))
                                 .padding(theme::S1)
                                 .style(theme::tool_button)
                                 .on_press(Message::ViewRebuilt),
-                        ),
+                            "Mesh every body again from its voxels",
+                        )),
                     )
                     .padding(theme::S3)
                     .style(theme::overlay_card),
@@ -1403,19 +1404,30 @@ impl Hani {
             );
         }
         if card.names_the_active_body() {
-            let verb = |label: &'static str, message: Message| {
-                button(text(label).size(theme::CAPTION_SIZE))
-                    .padding(theme::S1)
-                    .style(theme::tool_button)
-                    .on_press(message)
+            let verb = |label: &'static str, what: &'static str, message: Message| {
+                crate::ui::tip(
+                    button(text(label).size(theme::CAPTION_SIZE))
+                        .padding(theme::S1)
+                        .style(theme::tool_button)
+                        .on_press(message),
+                    what,
+                )
             };
             // Split off last, because it changes the document's shape where the
             // other two only change the mask sitting on it.
             body = body.push(
                 row![
-                    verb("invert", Message::MaskInverted),
-                    verb("clear", Message::MaskCleared),
-                    verb("split off", Message::BodySplitMasked),
+                    verb(
+                        "invert",
+                        "Masked becomes free and free becomes masked",
+                        Message::MaskInverted
+                    ),
+                    verb("clear", "Unmask everything", Message::MaskCleared),
+                    verb(
+                        "split off",
+                        "Make the masked part a body of its own",
+                        Message::BodySplitMasked
+                    ),
                 ]
                 .spacing(theme::S2),
             );
@@ -1777,22 +1789,28 @@ impl Hani {
     /// to the document; leaving it at 1.0 would re-blur an already-blurred mask
     /// the instant the next grab touched it.
     fn mask_block(&self) -> Element<'_, Message> {
-        let verb = |label: &'static str, message: Message| {
-            button(text(label).size(theme::LABEL_SIZE))
-                .width(Length::Fill)
-                .style(theme::tool_button)
-                .on_press(message)
+        let verb = |label: &'static str, what: &'static str, message: Message| {
+            crate::ui::tip(
+                button(text(label).size(theme::LABEL_SIZE))
+                    .width(Length::Fill)
+                    .style(theme::tool_button)
+                    .on_press(message),
+                what,
+            )
         };
 
         let filter = |which: MaskFilter| {
-            button(text(which.label()).size(theme::LABEL_SIZE))
-                .width(Length::Fill)
-                .style(if which == self.mask_filter {
-                    theme::tool_button_active
-                } else {
-                    theme::tool_button
-                })
-                .on_press(Message::MaskFilterChosen(which))
+            crate::ui::tip(
+                button(text(which.label()).size(theme::LABEL_SIZE))
+                    .width(Length::Fill)
+                    .style(if which == self.mask_filter {
+                        theme::tool_button_active
+                    } else {
+                        theme::tool_button
+                    })
+                    .on_press(Message::MaskFilterChosen(which)),
+                super::tips::mask_filter(which),
+            )
         };
 
         // A generator is a press and never a drag: unlike the four filters it
@@ -1800,17 +1818,27 @@ impl Hani {
         // on release. What it reads instead are the two sliders below it, which
         // is why they sit under the row rather than one per button.
         let generator = |which: MaskGenerator| {
-            button(text(which.label()).size(theme::LABEL_SIZE))
-                .width(Length::Fill)
-                .style(theme::tool_button)
-                .on_press(Message::MaskGenerated(which))
+            crate::ui::tip(
+                button(text(which.label()).size(theme::LABEL_SIZE))
+                    .width(Length::Fill)
+                    .style(theme::tool_button)
+                    .on_press(Message::MaskGenerated(which)),
+                super::tips::mask_generator(which),
+            )
         };
 
         let mut block = column![
             text("Mask").size(theme::LABEL_SIZE).color(theme::TEXT_DIM),
-            row![verb("Clear", Message::MaskCleared), verb("Invert", Message::MaskInverted)]
-                .spacing(theme::S1),
-            verb("Mask all", Message::MaskAllApplied),
+            row![
+                verb("Clear", "Unmask everything", Message::MaskCleared),
+                verb(
+                    "Invert",
+                    "Masked becomes free and free becomes masked",
+                    Message::MaskInverted
+                )
+            ]
+            .spacing(theme::S1),
+            verb("Mask all", "Protect the whole body", Message::MaskAllApplied),
             row![filter(MaskFilter::Blur), filter(MaskFilter::Sharpen)].spacing(theme::S1),
             row![filter(MaskFilter::Grow), filter(MaskFilter::Shrink)].spacing(theme::S1),
             // `on_release` is what makes the whole drag ONE undo entry: every
@@ -1889,7 +1917,11 @@ impl Hani {
             // gesture is the mask card's `split off` -- see `mask_card`. Two
             // labels for one message is deliberate: this one sits among full
             // sentences, the card's among lower-case verbs.
-            verb("Split off the mask", Message::BodySplitMasked),
+            verb(
+                "Split off the mask",
+                "Make the masked part a body of its own",
+                Message::BodySplitMasked
+            ),
         ]
         .spacing(theme::S1);
 
@@ -3038,14 +3070,22 @@ impl Hani {
                 .size(theme::LABEL_SIZE)
                 .color(theme::TEXT_DIM),
             row![
-                button(text("finer").size(theme::LABEL_SIZE))
-                    .style(theme::tool_button)
-                    .on_press_maybe((finer >= FINEST_VOXEL_MM).then_some(Message::Resample(finer))),
-                button(text("coarser").size(theme::LABEL_SIZE))
-                    .style(theme::tool_button)
-                    .on_press_maybe(
-                        (coarser <= COARSEST_VOXEL_MM).then_some(Message::Resample(coarser))
-                    ),
+                crate::ui::tip(
+                    button(text("finer").size(theme::LABEL_SIZE))
+                        .style(theme::tool_button)
+                        .on_press_maybe(
+                            (finer >= FINEST_VOXEL_MM).then_some(Message::Resample(finer))
+                        ),
+                    "Halve the voxel: more detail, more memory",
+                ),
+                crate::ui::tip(
+                    button(text("coarser").size(theme::LABEL_SIZE))
+                        .style(theme::tool_button)
+                        .on_press_maybe(
+                            (coarser <= COARSEST_VOXEL_MM).then_some(Message::Resample(coarser))
+                        ),
+                    "Double the voxel: less detail, less memory",
+                ),
             ]
             .spacing(theme::S2),
             text("Print size").size(theme::LABEL_SIZE).color(theme::TEXT_DIM),
@@ -3054,9 +3094,12 @@ impl Hani {
                     .on_input(Message::WorkingSizeTyped)
                     .on_submit(Message::WorkingSizeCommitted)
                     .size(theme::LABEL_SIZE),
-                button(text("set").size(theme::LABEL_SIZE))
-                    .style(theme::tool_button)
-                    .on_press(Message::WorkingSizeCommitted),
+                crate::ui::tip(
+                    button(text("set").size(theme::LABEL_SIZE))
+                        .style(theme::tool_button)
+                        .on_press(Message::WorkingSizeCommitted),
+                    "Scale the model so its longest side is this long",
+                ),
             ]
             .spacing(theme::S2),
             // Scaling is free and changes no voxel, so the only honest thing to
@@ -3104,9 +3147,12 @@ impl Hani {
 
         column![
             rows,
-            button(text("Sync filaments from printer").size(theme::LABEL_SIZE))
-                .style(theme::tool_button)
-                .on_press(Message::PaletteSyncRequested),
+            crate::ui::tip(
+                button(text("Sync filaments from printer").size(theme::LABEL_SIZE))
+                    .style(theme::tool_button)
+                    .on_press(Message::PaletteSyncRequested),
+                "Read the loaded filaments' colours from the printer",
+            ),
             // Show paint and show creases were here, and are in the View
             // menu now with the other view settings.
         ]
@@ -3154,8 +3200,12 @@ impl Hani {
             })
             .text_size(theme::LABEL_SIZE)
             .width(Length::Fill),
-            crate::ui::segmented(
-                hani_core::part::KeyShape::ALL.map(|shape| (shape, shape.label())),
+            crate::ui::segmented_tips(
+                hani_core::part::KeyShape::ALL.map(|shape| (
+                    shape,
+                    shape.label(),
+                    super::tips::key_shape(shape)
+                )),
                 key.shape,
                 |shape| Message::KeySettingChanged(KeySetting::Shape(shape)),
             ),
@@ -3188,9 +3238,12 @@ impl Hani {
             .shown(format!("{:.2} mm", key.clearance_mm)),
             // The real answer: a plate of sockets at six clearances and a
             // peg, to print and try. See `app/fit_test.rs`.
-            button(text("Print a fit test\u{2026}").size(theme::LABEL_SIZE))
-                .style(theme::tool_button)
-                .on_press(Message::FitTestRequested),
+            crate::ui::tip(
+                button(text("Print a fit test\u{2026}").size(theme::LABEL_SIZE))
+                    .style(theme::tool_button)
+                    .on_press(Message::FitTestRequested),
+                "Export a plate of sockets at six clearances and a peg to try them",
+            ),
         ]
         .spacing(theme::S1);
 
@@ -3295,9 +3348,12 @@ impl Hani {
             text(capabilities.unwrap_or_default()).size(theme::LABEL_SIZE).color(theme::TEXT_MUTE),
             row![
                 text(live).size(theme::LABEL_SIZE).font(theme::MONO).color(theme::TEXT_DIM),
-                button(text("reset").size(theme::LABEL_SIZE))
-                    .style(theme::tool_button)
-                    .on_press(Message::ResetPressurePeak),
+                crate::ui::tip(
+                    button(text("reset").size(theme::LABEL_SIZE))
+                        .style(theme::tool_button)
+                        .on_press(Message::ResetPressurePeak),
+                    "Forget the hardest press seen so far",
+                ),
             ]
             .spacing(theme::S2)
             .align_y(Alignment::Center),

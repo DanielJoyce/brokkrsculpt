@@ -994,12 +994,13 @@ impl Hani {
             }
             panel = panel.push(assembled);
         }
-        panel = panel.push(
+        panel = panel.push(crate::ui::tip(
             button(text("Take in a map…").size(theme::LABEL_SIZE))
                 .width(Length::Fill)
                 .style(theme::tool_button)
                 .on_press(Message::Maps(MapsMessage::Requested)),
-        );
+            "Read a picture whose brightness is height, to press into the surface",
+        ));
         panel.into()
     }
 

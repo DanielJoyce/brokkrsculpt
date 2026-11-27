@@ -199,26 +199,49 @@ impl Hani {
         let send = |message: CoatsMessage| Message::Coats(message);
         let label =
             |words: &'static str| text(words).size(theme::LABEL_SIZE).color(theme::TEXT_DIM);
+        // What each coat lays, on hover: `app/tips.rs`.
         let apply = |message: CoatsMessage| {
-            button(text("Apply").size(theme::LABEL_SIZE))
+            let what = match message {
+                CoatsMessage::BaseCoat => "Lay the base coat over the whole body, on a new layer",
+                CoatsMessage::Zenithal => "Prime from the light: light where it faces the light",
+                CoatsMessage::Spongechop => {
+                    "Sponge a dark, a middle and a light by height and light"
+                }
+                CoatsMessage::VarnishCoat => "Varnish the whole body with this finish",
+                _ => "Lay this coat on a new layer",
+            };
+            crate::ui::tip(
+                button(text("Apply").size(theme::LABEL_SIZE))
+                    .padding(theme::PAD_CHOICE)
+                    .style(theme::tool_button)
+                    .on_press(send(message)),
+                what,
+            )
+        };
+        let word = |words: &'static str, what: &'static str, message: CoatsMessage| {
+            crate::ui::tip(
+                button(
+                    text(words)
+                        .size(theme::LABEL_SIZE)
+                        .align_x(Alignment::Center)
+                        .width(Length::Fill),
+                )
+                .width(Length::Fill)
                 .padding(theme::PAD_CHOICE)
                 .style(theme::tool_button)
-                .on_press(send(message))
-        };
-        let word = |words: &'static str, message: CoatsMessage| {
-            button(
-                text(words).size(theme::LABEL_SIZE).align_x(Alignment::Center).width(Length::Fill),
+                .on_press(send(message)),
+                what,
             )
-            .width(Length::Fill)
-            .padding(theme::PAD_CHOICE)
-            .style(theme::tool_button)
-            .on_press(send(message))
         };
 
         let light = column![
             row![
-                word("From above", CoatsMessage::Above),
-                word("From the view", CoatsMessage::FromView)
+                word("From above", "Put the light straight overhead", CoatsMessage::Above),
+                word(
+                    "From the view",
+                    "Put the light where you are looking from",
+                    CoatsMessage::FromView
+                )
             ]
             .spacing(theme::S1),
             crate::ui::number(

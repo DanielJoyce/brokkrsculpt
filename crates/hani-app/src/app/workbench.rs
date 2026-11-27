@@ -87,6 +87,10 @@ pub(super) fn leaves_the_bench(message: &Message) -> bool {
     )
 }
 
+/// The bench's two buttons, the same words in the panel and over the view.
+const FRESH: &str = "A fresh piece";
+const BACK: &str = "Back to the model";
+
 impl Hani {
     /// Whether the workbench is up, and what is in the document's place is
     /// a piece to try a brush on.
@@ -208,26 +212,37 @@ impl Hani {
     /// it up, a fresh piece and the way back.
     pub(super) fn workbench_panel(&self) -> Element<'_, Message> {
         let changed = |message: WorkbenchMessage| Message::Workbench(message);
-        let wide = |label: &'static str, message: WorkbenchMessage| {
-            button(text(label).size(theme::LABEL_SIZE).width(Length::Fill).center())
-                .width(Length::Fill)
-                .padding(theme::PAD_CHOICE)
-                .style(theme::tool_button)
-                .on_press(changed(message))
+        let wide = |label: &'static str, what: &'static str, message: WorkbenchMessage| {
+            crate::ui::tip(
+                button(text(label).size(theme::LABEL_SIZE).width(Length::Fill).center())
+                    .width(Length::Fill)
+                    .padding(theme::PAD_CHOICE)
+                    .style(theme::tool_button)
+                    .on_press(changed(message)),
+                what,
+            )
         };
         if self.on_the_bench() {
             column![
                 row![
-                    wide("A fresh piece", WorkbenchMessage::Fresh),
-                    wide("Back to the model", WorkbenchMessage::Left),
+                    wide(FRESH, "Start the piece again", WorkbenchMessage::Fresh),
+                    wide(BACK, "Leave the bench; nothing on it is kept", WorkbenchMessage::Left),
                 ]
                 .spacing(theme::S1),
             ]
         } else {
             column![
                 row![
-                    wide("Try on a ball", WorkbenchMessage::Opened(Piece::Ball)),
-                    wide("On a copy of this", WorkbenchMessage::Opened(Piece::Copy)),
+                    wide(
+                        "Try on a ball",
+                        "Try the brush on a ball, apart from the model",
+                        WorkbenchMessage::Opened(Piece::Ball)
+                    ),
+                    wide(
+                        "On a copy of this",
+                        "Try the brush on a copy of the model; the model is not touched",
+                        WorkbenchMessage::Opened(Piece::Copy)
+                    ),
                 ]
                 .spacing(theme::S1),
             ]
@@ -250,14 +265,20 @@ impl Hani {
             })
             .size(theme::LABEL_SIZE)
             .color(theme::ACCENT_HOT),
-            button(text("A fresh piece").size(theme::LABEL_SIZE))
-                .padding(theme::S2)
-                .style(theme::tool_button)
-                .on_press(Message::Workbench(WorkbenchMessage::Fresh)),
-            button(text("Back to the model").size(theme::LABEL_SIZE))
-                .padding(theme::S2)
-                .style(theme::tool_button_active)
-                .on_press(Message::Workbench(WorkbenchMessage::Left)),
+            crate::ui::tip(
+                button(text(FRESH).size(theme::LABEL_SIZE))
+                    .padding(theme::S2)
+                    .style(theme::tool_button)
+                    .on_press(Message::Workbench(WorkbenchMessage::Fresh)),
+                "Start the piece again",
+            ),
+            crate::ui::tip(
+                button(text(BACK).size(theme::LABEL_SIZE))
+                    .padding(theme::S2)
+                    .style(theme::tool_button_active)
+                    .on_press(Message::Workbench(WorkbenchMessage::Left)),
+                "Leave the bench; nothing on it is kept",
+            ),
         ]
         .spacing(theme::S3)
         .align_y(Alignment::Center);

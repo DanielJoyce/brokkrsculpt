@@ -18,6 +18,8 @@ last one.
 - **Print** is for getting it out: export formats, detail, overhangs, parting
   keys and the fit test.
 
+Rest the pointer on a button to see what it does.
+
 ## The window
 
 - **The tool rail**, down the left, picks the kind of tool: a brush, Move,

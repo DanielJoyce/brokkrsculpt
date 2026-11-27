@@ -144,6 +144,25 @@ pub fn segmented<'a, T: Copy + PartialEq + 'a>(
         .into()
 }
 
+/// [`segmented`], each choice with what it does shown on hover. See
+/// `app/tips.rs`.
+pub fn segmented_tips<'a, T: Copy + PartialEq + 'a>(
+    choices: impl IntoIterator<Item = (T, &'a str, &'a str)>,
+    selected: T,
+    on_choose: impl Fn(T) -> Message + 'a,
+) -> Element<'a, Message> {
+    choices
+        .into_iter()
+        .fold(row![].spacing(theme::S1), |assembled, (value, name, what)| {
+            let share = name.len() as u16 + 2;
+            assembled.push(
+                container(tip(toggle(name, value == selected, on_choose(value)), what))
+                    .width(Length::FillPortion(share)),
+            )
+        })
+        .into()
+}
+
 /// A name shown when the pointer rests on `content`.
 ///
 /// Every button that shows only an icon has one: a test in this module
