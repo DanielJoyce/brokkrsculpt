@@ -390,10 +390,17 @@ impl Hani {
     pub(super) fn hierarchy_view_buttons(&self) -> Element<'_, Message> {
         let toggle = |name: icon::IconName, on: bool, message: Message, tip: &'static str| {
             crate::ui::tip(
-                button(icon::icon(name, theme::ICON_INLINE, theme::TEXT_DIM))
-                    .padding(theme::PAD_BUTTON)
-                    .style(if on { theme::tool_button_active } else { theme::tool_button })
-                    .on_press(message),
+                // Bigger than an inline icon, and a fixed square to hit:
+                // `theme::HIT`.
+                button(
+                    iced::widget::container(icon::icon(name, theme::ICON_BUTTON, theme::TEXT_DIM))
+                        .center(iced::Length::Fill),
+                )
+                .padding(0)
+                .width(iced::Length::Fixed(theme::HIT))
+                .height(iced::Length::Fixed(theme::HIT))
+                .style(if on { theme::tool_button_active } else { theme::tool_button })
+                .on_press(message),
                 tip,
             )
         };

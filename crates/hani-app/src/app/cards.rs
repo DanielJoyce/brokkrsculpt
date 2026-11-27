@@ -95,6 +95,9 @@ impl Hani {
                 .text_size(theme::LABEL_SIZE),
             // See `app/cores.rs`.
             self.cores_row(),
+            // See `app/ui_scale.rs`.
+            heading("INTERFACE SIZE"),
+            self.scale_block(),
         ]
         .spacing(theme::S2);
         let card = container(

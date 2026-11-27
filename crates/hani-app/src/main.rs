@@ -203,6 +203,8 @@ fn main() -> iced::Result {
         // face to fall back on, and shaping an italic with none panicked.
         .font(include_bytes!("../../../assets/fonts/Inter-Italic.otf").as_slice())
         .default_font(theme::FONT)
+        // The interface's own size over the system's: `app/ui_scale.rs`.
+        .scale_factor(Hani::interface_scale)
         .antialiasing(true)
         // The close button must not end the process on its own: unsaved work
         // needs a prompt first. `Hani::subscription` picks the request up as

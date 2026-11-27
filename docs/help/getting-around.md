@@ -74,6 +74,12 @@ mirrors it; *Shown* hides it without losing it. The model is always drawn
 over the pictures, wherever they stand. *Floor* draws a grid under the
 lowest point of the model, a line every round number of millimetres.
 
+## Interface size
+
+Edit, *Preferences…*, *Interface size*. *Auto* makes everything larger on a
+screen with many lines, by the monitor the window is on. Or untick it, drag
+*Size*, look at the *Preview*, and press *Apply*. *Reset to auto* goes back.
+
 ## Undo, saving and files
 
 - **Ctrl+Z** undoes a whole stroke or action at a time, and **Ctrl+Shift+Z**

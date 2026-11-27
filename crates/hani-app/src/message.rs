@@ -256,6 +256,19 @@ pub enum DeformMessage {
     Applied,
 }
 
+/// How big the interface is drawn. See `app/ui_scale.rs`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScaleMessage {
+    /// The monitor's height in logical pixels, as iced gives it, or none.
+    MonitorMeasured(Option<f32>),
+    AutoToggled(bool),
+    /// The slider moved: shown in the preview, not yet applied.
+    Previewed(f32),
+    Applied,
+    /// Back to Auto.
+    Reset,
+}
+
 /// Save, Save as new and Revert for the brush in hand. See
 /// `app/keeping.rs`.
 #[derive(Debug, Clone, PartialEq)]
@@ -1603,6 +1616,8 @@ pub enum Message {
     Reference(ReferenceMessage),
     /// Save, Save as new or Revert the brush in hand. See `app/keeping.rs`.
     Keep(KeepMessage),
+    /// How big the interface is drawn. See `app/ui_scale.rs`.
+    Scale(ScaleMessage),
     /// The revolve's axis up or away. See `app/revolve.rs`.
     Revolve(RevolveMessage),
     /// One of the controls of the brushes that add. See `app/adding.rs`.
