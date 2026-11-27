@@ -413,7 +413,7 @@ impl Hani {
         let menus = TopMenu::ALL.into_iter().fold(
             row![].spacing(theme::S2).align_y(Alignment::Center),
             |assembled, menu| {
-                assembled.push(crate::ui::tip(
+                assembled.push(crate::ui::side_tip(
                     button(text(menu.label()).size(theme::TEXT_SIZE_SMALL))
                         .padding(theme::PAD_BUTTON)
                         .style(if self.top_menu == Some(menu) {
@@ -994,7 +994,7 @@ impl Hani {
     fn top_menu_panel(&self, which: TopMenu) -> Element<'_, Message> {
         // Each entry says more of what it does on hover.
         let entry = |label: &'static str, what: &'static str, message: Message| {
-            crate::ui::tip(
+            crate::ui::side_tip(
                 button(text(label).size(theme::TEXT_SIZE_SMALL))
                     .width(Length::Fill)
                     .padding(theme::PAD_MENU_ITEM)
@@ -1009,7 +1009,7 @@ impl Hani {
                      key: &'static str,
                      what: &'static str,
                      message: Option<Message>| {
-            crate::ui::tip(
+            crate::ui::side_tip(
                 button(
                     row![
                         text(label).size(theme::TEXT_SIZE_SMALL).width(Length::Fill),
@@ -1071,7 +1071,7 @@ impl Hani {
                             .map(|name| name.to_string_lossy().into_owned())
                             .unwrap_or_else(|| path.display().to_string());
                         // The whole path on hover, the entry being its name.
-                        assembled.push(crate::ui::tip(
+                        assembled.push(crate::ui::side_tip(
                             button(text(label).size(theme::TEXT_SIZE_SMALL))
                                 .width(Length::Fill)
                                 .padding(theme::PAD_MENU_ITEM)
@@ -2507,7 +2507,10 @@ impl Hani {
             let holds = holds_active.get(index).copied().unwrap_or(false);
             let facts = RowFacts {
                 count: counts.get(index).copied().unwrap_or(0),
-                marked: node.id == self.doc.active() || (node.collapsed && holds),
+                marked: node.id == self.doc.active()
+                    || (node.collapsed && holds)
+                    // A folder under the gizmo. See `app/group_gizmo.rs`.
+                    || self.gizmo.is_some_and(|gizmo| gizmo.body == node.id),
                 // The active row, or any folder holding it -- collapsed or not,
                 // which is where this parts company with `marked`. Solo is
                 // enterable from nowhere else, and that is what keeps "the

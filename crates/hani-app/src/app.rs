@@ -12,7 +12,9 @@ mod autosave;
 mod booleans;
 pub(crate) use booleans::BooleanMessage;
 mod cards;
+// The gizmo on a folder. See `app/group_gizmo.rs`.
 mod context;
+mod group_gizmo;
 mod kept_settings;
 mod keys;
 pub(crate) use kept_settings::KeptMessage;
@@ -811,6 +813,9 @@ pub struct Hani {
     /// sub-slop drag really does change the placement, and dropping it would be
     /// silently discarding something the user asked for.
     gizmo_baked: Option<hani_core::Similarity>,
+    /// The folder in hand for the gizmo, and its session. See
+    /// `app/group_gizmo.rs`.
+    group_gizmo: group_gizmo::GroupGizmo,
     /// Whether the welcome screen is up. See [`crate::welcome`].
     welcome: bool,
     /// The Preferences card is up: the pen, the SpaceMouse and how the
@@ -1891,6 +1896,63 @@ fn key_event(
 /// row move.
 pub(crate) const RENAME_FIELD: &str = "hani-body-rename";
 
+/// The field `base` makes at `placement`, by the route the placement takes:
+/// a body's under the gizmo, and each of a folder's (`app/group_gizmo.rs`).
+fn bake_placed(
+    base: &hani_core::Volume,
+    placement: hani_core::Similarity,
+    route: hani_core::Bake,
+) -> hani_core::Volume {
+    match route {
+        // Unreachable: the identity route returns above, having put the
+        // base back rather than deep copying it. Left as the harmless
+        // answer rather than a panic, because the cost of being wrong here
+        // is one wasted copy and the cost of a panic is the sculpt.
+        hani_core::Bake::Identity => base.shifted(glam::IVec3::ZERO),
+        // Turn first, then carry it to where the pivot asked for. Both are
+        // exact; see `Similarity::route`, which works out why the shift is
+        // not simply the translation in voxels.
+        hani_core::Bake::Exact { turns, voxel_offset } => {
+            let turned = if turns.is_identity() { None } else { Some(base.rotated(turns)) };
+            match turned {
+                Some(turned) => turned.shifted(voxel_offset),
+                None => base.shifted(voxel_offset),
+            }
+        }
+        hani_core::Bake::Resample => {
+            let mut warped = base.warped(placement);
+            // **A per-axis scale leaves a field that is no longer a
+            // distance field, and this is where that is repaired.**
+            // `Volume::warped` multiplies the sampled distance by
+            // `min_scale`, which keeps the zero set exact and
+            // underestimates everywhere else -- sound for a sphere trace,
+            // wrong for everything that reads a gradient. The drift is
+            // `s_min/s_max` and it would compound across bakes with
+            // nothing to reset it, which is the whole reason
+            // `similarity.rs` refused a per-axis scale until this pass
+            // existed.
+            //
+            // Run on EVERY resample, uniform scale included. The tempting
+            // reading is that a uniform scale leaves the field exactly the
+            // transformed solid and so needs nothing -- that is true of the
+            // measured distances and false of the band. `Volume::warped`
+            // writes the saturation plateau back at the band edge rather
+            // than scaling it, which is a deliberate cliff, and this pass
+            // is what re-solves the band outward from the interface and
+            // removes it. Skipping it for a uniform scale left one drag of
+            // the centre handle with a field whose plateau had been carried
+            // from 3.0 voxels down to 0.15 and nothing to put it back.
+            //
+            // Costing nothing when it is not needed is `redistance`'s own
+            // job: it gates on measured drift and returns `None` after one
+            // read-only sweep, which is the cost the rotation-only case
+            // already accepts a few lines above.
+            warped.redistance();
+            warped
+        }
+    }
+}
+
 /// Whether a message leaves a rename in flight alone, or ends it.
 ///
 /// **The list is inverted on purpose, and that is the whole reason this is a
@@ -2299,6 +2361,7 @@ impl Hani {
             gizmo: None,
             gizmo_base: None,
             gizmo_baked: None,
+            group_gizmo: Default::default(),
             welcome: false,
             preferences: false,
             rail_last_brush: None,
@@ -3050,7 +3113,14 @@ impl Hani {
         self.shared.swap_gizmo(&mut batch);
         self.gizmo_batch = batch;
         // The body itself, drawn where the drag has it: `app/moving.rs`.
-        self.shared.set_moving(moving::drawn(self.gizmo.as_ref()));
+        // A folder's bodies all move with it: `app/group_gizmo.rs`.
+        let drawn = match moving::drawn(self.gizmo.as_ref()) {
+            Some((folder, map)) if self.doc.node(folder).is_some_and(|node| !node.is_body()) => {
+                self.moving_rows(folder, map)
+            }
+            drawn => drawn.into_iter().collect(),
+        };
+        self.shared.set_moving(drawn);
     }
 
     /// Take the active body under the gizmo, or say why not.
@@ -3079,6 +3149,10 @@ impl Hani {
     fn arm_gizmo(&mut self) -> Result<(), String> {
         if self.gizmo.is_some() {
             return Ok(());
+        }
+        // A folder in hand takes the gizmo. See `app/group_gizmo.rs`.
+        if let Some(folder) = self.gizmo_folder() {
+            return self.arm_group_gizmo(folder);
         }
         // A fresh session has baked nothing, whatever the last one baked.
         self.gizmo_baked = None;
@@ -3213,6 +3287,10 @@ impl Hani {
         let Some(gizmo) = self.gizmo else {
             return;
         };
+        // See `app/group_gizmo.rs`.
+        if self.gizmo_on_folder(&gizmo) {
+            return self.rebake_group(gizmo);
+        }
         let body = gizmo.body;
         let voxel_size = self.doc.voxel_size();
         let route = gizmo.placement.route(voxel_size);
@@ -3269,54 +3347,7 @@ impl Hani {
         };
 
         let started = Instant::now();
-        let mut baked = match route {
-            // Unreachable: the identity route returns above, having put the
-            // base back rather than deep copying it. Left as the harmless
-            // answer rather than a panic, because the cost of being wrong here
-            // is one wasted copy and the cost of a panic is the sculpt.
-            hani_core::Bake::Identity => base.shifted(glam::IVec3::ZERO),
-            // Turn first, then carry it to where the pivot asked for. Both are
-            // exact; see `Similarity::route`, which works out why the shift is
-            // not simply the translation in voxels.
-            hani_core::Bake::Exact { turns, voxel_offset } => {
-                let turned = if turns.is_identity() { None } else { Some(base.rotated(turns)) };
-                match turned {
-                    Some(turned) => turned.shifted(voxel_offset),
-                    None => base.shifted(voxel_offset),
-                }
-            }
-            hani_core::Bake::Resample => {
-                let mut warped = base.warped(gizmo.placement);
-                // **A per-axis scale leaves a field that is no longer a
-                // distance field, and this is where that is repaired.**
-                // `Volume::warped` multiplies the sampled distance by
-                // `min_scale`, which keeps the zero set exact and
-                // underestimates everywhere else -- sound for a sphere trace,
-                // wrong for everything that reads a gradient. The drift is
-                // `s_min/s_max` and it would compound across bakes with
-                // nothing to reset it, which is the whole reason
-                // `similarity.rs` refused a per-axis scale until this pass
-                // existed.
-                //
-                // Run on EVERY resample, uniform scale included. The tempting
-                // reading is that a uniform scale leaves the field exactly the
-                // transformed solid and so needs nothing -- that is true of the
-                // measured distances and false of the band. `Volume::warped`
-                // writes the saturation plateau back at the band edge rather
-                // than scaling it, which is a deliberate cliff, and this pass
-                // is what re-solves the band outward from the interface and
-                // removes it. Skipping it for a uniform scale left one drag of
-                // the centre handle with a field whose plateau had been carried
-                // from 3.0 voxels down to 0.15 and nothing to put it back.
-                //
-                // Costing nothing when it is not needed is `redistance`'s own
-                // job: it gates on measured drift and returns `None` after one
-                // read-only sweep, which is the cost the rotation-only case
-                // already accepts a few lines above.
-                warped.redistance();
-                warped
-            }
-        };
+        let mut baked = bake_placed(&base, gizmo.placement, route);
         // The bricks the outgoing field occupied, marked in the INCOMING one:
         // without this the renderer keeps drawing triangles nothing will ever
         // overwrite. The same rule `Document::resample` follows.
@@ -3423,6 +3454,10 @@ impl Hani {
             return;
         };
         self.refresh_gizmo();
+        // See `app/group_gizmo.rs`.
+        if self.gizmo_on_folder(&gizmo) {
+            return self.disarm_group(commit);
+        }
         if self.gizmo_base.is_none() {
             // Armed and never baked, or baked and then returned to the identity
             // by hand -- `rebake_gizmo` puts the base back in that case, which
@@ -9629,6 +9664,8 @@ impl Hani {
                             match chosen {
                                 Some(body) if body != self.doc.active() => {
                                     self.disarm_gizmo(true);
+                                    // See `app/group_gizmo.rs`.
+                                    self.body_picked();
                                     self.select_body(body);
                                     if let Err(why) = self.arm_gizmo() {
                                         self.status = why;
@@ -10736,6 +10773,9 @@ impl Hani {
                 // row's `mouse_area` has one `on_press` message to give, and
                 // the second job costs nothing until the pointer moves.
                 self.select_body(id);
+                // A folder row takes the folder in hand for the gizmo. See
+                // `app/group_gizmo.rs`.
+                self.row_pressed(id);
                 self.arm_row_drag(id);
             }
             Message::BodyRowDragged { over, fraction } => self.track_row_drag(over, fraction),
@@ -23832,6 +23872,52 @@ mod gizmo_tests {
         // And the field is untouched by any of this, which is what made the bug
         // invisible from the document's side.
         assert!(app.doc.active_volume().stats().dense_bricks > 0, "the move emptied the body");
+    }
+
+    /// A folder under the gizmo, dragged by its arrow through the pointer:
+    /// every body under it goes the same way, and the bodies outside it do
+    /// not. See `app/group_gizmo.rs`.
+    #[test]
+    fn a_folder_dragged_by_its_arrow_moves_every_body_under_it() {
+        let mut app = app();
+        update(&mut app, Message::PrimitiveAdded(hani_core::PrimitiveKind::Cube));
+        let cube = app.doc.active();
+        let first = app.doc.nodes()[0].id;
+        update(&mut app, Message::PrimitiveAdded(hani_core::PrimitiveKind::Cylinder));
+        let outside = app.doc.active();
+        let (folder, _) = app.doc.group(first, "Pair").expect("room for a folder");
+        app.doc.move_to_folder(cube, Some(folder)).expect("moved");
+        // Combining, so that what is drawn is the folder's result.
+        app.doc.set_bool_state(
+            folder,
+            hani_core::combine::BoolState { combines: true, op: hani_core::combine::BoolOp::Add },
+        );
+        update(&mut app, Message::ToolChanged(Tool::Sculpt));
+        let result_middle = |app: &Hani| {
+            let (low, high) =
+                app.doc.boolean_result(folder).and_then(Volume::surface_bounds).expect("result");
+            (low + high) * 0.5
+        };
+        let result_before = result_middle(&app);
+        let middle = |app: &Hani, body| {
+            let (low, high) = app.doc.volume(body).and_then(Volume::surface_bounds).expect("body");
+            (low + high) * 0.5
+        };
+        let before = [middle(&app, first), middle(&app, cube), middle(&app, outside)];
+        arm(&mut app);
+        update(&mut app, Message::BodySelected(folder));
+        assert_eq!(app.gizmo.map(|gizmo| gizmo.body), Some(folder), "{}", app.status);
+        drag_the_x_arrow(&mut app, 120.0);
+        let after = [middle(&app, first), middle(&app, cube), middle(&app, outside)];
+        let moved = after[0] - before[0];
+        assert!(moved.length() > 1.0, "the folder did not move: {}", app.status);
+        assert!((after[1] - before[1] - moved).length() < 1e-3, "the cube went another way");
+        assert!((after[2] - before[2]).length() < 1e-3, "a body outside the folder moved");
+        let result_after = result_middle(&app);
+        assert!(
+            (result_after - result_before - moved).length() < 1e-3,
+            "the result stayed at {result_before} where its rows went to {after:?}"
+        );
     }
 
     fn arm(app: &mut Hani) {
