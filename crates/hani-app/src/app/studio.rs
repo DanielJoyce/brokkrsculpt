@@ -844,12 +844,13 @@ impl Hani {
             radius,
             height: radius * self.studio.stamp_height * direction.outward_sign(),
         };
+        let symmetry = self.framed_symmetry();
         let studio = &mut self.studio;
         let pressed = studio.gesture.apply(
             self.doc.active_volume_mut(),
             &studio.alpha,
             &placement,
-            self.symmetry,
+            symmetry,
             super::MIRROR_CENTRE,
         );
         if pressed == Err(StampError::TooBig) {
@@ -931,13 +932,14 @@ impl Hani {
             if let Some(normal) = normal {
                 let placement =
                     Placement { centre: anchor, normal, up: next - anchor, radius, height };
+                let symmetry = self.framed_symmetry();
                 let studio = &mut self.studio;
                 studio.gesture.begin();
                 let pressed = studio.gesture.apply(
                     self.doc.active_volume_mut(),
                     &studio.alpha,
                     &placement,
-                    self.symmetry,
+                    symmetry,
                     super::MIRROR_CENTRE,
                 );
                 studio.gesture.end();
@@ -1090,6 +1092,7 @@ impl Hani {
             && !one_layer
             && profile == Profile::of(brush.falloff);
         let actions = custom.or_else(|| Actions::of(brush.kind)).filter(|_| !classic);
+        let symmetry = self.framed_symmetry();
         let volume = self.doc.active_volume_mut();
         match actions {
             Some(actions) => {
@@ -1105,7 +1108,7 @@ impl Hani {
                         volume,
                         stamp,
                         tip.as_deref(),
-                        self.symmetry,
+                        symmetry,
                         super::MIRROR_CENTRE,
                         &mut self.studio.layer,
                         &mut self.brush_scratch,
@@ -1115,7 +1118,7 @@ impl Hani {
                         volume,
                         stamp,
                         tip.as_deref(),
-                        self.symmetry,
+                        symmetry,
                         super::MIRROR_CENTRE,
                         &mut self.brush_scratch,
                     );
@@ -1124,7 +1127,7 @@ impl Hani {
             None => brush.apply_symmetric(
                 volume,
                 stamp,
-                self.symmetry,
+                symmetry,
                 super::MIRROR_CENTRE,
                 &mut self.brush_scratch,
             ),

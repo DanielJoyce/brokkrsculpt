@@ -554,6 +554,9 @@ pub struct ProjectState {
     pub paints: crate::paint::PaintTable,
     /// The reference pictures and the floor. See [`crate::reference`].
     pub references: crate::reference::References,
+    /// The radial copies. Kept in the section with the bodies' symmetry
+    /// frames; see `symmetry_frames.rs`.
+    pub radial: crate::symmetry_frames::Radial,
 }
 
 /// How far a read got before it returned.
@@ -1042,6 +1045,14 @@ fn write_tail(out: &mut impl Write, doc: &Document, state: &ProjectState) -> Res
     // See `combine.rs`.
     if let Some(section) = crate::combine::encode(doc) {
         out.write_all(crate::combine::TAG)?;
+        write_u64(out, section.len() as u64)?;
+        out.write_all(&section)?;
+    }
+
+    // The radial copies and the bodies' symmetry frames, last, where there
+    // are any. See `symmetry_frames.rs`.
+    if let Some(section) = crate::symmetry_frames::encode(doc, state.radial) {
+        out.write_all(crate::symmetry_frames::TAG)?;
         write_u64(out, section.len() as u64)?;
         out.write_all(&section)?;
     }
@@ -1539,6 +1550,8 @@ fn read_understanding_field_versions_to(
     let mut loaded: Vec<(NodeMeta, Option<Volume>)> = Vec::with_capacity(rows.len());
     // The boolean groups, by row, where the file has them. See `combine.rs`.
     let mut booleans: Vec<(usize, crate::combine::BoolState)> = Vec::new();
+    // The bodies' symmetry frames, by row. See `symmetry_frames.rs`.
+    let mut frames: Vec<(usize, crate::brush::SymmetryFrame)> = Vec::new();
     for row in rows {
         if !row.is_body {
             loaded.push((row.meta, None));
@@ -1707,6 +1720,25 @@ fn read_understanding_field_versions_to(
                     }
                 }
             }
+            tag = next_tag(input);
+        }
+        // The radial copies and the bodies' frames, on the same terms: a
+        // section not taken leaves every frame the room's and the copies
+        // off. See `symmetry_frames.rs`.
+        if tag.as_ref() == Some(crate::symmetry_frames::TAG) {
+            let mut length = [0u8; 8];
+            if input.read_exact(&mut length).is_ok() {
+                let length = u64::from_le_bytes(length);
+                if length <= crate::symmetry_frames::MOST_SECTION_BYTES {
+                    let mut bytes = Vec::new();
+                    let taken = input.take(length).read_to_end(&mut bytes);
+                    if taken.is_ok_and(|read| read as u64 == length) {
+                        let (radial, read) = crate::symmetry_frames::decode(&bytes, loaded.len());
+                        state.radial = radial;
+                        frames = read;
+                    }
+                }
+            }
         }
     }
 
@@ -1715,6 +1747,11 @@ fn read_understanding_field_versions_to(
     for (index, state) in booleans {
         if let Some(id) = ids.get(index) {
             doc.set_bool_state(*id, state);
+        }
+    }
+    for (index, frame) in frames {
+        if let Some(id) = ids.get(index) {
+            doc.set_symmetry_frame(*id, frame);
         }
     }
     // Nothing has been meshed yet, and the renderer holds whatever the previous

@@ -9,7 +9,7 @@
 //! mirror planes that are on, so X and six round Y gives twelve. The axis
 //! goes through the symmetry's frame, which is the body's own (see
 //! `app/symmetry_frame.rs`). Like the mirror planes it is a setting of the
-//! session and is not kept in a file.
+//! session, kept in a file with the bodies' frames.
 
 use hani_core::{MirrorAxis, Symmetry};
 use iced::Element;
@@ -26,6 +26,9 @@ pub enum RadialMessage {
     Copies(f32),
     /// The axis they turn about.
     Axis(MirrorAxis),
+    /// The active body's planes back through the middle of the room. See
+    /// `app/symmetry_frame.rs`.
+    ResetFrame,
 }
 
 impl Hani {
@@ -37,6 +40,7 @@ impl Hani {
                 self.symmetry.with_radial(count, axis)
             }
             RadialMessage::Axis(next) => self.symmetry.with_radial(copies, next),
+            RadialMessage::ResetFrame => return self.reset_frame(),
         };
         self.status = format!("symmetry: {}", self.symmetry.label());
     }
@@ -90,6 +94,16 @@ impl Hani {
             ]
             .spacing(theme::S2)
             .align_y(iced::Alignment::Center),
+            // The body's own frame, moved with it by the gizmo. See
+            // `app/symmetry_frame.rs`.
+            crate::ui::tip(
+                crate::ui::button_secondary(
+                    "Recentre",
+                    (!self.frame_is_the_rooms())
+                        .then_some(Message::Radial(RadialMessage::ResetFrame)),
+                ),
+                "Put this body's planes and axis back through the middle of the room, unturned",
+            ),
         ]
         .spacing(theme::S2)
         .into()

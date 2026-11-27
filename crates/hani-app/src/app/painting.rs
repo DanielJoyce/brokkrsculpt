@@ -225,12 +225,13 @@ impl Hani {
             load: coat.load,
             crease_gain: coat.crease_gain,
         };
+        let symmetry = self.framed_symmetry();
         self.painting.stroke.stamp_symmetric(
             self.doc.active_volume_mut(),
             brush,
             stamp,
             &lay,
-            self.symmetry,
+            symmetry,
             super::MIRROR_CENTRE,
         );
     }

@@ -424,6 +424,9 @@ pub struct Document {
     /// Which folders combine their children, how each row joins, and the
     /// results built from them. See `combine.rs`.
     pub(crate) booleans: crate::combine::Booleans,
+    /// Each body's symmetry frame, where it is not the room's. See
+    /// `symmetry_frames.rs`.
+    pub(crate) frames: crate::symmetry_frames::Frames,
 }
 
 impl Document {
@@ -454,6 +457,7 @@ impl Document {
             next_id: 2,
             paints: PaintTable::default(),
             booleans: Default::default(),
+            frames: Default::default(),
         };
         doc.assert_invariants();
         doc
@@ -524,6 +528,7 @@ impl Document {
             next_id: highest + 1,
             paints: PaintTable::default(),
             booleans: Default::default(),
+            frames: Default::default(),
         };
         doc.assert_invariants();
         doc

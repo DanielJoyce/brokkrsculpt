@@ -12,6 +12,8 @@ mod autosave;
 mod booleans;
 // Radial symmetry. See `app/radial.rs`.
 mod radial;
+// Symmetry local to the body. See `app/symmetry_frame.rs`.
+mod symmetry_frame;
 pub(crate) use radial::RadialMessage;
 // A shape set down in Sculpt, placed and joined when done. See
 // `app/placed.rs`.
@@ -1426,13 +1428,23 @@ impl PendingAction {
 /// Touching counts as straddling: a body whose surface reaches the plane
 /// exactly has its twin land against it rather than out in space, which is a
 /// join and not a free-floating shell.
-fn straddles((low, high): (Vec3, Vec3), axis: MirrorAxis) -> bool {
+fn straddles((low, high): (Vec3, Vec3), axis: MirrorAxis, frame: hani_core::SymmetryFrame) -> bool {
     let component = match axis {
         MirrorAxis::X => 0,
         MirrorAxis::Y => 1,
         MirrorAxis::Z => 2,
     };
-    low[component] <= MIRROR_CENTRE[component] && MIRROR_CENTRE[component] <= high[component]
+    // Asked in the body's own frame, the box's corners carried into it. See
+    // `app/symmetry_frame.rs`.
+    let (mut least, mut most) = (f32::MAX, f32::MIN);
+    for corner in 0..8 {
+        let pick = |bit: usize, axis: usize| if corner & bit == 0 { low[axis] } else { high[axis] };
+        let at = Vec3::new(pick(1, 0), pick(2, 1), pick(4, 2));
+        let local = frame.to_local(at - MIRROR_CENTRE)[component];
+        least = least.min(local);
+        most = most.max(local);
+    }
+    least <= 0.0 && 0.0 <= most
 }
 
 /// Where bug reports go.
@@ -3465,7 +3477,7 @@ impl Hani {
         self.refresh_gizmo();
         // See `app/group_gizmo.rs`.
         if self.gizmo_on_folder(&gizmo) {
-            return self.disarm_group(commit);
+            return self.disarm_group(commit, gizmo.placement);
         }
         if self.gizmo_base.is_none() {
             // Armed and never baked, or baked and then returned to the identity
@@ -3480,10 +3492,10 @@ impl Hani {
             self.gizmo_baked = None;
             let base = self.gizmo_base.take().expect("checked just above");
             let before = self.history.stats();
-            self.history.push(hani_core::Entry::new(vec![hani_core::Change::WholeVolume {
-                body,
-                volume: base,
-            }]));
+            let mut changes = vec![hani_core::Change::WholeVolume { body, volume: base }];
+            // The body's symmetry goes with it. See `app/symmetry_frame.rs`.
+            changes.extend(self.move_frames(&[body], gizmo.placement));
+            self.history.push(hani_core::Entry::new(changes));
             self.record_history(before);
             return;
         }
@@ -5092,7 +5104,8 @@ impl Hani {
             return;
         };
         for axis in MirrorAxis::ALL {
-            if !self.symmetry.axis(axis) || straddles(bounds, axis) {
+            if !self.symmetry.axis(axis) || straddles(bounds, axis, self.framed_symmetry().frame())
+            {
                 continue;
             }
             self.symmetry = self.symmetry.with_axis(axis, false);
@@ -5106,7 +5119,11 @@ impl Hani {
     /// axis and a selection asks about all three, and the sweep is what makes
     /// one scan of the field answer for all of them.
     fn mirror_straddles(&self, axis: MirrorAxis) -> bool {
-        self.doc.active_volume().surface_bounds().is_none_or(|bounds| straddles(bounds, axis))
+        let frame = self.framed_symmetry().frame();
+        self.doc
+            .active_volume()
+            .surface_bounds()
+            .is_none_or(|bounds| straddles(bounds, axis, frame))
     }
 
     /// What the user is told when a mirror plane misses the body.
@@ -5197,7 +5214,7 @@ impl Hani {
             &mut batch,
             volume,
             &self.effective_brush(),
-            self.symmetry,
+            self.framed_symmetry(),
             MIRROR_CENTRE,
             self.hover,
             cursor::mood(
@@ -5306,7 +5323,7 @@ impl Hani {
         // is exact at the focus depth and the same approximation the preview
         // already makes everywhere else.
         let mut flips = [hani_core::Flip::IDENTITY; Symmetry::MAX_MIRRORS];
-        let count = self.symmetry.flips(MIRROR_CENTRE, &mut flips);
+        let count = self.framed_symmetry().flips(MIRROR_CENTRE, &mut flips);
         for flip in &flips[..count] {
             let mirrored_at = |pixel: Vec2| {
                 let reflected = flip.point(at(pixel));
@@ -5728,7 +5745,7 @@ impl Hani {
                 self.doc.active_volume(),
                 &brush,
                 point,
-                self.symmetry,
+                self.framed_symmetry(),
                 MIRROR_CENTRE,
             );
             self.move_grab = Some(point);
@@ -5762,7 +5779,7 @@ impl Hani {
                 self.doc.active_volume(),
                 &brush,
                 carried,
-                self.symmetry,
+                self.framed_symmetry(),
                 MIRROR_CENTRE,
             );
             self.move_grab = Some(carried);
@@ -5942,12 +5959,13 @@ impl Hani {
                 .with_tangent(tangent);
             // By the stroke, so it fades to nothing at the radius rather
             // than settling solid nearly to it: `hani_core::mask_stroke`.
+            let symmetry = self.framed_symmetry();
             self.mask_stroke.stamp(
                 &brush,
                 self.doc.active_volume_mut(),
                 &stamp,
                 op,
-                self.symmetry,
+                symmetry,
                 MIRROR_CENTRE,
                 &mut self.brush_scratch,
             );
@@ -6725,7 +6743,7 @@ impl Hani {
         // on and find the other side untouched, after a session in which every
         // stroke had gone to both. The preview draws the twin for the same
         // reason: what is shown is what goes, on both sides of the plane.
-        let twins = self.symmetry.mirrored_cutters(&planes, MIRROR_CENTRE);
+        let twins = self.framed_symmetry().mirrored_cutters(&planes, MIRROR_CENTRE);
         let mut cutters: Vec<&[hani_core::ClipPlane]> = vec![&planes];
         cutters.extend(twins.iter().map(Vec::as_slice));
         let mirrored = if twins.is_empty() {
@@ -7168,6 +7186,8 @@ impl Hani {
             paints: self.doc.paints().clone(),
             // See `app/references.rs`.
             references: self.references.clone(),
+            // See `app/symmetry_frame.rs`.
+            radial: hani_core::Radial::of(self.symmetry),
         }
     }
 
@@ -7441,6 +7461,8 @@ impl Hani {
         // `select_body`.
         self.status = format!("opened {}", path.display());
         self.apply_view(&state.view);
+        // The radial copies. See `app/symmetry_frame.rs`.
+        self.symmetry = self.symmetry.with_radial(state.radial.copies, state.radial.axis);
         self.doc.replace_paints(state.paints);
         // The pictures and the floor. See `app/references.rs`.
         self.adopt_references(state.references);
