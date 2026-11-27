@@ -1077,6 +1077,8 @@ pub enum PanelSection {
     Add,
     Brush,
     Stroke,
+    /// The mirror planes and the radial copies. See `app/radial.rs`.
+    Symmetry,
     Form,
     Extract,
     Deform,
@@ -1091,13 +1093,14 @@ pub enum PanelSection {
 
 impl PanelSection {
     /// In the order the panel draws them.
-    pub const ALL: [PanelSection; 16] = [
+    pub const ALL: [PanelSection; 17] = [
         PanelSection::Bodies,
         PanelSection::Brushes,
         PanelSection::Workbench,
         PanelSection::Add,
         PanelSection::Brush,
         PanelSection::Stroke,
+        PanelSection::Symmetry,
         PanelSection::Form,
         PanelSection::Extract,
         PanelSection::Deform,
@@ -1118,6 +1121,7 @@ impl PanelSection {
             PanelSection::Add => "ADD",
             PanelSection::Brush => "BRUSH",
             PanelSection::Stroke => "STROKE",
+            PanelSection::Symmetry => "SYMMETRY",
             PanelSection::Form => "FORM",
             PanelSection::Extract => "EXTRACT",
             PanelSection::Deform => "DEFORM",
@@ -1233,6 +1237,8 @@ pub enum Message {
     /// because both the strip button and the keyboard act on what is currently
     /// set rather than knowing it.
     SymmetryAxisToggled(MirrorAxis),
+    /// Radial symmetry's copies and axis. See `app/radial.rs`.
+    Radial(crate::app::RadialMessage),
     /// Multiply the brush radius, for the keyboard nudge. Multiplicative
     /// because the radius spans fifty to one and a fixed step would crawl at
     /// the top and jump at the bottom.

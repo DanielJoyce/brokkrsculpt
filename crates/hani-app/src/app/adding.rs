@@ -41,7 +41,7 @@ use glam::{Vec2, Vec3};
 use hani_core::solid::{
     self, BuiltInMap, Draped, End, Form, Heights, How, Join, Lent, Mirrored, Placed, Solid, Step,
 };
-use hani_core::{BrushDirection, Change, Entry, MirrorAxis, NodeId, Volume};
+use hani_core::{BrushDirection, Change, Entry, NodeId, Volume};
 use iced::widget::{button, column, row, text};
 use iced::{Element, Length};
 
@@ -337,24 +337,19 @@ impl AddState {
     }
 }
 
-/// The mirrors of a solid that symmetry asks for: the flips of every
-/// combination of the axes that are on, but for no flip at all.
-fn flips(symmetry: hani_core::Symmetry) -> Vec<Vec3> {
-    let on = [MirrorAxis::X, MirrorAxis::Y, MirrorAxis::Z].map(|axis| symmetry.axis(axis));
-    (1..8_u8)
-        .filter(|bits| (0..3).all(|axis| bits & (1 << axis) == 0 || on[axis]))
-        .map(|bits| {
-            let side = |axis: u8| if bits & (1 << axis) != 0 { -1.0 } else { 1.0 };
-            Vec3::new(side(0), side(1), side(2))
-        })
-        .collect()
+/// The copies of a solid that symmetry asks for: a mirror's, a radial
+/// copy's, or one of each, but for the solid itself.
+fn flips(symmetry: hani_core::Symmetry) -> Vec<hani_core::Flip> {
+    let mut out = [hani_core::Flip::IDENTITY; hani_core::Symmetry::MAX_MIRRORS];
+    let count = symmetry.flips(super::MIRROR_CENTRE, &mut out);
+    out[..count].to_vec()
 }
 
 /// The pieces of a gesture, and their mirrors, as solids.
 fn with_solids<R>(
     pieces: &[Piece],
     source: Option<&(Volume, (Vec3, Vec3))>,
-    flips: &[Vec3],
+    flips: &[hani_core::Flip],
     then: impl FnOnce(&[&dyn Solid]) -> R,
 ) -> R {
     let lent: Vec<Lent<'_>> = pieces
@@ -383,13 +378,7 @@ fn with_solids<R>(
     solids.extend(lent.iter().map(|lent| lent as &dyn Solid));
     let twins: Vec<Mirrored<'_>> = solids
         .iter()
-        .flat_map(|solid| {
-            flips.iter().map(|flip| Mirrored {
-                of: *solid,
-                flip: *flip,
-                about: super::MIRROR_CENTRE,
-            })
-        })
+        .flat_map(|solid| flips.iter().map(|flip| Mirrored { of: *solid, flip: *flip }))
         .collect();
     solids.extend(twins.iter().map(|twin| twin as &dyn Solid));
     then(&solids)
@@ -664,7 +653,7 @@ impl Hani {
         let mut join = |solid: &dyn Solid| {
             state.join.add(volume, solid, how);
             for flip in &flips {
-                let twin = Mirrored { of: solid, flip: *flip, about: super::MIRROR_CENTRE };
+                let twin = Mirrored { of: solid, flip: *flip };
                 state.join.add(volume, &twin, how);
             }
         };
@@ -725,8 +714,7 @@ impl Hani {
     /// surface here.
     fn drapes(&self, relief: &solid::Relief) -> Vec<(Vec3, glam::Mat3, f32, Heights)> {
         let volume = self.doc.active_volume();
-        let about = super::MIRROR_CENTRE;
-        let mut sides = vec![Vec3::ONE];
+        let mut sides = vec![hani_core::Flip::IDENTITY];
         sides.extend(flips(self.symmetry));
         self.inserts
             .pieces
@@ -737,11 +725,11 @@ impl Hani {
             })
             .flat_map(|seat| {
                 sides.iter().map(move |flip| {
-                    let centre = about + (seat.centre - about) * *flip;
+                    let centre = flip.point(seat.centre);
                     let frame = glam::Mat3::from_cols(
-                        seat.frame.x_axis * *flip,
-                        seat.frame.y_axis * *flip,
-                        seat.frame.z_axis * *flip,
+                        flip.direction(seat.frame.x_axis),
+                        flip.direction(seat.frame.y_axis),
+                        flip.direction(seat.frame.z_axis),
                     );
                     (centre, frame, seat.half)
                 })
@@ -1844,7 +1832,7 @@ mod tests {
         let (point, out) = on_the_ball(at);
         assert!(point.x > 3.0, "the fixture's press is on the mirror plane");
         let mut app = app();
-        update(&mut app, Message::SymmetryAxisToggled(MirrorAxis::X));
+        update(&mut app, Message::SymmetryAxisToggled(hani_core::MirrorAxis::X));
         choose(&mut app, Insert::Shape(Form::Ball));
         set(&mut app, AddMessage::LiftChanged(0.0));
         drag(&mut app, at, at + Vec2::new(25.0, 0.0));
@@ -1858,12 +1846,14 @@ mod tests {
         let made = made.volume().expect("a field");
         assert!(made.sample_world(point + out * 1.0) < 0.0);
         assert!(made.sample_world((point + out * 1.0) * flip) < 0.0);
-        assert_eq!(flips(hani_core::Symmetry::OFF), Vec::<Vec3>::new());
+        assert!(flips(hani_core::Symmetry::OFF).is_empty());
         let all = hani_core::Symmetry::OFF
-            .with_axis(MirrorAxis::X, true)
-            .with_axis(MirrorAxis::Y, true)
-            .with_axis(MirrorAxis::Z, true);
+            .with_axis(hani_core::MirrorAxis::X, true)
+            .with_axis(hani_core::MirrorAxis::Y, true)
+            .with_axis(hani_core::MirrorAxis::Z, true);
         assert_eq!(flips(all).len(), 7);
+        // Radial copies as well: three round Y with the three planes.
+        assert_eq!(flips(all.with_radial(3, hani_core::MirrorAxis::Y)).len(), 23);
     }
 
     /// One thing is in hand at a time: a brush, the stamp, or something

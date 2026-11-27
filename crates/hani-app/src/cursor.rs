@@ -223,15 +223,20 @@ pub fn build(
     // and a plane's orientation says which one it is.
     let reach = (model_radius * PLANE_OVERSHOOT).max(1.0);
     let plane_colour = linear(theme::ACCENT, PLANE_ALPHA);
+    // In the symmetry's frame, which is the body's own: the planes move and
+    // turn with it. See `app/symmetry_frame.rs`.
+    let frame = symmetry.frame();
+    let mirror_centre = frame.origin + mirror_centre;
+    let turn = |along: Vec3| frame.rotation * along;
     for axis in MirrorAxis::ALL {
         if !symmetry.axis(axis) {
             continue;
         }
-        // The two world axes the plane spans.
+        // The two axes of the frame the plane spans.
         let (u, v) = match axis {
-            MirrorAxis::X => (Vec3::Y, Vec3::Z),
-            MirrorAxis::Y => (Vec3::X, Vec3::Z),
-            MirrorAxis::Z => (Vec3::X, Vec3::Y),
+            MirrorAxis::X => (turn(Vec3::Y), turn(Vec3::Z)),
+            MirrorAxis::Y => (turn(Vec3::X), turn(Vec3::Z)),
+            MirrorAxis::Z => (turn(Vec3::X), turn(Vec3::Y)),
         };
         batch.push_quad(
             mirror_centre + (-u - v) * reach,
@@ -240,6 +245,29 @@ pub fn build(
             mirror_centre + (-u + v) * reach,
             plane_colour,
         );
+    }
+    // Radial copies: a half plane out from the axis at each copy's start,
+    // fainter than a mirror's. See `app/radial.rs`.
+    let copies = symmetry.radial();
+    if copies > 1 {
+        let (along, out) = match symmetry.radial_axis() {
+            MirrorAxis::X => (Vec3::X, Vec3::Y),
+            MirrorAxis::Y => (Vec3::Y, Vec3::X),
+            MirrorAxis::Z => (Vec3::Z, Vec3::X),
+        };
+        let spoke_colour = linear(theme::ACCENT, PLANE_ALPHA * 0.6);
+        for k in 0..copies {
+            let angle = std::f32::consts::TAU * f32::from(k) / f32::from(copies);
+            let side = turn(glam::Quat::from_axis_angle(along, angle) * out);
+            let up = turn(along);
+            batch.push_quad(
+                mirror_centre - up * reach,
+                mirror_centre + up * reach,
+                mirror_centre + up * reach + side * reach,
+                mirror_centre - up * reach + side * reach,
+                spoke_colour,
+            );
+        }
     }
 
     // --- the brush cursor -------------------------------------------------

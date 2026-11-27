@@ -10,6 +10,9 @@ mod adding;
 mod autosave;
 // Boolean groups in the list and on the model. See `app/booleans.rs`.
 mod booleans;
+// Radial symmetry. See `app/radial.rs`.
+mod radial;
+pub(crate) use radial::RadialMessage;
 // A shape set down in Sculpt, placed and joined when done. See
 // `app/placed.rs`.
 mod placed;
@@ -5321,7 +5324,7 @@ impl Hani {
                 &gesture.hull,
                 gesture.shape,
                 self.model_radius,
-                doomed.map(|normal| normal * flip.sign),
+                doomed.map(|normal| flip.direction(normal)),
                 through,
                 mirrored_at,
             );
@@ -10367,6 +10370,8 @@ impl Hani {
                 crate::welcome::set_on_startup(show);
             }
             Message::SymmetryAxisToggled(axis) => self.toggle_mirror(axis),
+            // See `app/radial.rs`.
+            Message::Radial(message) => self.radial_changed(message),
             Message::PatternChanged(kind) => self.brush.pattern.kind = kind,
             Message::PatternScaleChanged(scale) => self.brush.pattern.scale_mm = scale,
             Message::PatternDepthChanged(depth) => self.brush.pattern.depth = depth,
@@ -11581,6 +11586,32 @@ mod tests {
             app.doc.active_volume().sample_world(mirrored) < before,
             "the mirrored half of the stroke never landed"
         );
+    }
+
+    /// Six copies round Z: one press lays the stroke at every sixth of a
+    /// turn round the axis through the middle, and not only where it was
+    /// pressed. See `app/radial.rs`.
+    #[test]
+    fn radial_symmetry_lays_a_copy_at_every_turn() {
+        let mut app = app();
+        update(&mut app, Message::Radial(crate::app::RadialMessage::Copies(6.0)));
+        update(&mut app, Message::Radial(crate::app::RadialMessage::Axis(MirrorAxis::Z)));
+        app.viewport_size = Vec2::new(SIZE.x, SIZE.y);
+        let off_centre = Vector::new(SIZE.x * 0.5, SIZE.y * 0.3);
+        let hit = app
+            .surface_under(Vec2::new(off_centre.x, off_centre.y))
+            .expect("the test needs a point that is on the model");
+        let copies: Vec<Vec3> = (1..6)
+            .map(|k| glam::Quat::from_rotation_z(std::f32::consts::TAU * k as f32 / 6.0) * hit)
+            .collect();
+        let before: Vec<f32> =
+            copies.iter().map(|at| app.doc.active_volume().sample_world(*at)).collect();
+        press(&mut app, off_centre);
+        release(&mut app);
+        for (k, (at, was)) in copies.iter().zip(before).enumerate() {
+            let now = app.doc.active_volume().sample_world(*at);
+            assert!(now < was, "copy {} at {at} never landed: {was} then {now}", k + 1);
+        }
     }
 
     /// The ZBrush convention, and the biggest ergonomic win in this round.

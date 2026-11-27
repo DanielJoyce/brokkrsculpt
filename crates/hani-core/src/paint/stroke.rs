@@ -578,11 +578,8 @@ impl PaintStroke {
             for (twin, flip) in twins[..count].iter().zip(&flips[..count]) {
                 // Where the twin is swept from is the mirror image of
                 // where the stamp is.
-                let from = End {
-                    at: from.at * flip.sign + flip.offset,
-                    facing: from.facing * flip.sign,
-                    ..from
-                };
+                let from =
+                    End { at: flip.point(from.at), facing: flip.direction(from.facing), ..from };
                 let mirror = Mirror { of: stamp, flip: *flip, from };
                 self.stamp_flipped(volume, brush, twin, mirror, lay);
             }
@@ -708,7 +705,7 @@ impl PaintStroke {
                     let on_surface = voxel.as_vec3() - normal * distance;
                     let relief = curvatures.relief(on_surface, lay.crease_gain);
                     let world = position - normal * (distance * voxel_size);
-                    let in_source = (world - flip.offset) * flip.sign;
+                    let in_source = flip.source_of(world);
                     thinned *= match lay.catch {
                         Catch::All => 1.0,
                         Catch::Recesses => pooled(relief),

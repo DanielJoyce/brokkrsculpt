@@ -357,7 +357,7 @@ impl Coat {
 
             // The gate's pattern is read where this point is the image of.
             let world = position - normal * (distance * voxel_size);
-            let in_source = (world - flip.offset) * flip.sign;
+            let in_source = flip.source_of(world);
             let caught = match gate {
                 Gate::Dry(dry) => {
                     let facing = 0.5 - 0.5 * normal.dot(travel);

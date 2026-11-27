@@ -376,19 +376,19 @@ impl Solid for Step {
     }
 }
 
-/// A solid seen in a mirror: the same shape on the other side of the
-/// planes through `about` that `flip` turns over, which is -1 on each axis
-/// that is mirrored and 1 on the rest.
+/// A solid's copy by a symmetry: the same shape reflected, turned, or both,
+/// by `flip` (a mirror's, a radial copy's, or one of each; see
+/// [`crate::brush::Flip`]).
 #[derive(Clone, Copy)]
 pub struct Mirrored<'a> {
     pub of: &'a dyn Solid,
-    pub flip: Vec3,
-    pub about: Vec3,
+    pub flip: crate::brush::Flip,
 }
 
 impl Mirrored<'_> {
+    /// The point of the original a point of the copy stands for.
     fn across(&self, point: Vec3) -> Vec3 {
-        self.about + (point - self.about) * self.flip
+        self.flip.source_of(point)
     }
 }
 
@@ -406,9 +406,18 @@ impl Solid for Mirrored<'_> {
     }
 
     fn bounds(&self) -> (Vec3, Vec3) {
+        // Every corner of the original's box, carried: a turn can put any of
+        // them furthest out.
         let (low, high) = self.of.bounds();
-        let (a, b) = (self.across(low), self.across(high));
-        (a.min(b), a.max(b))
+        let mut out = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+        for corner in 0..8 {
+            let pick = |bit: u32, a: f32, b: f32| if corner & bit == 0 { a } else { b };
+            let at =
+                Vec3::new(pick(1, low.x, high.x), pick(2, low.y, high.y), pick(4, low.z, high.z));
+            let moved = self.flip.point(at);
+            out = (out.0.min(moved), out.1.max(moved));
+        }
+        out
     }
 }
 
@@ -998,8 +1007,7 @@ mod tests {
             }
             let mirrored = Mirrored {
                 of: solids[round % solids.len()],
-                flip: Vec3::new(-1.0, 1.0, 1.0),
-                about: CENTRE,
+                flip: crate::brush::Flip::mirror(Vec3::new(-1.0, 1.0, 1.0), CENTRE),
             };
             solids.push(&mirrored);
 
@@ -1268,7 +1276,10 @@ mod tests {
     fn a_solid_in_a_mirror_is_on_the_other_side() {
         let knob = Placed::on(Form::Cone, Vec3::new(10.0, 2.0, 3.0), Vec3::X, Vec3::Y, 4.0, 1.0)
             .expect("a cone");
-        let twin = Mirrored { of: &knob, flip: Vec3::new(-1.0, 1.0, 1.0), about: Vec3::ZERO };
+        let twin = Mirrored {
+            of: &knob,
+            flip: crate::brush::Flip::mirror(Vec3::new(-1.0, 1.0, 1.0), Vec3::ZERO),
+        };
         for probe in
             [Vec3::new(12.0, 2.0, 3.0), Vec3::new(17.0, 2.5, 3.0), Vec3::new(9.0, 9.0, 9.0)]
         {
@@ -1279,7 +1290,8 @@ mod tests {
         assert_eq!((twin_low.x, twin_high.x), (-high.x, -low.x));
         assert_eq!((twin_low.y, twin_high.y), (low.y, high.y));
         // No flip is no mirror.
-        let same = Mirrored { of: &knob, flip: Vec3::ONE, about: Vec3::splat(7.0) };
+        let same =
+            Mirrored { of: &knob, flip: crate::brush::Flip::mirror(Vec3::ONE, Vec3::splat(7.0)) };
         assert_eq!(same.distance(Vec3::splat(1.0)), knob.distance(Vec3::splat(1.0)));
     }
 

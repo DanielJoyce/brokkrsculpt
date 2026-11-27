@@ -402,6 +402,8 @@ impl Hani {
             Workspace::Sculpt => vec![
                 self.brush_section(),
                 self.section(PanelSection::Stroke, || self.stroke_panel()),
+                // See `app/radial.rs`.
+                self.section(PanelSection::Symmetry, || self.symmetry_panel()),
                 self.section(PanelSection::Pattern, || self.pattern_panel()),
                 self.section(PanelSection::Form, || self.form_panel()),
                 // See `hollow.rs`.
@@ -429,6 +431,8 @@ impl Hani {
                 self.coats_block(),
                 self.brush_section(),
                 self.section(PanelSection::Stroke, || self.stroke_panel()),
+                // See `app/radial.rs`.
+                self.section(PanelSection::Symmetry, || self.symmetry_panel()),
             ],
             Workspace::Print => vec![
                 self.section(PanelSection::Detail, || self.detail_panel()),

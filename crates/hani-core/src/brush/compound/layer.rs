@@ -165,7 +165,7 @@ const MOST_PULL: f32 = 0.75;
 /// What one stroke of a layer brush has given each voxel so far.
 ///
 /// Kept for the length of a stroke: [`Layer::begin`] when it starts.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Layer {
     /// The most any stamp of the stroke has given each voxel, as the bits
     /// of an `f32`, by brick. Atoms because a stamp is laid across every
@@ -179,6 +179,16 @@ pub struct Layer {
     /// Where the last stamp of a line was put down: the stroke's own, and
     /// each of its mirrors'.
     last: [Option<Vec3>; 1 + Symmetry::MAX_MIRRORS],
+}
+
+impl Default for Layer {
+    fn default() -> Self {
+        Self {
+            coverage: FxHashMap::default(),
+            line: false,
+            last: [None; 1 + Symmetry::MAX_MIRRORS],
+        }
+    }
 }
 
 impl Layer {
