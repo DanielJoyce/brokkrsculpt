@@ -547,7 +547,10 @@ true of it too, and what it adds is this.
   file in your data directory (`~/.local/share/hanisculpt/brushes` on
   Linux), so a brush can be handed to somebody else, and *Import*, behind
   the same button, takes one in. Press **b** for the palette under the
-  pointer.
+  pointer. A picture of your own (PNG or JPEG), added from the picture
+  picker for the stamp or the tip, is kept beside your brushes
+  (`~/.local/share/hanisculpt/brush-pictures`), listed after the six that
+  come with the application, and a brush kept with it takes it up again.
 - **Brushes that add.** Set a ball, box, cylinder, cone or ring down on
   the model with one drag, or a copy of any body (import a mesh, then
   stamp it wherever you like). Lay a *Cable* along the surface or hang
