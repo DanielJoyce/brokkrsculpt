@@ -673,6 +673,34 @@ Not done: the bristles' streaks and the side a stroke travels toward are
 not in what is shown (it is the middle of both), and a smooth ball, which
 stands up nowhere, shows nothing, as a drybrush catches nothing there.
 
+### The sponge's, beside it (2026-11-28)
+
+The Sponge touch is shown the same way. Each point under the ring is
+tinted by the share of it the sponge would cover (`Sponge::share`, asked
+by `Volume::sponge_would_catch`): its *Covers* on a flat facing the light,
+more on an edge by as much as *More on edges* says, less in a recess, and
+less on a face turned from the light by as much as *Toward the light*
+says. Where each speck falls is drawn from a seed each stroke takes
+afresh, so the specks themselves cannot be shown before the stroke, and
+the share they will cover is.
+
+A sponge tints the whole ring, where a drybrush tints a few edges, and on
+a screen the drybrush's squares, a little wider than a voxel, stacked
+their tint until every share looked the same. The sponge's squares tile,
+and its tint ramps from a fainter floor (`app/dry_preview.rs`). On the
+ball, with *Toward the light* at one and the light overhead, the tint fades
+from top to bottom of the ring (its blue channel 45 below the clay at the
+top, about 20 at the bottom, read off the screenshot) and ends short of
+the ring's foot.
+
+Tests: on a cube a flat shows its density, an edge shows more with *More on
+edges* at one than at nought, and the face from the light shows nothing
+when the sponge wants the light wholly; in the application, the lit face
+of a box is tinted and the face from the light is not.
+
+Not done: the preview of a smooth sponge is the same as of any other, its
+share being the coat it lays.
+
 ## 7. One-click coats
 
 Each is a small card (its few settings and a live preview on the model)

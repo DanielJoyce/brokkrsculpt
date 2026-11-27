@@ -697,6 +697,44 @@ impl Volume {
         crease_gain: f32,
         scratch: &mut TouchScratch,
     ) -> Vec<Caught> {
+        self.would_catch(centre, radius, crease_gain, scratch, |relief, _| {
+            dry.amount(relief.max(0.0), 0.5, 0.5, 1.0)
+        })
+    }
+
+    /// Where on the surface within `radius` of `centre` a sponge would
+    /// leave paint, and how much of the surface there it would cover
+    /// ([`Sponge::share`]): more on what stands up, less in a recess by as
+    /// little as its reach says, and less on what faces from the light.
+    /// The specks themselves are laid from a seed each stroke draws afresh,
+    /// so what is shown is the share they will cover and not where each
+    /// will fall. One point a voxel of the surface's own layer.
+    ///
+    /// Asked for by the maintainer on 2026-11-27, beside the drybrush's.
+    pub fn sponge_would_catch(
+        &self,
+        centre: Vec3,
+        radius: f32,
+        sponge: Sponge,
+        crease_gain: f32,
+        scratch: &mut TouchScratch,
+    ) -> Vec<Caught> {
+        self.would_catch(centre, radius, crease_gain, scratch, |relief, normal| {
+            sponge.share(relief, normal.dot(sponge.light)).clamp(0.0, 1.0)
+        })
+    }
+
+    /// The points of the surface's own layer within `radius` of `centre`
+    /// that `amount` gives anything, from the relief there (1 on a full
+    /// edge, -1 in a full crease) and the way out.
+    fn would_catch(
+        &self,
+        centre: Vec3,
+        radius: f32,
+        crease_gain: f32,
+        scratch: &mut TouchScratch,
+        amount: impl Fn(f32, Vec3) -> f32,
+    ) -> Vec<Caught> {
         let voxel_size = self.voxel_size();
         if radius <= 0.0 {
             return Vec::new();
@@ -726,8 +764,7 @@ impl Volume {
                     if at.distance_squared(centre) > radius * radius {
                         continue;
                     }
-                    let raised = curvatures.relief(on_surface, crease_gain).max(0.0);
-                    let amount = dry.amount(raised, 0.5, 0.5, 1.0);
+                    let amount = amount(curvatures.relief(on_surface, crease_gain), normal);
                     if amount > 0.0 {
                         caught.push(Caught { at, normal, amount });
                     }
@@ -922,6 +959,35 @@ mod tests {
         for point in edge {
             assert!((0.0..=1.0).contains(&point.amount) && point.at.distance(at_edge) <= 2.0);
         }
+    }
+
+    /// A sponge shows the share it would cover: on a flat facing the light
+    /// its density, more on an edge the more it favours edges, and nothing
+    /// on a face turned from the light when it wants the light wholly.
+    #[test]
+    fn a_sponge_shows_what_it_would_catch() {
+        let volume = cube();
+        let mut scratch = TouchScratch::new();
+        let gain = 4.0;
+        let top = Vec3::new(0.0, 0.0, HALF);
+        let edge = Vec3::new(HALF, HALF, 0.0);
+        let even = Sponge { density: 0.4, edges: 0.0, reach: 1.0, light: Vec3::Z, ..Sponge::PLAIN };
+        let flat = volume.sponge_would_catch(top, 2.0, even, gain, &mut scratch);
+        assert!(flat.len() > 5, "the flat showed {} points", flat.len());
+        for point in &flat {
+            assert!((point.amount - 0.4).abs() < 0.05, "a flat point showed {}", point.amount);
+            assert!(point.at.distance(top) <= 2.0);
+        }
+        let most = |shown: &[Caught]| shown.iter().map(|point| point.amount).fold(0.0, f32::max);
+        let plain = most(&volume.sponge_would_catch(edge, 2.0, even, gain, &mut scratch));
+        let edgy = Sponge { edges: 1.0, ..even };
+        let favoured = most(&volume.sponge_would_catch(edge, 2.0, edgy, gain, &mut scratch));
+        assert!(favoured > plain + 0.2, "edges 1 showed {favoured} on an edge, edges 0 {plain}");
+        // The bottom face looks straight away from a light overhead.
+        let shy = Sponge { toward_light: 1.0, ..even };
+        let bottom = Vec3::new(0.0, 0.0, -HALF);
+        let away = volume.sponge_would_catch(bottom, 2.0, shy, gain, &mut scratch);
+        assert!(away.is_empty(), "the face from the light showed {} points", away.len());
     }
 
     #[test]
