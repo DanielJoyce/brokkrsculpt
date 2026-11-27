@@ -1658,6 +1658,23 @@ mod tests {
         }
     }
 
+    /// The worst of what the property allows: nearest the ball, tilted the
+    /// full third of a right angle, toward the ball and away, square to an
+    /// axis and between two. Severed, each.
+    #[test]
+    fn a_disc_tilted_a_third_of_a_right_angle_next_to_the_ball_severs_the_arm() {
+        let volume = figure();
+        let most = (std::f32::consts::PI / 6.0).tan();
+        for (y, z) in [(1.0_f32, 0.0_f32), (0.0, -1.0), (0.7071, 0.7071), (-0.7071, 0.7071)] {
+            let normal = Vec3::new(1.0, y * most, z * most).normalize();
+            let disc = Disc::round(Vec3::new(7.0, 0.0, 0.0), normal, 3.5);
+            assert!(
+                matches!(volume.sever(&disc), Severed::Apart { .. }),
+                "tilted toward ({y}, {z}), not severed"
+            );
+        }
+    }
+
     proptest::proptest! {
         #![proptest_config(proptest::prelude::ProptestConfig::with_cases(12))]
 
@@ -1670,6 +1687,16 @@ mod tests {
             x in 7.0f32..13.0,
             tilt in (-0.5f32..0.5, -0.5f32..0.5),
         ) {
+            // A third of a right angle and no more, as the property says:
+            // each part of the tilt reaching a half allowed 35 degrees, and
+            // at x = 7 a disc tilted 32.8 degrees reaches into the ball the
+            // arm stands on (2.5 mm off the axis its plane is at x = 5.39
+            // and the ball's surface at 5.45, worked out), so it does not
+            // cut the arm off and is right not to. Found by proptest on
+            // 2026-11-27, and the seed is kept.
+            proptest::prop_assume!(
+                glam::Vec2::new(tilt.0, tilt.1).length() <= (std::f32::consts::PI / 6.0).tan()
+            );
             let volume = figure();
             let normal = Vec3::new(1.0, tilt.0, tilt.1).normalize();
             let disc = Disc::round(Vec3::new(x, 0.0, 0.0), normal, 3.5);
