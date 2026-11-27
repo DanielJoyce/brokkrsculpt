@@ -733,9 +733,12 @@ speck and more on edges: **Into recesses** (how far into a crease it
 reaches: at none a full crease takes nothing, at all a recess takes what
 a flat does; a third to start), **Toward the light** (how much a face
 turned from the light is passed over; none to start), and the **foam**:
-Fine, Coarse (specks twice the size), or Torn (the same noise read where
+Fine, Coarse (specks twice the size), Torn (the same noise read where
 a coarser noise pushes it, so the share caught is unchanged and the
-edges are ragged). The light is the coats' light. Each dab is a new
+edges are ragged), or Smooth (no specks: every point takes the share it
+is owed as a thinner coat, and the Speck slider goes; added 2026-11-27).
+The drybrush's **bristle marks** switch, off, sets Streaks to none and
+hides Streaks and Bristle: the paint goes on wherever the shape says. The light is the coats' light. Each dab is a new
 seed, as before, so dabbing again fills in.
 
 **The coats** (`paint/coats.rs`, `app/coats.rs`), in a COATS block under

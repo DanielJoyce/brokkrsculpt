@@ -530,46 +530,64 @@ impl Hani {
                         .step(0.01)
                         .shown(format!("{:.2}", dry.catch)),
                     )
+                    // Bristle marks off is no streaks at all: asked for by the
+                    // maintainer on 2026-11-27, "You should be able to turn off
+                    // the sponge and drybrush speckles/bristles/etc entirely".
                     .push(
-                        crate::ui::number(
-                            &self.drafts,
-                            "paints.streaks",
-                            "Streaks",
-                            dry.streak,
-                            STREAK_RANGE,
-                            move |v| changed(TouchSetting::DryStreak(v)),
-                        )
-                        .step(0.01)
-                        .shown(format!("{:.2}", dry.streak)),
-                    )
-                    .push(
-                        crate::ui::number(
-                            &self.drafts,
-                            "paints.bristle",
-                            "Bristle",
-                            dry.bristle_mm,
-                            BRISTLE_RANGE,
-                            move |v| changed(TouchSetting::DryBristle(v)),
-                        )
-                        .step(0.1)
-                        .shown(format!("{:.1} mm", dry.bristle_mm)),
-                    )
-                    .push(
-                        crate::ui::number(
-                            &self.drafts,
-                            "paints.runs_out",
-                            "Runs out after",
-                            load,
-                            LOAD_RANGE,
-                            move |v| changed(TouchSetting::DryLoad(v)),
-                        )
-                        .step(5.0)
-                        .shown(if load > 0.0 {
-                            format!("{load:.0} mm")
-                        } else {
-                            "never".to_string()
-                        }),
+                        checkbox(dry.streak > 0.0)
+                            .label("bristle marks")
+                            .on_toggle(move |on| {
+                                changed(TouchSetting::DryStreak(if on {
+                                    hani_core::paint::touch::Drybrush::default().streak
+                                } else {
+                                    0.0
+                                }))
+                            })
+                            .text_size(theme::LABEL_SIZE),
                     );
+                if dry.streak > 0.0 {
+                    picker = picker
+                        .push(
+                            crate::ui::number(
+                                &self.drafts,
+                                "paints.streaks",
+                                "Streaks",
+                                dry.streak,
+                                STREAK_RANGE,
+                                move |v| changed(TouchSetting::DryStreak(v)),
+                            )
+                            .step(0.01)
+                            .shown(format!("{:.2}", dry.streak)),
+                        )
+                        .push(
+                            crate::ui::number(
+                                &self.drafts,
+                                "paints.bristle",
+                                "Bristle",
+                                dry.bristle_mm,
+                                BRISTLE_RANGE,
+                                move |v| changed(TouchSetting::DryBristle(v)),
+                            )
+                            .step(0.1)
+                            .shown(format!("{:.1} mm", dry.bristle_mm)),
+                        );
+                }
+                picker = picker.push(
+                    crate::ui::number(
+                        &self.drafts,
+                        "paints.runs_out",
+                        "Runs out after",
+                        load,
+                        LOAD_RANGE,
+                        move |v| changed(TouchSetting::DryLoad(v)),
+                    )
+                    .step(5.0)
+                    .shown(if load > 0.0 {
+                        format!("{load:.0} mm")
+                    } else {
+                        "never".to_string()
+                    }),
+                );
             }
             PaintTouch::Sponge => {
                 let sponge = self.touch.sponge;
@@ -586,7 +604,8 @@ impl Hani {
                         .step(0.01)
                         .shown(format!("{:.0}%", sponge.density * 100.0)),
                     )
-                    .push(
+                    // A smooth sponge has no specks to size.
+                    .extend((sponge.foam != hani_core::paint::touch::Foam::Smooth).then(|| {
                         crate::ui::number(
                             &self.drafts,
                             "paints.speck",
@@ -596,8 +615,9 @@ impl Hani {
                             move |v| changed(TouchSetting::SpongeGrain(v)),
                         )
                         .step(0.1)
-                        .shown(format!("{:.1} mm", sponge.grain_mm)),
-                    )
+                        .shown(format!("{:.1} mm", sponge.grain_mm))
+                        .into()
+                    }))
                     .push(
                         crate::ui::number(
                             &self.drafts,
