@@ -88,8 +88,8 @@ pub enum Blend {
     Multiply,
     /// Lightens what is under it.
     Screen,
-    /// A tint over everything that keeps what is under it showing: the
-    /// colour's hue at what is under it's lightness.
+    /// A tint over everything that keeps what is under it showing: a film
+    /// of the colour's hue that gives back half the lightness it takes.
     Glaze,
     /// Multiply, thicker in a crease and thinner on an edge.
     Wash,
@@ -175,11 +175,10 @@ impl Blend {
             Blend::Normal | Blend::Varnish => colour,
             Blend::Multiply | Blend::Wash => each(&|c, u| c * u),
             Blend::Screen => each(&|c, u| 1.0 - (1.0 - c) * (1.0 - u)),
-            Blend::Glaze => {
-                let tint = luma(colour).max(0.05);
-                let light = luma(under);
-                each(&|c, _| (c / tint * light).min(1.0))
-            }
+            // The same film a glaze stroke lays. Giving the colour the
+            // lightness under it channel by channel, as this did before
+            // 2026-11-27, turned a dark blue over white to cyan.
+            Blend::Glaze => crate::paint::stroke::tinted(under, colour),
             Blend::Contrast => {
                 // Dark under it keeps a little of the colour, light under it
                 // all of it: what a translucent paint over a grey value
