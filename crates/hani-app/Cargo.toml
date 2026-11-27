@@ -119,7 +119,8 @@ core-foundation.workspace = true
 windows-sys.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-evdev.workspace = true
+# Our own, over libc, in place of the `evdev` crate. See `crates/hani-evdev`.
+hani-evdev.workspace = true
 
 # Blocks on wgpu's adapter and device futures, and nothing else. Needed because
 # `SharedFrame::apply` orders a pool reset, a set of body deletions and a batch

@@ -22,7 +22,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use evdev::Device;
+use hani_evdev::Device;
 
 /// What a watcher does with the devices it finds.
 pub trait Adopter: Send + Sync + 'static {
