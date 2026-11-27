@@ -177,6 +177,12 @@ pub const ICON_CHROME: f32 = 14.0;
 pub const ICON_TOOL: f32 = 18.0;
 /// Inline with a line of text: a section's collapse marker.
 pub const ICON_INLINE: f32 = 11.0;
+/// On a button that is only an icon, standing on its own: the hierarchy's.
+pub const ICON_BUTTON: f32 = 14.0;
+/// The side of a button that is only an icon. 11 px icons on 3 px of
+/// padding were 18 by 17, which the maintainer found "really small" on
+/// 2026-11-27. See `app/ui_scale.rs` for the rest of that ask.
+pub const HIT: f32 = 26.0;
 
 // Spacing scale, `--s-1` through `--s-6`.
 pub const S1: f32 = 4.0;

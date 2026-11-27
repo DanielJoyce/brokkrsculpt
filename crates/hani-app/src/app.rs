@@ -52,6 +52,8 @@ mod deform;
 mod references;
 // Save, Save as new and Revert for the brush in hand: `app/keeping.rs`.
 mod keeping;
+// How big the interface is drawn: `app/ui_scale.rs`.
+mod ui_scale;
 pub use references::Taken as ReferenceTaken;
 mod form;
 // A line drawn beside an axis, spun into a body. See `app/revolve.rs`.
@@ -1006,6 +1008,8 @@ pub struct Hani {
     reference_view: references::ReferencesState,
     /// Which palette brush is in hand as. See `app/keeping.rs`.
     kept_as: keeping::KeepingState,
+    /// How big the interface is drawn. See `app/ui_scale.rs`.
+    ui_scale: ui_scale::UiScale,
     /// Shell and extract settings. See `app/hollow.rs`.
     hollow: hollow::HollowState,
     /// The overhang view: whether it is on, and how steep a lean the
@@ -2028,6 +2032,8 @@ impl Hani {
         app.palette = crate::palette::Palette::load();
         // And the brush presets, for it a third time.
         app.studio.presets = presets::Presets::load();
+        // And the interface's size: `app/ui_scale.rs`.
+        app.ui_scale = ui_scale::UiScale::kept();
         // The maps that have been taken in: `app/maps.rs`.
         app.inserts.maps = maps::kept(maps::directory().as_deref());
         // And the brush pictures: `app/brush_pictures.rs`.
@@ -2335,6 +2341,7 @@ impl Hani {
             references: hani_core::reference::References::default(),
             reference_view: references::ReferencesState::default(),
             kept_as: keeping::KeepingState::default(),
+            ui_scale: ui_scale::UiScale::default(),
             hollow: hollow::HollowState::default(),
             overhang: overhang::OverhangState::default(),
             painting: painting::PaintingState::default(),
@@ -9992,7 +9999,9 @@ impl Hani {
                     frame.uploaded_bytes += cost.uploaded_bytes;
                 });
                 self.phases.end_frame();
-                return self.replay_frame();
+                // The monitor's size, once there is a window on one. See
+                // `app/ui_scale.rs`.
+                return Task::batch([self.ask_the_monitor(), self.replay_frame()]);
             }
             Message::BrushKindChanged(kind) => {
                 // Remember what the outgoing brush was set to, and restore what
@@ -10802,6 +10811,7 @@ impl Hani {
             Message::Deform(message) => self.deform_changed(message),
             Message::Reference(message) => return self.reference_changed(message),
             Message::Keep(message) => self.keep_changed(message),
+            Message::Scale(message) => self.scale_changed(message),
             // See `app/revolve.rs`.
             Message::Revolve(message) => self.revolve_changed(message),
             Message::Measure(message) => self.measure_changed(message),

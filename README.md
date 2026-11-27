@@ -451,6 +451,11 @@ true of it too, and what it adds is this.
   on the clipboard, for one paste. GitHub's API makes no issue without a
   token and takes no pictures, so the page is GitHub's own. Not in the
   browser version.
+- **Interface size.** Preferences, *Interface size*: *Auto* draws the
+  interface larger on a screen with many lines at the system's own density
+  (1 to 2 times, in eighths, from the monitor's height over 1080), or a
+  size from 75% to 200% is chosen on a slider, shown first in a preview of
+  a few controls and applied with *Apply*. Kept in `interface.conf`.
 - **Help in the application.** The **?** in the title bar opens three
   pages, what HaniSculpt is, getting around and how it works, in tabs with
   a search across them. They are Markdown files in
