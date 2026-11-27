@@ -3,6 +3,8 @@
 //! Application state, input handling and the widget tree.
 
 mod about;
+// The graphics adapter, for the About card. See `app/adapter.rs`.
+mod adapter;
 mod adding;
 // The crash net, written without stopping the drawing. See `app/autosave.rs`.
 mod autosave;
@@ -834,6 +836,8 @@ pub struct Hani {
     help: help::HelpState,
     /// Whether the About card is up. See `app/about.rs`.
     about_open: bool,
+    /// The graphics adapter's name, once asked. See `app/adapter.rs`.
+    graphics: Option<String>,
     /// The fingers on a touch screen. See `app/touch.rs`.
     touches: touch::Touches,
     /// What is typed in the printer's and the slicer's fields. See
@@ -2307,6 +2311,7 @@ impl Hani {
             shortcuts: false,
             help: help::HelpState::default(),
             about_open: false,
+            graphics: None,
             touches: touch::Touches::default(),
             kept: kept_settings::KeptSettings::read(),
             shelf: shelf::ShelfState::default(),
@@ -10116,7 +10121,8 @@ impl Hani {
             Message::ShortcutsClosed => self.shortcuts = false,
             // See `app/help.rs`.
             Message::Help(message) => self.help_changed(message),
-            Message::About(open) => self.about_open = open,
+            Message::About(open) => return self.about_changed(open),
+            Message::GraphicsNamed(name) => self.graphics = Some(name),
             Message::Kept(message) => self.kept_changed(message),
             Message::Shelf(message) => return self.shelf_changed(message),
             Message::Snip(message) => return self.snip_changed(message),

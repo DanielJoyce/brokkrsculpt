@@ -19,6 +19,9 @@ use super::Hani;
 use crate::message::Message;
 use crate::theme;
 
+/// What the Graphics line says while the adapter is being asked for.
+const ASKING: &str = "asking…";
+
 /// Where this build runs: the operating system and the processor, or a
 /// browser.
 pub(super) fn platform() -> String {
@@ -39,6 +42,19 @@ impl Hani {
     /// Escape: close About, and say whether it was open.
     pub(super) fn about_escaped(&mut self) -> bool {
         std::mem::replace(&mut self.about_open, false)
+    }
+
+    /// About opened or closed. The first time it opens, the graphics
+    /// adapter is asked for on the task pool (`app/adapter.rs`).
+    pub(super) fn about_changed(&mut self, open: bool) -> iced::Task<Message> {
+        self.about_open = open;
+        if open && self.graphics.is_none() {
+            // Asked once: while the answer is on its way the line says so,
+            // and a second opening does not ask again.
+            self.graphics = Some(ASKING.to_string());
+            return iced::Task::perform(super::adapter::asked(), Message::GraphicsNamed);
+        }
+        iced::Task::none()
     }
 
     /// The card, over everything below it.
@@ -62,6 +78,10 @@ impl Hani {
             line("Version", env!("CARGO_PKG_VERSION").to_string()),
             line("Build", super::build_label()),
             line("Platform", platform()),
+            crate::ui::tip(
+                line("Graphics", self.graphics.clone().unwrap_or_else(|| ASKING.to_string())),
+                "The adapter a request like the window's is given, and its backend",
+            ),
             line("Compiled with", features),
             line("Licence", "AGPL-3.0-only".to_string()),
         ]
@@ -122,6 +142,21 @@ mod tests {
         assert!(app.about_escaped(), "Escape did not find it open");
         assert!(!app.about_open);
         assert!(!app.about_escaped(), "Escape found it open twice");
+    }
+
+    /// The first opening asks for the adapter and says so on the card until
+    /// it is named; a second opening does not ask again.
+    #[test]
+    fn about_asks_for_the_adapter_once() {
+        let mut app = Hani::with_tablet(crate::tablet::Tablet::inert());
+        assert_eq!(app.graphics, None);
+        update(&mut app, Message::About(true));
+        assert_eq!(app.graphics.as_deref(), Some(ASKING));
+        update(&mut app, Message::GraphicsNamed("Radeon RX 7600 (Vulkan)".to_string()));
+        drop(app.about_card());
+        update(&mut app, Message::About(false));
+        update(&mut app, Message::About(true));
+        assert_eq!(app.graphics.as_deref(), Some("Radeon RX 7600 (Vulkan)"));
     }
 
     /// The platform names this machine's system, and the features name the
