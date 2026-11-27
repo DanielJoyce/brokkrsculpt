@@ -42,6 +42,9 @@ pub use adding::Insert;
 // Vector displacement maps, for the brushes that add: `app/maps.rs`.
 mod maps;
 pub use maps::MapName;
+// The user's own brush pictures, kept and named by a brush:
+// `app/brush_pictures.rs`.
+mod brush_pictures;
 mod fit_test;
 // Twist, bend and taper. See `app/deform.rs`.
 mod deform;
@@ -2023,6 +2026,8 @@ impl Hani {
         app.studio.presets = presets::Presets::load();
         // The maps that have been taken in: `app/maps.rs`.
         app.inserts.maps = maps::kept(maps::directory().as_deref());
+        // And the brush pictures: `app/brush_pictures.rs`.
+        app.studio.own = brush_pictures::kept(brush_pictures::directory().as_deref());
         // A recording or a replay asked for by the environment, after the
         // welcome flag it overrides: `app/replay.rs`.
         app.replay_from_environment();

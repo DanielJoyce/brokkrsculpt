@@ -182,6 +182,12 @@ fn alpha_of(picture: StampOf) -> Alpha {
     Alpha::built_in(match picture {
         StampOf::BuiltIn(kind) => kind,
         StampOf::InHand => BuiltIn::Dome,
+        // One of the user's own, if it can be read. See
+        // `app/brush_pictures.rs`.
+        StampOf::Own(name) => match super::brush_pictures::alpha(name) {
+            Ok(alpha) => return (*alpha).clone(),
+            Err(_) => BuiltIn::Dome,
+        },
     })
 }
 

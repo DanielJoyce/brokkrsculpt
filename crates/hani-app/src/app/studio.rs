@@ -172,6 +172,10 @@ pub(super) struct StudioState {
     pub alpha_name: String,
     /// The built-in the image is, or `None` for one read from a file.
     pub built_in: Option<BuiltIn>,
+    /// The user's own pictures, kept by name, and which of them is in hand.
+    /// See `app/brush_pictures.rs`.
+    pub own: Vec<super::MapName>,
+    pub own_in_hand: Option<super::MapName>,
     /// How tall the stamp is, as a share of half its width.
     pub stamp_height: f32,
     /// The stamp being placed, and where the press that began it landed:
@@ -213,6 +217,8 @@ impl Default for StudioState {
             alpha: Arc::new(Alpha::built_in(BuiltIn::Rivet)),
             alpha_name: BuiltIn::Rivet.label().to_string(),
             built_in: Some(BuiltIn::Rivet),
+            own: Vec::new(),
+            own_in_hand: None,
             stamp_height: 0.35,
             gesture: StampGesture::new(),
             press: None,
@@ -327,7 +333,17 @@ impl StudioState {
                 self.alpha = Arc::new(Alpha::built_in(kind));
                 self.alpha_name = kind.label().to_string();
                 self.built_in = Some(kind);
+                self.own_in_hand = None;
             }
+            StudioMessage::OwnPictureChosen(name) => match super::brush_pictures::alpha(name) {
+                Ok(alpha) => {
+                    self.alpha = alpha;
+                    self.alpha_name = name.as_str().to_string();
+                    self.built_in = None;
+                    self.own_in_hand = Some(name);
+                }
+                Err(why) => return Some(format!("that picture cannot be a stamp: {why}")),
+            },
             StudioMessage::StampHeightChanged(share) => {
                 self.stamp_height = clamped(share, HEIGHT_RANGE);
             }
@@ -342,6 +358,15 @@ impl StudioState {
                 self.alpha = loaded.alpha;
                 self.alpha_name = loaded.name;
                 self.built_in = None;
+                // Kept, and so listed with the user's own. See
+                // `app/brush_pictures.rs`.
+                self.own_in_hand = loaded.own;
+                if let Some(name) = loaded.own
+                    && !self.own.contains(&name)
+                {
+                    self.own.push(name);
+                    self.own.sort_by_key(|name| name.as_str().to_lowercase());
+                }
                 return Some(format!("stamp image: {}", self.alpha_name));
             }
             StudioMessage::StampImageLoaded(Some(Err(why))) => {
@@ -369,32 +394,17 @@ impl StudioState {
     }
 }
 
-/// Read a picture as a stamp image: its brightness is its height.
-///
-/// Sixteen bits of grey where the file has them, because eight is 256 steps
-/// and a stamp a centimetre tall would have terraces 40 microns high, which
-/// a resin printer prints.
+/// Read a picture file as a stamp image, held while it is in hand and not
+/// kept. See `app/brush_pictures.rs` for the pictures that are kept.
+#[cfg(test)]
 pub(super) fn read_stamp_image(path: &std::path::Path) -> Result<LoadedStamp, String> {
-    let picture = image::open(path).map_err(|error| error.to_string())?.into_luma16();
-    let (width, height) = (picture.width() as usize, picture.height() as usize);
-    let heights: Vec<f32> =
-        picture.as_raw().iter().map(|level| f32::from(*level) / f32::from(u16::MAX)).collect();
-    let alpha = Alpha::from_heights(width, height, &heights).map_err(|error| error.to_string())?;
+    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+    let alpha = super::brush_pictures::decode(&bytes)?;
     let name = path
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_else(|| "picture".to_string());
-    Ok(LoadedStamp { name, alpha: Arc::new(alpha) })
-}
-
-/// Ask for a picture and read it. `None` when the dialog is dismissed.
-async fn pick_stamp_image() -> Option<Result<LoadedStamp, String>> {
-    let handle = rfd::AsyncFileDialog::new()
-        .set_title("Stamp image")
-        .add_filter("Picture", &["png", "jpg", "jpeg"])
-        .pick_file()
-        .await?;
-    Some(read_stamp_image(handle.path()))
+    Ok(LoadedStamp { name, alpha: Arc::new(alpha), own: None })
 }
 
 /// Ask for brush files and read them: each one's name and text, or why it
@@ -438,7 +448,16 @@ fn clamped(value: f32, range: std::ops::RangeInclusive<f32>) -> f32 {
 impl Hani {
     pub(super) fn studio_changed(&mut self, message: StudioMessage) -> Task<Message> {
         if message == StudioMessage::StampImageRequested {
-            return Task::perform(pick_stamp_image(), |loaded| {
+            // Read and kept among the user's own. See
+            // `app/brush_pictures.rs`.
+            return Task::perform(super::brush_pictures::pick(), |taken| {
+                let loaded = taken.map(|taken| {
+                    taken.map(|(name, alpha)| LoadedStamp {
+                        name: name.as_str().to_string(),
+                        alpha,
+                        own: Some(name),
+                    })
+                });
                 Message::Studio(StudioMessage::StampImageLoaded(loaded))
             });
         }
@@ -480,6 +499,10 @@ impl Hani {
             }
             StudioMessage::BrushesReloaded => {
                 self.studio.presets = Presets::load();
+                // And the pictures beside them: `app/brush_pictures.rs`.
+                super::brush_pictures::forget_kept();
+                self.studio.own =
+                    super::brush_pictures::kept(super::brush_pictures::directory().as_deref());
                 // And the maps beside them, whose files may have been
                 // changed by hand too: `app/maps.rs`.
                 super::maps::forget_kept();
@@ -579,7 +602,13 @@ impl Hani {
 
     /// The brush as it is set up now, as a preset under `name`.
     pub(super) fn preset_now(&self, name: String) -> Preset {
-        let picture = self.studio.built_in.map_or(StampOf::InHand, StampOf::BuiltIn);
+        // One of the application's by name, one of the user's own by name,
+        // or, for a picture not kept, whichever is in hand.
+        let picture = match (self.studio.built_in, self.studio.own_in_hand) {
+            (Some(kind), _) => StampOf::BuiltIn(kind),
+            (None, Some(name)) => StampOf::Own(name),
+            (None, None) => StampOf::InHand,
+        };
         let stamp = self.studio.stamp_on.then_some((picture, self.studio.stamp_height));
         Preset {
             name,
@@ -668,8 +697,18 @@ impl Hani {
                 // The picture, for the stamp or for the tip: one of the
                 // application's by name, or whichever is in hand.
                 let picture = preset.stamp.map(|(picture, _)| picture).or(preset.tip);
-                if let Some(StampOf::BuiltIn(kind)) = picture {
-                    self.studio.set(StudioMessage::StampChosen(kind));
+                let mut missing = None;
+                match picture {
+                    Some(StampOf::BuiltIn(kind)) => {
+                        self.studio.set(StudioMessage::StampChosen(kind));
+                    }
+                    // One of the user's own, if it is still there: a brush
+                    // file from another machine may name one this one has
+                    // not got, and then the picture in hand stays.
+                    Some(StampOf::Own(name)) => {
+                        missing = self.studio.set(StudioMessage::OwnPictureChosen(name));
+                    }
+                    Some(StampOf::InHand) | None => {}
                 }
                 if let Some((_, height)) = preset.stamp {
                     self.studio.set(StudioMessage::StampHeightChanged(height));
@@ -686,7 +725,10 @@ impl Hani {
                 if let Some(setup) = preset.add {
                     self.take_up(setup);
                 }
-                self.status = format!("brush: {}", preset.name);
+                self.status = match missing {
+                    Some(why) => format!("brush: {}, but {why}", preset.name),
+                    None => format!("brush: {}", preset.name),
+                };
                 // Choosing a brush is what the palette at the pointer was
                 // up for.
                 self.studio.popup = None;
@@ -1508,8 +1550,8 @@ impl Hani {
     }
 
     /// Which picture is in hand, for the stamp to press or to lay across
-    /// a brush's tip: the six that come with the application, three to a
-    /// row, and a button that asks for any picture.
+    /// a brush's tip: the six that come with the application and the
+    /// user's own, three to a row, and a button that adds a picture.
     fn picture_picker(&self) -> Element<'_, Message> {
         let changed = |message: StudioMessage| Message::Studio(message);
         let mut pictures = column![].spacing(theme::S1);
@@ -1529,19 +1571,37 @@ impl Hani {
                     )
                 }));
         }
-        let own = self.studio.built_in.is_none();
+        // The user's own, kept, three to a row after the application's. See
+        // `app/brush_pictures.rs`.
+        for names in self.studio.own.chunks(3) {
+            let mut line = names.iter().fold(row![].spacing(theme::S1), |assembled, name| {
+                let live = self.studio.built_in.is_none() && self.studio.own_in_hand == Some(*name);
+                assembled.push(
+                    button(text(name.as_str().to_string()).size(theme::LABEL_SIZE))
+                        .width(Length::Fill)
+                        .style(if live { theme::tool_button_active } else { theme::tool_button })
+                        .on_press(changed(StudioMessage::OwnPictureChosen(*name))),
+                )
+            });
+            for _ in names.len()..3 {
+                line = line.push(iced::widget::space().width(Length::Fill));
+            }
+            pictures = pictures.push(line);
+        }
+        // A picture in hand that is not kept: one from before pictures were.
+        let unkept = self.studio.built_in.is_none() && self.studio.own_in_hand.is_none();
         pictures
             .push(
                 button(
-                    text(if own {
+                    text(if unkept {
                         format!("Picture: {}", self.studio.alpha_name)
                     } else {
-                        "A picture…".to_string()
+                        "Add a picture…".to_string()
                     })
                     .size(theme::LABEL_SIZE),
                 )
                 .width(Length::Fill)
-                .style(if own { theme::tool_button_active } else { theme::tool_button })
+                .style(if unkept { theme::tool_button_active } else { theme::tool_button })
                 .on_press(changed(StudioMessage::StampImageRequested)),
             )
             .into()
@@ -3084,6 +3144,7 @@ mod tests {
         let mine = LoadedStamp {
             name: "mine.png".to_string(),
             alpha: Arc::new(Alpha::built_in(BuiltIn::Star)),
+            own: None,
         };
         set(&mut app, StudioMessage::StampImageLoaded(Some(Ok(mine))));
         set(&mut app, StudioMessage::StampToggled(true));
@@ -3108,6 +3169,64 @@ mod tests {
         assert_eq!(app.studio.stamp_height, 0.8);
         assert_eq!(app.studio.alpha_name, "mine.png", "the picture in hand was put down");
         assert_eq!(app.studio.built_in, None);
+    }
+
+    /// A picture of the user's own is kept and listed, and a brush kept
+    /// with it names it: taking the brush up takes that picture up again,
+    /// whatever is in hand. One the brush names and this machine has not
+    /// got leaves the picture in hand and says so. See
+    /// `app/brush_pictures.rs`.
+    #[test]
+    fn a_brush_keeps_its_own_picture_and_takes_it_up_again() {
+        let mut app = app();
+        let picture = image::DynamicImage::ImageLuma8(image::GrayImage::from_fn(16, 16, |x, _| {
+            image::Luma([if x < 8 { 0 } else { 255 }])
+        }));
+        let mut bytes = Vec::new();
+        picture.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
+        // Held for the session, as in a browser: no directory to keep it in.
+        let (name, alpha) = super::super::brush_pictures::take_in("Half lit.png", &bytes, None)
+            .expect("a PNG is a brush picture");
+        let loaded = LoadedStamp { name: name.as_str().to_string(), alpha, own: Some(name) };
+        set(&mut app, StudioMessage::StampImageLoaded(Some(Ok(loaded))));
+        assert_eq!(app.studio.own, vec![name], "the kept picture is not listed");
+        assert_eq!(app.studio.own_in_hand, Some(name));
+        drop(app.studio_panel());
+        drop(app.stroke_panel());
+
+        set(&mut app, StudioMessage::StampToggled(true));
+        set(&mut app, StudioMessage::PresetNamed("Half lit stamp".to_string()));
+        set(&mut app, StudioMessage::PresetSaved);
+        assert_eq!(
+            kept(&app, "Half lit stamp").stamp.map(|(picture, _)| picture),
+            Some(StampOf::Own(name))
+        );
+        // And it says so in its file.
+        assert!(kept(&app, "Half lit stamp").line().contains("stamp:Half lit"));
+
+        // Another picture in hand, then the brush again.
+        set(&mut app, StudioMessage::StampChosen(BuiltIn::Bar));
+        assert_eq!(app.studio.own_in_hand, None);
+        choose(&mut app, "Half lit stamp");
+        assert_eq!(app.studio.own_in_hand, Some(name), "the brush did not take its picture up");
+        assert_eq!(app.studio.built_in, None);
+        assert_eq!(app.studio.alpha_name, "Half lit");
+
+        // Chosen from the picker.
+        set(&mut app, StudioMessage::StampChosen(BuiltIn::Bar));
+        set(&mut app, StudioMessage::OwnPictureChosen(name));
+        assert_eq!(app.studio.own_in_hand, Some(name));
+
+        // A brush naming a picture this machine has not got.
+        let elsewhere = super::super::maps::MapName::new("From another machine").unwrap();
+        assert!(app.studio.presets.put(Preset {
+            stamp: Some((StampOf::Own(elsewhere), 0.5)),
+            ..Preset::plain("Borrowed")
+        }));
+        set(&mut app, StudioMessage::StampChosen(BuiltIn::Bar));
+        choose(&mut app, "Borrowed");
+        assert_eq!(app.studio.built_in, Some(BuiltIn::Bar), "the picture in hand was lost");
+        assert!(app.status.contains("no picture called From another machine"), "{}", app.status);
     }
 
     /// A drag from the middle of the view out to `pixels` and back, `times`

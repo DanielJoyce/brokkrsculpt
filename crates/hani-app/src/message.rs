@@ -359,6 +359,9 @@ pub enum StudioMessage {
     /// and the image, or why it could not be used. `None` when the dialog
     /// was dismissed.
     StampImageLoaded(Option<Result<LoadedStamp, String>>),
+    /// Take up one of the user's own kept pictures. See
+    /// `app/brush_pictures.rs`.
+    OwnPictureChosen(crate::app::MapName),
     /// Take up a brush from the palette: every setting it holds, at once.
     /// The number is its place on the palette.
     PresetChosen(usize),
@@ -670,6 +673,9 @@ pub enum OverhangMessage {
 pub struct LoadedStamp {
     pub name: String,
     pub alpha: std::sync::Arc<hani_core::brush::alpha::Alpha>,
+    /// The name it is kept under among the user's own pictures, or `None`
+    /// for one only held while it is in hand. See `app/brush_pictures.rs`.
+    pub own: Option<crate::app::MapName>,
 }
 
 /// How the paint brush is put to the model. See

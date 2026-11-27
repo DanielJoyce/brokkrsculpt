@@ -66,10 +66,11 @@
 //!
 //! # What a brush does not hold
 //!
-//! * **A stamp picture read from a file.** A brush kept with one in hand
-//!   says "the stamp, with the picture in hand" and uses whichever picture
-//!   that is when it is chosen. The pictures that come with the
-//!   application are held by name.
+//! * **A stamp picture's file.** A brush kept with one of the user's own
+//!   pictures names it, and the picture is kept beside the brushes, as a
+//!   map is (`app/brush_pictures.rs`). The pictures that come with the
+//!   application are held by name too. Only a brush written by hand, or
+//!   from before pictures were kept, says "the picture in hand".
 //! * **A surface pattern**, which is a dozen settings of its own with its
 //!   own panel.
 //! * **The paint brush's colour and touch**, which belong to the paint
@@ -117,6 +118,8 @@ pub(super) enum StampOf {
     BuiltIn(BuiltIn),
     /// Whichever picture is in hand when the preset is chosen.
     InHand,
+    /// One of the user's own, kept by name. See `app/brush_pictures.rs`.
+    Own(super::maps::MapName),
 }
 
 /// A brush as it is set up.
@@ -352,8 +355,9 @@ impl Preset {
             fields.push(format!("strength:{strength}"));
         }
         let pictured = |picture: StampOf| match picture {
-            StampOf::BuiltIn(kind) => kind.label(),
-            StampOf::InHand => IN_HAND,
+            StampOf::BuiltIn(kind) => kind.label().to_string(),
+            StampOf::InHand => IN_HAND.to_string(),
+            StampOf::Own(name) => name.as_str().to_string(),
         };
         if let Some(tip) = self.tip {
             fields.push(format!("tip:{}", pictured(tip)));
@@ -475,6 +479,16 @@ impl Preset {
                             .into_iter()
                             .find(|kind| named(kind.label()))
                             .map(StampOf::BuiltIn)
+                            // Any other name is one of the user's own
+                            // pictures, if it is one exactly as written:
+                            // a name tidied on the way in would be written
+                            // back as another. See `app/brush_pictures.rs`.
+                            .or_else(|| {
+                                super::brush_pictures::name_for(value)
+                                    .ok()
+                                    .filter(|name| name.as_str() == value)
+                                    .map(StampOf::Own)
+                            })
                     };
                     match picture {
                         Some(picture) if key == "stamp" => {
@@ -577,7 +591,7 @@ impl Preset {
     }
 
     /// The brush's line of a file.
-    fn line(&self) -> String {
+    pub(super) fn line(&self) -> String {
         format!("{} = {}\n", self.name, self.settings())
     }
 }
@@ -613,7 +627,7 @@ struct Adding {
 const OFF: &str = "off";
 
 /// How a preset's line says "the stamp, with the picture in hand".
-const IN_HAND: &str = "picture";
+pub(super) const IN_HAND: &str = "picture";
 
 /// How tall a stamp is when a line names one and gives no height: what the
 /// studio block starts at.
@@ -1171,6 +1185,17 @@ mod tests {
             made("Nothing at all", nothing),
             Preset::plain("Plain"),
             Preset { tip: Some(StampOf::InHand), ..Preset::plain("My own tip") },
+            Preset {
+                stamp: Some((
+                    StampOf::Own(super::super::maps::MapName::new("Brick wall").unwrap()),
+                    0.4,
+                )),
+                ..full("A kept picture")
+            },
+            Preset {
+                tip: Some(StampOf::Own(super::super::maps::MapName::new("bark_2").unwrap())),
+                ..Preset::plain("A kept tip")
+            },
             Preset::adding(
                 "Conduit",
                 Setup {
@@ -1338,7 +1363,14 @@ mod tests {
         // is a picture already, and Move and Paint have no tip.
         assert_eq!(read("a = tip:Star, stamp:Dome").tip, None);
         assert_eq!(read("a = brush:Paint, tip:Star").tip, None);
-        assert_eq!(read("a = tip:Cog").tip, None);
+        // Any other name is one of the user's own pictures, if it is a
+        // name a picture can be kept under.
+        assert_eq!(
+            read("a = tip:Cog").tip,
+            Some(StampOf::Own(super::super::MapName::new("Cog").unwrap()))
+        );
+        assert_eq!(read("a = tip:C?g").tip, None);
+        assert_eq!(read("a = stamp:Sc\tale").stamp, None);
         // One layer a stroke, and dabs, are a brush on the field's too.
         let layered = read("a = buildup:OFF, dabs:2");
         assert_eq!((layered.build_up, layered.dabs), (false, 2.0));
@@ -1433,7 +1465,7 @@ mod tests {
         let read = |settings: &str| Presets::parse(&format!("a = {settings}")).list.remove(0);
 
         let preset = read(
-            "brush:Chisel, size:big, strength:, falloff:9, studio:Nothing, stamp:Cog, lazy:x, \
+            "brush:Chisel, size:big, strength:, falloff:9, studio:Nothing, stamp:C?g, lazy:x, \
              pressure:NaN, height:inf, colour:red, , no colon here, :, push:hard, side:Left, \
              plateau:wide, lazy:20",
         );
@@ -1828,6 +1860,13 @@ mod tests {
             let picture = prop_oneof![
                 Just(StampOf::InHand),
                 prop::sample::select(BuiltIn::ALL.to_vec()).prop_map(StampOf::BuiltIn),
+                "[a-z][a-z0-9 _-]{0,20}[a-z0-9]"
+                    .prop_filter("not a name a brush file means something else by", |name| {
+                        crate::app::brush_pictures::name_for(name).is_ok()
+                    })
+                    .prop_map(|name| StampOf::Own(
+                        crate::app::MapName::new(&name).expect("a name")
+                    )),
             ];
             prop::option::of((picture, 0.02_f32..=1.0))
         }
