@@ -417,7 +417,7 @@ true of it too, and what it adds is this.
   so the active one can be worked on in place; choosing another row makes
   that one solid instead. See [`docs/WORKSPACES.md`](docs/WORKSPACES.md).
 - **Your sculpts are `.hani` files.** One file holds the whole document:
-  every body, the mask, the paint and its layers, the timeline. A sculpt
+  every body, the mask, the paint and its layers. A sculpt
   saved as `.brokkr` before the rename still opens, and your settings,
   brushes and autosave move across by themselves on the first start.
 - **In a browser.** The same application builds for the web and runs on

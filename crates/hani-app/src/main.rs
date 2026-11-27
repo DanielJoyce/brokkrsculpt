@@ -69,7 +69,6 @@ mod spacemouse;
 mod tablet;
 mod theme;
 mod thumbnails;
-mod timeline;
 mod ui;
 mod update;
 mod viewport;

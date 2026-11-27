@@ -15,7 +15,7 @@ use std::sync::Arc;
 use hani_core::{BrushKind, MaskFilter, PatternKind};
 use iced::widget::{
     button, checkbox, column, container, mouse_area, opaque, pick_list, rich_text, row, scrollable,
-    sensor, space, span, stack, text, text_editor, text_input,
+    space, span, stack, text, text_editor, text_input,
 };
 use iced::{Alignment, Element, Length, Padding};
 
@@ -213,7 +213,6 @@ impl Hani {
                 self.rail(),
                 column![
                     self.context_bar(),
-                    self.timeline_strip(),
                     container(scene).width(Length::Fill).height(Length::Fill)
                 ]
                 .spacing(theme::S2)
@@ -1889,100 +1888,6 @@ impl Hani {
         }
 
         block.into()
-    }
-
-    /// The timeline strip: stored views, a playhead, and a play button.
-    ///
-    /// Above the viewport rather than over it. ZBrush floats its timeline on
-    /// the canvas, which costs it a strip of the model; there is room here, and
-    /// a widget in the layout is a widget iced can hit-test for us rather than
-    /// one this file has to hit-test itself.
-    ///
-    /// Built from spacers rather than drawn, because `canvas` is behind a
-    /// feature this build does not enable and turning it on would pull a
-    /// tessellator in for four diamonds and a line. The strip's own pixel width
-    /// comes back through `sensor`, which is what turns a pointer offset into a
-    /// position along it.
-    fn timeline_strip(&self) -> Element<'_, Message> {
-        /// Height of the clickable strip.
-        const STRIP_H: f32 = 18.0;
-        /// Width of a key marker, and of the playhead.
-        const KEY_W: f32 = 7.0;
-        const HEAD_W: f32 = 2.0;
-
-        let width = self.timeline.width();
-        // Markers laid out as a row of spacers: each one is placed by the gap
-        // in front of it, so the gaps have to be *differences* along the
-        // strip. Running left to right and remembering where the last one
-        // ended is what keeps them from piling up at the origin.
-        let mut placed = 0.0_f32;
-        let mut markers = row![];
-        for (index, at) in self.timeline.positions() {
-            let centre = at * width;
-            let gap = (centre - KEY_W * 0.5 - placed).max(0.0);
-            let lit =
-                self.timeline.hovered == Some(index) || self.timeline.dragged_key() == Some(index);
-            markers = markers.push(space().width(Length::Fixed(gap))).push(
-                container(space())
-                    .width(Length::Fixed(KEY_W))
-                    .height(Length::Fixed(STRIP_H))
-                    .style(if lit { theme::timeline_key_lit } else { theme::timeline_key }),
-            );
-            placed += gap + KEY_W;
-        }
-
-        let head_x = (self.timeline.playhead * width - HEAD_W * 0.5).max(0.0);
-        let playhead = row![
-            space().width(Length::Fixed(head_x)),
-            container(space())
-                .width(Length::Fixed(HEAD_W))
-                .height(Length::Fixed(STRIP_H))
-                .style(theme::timeline_playhead),
-        ];
-
-        let track = container(space())
-            .width(Length::Fill)
-            .height(Length::Fixed(STRIP_H))
-            .style(theme::timeline_track);
-
-        let strip = mouse_area(stack![track, markers, playhead])
-            .on_move(|point| Message::TimelineHover(point.x))
-            .on_press(Message::TimelinePressed)
-            .on_release(Message::TimelineReleased)
-            // A drag that leaves the strip has to let go of its key, because
-            // `on_release` only fires while the pointer is still over it.
-            .on_exit(Message::TimelineLeft)
-            .on_right_press(Message::TimelineRemoveKey);
-
-        let (play_style, play_ink) = theme::tool_toggle(self.timeline.playing);
-        let play = crate::ui::tip(
-            button(icon::icon(
-                if self.timeline.playing { icon::IconName::Stop } else { icon::IconName::Play },
-                theme::ICON_CHROME,
-                play_ink,
-            ))
-            .padding(Padding { top: 1.0, right: 6.0, bottom: 1.0, left: 6.0 })
-            .style(play_style)
-            .on_press_maybe(
-                (self.timeline.keys.len() >= 2).then_some(Message::TimelinePlayToggled),
-            ),
-            if self.timeline.playing { "Stop" } else { "Play the stored views" },
-        );
-
-        row![
-            play,
-            // What a press does on the strip, on hover rather than as a
-            // caption beside it.
-            crate::ui::tip(
-                sensor(strip)
-                    .on_show(|size| Message::TimelineResized(size.width))
-                    .on_resize(|size| Message::TimelineResized(size.width)),
-                "Click to store this view. Drag a key to re-time it, right click to remove it",
-            ),
-        ]
-        .spacing(theme::S2)
-        .align_y(Alignment::Center)
-        .into()
     }
 
     /// SpaceMouse settings, plus the live readout.
