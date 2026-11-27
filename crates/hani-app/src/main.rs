@@ -44,7 +44,9 @@ mod links;
 #[cfg(target_os = "linux")]
 mod input_watch;
 mod logo;
+// Vector displacement maps' OpenEXR files, read without the `exr` crate.
 mod message;
+mod openexr;
 // The printer's and the updater's requests, without an HTTP library. Not in a
 // browser, which makes neither.
 mod navcube;

@@ -50,13 +50,12 @@ rayon.workspace = true
 serde_json = "1.0.151"
 rfd.workspace = true
 wgpu.workspace = true
-# Vector displacement maps (app/maps.rs): the files other programs write
-# them in are OpenEXR, and nothing already here reads one. Taken directly
-# and with no default features. Measured against this lockfile: +7 crates
-# (exr, lebe, bit_field, zune-inflate, and multiversion with its macro
-# crate and target-features), where `image/exr` was turned down above as
-# part of `image/default` and its 72.
-exr = { version = "1.74.3", default-features = false }
+# Vector displacement maps (app/maps.rs) are OpenEXR files, read by our own
+# reader (`src/openexr.rs`), which inflates ZIP chunks with miniz_oxide:
+# already here through png, so no new crate. It replaced `exr` and its six
+# on 2026-11-27 (`docs/DEPENDENCIES.md`, proposal 6); `exr` stays as a
+# dev-dependency, below, to write the test files.
+miniz_oxide = "0.8"
 web-time.workspace = true
 
 # Native only: the folders settings live in, the updater, the bug report's
@@ -131,6 +130,11 @@ hani-evdev.workspace = true
 # workspace dependency and already compiled for `hani-gpu`'s own tests.
 [dev-dependencies]
 pollster.workspace = true
+# Writes the OpenEXR files the reader is tested against, in every
+# compression, so the reader is held to another implementation's output and
+# not only to its own idea of the format. Tests only: none of it is in the
+# application.
+exr = { version = "1.74.3", default-features = false }
 # Property tests, as in `hani-core`: what a brush kept in a file comes back
 # as, whatever the brush. Zero new crates, for the same reason as above.
 proptest.workspace = true

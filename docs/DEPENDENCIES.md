@@ -276,6 +276,25 @@ devices, so the end-to-end test (a virtual pen made, opened, read back and
 an event read) skips here, as the readers' own uinput tests do; it wants
 running on a Linux machine with `/dev/uinput` before a release.
 
+**Proposal 6, OpenEXR**, 2026-11-27: `hani-app/src/openexr.rs`, our own,
+on `miniz_oxide` (already in the graph through PNG). It reads a
+single-part file, scanline or tiled (the full-size level of a mipmapped
+or ripmapped one), in half, float or uint samples, uncompressed, RLE, ZIPS
+or ZIP, and takes the first layer with red, green and blue as before. PIZ,
+PXR24, B44 and DWA are refused by name, with "save the map with ZIP" in
+the message; so are deep and multi-part files. Every half is checked
+against the `half` crate's conversion, all 65,536 of them. `exr` stays as
+a dev-dependency, which is why the lockfile does not shrink: the tests
+write pictures with it in every compression we read, as lines, in 16 and
+64 pixel tiles, in half and float, and read them back; a property test
+round-trips random pictures, and another feeds damaged files and wants a
+refusal, never a panic. Measured after: Linux 251 to 244, Windows 213 to
+206, macOS 209 to 205, browser 165 to 161; the lockfile unchanged at 413.
+Not checked: what ZBrush, Mudbox and Blender write for a vector
+displacement map. No such file is in the repository and none was made
+here; if one comes in PIZ, the refusal says what to do, and PIZ is the
+compression to add next.
+
 ## Not done
 
 Compile time and binary size per crate were not measured. The Windows and macOS numbers are counts from the
