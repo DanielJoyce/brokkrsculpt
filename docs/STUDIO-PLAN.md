@@ -34,7 +34,7 @@ was built and what was measured.
 | Web version | **Runs, and opens and saves**, 2026-11-26: [`WEB.md`](WEB.md). Not in the first plan; asked for by the maintainer | The application in a browser on WebGPU, sculpting included, published to GitHub Pages from `main` through the `pages` branch. *Save* keeps a sculpt in the browser's IndexedDB, *Sculpts in this browser…* lists them to open, download or delete, *Save to computer* and every export download a file, and *Open…* and *Import and replace…* read one from the computer. It runs on one core and has no autosave |
 | Help | **Done**, 2026-11-26. Not in the first plan; asked for by the maintainer | A **?** in the title bar, before the window buttons, and *Help* in the Help menu, open a card of three pages kept as Markdown in `docs/help/`: *What it is*, *Getting around* and *How it works*, one a tab, with links between them. A search box finds the parts of every page that hold every word typed, and a result opens its page. Every heading of the panel, and each tab of the help, says what it is for when the pointer rests on it. The welcome screen and *What it is* link to the repository |
 | Snip and report | **Done** on the desktop, 2026-11-26. Not in the first plan; asked for by the maintainer | **Ctrl ?**, or Help, *Snip and report…*: the window frozen, a part of it dragged out, drawn on in orange, white or black, a title and a comment, then *Copy picture*, *Save picture…* or *Open an issue on GitHub*, which opens the new-issue page with the title and comment in it and the picture on the clipboard (`app/snip.rs`). Not in a browser, where iced's screenshot cannot read the frame back |
-| Timeline removed | **Done**, 2026-11-27, at the maintainer's word (*"Pull it out"*). Upstream's, from 2026-08-25 | Nothing above the viewport now. The strip of stored views and its play button are gone; a file saved with keys opens with them dropped, and a save writes the keys' trailer empty, so older builds read it |
+| Timeline removed | **Done**, 2026-11-27, at the maintainer's word (*"Pull it out"*). Upstream's, from 2026-08-25 | Nothing above the viewport now. The strip of stored views and its play button are gone; a file saved with keys opens with them dropped. The `.hani` layout went to version 4 the same day, with no key trailer: older files still open, and an older build refuses a new file by its version |
 | Performance | **Under way**, since 2026-11-24. Not a milestone of this plan: its tickets, its measurements and what each change did are in [`PERFORMANCE.md`](PERFORMANCE.md) | Two lines of phase timings behind the Info toggle, and a stroke that can be recorded and replayed for a table of what it cost |
 
 On numbers: every figure is either **sourced** (a `file:line` in this
@@ -1144,7 +1144,9 @@ bytes `BRKPAINT`, a length, the table. Written only when the document has
 paints, so a file without them is byte for byte what upstream writes and
 `CONTAINER_VERSION` did not move. (Bumping it to 4 with a mandatory trailer
 was tried first and broke 28 of upstream's project tests, which pin the
-bytes.) The reader is forgiving in one direction only: a damaged paint table
+bytes.) Version 4 came later, on 2026-11-27, for another reason: the
+timeline was taken out and its keys with it, so the paint tag now follows
+the last body's streams directly. The reader is forgiving in one direction only: a damaged paint table
 gives back the sculpt with no paints, and never refuses the file. It has a
 mutation fuzz with a control.
 

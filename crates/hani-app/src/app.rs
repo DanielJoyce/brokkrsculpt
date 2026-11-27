@@ -7042,13 +7042,7 @@ impl Hani {
     /// Shared by the explicit save and the autosave so the two cannot record
     /// different things.
     fn project_state(&self) -> hani_core::ProjectState {
-        hani_core::ProjectState {
-            view: self.current_view(),
-            // The timeline was taken out on 2026-11-27; a file keeps its
-            // trailer, empty, so older builds still read what this writes.
-            keys: Vec::new(),
-            paints: self.doc.paints().clone(),
-        }
+        hani_core::ProjectState { view: self.current_view(), paints: self.doc.paints().clone() }
     }
 
     /// What a `.hani` file stores beside the sculpt, so a reopen comes back to
@@ -7321,9 +7315,6 @@ impl Hani {
         // `select_body`.
         self.status = format!("opened {}", path.display());
         self.apply_view(&state.view);
-        // A file from when there was a timeline opens with its keys
-        // dropped: they were views, not part of the sculpt.
-        drop(state.keys);
         self.doc.replace_paints(state.paints);
         // Painted by filament slot, from before slot painting was taken
         // out: its slots laid into its colour paint. See
@@ -17226,42 +17217,6 @@ mod export_tests {
             "the cap should be reported: {}",
             app.status
         );
-    }
-}
-
-/// The timeline was taken out on 2026-11-27. A file saved with keys still
-/// opens, its view is put back, and a save of it writes no keys.
-#[cfg(test)]
-mod timeline_gone_tests {
-    use super::*;
-
-    #[test]
-    fn a_file_saved_with_timeline_keys_opens_and_saves_without_them() {
-        let directory =
-            std::env::temp_dir().join(format!("hani-timeline-gone-{}", std::process::id()));
-        std::fs::create_dir_all(&directory).unwrap();
-        let with_keys = directory.join("with-keys.hani");
-
-        let mut app = Hani::with_tablet(crate::tablet::Tablet::inert());
-        let mut state = app.project_state();
-        state.view.camera_yaw = 1.25;
-        let key = hani_core::Keyframe { at: 0.5, view: state.view };
-        state.keys = vec![key, hani_core::Keyframe { at: 0.9, ..key }];
-        let mut bytes = Vec::new();
-        hani_core::project::write(&mut bytes, &app.doc, &state).unwrap();
-        std::fs::write(&with_keys, &bytes).unwrap();
-
-        app.open_project(&with_keys);
-        assert!(app.status.starts_with("opened"), "it did not open: {}", app.status);
-        assert!((app.camera.yaw - 1.25).abs() < 1.0e-6, "the saved view was not put back");
-
-        let resaved = directory.join("resaved.hani");
-        app.save_project(&resaved);
-        let (_, reread) =
-            hani_core::project::read(&mut std::fs::File::open(&resaved).unwrap()).unwrap();
-        assert!(reread.keys.is_empty(), "a save still wrote timeline keys");
-
-        let _ = std::fs::remove_dir_all(&directory);
     }
 }
 

@@ -23,17 +23,17 @@
 //! cap checked before anything is read, and never trusting a number from inside
 //! the file without bounding it first.
 //!
-//! # The exact layout, at container version 3
+//! # The exact layout, at container version 4
 //!
 //! ```text
 //!  0..8    MAGIC  b"HANISC\x00\x01" (b"BROKKR\x00\x01" before the rename, still read)
-//!  8..10   container u16 LE = 3
+//!  8..10   container u16 LE = 4
 //! 10..12   field     u16 LE            a RANGE, see `OLDEST_FIELD_VERSION`
 //! 12..16   BRICK_DIM u32 LE            refused on mismatch
 //! 16..20   NARROW_BAND f32 LE          refused on mismatch
 //! 20..24   voxel_size f32 LE           DOCUMENT-wide: bodies share the lattice
 //! 24..63   View, 39 bytes
-//! --- version 3 begins here; a version 1 or 2 file has the u64 brick count at 63
+//! --- versions 3 and 4 begin here; a version 1 or 2 file has the u64 brick count at 63
 //! 63..67   node_count   u32 LE   1 ..= MAX_NODES
 //! 67..71   active_index u32 LE   an index into the table; must name a body
 //! 71..     node_count records of EXACTLY NODE_RECORD_BYTES, in PREORDER
@@ -41,9 +41,13 @@
 //!          brick_count u64 LE, then that many brick records
 //!          then, at field version 2 and later ONLY, that body's mask stream
 //!          mask_flags u8, mask_count u64 LE, then that many mask records
-//! --- then the key trailer, LAST
-//!          key_count u32 LE, then 43 bytes per key
+//! --- then the optional tagged sections (paints, paint, layers), each
+//!          behind a tag of its own, and only where the document has some
 //! ```
+//!
+//! Versions 2 and 3 had the timeline's key trailer between the last body and
+//! the tags: `key_count u32 LE`, then 43 bytes per key. Version 4 dropped it
+//! with the timeline; the reader still steps over it in an older file.
 //!
 //! **Bytes 0..63 are byte for byte what version 2 wrote**, which is what lets
 //! every header offset the tests hardcode go on aiming at what it names. New
@@ -112,15 +116,17 @@ const LEGACY_MAGIC: &[u8; 8] = b"BROKKR\x00\x01";
 ///
 /// 2 added the timeline key trailer after the brick stream. 3 added the node
 /// table between the view and the geometry, and made the brick stream one
-/// stream per body. Neither bump had to orphan the files already written, and
-/// neither did: see [`OLDEST_CONTAINER_VERSION`].
+/// stream per body. 4 took the key trailer back out, with the timeline, on
+/// 2026-11-27: the optional tagged sections now follow the last body's
+/// streams directly. None of the bumps orphaned the files already written:
+/// see [`OLDEST_CONTAINER_VERSION`].
 ///
 /// **Folders do not bump this.** They widen the legal range of two bytes that
 /// version 3 already reserves in every node record, which is the whole reason
 /// those two bytes are reserved rather than absent.
-const CONTAINER_VERSION: u16 = 3;
+const CONTAINER_VERSION: u16 = 4;
 
-/// What marks a paint table after the key trailer.
+/// What marks a paint table after the last body's streams.
 ///
 /// **The table is not part of the container's layout and does not bump its
 /// version**, and that is a decision made the hard way. The first attempt
@@ -130,10 +136,9 @@ const CONTAINER_VERSION: u16 = 3;
 ///
 /// So the table is an OPTIONAL tail, present only in a document that has
 /// paints, behind a tag of its own. A document without paints is written
-/// byte for byte as it always was. A reader that predates paints stops after
-/// the keys, where it always stopped, and opens the file with its slots
-/// drawn as filaments. And a file from before paints has nothing after its
-/// keys, which this reader takes as no table.
+/// byte for byte as it always was. A file from before paints has nothing
+/// after its geometry (and, at versions 2 and 3, its keys), which this reader
+/// takes as no table.
 const PAINT_TAG: &[u8; 8] = b"HANPAINT";
 
 /// The tag a paint table had before the name was HaniSculpt. Read, never
@@ -150,7 +155,8 @@ const MAX_PAINT_TABLE_BYTES: u32 = 16 * 1024;
 /// The oldest layout this build still reads.
 ///
 /// Version 1 is version 2 without the key trailer, so reading one is a matter
-/// of not looking for the trailer. Version 2 is version 3 without the node
+/// of not looking for the trailer; version 4 is version 3 without it, the
+/// same again. Version 2 is version 3 without the node
 /// table, so reading one is a matter of synthesizing a single default body --
 /// which is a different shape but still no conversion and still one geometry
 /// loop. This exists because the alternative was refusing every `.hani` file
@@ -352,13 +358,15 @@ fn charge(total: &mut u64, bytes: u64, limit: u64) -> Result<()> {
 /// A corrupt file is what reaches it.
 const MAX_BRICK_COORD: i32 = (i32::MAX - (BRICK_DIM as i32 - 1)) / BRICK_DIM as i32;
 
-/// Most timeline keys a file may carry.
+/// Most timeline keys a version 2 or 3 file may claim.
 ///
-/// A ceiling rather than a limit anyone should meet: the strip is a few hundred
-/// pixels wide, so a thousand keys is already more than one per pixel. It is
-/// here for the same reason [`MAX_BRICKS`] is -- a count read out of a file
-/// decides an allocation, and a corrupt one should not decide a large one.
+/// The keys are skipped, not kept: the timeline was taken out at version 4.
+/// The ceiling stays because a count read out of a file still decides how far
+/// the reader walks, and a corrupt one should be refused rather than walked.
 const MAX_KEYS: u32 = 1024;
+
+/// The last container version that carries the key trailer.
+const LAST_VERSION_WITH_KEYS: u16 = 3;
 
 /// Bytes in one node record, and it is FIXED at forty.
 ///
@@ -493,18 +501,11 @@ const RESERVED_MASK_FLAGS: u8 = !MASK_FLAG_INVERTED;
 /// readable but whose settings are nonsense should still load its geometry, so
 /// every one of these is clamped on read rather than trusted.
 ///
-/// Its own type because two things restore it: reopening a file, and jumping to
-/// a timeline key. Keeping them one type is what stops a key from quietly
-/// restoring less than a reopen does when a field is added here.
-///
 /// # Solo does not belong here, and this is where a careful reader will put it
 ///
 /// Solo looks like a view setting, and it is a view MODE -- which is not the
-/// same thing. Both of the two things that restore this type would then restore
-/// it: reopening a file would bring back a mode the user left an hour ago, and
-/// jumping to a timeline key would change *which bodies exist on screen*, so
-/// playback would flicker them in and out against the pinned rule that playback
-/// moves the camera and nothing else. Solo lives on `Hani` and reaches
+/// same thing. Reopening a file would bring back a mode the user left an hour
+/// ago. Solo lives on `Hani` and reaches
 /// [`crate::resolve_visibility`] as a parameter; [`write`] takes a `&Document`
 /// and a `&ProjectState` and solo is a field of neither, so there is no
 /// expression that can hand it to the writer. That is not discipline -- the
@@ -537,31 +538,12 @@ impl Default for View {
     }
 }
 
-/// One stored view on the timeline.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Keyframe {
-    /// Where along the strip it sits, from 0 at the left to 1 at the right.
-    ///
-    /// A position rather than a duration, because the strip is a fixed length
-    /// a user drags keys around on. What that length means in seconds is the
-    /// application's business, not the file's.
-    pub at: f32,
-    pub view: View,
-}
-
 /// Everything about a session that is worth reopening into, beyond the field
 /// itself.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ProjectState {
     /// Where things were when the file was saved.
     pub view: View,
-    /// Timeline keys, in ascending `at` order.
-    ///
-    /// Held sorted rather than sorted on use, because everything that reads
-    /// them wants neighbours -- the pair a playhead sits between, the key
-    /// nearest a click -- and a list that is sorted only sometimes makes every
-    /// one of those a bug waiting for the one caller that forgot.
-    pub keys: Vec<Keyframe>,
     /// The document's paints: what each painted slot means. See
     /// [`crate::paint`]. Empty for a document that only uses filaments.
     ///
@@ -739,7 +721,7 @@ pub enum ProjectError {
         found: [i32; 3],
         limit: i32,
     },
-    /// More timeline keys than [`MAX_KEYS`].
+    /// A version 2 or 3 file claims more timeline keys than [`MAX_KEYS`].
     TooManyKeys {
         keys: u32,
         limit: u32,
@@ -890,8 +872,8 @@ fn read_vec3(input: &mut impl Read) -> Result<Vec3> {
 
 /// Write the camera and brush settings.
 ///
-/// One function for both the session's own view and every timeline key, so the
-/// two can never store different things. Adding a field here adds it to both.
+/// A version 2 or 3 file's timeline keys hold one each too, which is how the
+/// reader steps over them: see [`read_understanding_field_versions_to`].
 fn write_view(out: &mut impl Write, view: &View) -> Result<()> {
     write_vec3(out, view.camera_target)?;
     write_f32(out, view.camera_distance)?;
@@ -1009,19 +991,9 @@ fn write_head(
     Ok(())
 }
 
-/// Everything after the last body's streams: the keys, and the paints where
-/// there are any.
+/// Everything after the last body's streams: the paints where there are
+/// any. Since version 4 there is no key trailer before them.
 fn write_tail(out: &mut impl Write, doc: &Document, state: &ProjectState) -> Result<()> {
-    // The key trailer, after the bricks rather than in the header. A version 1
-    // file is exactly this file without it, which is what lets one still be
-    // read: the brick counts say where the geometry ends, and there is simply
-    // nothing after it.
-    write_u32(out, state.keys.len() as u32)?;
-    for key in &state.keys {
-        write_f32(out, key.at)?;
-        write_view(out, &key.view)?;
-    }
-
     // The paint table, only where there is one. See `PAINT_TAG` for why a
     // document without paints must not gain a byte here.
     if !state.paints.is_empty() {
@@ -1151,7 +1123,7 @@ fn active_index(doc: &Document) -> usize {
 /// `flags = 1/0, kind = 0, depth = 0` -- correct, bit for bit. Reverse `kind`
 /// and `flags` and a visible body's `flags = 1` reads as `kind = 1`, a folder:
 /// every body becomes an empty folder with no brick stream, and the reader then
-/// takes the first body's brick count as the key trailer's key count. That is a
+/// takes the first body's brick count as whatever follows the streams. That is a
 /// plausible-looking sculpt made of misread numbers under an unchanged version
 /// number, which is the exact failure the lattice check exists to prevent.
 /// Someone will want to tidy this into `kind, depth, flags`; this comment is
@@ -1339,7 +1311,7 @@ fn read_header(input: &mut impl Read, newest_field: u16) -> Result<Header> {
 /// holds.
 ///
 /// **This is the whole of the compatibility branch**, and it has the shape of
-/// the one already above it for the key trailer. A version 1 or 2 file carries
+/// the one below it for the key trailer. A version 1 or 2 file carries
 /// no table, so what it holds is one default body -- and the brick loop below
 /// then runs exactly once, reading the u64 at byte 63 exactly as it always did.
 fn read_table_or_synthesize(
@@ -1532,11 +1504,7 @@ fn read_understanding_field_versions_to(
     newest_field: u16,
 ) -> Result<(Document, ProjectState)> {
     let header = read_header(input, newest_field)?;
-    let mut state = ProjectState {
-        view: header.view,
-        keys: Vec::new(),
-        paints: crate::paint::PaintTable::default(),
-    };
+    let mut state = ProjectState { view: header.view, paints: crate::paint::PaintTable::default() };
 
     let (rows, active) = read_table_or_synthesize(input, header.container, progress)?;
 
@@ -1586,25 +1554,20 @@ fn read_understanding_field_versions_to(
         loaded.push((row.meta, Some(volume)));
     }
 
-    // The key trailer, which only version 2 and later carry. A version 1 file
-    // ends with its last brick, and reading one is a matter of not looking.
-    if header.container >= 2 {
+    // The timeline's key trailer, which only versions 2 and 3 carry, stepped
+    // over: the timeline was taken out at version 4. Each key is a position
+    // and a view, read and dropped, so a damaged one fails here as it always
+    // did rather than misaligning the paint after it. A version 1 file ends
+    // with its last brick, and a version 4 one goes straight on to its tags.
+    if (2..=LAST_VERSION_WITH_KEYS).contains(&header.container) {
         let count = read_u32(input)?;
         if count > MAX_KEYS {
             return Err(ProjectError::TooManyKeys { keys: count, limit: MAX_KEYS });
         }
-        state.keys.reserve(count as usize);
         for _ in 0..count {
-            let at = read_f32(input)?;
-            // Repaired rather than refused, like the view itself: a key at a
-            // nonsense position is a key in the wrong place, not a reason to
-            // lose the sculpt it was saved beside.
-            let at = if at.is_finite() { at.clamp(0.0, 1.0) } else { 0.0 };
-            state.keys.push(Keyframe { at, view: read_view(input)? });
+            read_f32(input)?;
+            read_view(input)?;
         }
-        // Sorted on the way in, because everything downstream asks for
-        // neighbours and a file is free to have been written by anything.
-        state.keys.sort_by(|a, b| a.at.partial_cmp(&b.at).expect("clamped, so no NaN"));
     }
 
     // The paint table, if the file goes on. Everything here is forgiving, on
@@ -1904,23 +1867,34 @@ mod tests {
         Document::from_volume(volume)
     }
 
-    /// Bytes the key trailer occupies when there are no keys: just its count.
-    ///
-    /// Several tests below reach for the *last brick value*, which used to mean
-    /// the last four bytes of the file. Since version 2 the file ends with the
-    /// key trailer instead, so they have to step back over it. Named rather
-    /// than written as a bare 4, because when the trailer grows every one of
-    /// them has to move with it.
+    /// Bytes an empty key trailer took in a version 2 or 3 file: its count.
     const EMPTY_TRAILER_BYTES: usize = 4;
+
+    /// Bytes one key took in a version 2 or 3 file: its position and a view.
+    const KEY_BYTES: usize = 4 + 39;
+
+    /// The key trailer a version 2 or 3 file carried after its geometry.
+    ///
+    /// Written here rather than by the writer, which no longer has keys to
+    /// write; the bytes are what `write_tail` wrote before version 4.
+    fn key_trailer(keys: &[(f32, View)]) -> Vec<u8> {
+        let mut out = Vec::new();
+        write_u32(&mut out, keys.len() as u32).unwrap();
+        for (at, view) in keys {
+            write_f32(&mut out, *at).unwrap();
+            write_view(&mut out, view).unwrap();
+        }
+        out
+    }
 
     /// Where the final brick's last distance value starts.
     ///
     /// **Single body and folder free**, like [`first_brick_at`]: it assumes the
-    /// file ends with one body's last brick and then the empty trailer. Add a
+    /// file ends with one body's last brick. Add a
     /// second body to a fixture that uses this and it aims into that body
     /// rather than the first, silently.
     fn last_distance_at(bytes: &[u8]) -> usize {
-        bytes.len() - EMPTY_TRAILER_BYTES - 4
+        bytes.len() - 4
     }
 
     /// Where the first brick's coordinate starts, found by measuring the header
@@ -1935,12 +1909,12 @@ mod tests {
     /// answer is where the FIRST body's stream begins. A future test that adds
     /// a folder or a second body to the shared fixture gets a silently wrong
     /// offset and a passing assertion, not a failure. It also does not
-    /// self-adjust for anything appended AFTER the bricks -- see
-    /// `EMPTY_TRAILER_BYTES`.
+    /// self-adjust for anything appended AFTER the bricks, of which a version 4
+    /// file with no paint has none.
     fn first_brick_at() -> usize {
         let mut empty = Vec::new();
         write(&mut empty, &Document::new(0.5), &ProjectState::default()).expect("write failed");
-        empty.len() - EMPTY_TRAILER_BYTES
+        empty.len()
     }
 
     /// Where the node table begins: the whole of the version 1 and 2 header.
@@ -2020,7 +1994,6 @@ mod tests {
                 brush_strength: 0.33,
                 mirror: [true, false, true],
             },
-            keys: Vec::new(),
             ..ProjectState::default()
         };
         let (_, loaded) = round_trip(&sculpted_doc(), &state);
@@ -2591,47 +2564,6 @@ mod tests {
         }
     }
 
-    fn a_key(at: f32, distance: f32) -> Keyframe {
-        Keyframe {
-            at,
-            view: View {
-                camera_distance: distance,
-                camera_yaw: at * 2.0,
-                mirror: [at > 0.5, false, true],
-                ..View::default()
-            },
-        }
-    }
-
-    #[test]
-    fn timeline_keys_survive_a_round_trip_in_order() {
-        let state = ProjectState {
-            view: View { camera_distance: 77.0, ..View::default() },
-            keys: vec![a_key(0.0, 10.0), a_key(0.25, 20.0), a_key(0.9, 30.0)],
-            ..ProjectState::default()
-        };
-        let (_, loaded) = round_trip(&sculpted_doc(), &state);
-        assert_eq!(loaded, state, "the keys did not come back as they went in");
-    }
-
-    #[test]
-    fn keys_written_out_of_order_come_back_sorted() {
-        // The file is a stream of bytes and anything may have written it, so
-        // the invariant `ProjectState::keys` documents -- ascending `at` -- has
-        // to be established on read rather than assumed of the writer.
-        let state = ProjectState {
-            view: View::default(),
-            keys: vec![a_key(0.8, 1.0), a_key(0.1, 2.0), a_key(0.5, 3.0)],
-            ..ProjectState::default()
-        };
-        let (_, loaded) = round_trip(&sculpted_doc(), &state);
-        let order: Vec<f32> = loaded.keys.iter().map(|key| key.at).collect();
-        assert_eq!(order, vec![0.1, 0.5, 0.8]);
-        // And each key kept its own view rather than merely its position.
-        assert_eq!(loaded.keys[0].view.camera_distance, 2.0);
-        assert_eq!(loaded.keys[2].view.camera_distance, 1.0);
-    }
-
     /// The one that matters most about the version bumps: every `.hani` file
     /// already written is a version 1 or 2 file, and there are real ones on
     /// disk.
@@ -2646,17 +2578,15 @@ mod tests {
         let bricks = doc.active_volume().brick_coords().count();
         let state = ProjectState {
             view: View { camera_distance: 55.0, brush_radius: 7.0, ..View::default() },
-            keys: Vec::new(),
             ..ProjectState::default()
         };
         let mut bytes = Vec::new();
         write(&mut bytes, &doc, &state).expect("write failed");
-        let bytes = as_older_container(1, bytes);
+        let bytes = as_older_container(1, bytes, &[]);
 
         let (loaded, loaded_state) =
             read(&mut bytes.as_slice()).expect("a version 1 file was refused");
         assert_eq!(loaded_state.view, state.view, "the old file's settings came back wrong");
-        assert!(loaded_state.keys.is_empty(), "a file with no trailer gained keys");
         assert_eq!(
             loaded.active_volume().brick_coords().count(),
             bricks,
@@ -2692,14 +2622,11 @@ mod tests {
     }
 
     #[test]
-    fn an_absurd_key_count_is_refused_before_anything_is_read() {
+    fn an_absurd_key_count_in_an_old_file_is_refused_before_anything_is_walked() {
         let mut bytes = Vec::new();
         write(&mut bytes, &sculpted_doc(), &ProjectState::default()).expect("write failed");
+        let mut bytes = as_older_container(2, bytes, &[]);
         let at = bytes.len() - EMPTY_TRAILER_BYTES;
-        // Bounded rather than written as `bytes[at..]`, which is the same four
-        // bytes today and a slice-length *panic* the moment the trailer grows
-        // -- and a panic here would read as this test having found a bug rather
-        // than as the test needing to move with the trailer.
         bytes[at..at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
         match read(&mut bytes.as_slice()) {
             Err(ProjectError::TooManyKeys { keys, limit }) => {
@@ -2711,46 +2638,54 @@ mod tests {
         }
     }
 
+    /// A version 3 file, the layout before the timeline came out, opens with
+    /// its keys stepped over and the paint table after them still read.
+    ///
+    /// Made from this build's own output with the stamp set back to 3 and a
+    /// two-key trailer put where version 3 had it, between the last body's
+    /// streams and the paint table's tag.
     #[test]
-    fn a_key_at_a_nonsense_position_is_repaired_rather_than_refused() {
-        // Keys are conveniences like the camera is. A key in the wrong place
-        // is not a reason to lose the sculpt saved beside it -- but it does
-        // have to land somewhere on the strip, or it is a key nothing can
-        // reach.
-        for offending in [f32::NAN, f32::INFINITY, -5.0, 900.0] {
-            let state = ProjectState {
-                view: View::default(),
-                keys: vec![Keyframe { at: offending, view: View::default() }],
-                ..ProjectState::default()
-            };
-            let (_, loaded) = round_trip(&sculpted_doc(), &state);
-            let at = loaded.keys[0].at;
-            assert!(
-                (0.0..=1.0).contains(&at),
-                "a key written at {offending} came back at {at}, which is off the strip"
-            );
-        }
+    fn a_version_3_file_with_keys_and_paints_opens_without_the_keys() {
+        let mut paints = crate::paint::PaintTable::default();
+        paints.add(crate::paint::Paint::flat("Ochre", [200, 140, 60]));
+        let state = ProjectState { view: View { camera_yaw: 1.5, ..View::default() }, paints };
+        let doc = sculpted_doc();
+        let mut bytes = Vec::new();
+        write(&mut bytes, &doc, &state).expect("write failed");
+
+        let tag_at = bytes
+            .windows(PAINT_TAG.len())
+            .position(|window| window == PAINT_TAG)
+            .expect("a document with paints wrote no paint table");
+        let keys = [
+            (0.25, View { camera_distance: 10.0, ..View::default() }),
+            (0.75, View { camera_target: Vec3::splat(f32::NAN), ..View::default() }),
+        ];
+        bytes.splice(tag_at..tag_at, key_trailer(&keys));
+        bytes[MAGIC.len()..MAGIC.len() + 2].copy_from_slice(&3u16.to_le_bytes());
+
+        let (loaded, loaded_state) =
+            read(&mut bytes.as_slice()).expect("a version 3 file with keys was refused");
+        assert_eq!(loaded_state, state, "the view or the paints did not come back past the keys");
+        assert_same_document(&doc, &loaded);
     }
 
+    /// A version 4 file carries nothing after its geometry where there is no
+    /// paint: not an empty key trailer, not a byte.
     #[test]
-    fn a_key_with_a_nonsense_view_is_repaired_the_way_the_session_view_is() {
-        // The repair lives in `read_view`, which both go through, so this is
-        // really asserting that they still do.
-        let state = ProjectState {
-            view: View::default(),
-            keys: vec![Keyframe {
-                at: 0.5,
-                view: View {
-                    camera_target: Vec3::splat(f32::NAN),
-                    camera_distance: f32::INFINITY,
-                    ..View::default()
-                },
-            }],
-            ..ProjectState::default()
-        };
-        let (_, loaded) = round_trip(&sculpted_doc(), &state);
-        assert!(loaded.keys[0].view.camera_target.is_finite());
-        assert!(loaded.keys[0].view.camera_distance.is_finite());
+    fn a_version_4_file_ends_with_its_last_brick() {
+        let mut bytes = Vec::new();
+        write(&mut bytes, &sculpted_doc(), &ProjectState::default()).expect("write failed");
+        assert_eq!(u16::from_le_bytes([bytes[8], bytes[9]]), 4);
+        let (doc, _) = read(&mut bytes.as_slice()).expect("this build refused its own file");
+        let mut again = Vec::new();
+        write(&mut again, &doc, &ProjectState::default()).expect("write failed");
+        assert_eq!(bytes, again);
+        assert_eq!(
+            mask_stream_at(&bytes, 1),
+            bytes.len(),
+            "something follows the last brick, where a version 3 file had its key count"
+        );
     }
 
     /// The reach the error variant cannot express, pinned as its own case.
@@ -2893,8 +2828,8 @@ mod tests {
 
         assert_eq!(
             u16::from_le_bytes([empty[8], empty[9]]),
-            3,
-            "this build no longer writes container version 3"
+            4,
+            "this build no longer writes container version 4"
         );
         assert_eq!(
             NODE_TABLE_AT, 63,
@@ -2904,7 +2839,7 @@ mod tests {
         // u64 brick count.
         assert_eq!(first_brick_at(), NODE_TABLE_AT + 4 + 4 + NODE_RECORD_BYTES + 8);
         // The whole of an empty single-body file, to the byte.
-        assert_eq!(empty.len(), 123);
+        assert_eq!(empty.len(), 119);
 
         assert_eq!(u32::from_le_bytes(empty[63..67].try_into().unwrap()), 1, "one row");
         assert_eq!(u32::from_le_bytes(empty[67..71].try_into().unwrap()), 0, "the first row");
@@ -2954,7 +2889,6 @@ mod tests {
         let doc = three_bodies();
         let state = ProjectState {
             view: View { camera_distance: 12.0, ..View::default() },
-            keys: vec![a_key(0.4, 9.0)],
             ..ProjectState::default()
         };
 
@@ -3810,7 +3744,7 @@ mod tests {
             .checked_sub(1)
             .and_then(|_| {
                 // The dense tag is the last byte before 32,768 slot bytes.
-                bytes.len().checked_sub(COLOUR_BRICK_BYTES + EMPTY_TRAILER_BYTES + 1)
+                bytes.len().checked_sub(COLOUR_BRICK_BYTES + 1)
             })
             .expect("the file is shorter than one dense colour brick");
         assert_eq!(bytes[tag_at], TAG_COLOUR_DENSE, "the tag is not where this test looked");
@@ -3848,15 +3782,15 @@ mod tests {
             "an unmasked document was stamped with the mask encoding"
         );
         assert_eq!(
-            mask_stream_at(&bytes, 1) + EMPTY_TRAILER_BYTES,
+            mask_stream_at(&bytes, 1),
             bytes.len(),
-            "there are bytes between the last brick and the key trailer, which at field \
-             version 1 there cannot be"
+            "there are bytes after the last brick, which at field version 1 with no paint \
+             there cannot be"
         );
 
-        // And the empty document is still the 123 bytes every offset in this
+        // And the empty document is still the 119 bytes every offset in this
         // module is measured against.
-        assert_eq!(first_brick_at() + EMPTY_TRAILER_BYTES, 123);
+        assert_eq!(first_brick_at(), 119);
     }
 
     /// A masked document is stamped 2, and the stream is the nine bytes plus
@@ -4193,7 +4127,7 @@ mod tests {
         // what the outline reports.
         let mut single = Vec::new();
         write(&mut single, &sculpted_doc(), &ProjectState::default()).expect("write failed");
-        let older = as_older_container(1, single);
+        let older = as_older_container(1, single, &[]);
         let outline = read_outline(&mut older.as_slice()).expect("a version 1 outline was refused");
         assert_eq!((outline.nodes, outline.bodies), (1, 1));
     }
@@ -4285,16 +4219,12 @@ mod tests {
     /// A whole file for a masked document, as this build writes one.
     fn masked_fixture() -> Vec<u8> {
         let mut bytes = Vec::new();
-        write(
-            &mut bytes,
-            &Document::from_volume(masked_fixture_volume()),
-            &fixture_state(Vec::new()),
-        )
-        .expect("write failed");
+        write(&mut bytes, &Document::from_volume(masked_fixture_volume()), &fixture_state())
+            .expect("write failed");
         bytes
     }
 
-    fn fixture_state(keys: Vec<Keyframe>) -> ProjectState {
+    fn fixture_state() -> ProjectState {
         ProjectState {
             view: View {
                 camera_target: Vec3::new(-1.5, 2.0, 0.25),
@@ -4306,23 +4236,17 @@ mod tests {
                 brush_strength: 0.4,
                 mirror: [true, false, true],
             },
-            keys,
             ..ProjectState::default()
         }
     }
 
     /// Build a fixture's bytes: what a build of the given container version
     /// would have written for [`fixture_volume`].
-    fn manufactured_fixture(container: u16, keys: Vec<Keyframe>) -> Vec<u8> {
-        assert!(
-            container >= 2 || keys.is_empty(),
-            "a version 1 file has no trailer to put keys in"
-        );
-
+    fn manufactured_fixture(container: u16, keys: &[(f32, View)]) -> Vec<u8> {
         let mut bytes = Vec::new();
-        write(&mut bytes, &Document::from_volume(fixture_volume()), &fixture_state(keys))
+        write(&mut bytes, &Document::from_volume(fixture_volume()), &fixture_state())
             .expect("write failed");
-        as_older_container(container, bytes)
+        as_older_container(container, bytes, keys)
     }
 
     /// What a build of an older container version would have written for the
@@ -4344,7 +4268,16 @@ mod tests {
     /// Single body only, like everything else keyed off [`first_brick_at`]: a
     /// two-body document has a second brick stream that no older layout can
     /// express at all.
-    fn as_older_container(container: u16, mut bytes: Vec<u8>) -> Vec<u8> {
+    ///
+    /// A version 2 file also carries the key trailer, which this build no
+    /// longer writes, so it is put back from `keys`. The document must have no
+    /// paint, so that the trailer goes at the end.
+    fn as_older_container(container: u16, mut bytes: Vec<u8>, keys: &[(f32, View)]) -> Vec<u8> {
+        assert!(container == 1 || container == 2, "only versions 1 and 2 drop the node table");
+        assert!(
+            container >= 2 || keys.is_empty(),
+            "a version 1 file has no trailer to put keys in"
+        );
         let count_at = first_brick_at() - 8;
         assert!(
             count_at >= LEGACY_HEADER_BYTES,
@@ -4354,19 +4287,38 @@ mod tests {
         bytes.drain(LEGACY_HEADER_BYTES..count_at);
 
         bytes[MAGIC.len()..MAGIC.len() + 2].copy_from_slice(&container.to_le_bytes());
-        if container < 2 {
-            // A version 1 file ends with its last brick. There is no trailer,
-            // not even an empty one.
-            bytes.truncate(bytes.len() - EMPTY_TRAILER_BYTES);
+        // A version 1 file ends with its last brick, as a version 4 one does.
+        // A version 2 file has the trailer after it.
+        if container == 2 {
+            bytes.extend(key_trailer(keys));
         }
         bytes
     }
 
+    /// What a version 3 build wrote for a one-body document with no paint and
+    /// no keys: this build's file, stamped 3, with the empty trailer after it.
+    fn as_version_3(mut bytes: Vec<u8>) -> Vec<u8> {
+        bytes[MAGIC.len()..MAGIC.len() + 2].copy_from_slice(&3u16.to_le_bytes());
+        bytes.extend(key_trailer(&[]));
+        bytes
+    }
+
     /// Two keys, so the version 2 fixture exercises the trailer rather than
-    /// merely carrying an empty one. Written out of order on purpose: the
-    /// reader sorts, and the committed bytes record that it has to.
-    fn fixture_keys() -> Vec<Keyframe> {
-        vec![a_key(0.75, 12.0), a_key(0.2, 34.0)]
+    /// merely carrying an empty one. Out of order, as it was committed when
+    /// the reader still sorted them; now it steps over them.
+    fn fixture_keys() -> Vec<(f32, View)> {
+        let key = |at: f32, distance: f32| {
+            (
+                at,
+                View {
+                    camera_distance: distance,
+                    camera_yaw: at * 2.0,
+                    mirror: [at > 0.5, false, true],
+                    ..View::default()
+                },
+            )
+        };
+        vec![key(0.75, 12.0), key(0.2, 34.0)]
     }
 
     /// Writes the two fixtures. A one-off act rather than a check, and it
@@ -4409,9 +4361,9 @@ mod tests {
         let directory = fixture_path("");
         std::fs::create_dir_all(&directory).expect("could not make the fixtures directory");
         for (name, bytes) in [
-            ("container-v1.hani", manufactured_fixture(1, Vec::new())),
-            ("container-v2.hani", manufactured_fixture(2, fixture_keys())),
-            ("field-v2.hani", masked_fixture()),
+            ("container-v1.hani", manufactured_fixture(1, &[])),
+            ("container-v2.hani", manufactured_fixture(2, &fixture_keys())),
+            ("field-v2.hani", as_version_3(masked_fixture())),
         ] {
             let path = fixture_path(name);
             std::fs::write(&path, &bytes).expect("could not write the fixture");
@@ -4441,8 +4393,9 @@ mod tests {
     #[test]
     fn the_committed_fixtures_are_byte_for_byte_what_the_old_writers_produced() {
         for (name, mut manufactured) in [
-            ("container-v1.hani", manufactured_fixture(1, Vec::new())),
-            ("container-v2.hani", manufactured_fixture(2, fixture_keys())),
+            ("container-v1.hani", manufactured_fixture(1, &[])),
+            ("container-v2.hani", manufactured_fixture(2, &fixture_keys())),
+            ("field-v2.hani", as_version_3(masked_fixture())),
         ] {
             // Written before the name was HaniSculpt, as the files on users'
             // disks were: they open with the old magic, which this build reads
@@ -4495,7 +4448,7 @@ mod tests {
         let (doc, state) = read_reporting(&mut bytes.as_slice(), &mut progress)
             .expect("a field version 2 file was refused");
 
-        assert_eq!(state.view, fixture_state(Vec::new()).view);
+        assert_eq!(state.view, fixture_state().view);
         assert_same_bricks(&masked_fixture_volume(), doc.active_volume());
 
         // The mask itself, cell by cell, including the one over empty space.
@@ -4527,8 +4480,7 @@ mod tests {
         let (doc, state) = read_reporting(&mut bytes.as_slice(), &mut progress)
             .expect("the committed version 1 fixture was refused");
 
-        assert_eq!(state.view, fixture_state(Vec::new()).view);
-        assert!(state.keys.is_empty(), "a file with no trailer gained keys");
+        assert_eq!(state.view, fixture_state().view);
         assert_eq!(progress.bricks, 5);
         assert_eq!(doc.body_count(), 1, "a file with no node table is one implicit body");
         assert_eq!(doc.nodes()[0].name, Document::FIRST_BODY_NAME);
@@ -4536,9 +4488,9 @@ mod tests {
         assert_same_bricks(&fixture_volume(), doc.active_volume());
     }
 
-    /// And a version 2 file, whose trailer has to come back sorted.
+    /// And a version 2 file, whose two timeline keys are stepped over.
     #[test]
-    fn the_committed_version_2_fixture_opens_with_its_timeline_keys() {
+    fn the_committed_version_2_fixture_opens_past_its_timeline_keys() {
         let bytes = committed_fixture("container-v2.hani");
         assert_eq!(u16::from_le_bytes([bytes[8], bytes[9]]), 2);
 
@@ -4546,10 +4498,7 @@ mod tests {
         let (doc, state) = read_reporting(&mut bytes.as_slice(), &mut progress)
             .expect("the committed version 2 fixture was refused");
 
-        assert_eq!(state.view, fixture_state(Vec::new()).view);
-        let mut expected = fixture_keys();
-        expected.sort_by(|a, b| a.at.partial_cmp(&b.at).expect("no NaN in the fixture"));
-        assert_eq!(state.keys, expected, "the trailer did not come back in order");
+        assert_eq!(state.view, fixture_state().view);
         assert_eq!(progress.bricks, 5);
         assert_eq!(doc.body_count(), 1, "a file with no node table is one implicit body");
         assert_same_bricks(&fixture_volume(), doc.active_volume());
@@ -4562,7 +4511,7 @@ mod tests {
         let one = committed_fixture("container-v1.hani");
         let two = committed_fixture("container-v2.hani");
         assert_eq!(
-            one.len() + EMPTY_TRAILER_BYTES + fixture_keys().len() * (4 + 39),
+            one.len() + EMPTY_TRAILER_BYTES + fixture_keys().len() * KEY_BYTES,
             two.len(),
             "the two fixtures differ by more than the key trailer"
         );
@@ -4701,19 +4650,18 @@ mod tests {
                 path.display()
             );
             eprintln!(
-                "{}: {size} bytes, {} bricks, voxel {} mm, {} keys",
+                "{}: {size} bytes, {} bricks, voxel {} mm",
                 path.display(),
                 progress.bricks,
                 volume.voxel_size(),
-                state.keys.len()
             );
 
             // Unmasked first, because a real file's own round trip is the
             // thing that has to keep working, and the mask must not be able
             // to hide a regression in it.
-            round_trip_through_version_3(path, &doc, &state);
+            round_trip_through_this_version(path, &doc, &state);
             paint_a_mask_over(doc.active_volume_mut());
-            round_trip_through_version_3(path, &doc, &state);
+            round_trip_through_this_version(path, &doc, &state);
             opened += 1;
         }
         eprintln!("opened {opened} of {} real projects", paths.len());
@@ -4725,7 +4673,7 @@ mod tests {
     /// Through a file rather than a `Vec`, because that is what the application
     /// does and because a `BufWriter` over a file is where a partial write
     /// would actually happen.
-    fn round_trip_through_version_3(
+    fn round_trip_through_this_version(
         source: &std::path::Path,
         doc: &Document,
         state: &ProjectState,
@@ -4734,7 +4682,7 @@ mod tests {
             .map(std::path::PathBuf::from)
             .unwrap_or_else(std::env::temp_dir);
         let name = source.file_name().expect("a file has a name");
-        let target = scratch.join(format!("hani-v3-check-{}", name.to_string_lossy()));
+        let target = scratch.join(format!("hani-check-{}", name.to_string_lossy()));
 
         let started = web_time::Instant::now();
         {
@@ -4755,7 +4703,6 @@ mod tests {
             reread.expect("this build refused a file it had just written itself");
         assert_same_document(doc, &reread);
         assert_eq!(reread_state.view, state.view, "the view did not survive the round trip");
-        assert_eq!(reread_state.keys, state.keys, "the timeline did not survive the round trip");
         eprintln!(
             "  round tripped through container {CONTAINER_VERSION} at field {}: {written} \
              bytes, {:.0} ms",
