@@ -3588,3 +3588,65 @@ fn a_spread_body_is_drawn_moved_by_its_offset() {
     let share = lit(&mask(&harness.frame(&renderer))) / lit(&plain);
     assert!((share - 0.25).abs() < 0.05, "a quarter screened in drew {share:.3} of it");
 }
+
+/// A reference picture shows round the model and never over it, even when
+/// its plane stands in front of the model. See `reference.rs`.
+#[test]
+fn a_reference_picture_is_drawn_behind_the_model_wherever_its_plane_stands() {
+    let Some(harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the reference picture test");
+        return;
+    };
+    let distance = MODEL_RADIUS * 3.0;
+    let mut renderer = SculptRenderer::new(&harness.device, &harness.queue, TARGET_FORMAT);
+    renderer.resize(&harness.device, WIDTH, HEIGHT);
+    renderer.write_uniforms(&harness.queue, &uniforms(distance));
+    let mut volume = Volume::new(VOXEL_SIZE);
+    volume.seed_sphere(Vec3::ZERO, MODEL_RADIUS);
+    upload_all(&mut renderer, &harness.device, &harness.queue, &mut volume);
+    let bare = harness.frame(&renderer);
+
+    // A plain red picture, four texels.
+    let picture =
+        hani_gpu::ReferencePicture { width: 2, height: 2, rgba: [255, 0, 0, 255].repeat(4) };
+    renderer.set_reference_picture(&harness.device, &harness.queue, 0, Some(&picture));
+
+    let toward_eye = Vec3::new(0.45, 0.35, 1.0).normalize();
+    let right = toward_eye.cross(Vec3::Y).normalize();
+    let up = right.cross(toward_eye).normalize();
+    let quad_at = |centre: Vec3| hani_gpu::ReferenceQuad {
+        slot: 0,
+        corners: [
+            centre - right * 200.0 - up * 200.0,
+            centre + right * 200.0 - up * 200.0,
+            centre + right * 200.0 + up * 200.0,
+            centre - right * 200.0 + up * 200.0,
+        ],
+        opacity: 1.0,
+        flipped: false,
+    };
+    let middle = (((HEIGHT / 2) * WIDTH + WIDTH / 2) * 4) as usize;
+    let corner = ((4 * WIDTH + 4) * 4) as usize;
+    let red = |pixels: &[u8], at: usize| pixels[at] > 200 && pixels[at + 1] < 40;
+
+    for (name, centre) in [
+        ("reference-behind", -toward_eye * (MODEL_RADIUS + 10.0)),
+        ("reference-in-front", toward_eye * (MODEL_RADIUS + 10.0)),
+    ] {
+        renderer.write_references(&harness.queue, &[quad_at(centre)], view_projection(distance));
+        let framed = harness.frame(&renderer);
+        dump(name, &framed);
+        assert!(red(&framed, corner), "{name}: the picture did not show round the model");
+        assert_eq!(
+            &framed[middle..middle + 3],
+            &bare[middle..middle + 3],
+            "{name}: the picture was drawn over the model"
+        );
+    }
+
+    // Emptied, the slot draws nothing.
+    renderer.set_reference_picture(&harness.device, &harness.queue, 0, None);
+    renderer.write_references(&harness.queue, &[quad_at(Vec3::ZERO)], view_projection(distance));
+    let emptied = harness.frame(&renderer);
+    assert_eq!(emptied, bare, "an emptied slot still drew");
+}

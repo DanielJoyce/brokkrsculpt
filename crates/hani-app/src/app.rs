@@ -45,6 +45,9 @@ pub use maps::MapName;
 mod fit_test;
 // Twist, bend and taper. See `app/deform.rs`.
 mod deform;
+// Reference pictures and the floor. See `app/references.rs`.
+mod references;
+pub use references::Taken as ReferenceTaken;
 mod form;
 // A line drawn beside an axis, spun into a body. See `app/revolve.rs`.
 mod revolve;
@@ -991,6 +994,11 @@ pub struct Hani {
     revolve: revolve::RevolveState,
     /// The deformers' settings. See `app/deform.rs`.
     deform: deform::DeformState,
+    /// The reference pictures and the floor, the document's: saved in the
+    /// file. See `app/references.rs`.
+    references: hani_core::reference::References,
+    /// Which plane the references panel places, and the pictures decoded.
+    reference_view: references::ReferencesState,
     /// Shell and extract settings. See `app/hollow.rs`.
     hollow: hollow::HollowState,
     /// The overhang view: whether it is on, and how steep a lean the
@@ -2315,6 +2323,8 @@ impl Hani {
             form: form::FormState::default(),
             revolve: revolve::RevolveState::default(),
             deform: deform::DeformState::default(),
+            references: hani_core::reference::References::default(),
+            reference_view: references::ReferencesState::default(),
             hollow: hollow::HollowState::default(),
             overhang: overhang::OverhangState::default(),
             painting: painting::PaintingState::default(),
@@ -5108,6 +5118,8 @@ impl Hani {
         self.add_drybrush_preview(&mut batch);
         // The ring cut. See `app/ring_cut.rs`.
         self.add_ring_preview(&mut batch);
+        // The floor. See `app/references.rs`.
+        self.add_floor(&mut batch);
         self.shared.swap_overlay(&mut batch);
         self.overlay = batch;
     }
@@ -6949,6 +6961,9 @@ impl Hani {
         // number of voxels, so it has to be told the real one.
         self.refresh_camera_lattice();
         self.project_path = None;
+        // A new sculpt starts with no pictures and no floor. See
+        // `app/references.rs`.
+        self.adopt_references(hani_core::reference::References::default());
         self.unsaved = false;
         self.status = String::new();
         self.publish_camera();
@@ -7042,7 +7057,12 @@ impl Hani {
     /// Shared by the explicit save and the autosave so the two cannot record
     /// different things.
     fn project_state(&self) -> hani_core::ProjectState {
-        hani_core::ProjectState { view: self.current_view(), paints: self.doc.paints().clone() }
+        hani_core::ProjectState {
+            view: self.current_view(),
+            paints: self.doc.paints().clone(),
+            // See `app/references.rs`.
+            references: self.references.clone(),
+        }
     }
 
     /// What a `.hani` file stores beside the sculpt, so a reopen comes back to
@@ -7316,6 +7336,8 @@ impl Hani {
         self.status = format!("opened {}", path.display());
         self.apply_view(&state.view);
         self.doc.replace_paints(state.paints);
+        // The pictures and the floor. See `app/references.rs`.
+        self.adopt_references(state.references);
         // Painted by filament slot, from before slot painting was taken
         // out: its slots laid into its colour paint. See
         // `hani_core::paint::old_slots`.
@@ -10766,6 +10788,7 @@ impl Hani {
             Message::Hollow(message) => self.hollow_changed(message),
             // See `app/deform.rs`.
             Message::Deform(message) => self.deform_changed(message),
+            Message::Reference(message) => return self.reference_changed(message),
             // See `app/revolve.rs`.
             Message::Revolve(message) => self.revolve_changed(message),
             Message::Measure(message) => self.measure_changed(message),

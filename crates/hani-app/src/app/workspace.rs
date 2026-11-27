@@ -402,6 +402,8 @@ impl Hani {
                 // See `hollow.rs`.
                 self.section(PanelSection::Extract, || self.extract_panel()),
                 self.section(PanelSection::Workbench, || self.workbench_panel()),
+                // See `references.rs`.
+                self.section(PanelSection::References, || self.references_panel()),
                 self.section(PanelSection::Detail, || self.detail_panel()),
             ],
             Workspace::Transform => vec![
@@ -410,6 +412,8 @@ impl Hani {
                 self.section(PanelSection::Deform, || self.deform_panel()),
                 // See `revolve.rs`.
                 self.section(PanelSection::Revolve, || self.revolve_panel()),
+                // See `references.rs`.
+                self.section(PanelSection::References, || self.references_panel()),
                 self.section(PanelSection::Detail, || self.detail_panel()),
             ],
             Workspace::Paint => vec![

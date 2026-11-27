@@ -49,6 +49,8 @@ pub mod pyramid;
 pub mod raycast;
 mod reach;
 pub mod redistance;
+// Reference pictures and the floor, kept in the project file.
+pub mod reference;
 pub mod region;
 pub mod resample;
 pub mod revolve;

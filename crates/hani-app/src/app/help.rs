@@ -317,6 +317,7 @@ pub(super) fn section_tip(which: PanelSection) -> &'static str {
         PanelSection::Extract => "The masked area as a plate of its own",
         PanelSection::Deform => "Twist, bend or taper the active body",
         PanelSection::Revolve => "Draw a line beside an axis and spin it into a body",
+        PanelSection::References => "Pictures to model against, and a floor, kept in the file",
         PanelSection::Pattern => "A texture pressed in by whatever brush is in hand",
         PanelSection::History => "The steps that can be undone",
         PanelSection::Detail => "How fine the voxels are, and what that costs",

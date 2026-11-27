@@ -417,7 +417,7 @@ true of it too, and what it adds is this.
   so the active one can be worked on in place; choosing another row makes
   that one solid instead. See [`docs/WORKSPACES.md`](docs/WORKSPACES.md).
 - **Your sculpts are `.hani` files.** One file holds the whole document:
-  every body, the mask, the paint and its layers. A sculpt
+  every body, the mask, the paint and its layers, the reference pictures. A sculpt
   saved as `.brokkr` before the rename still opens, and your settings,
   brushes and autosave move across by themselves on the first start.
 - **In a browser.** The same application builds for the web and runs on
@@ -438,6 +438,12 @@ true of it too, and what it adds is this.
   puts an upright axis on the screen; draw a line beside it, either side or
   across, and it is spun round the axis into a new body, a vase from one
   stroke.
+- **Reference pictures and a floor.** REFERENCES in Sculpt and Transform
+  puts a PNG or JPEG on the front, side or top plane, sized to the model
+  and standing behind it; opacity, width, position and a mirror flip are
+  set there. The model is always drawn over the pictures. *Floor* draws a
+  grid under the model. Both are saved in the `.hani` file, the pictures as
+  the files they were.
 - **Snip and report.** **Ctrl ?** (or Help, *Snip and report…*) freezes
   the window; drag across the part you mean, draw on it in one of three
   inks, give it a title and say what should be different, and *Open an

@@ -256,6 +256,28 @@ pub enum DeformMessage {
     Applied,
 }
 
+/// The reference pictures and the floor. See `app/references.rs`.
+#[derive(Debug, Clone)]
+pub enum ReferenceMessage {
+    /// Which plane the panel places.
+    Editing(hani_core::reference::Plane),
+    /// Ask for a picture for the plane being placed.
+    Load,
+    /// A picture read for a plane, or why not; `None` when the dialog was
+    /// closed.
+    Loaded(hani_core::reference::Plane, Option<Result<crate::app::ReferenceTaken, String>>),
+    Remove,
+    Shown(bool),
+    Flipped(bool),
+    Opacity(f32),
+    /// Millimetres.
+    Width(f32),
+    Across(f32),
+    Up(f32),
+    Depth(f32),
+    Floor(bool),
+}
+
 /// The shell and extract controls. See `app/hollow.rs`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HollowMessage {
@@ -981,6 +1003,7 @@ pub enum PanelSection {
     Extract,
     Deform,
     Revolve,
+    References,
     Pattern,
     History,
     Detail,
@@ -990,7 +1013,7 @@ pub enum PanelSection {
 
 impl PanelSection {
     /// In the order the panel draws them.
-    pub const ALL: [PanelSection; 15] = [
+    pub const ALL: [PanelSection; 16] = [
         PanelSection::Bodies,
         PanelSection::Brushes,
         PanelSection::Workbench,
@@ -1001,6 +1024,7 @@ impl PanelSection {
         PanelSection::Extract,
         PanelSection::Deform,
         PanelSection::Revolve,
+        PanelSection::References,
         PanelSection::Pattern,
         PanelSection::History,
         PanelSection::Detail,
@@ -1020,6 +1044,7 @@ impl PanelSection {
             PanelSection::Extract => "EXTRACT",
             PanelSection::Deform => "DEFORM",
             PanelSection::Revolve => "REVOLVE",
+            PanelSection::References => "REFERENCES",
             PanelSection::Pattern => "PATTERN",
             PanelSection::History => "HISTORY",
             PanelSection::Detail => "DETAIL",
@@ -1051,6 +1076,7 @@ impl PanelSection {
                 | PanelSection::Filament
                 | PanelSection::Form
                 | PanelSection::Extract
+                | PanelSection::References
         )
     }
 }
@@ -1551,6 +1577,8 @@ pub enum Message {
     Hollow(HollowMessage),
     /// Twist, bend or taper. See `app/deform.rs`.
     Deform(DeformMessage),
+    /// The reference pictures and the floor. See `app/references.rs`.
+    Reference(ReferenceMessage),
     /// The revolve's axis up or away. See `app/revolve.rs`.
     Revolve(RevolveMessage),
     /// One of the controls of the brushes that add. See `app/adding.rs`.
