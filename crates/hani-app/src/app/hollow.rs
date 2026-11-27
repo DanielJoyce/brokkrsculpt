@@ -46,7 +46,7 @@ impl Default for HollowState {
     fn default() -> Self {
         Self {
             wall_mm: 1.5,
-            extract: Extraction { thickness_mm: 1.0, inward: 0.0, offset_mm: 0.0 },
+            extract: Extraction { thickness_mm: 1.0, inward: 0.0, offset_mm: 0.0, feathered: true },
             peel: false,
         }
     }
@@ -71,6 +71,7 @@ impl Hani {
                 self.hollow.extract.offset_mm = clamped(mm, OFFSET_RANGE);
             }
             HollowMessage::PeelChosen(peel) => self.hollow.peel = peel,
+            HollowMessage::FeatheredChosen(on) => self.hollow.extract.feathered = on,
             HollowMessage::ExtractApplied => self.extract_active(),
         }
     }
@@ -255,10 +256,17 @@ impl Hani {
             )
             .step(0.1)
             .shown(format!("{:+.2} mm", how.offset_mm)),
+            crate::ui::tip(
+                iced::widget::checkbox(how.feathered)
+                    .label("Feather by mask")
+                    .on_toggle(move |on| changed(HollowMessage::FeatheredChosen(on)))
+                    .text_size(theme::LABEL_SIZE),
+                "As thick as the mask is full: tapering to nothing where the mask fades",
+            ),
             crate::ui::segmented_tips(
                 [
-                    (false, "New part", "Make the shell a new part and keep the body whole"),
-                    (true, "Peel off", "Take the shell off the body as a part of its own"),
+                    (false, "New part", "Make the plate a new part and keep the body whole"),
+                    (true, "Peel off", "Take the plate off the body as a part of its own"),
                 ],
                 self.hollow.peel,
                 move |peel| changed(HollowMessage::PeelChosen(peel)),

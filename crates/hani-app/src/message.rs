@@ -322,6 +322,8 @@ pub enum HollowMessage {
     /// Whether the plate is taken out of the body (peeled off) or the body
     /// is left as it is.
     PeelChosen(bool),
+    /// Whether the plate's thickness follows the mask.
+    FeatheredChosen(bool),
     ExtractApplied,
 }
 

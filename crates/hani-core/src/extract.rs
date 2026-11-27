@@ -53,6 +53,33 @@ use contracts::debug_requires;
 /// Half protection: at or over this a voxel is masked.
 const MASKED: u8 = 128;
 
+/// Feathered, any protection at all puts a voxel in the plate's footprint,
+/// at a thickness that share of the whole.
+const FEATHERED: u8 = 1;
+
+/// Feathered, the thinnest a plate is let be, in voxels: where its share of
+/// the thickness is less, it ends.
+const MOST_FEATHER_EDGE: f32 = 1.0;
+
+impl Volume {
+    /// The mask's protection at a point in voxel units, 0..=1, between the
+    /// eight voxels round it.
+    fn mask_between(&self, point: Vec3) -> f32 {
+        let base = point.floor();
+        let f = point - base;
+        let corner = base.as_ivec3();
+        let mut sum = 0.0;
+        for index in 0..8_i32 {
+            let step = glam::IVec3::new(index & 1, (index >> 1) & 1, (index >> 2) & 1);
+            let weight = (if step.x == 1 { f.x } else { 1.0 - f.x })
+                * (if step.y == 1 { f.y } else { 1.0 - f.y })
+                * (if step.z == 1 { f.z } else { 1.0 - f.z });
+            sum += weight * f32::from(self.mask().at(corner + step));
+        }
+        sum / 255.0
+    }
+}
+
 /// What to extract, in millimetres.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Extraction {
@@ -63,6 +90,12 @@ pub struct Extraction {
     /// How far the whole plate is moved out along the normal. Negative moves
     /// it in.
     pub offset_mm: f32,
+    /// Whether the plate's thickness follows the mask: full where the mask is
+    /// full, none where it is nought, and that share of it between, so a
+    /// feathered mask makes a plate that tapers to nothing at its edge.
+    /// Otherwise the plate is the whole thickness wherever the mask is half
+    /// or more, and stands square at its edge.
+    pub feathered: bool,
 }
 
 impl Extraction {
@@ -105,13 +138,25 @@ impl Volume {
         let (inner, outer) = how.faces(voxel_size);
         let mut masked = Vec::new();
         let mut rest = Vec::new();
+        // Feathered, the plate reaches wherever the mask is anything at all,
+        // and is as thick there as the mask is full.
+        let threshold = if how.feathered { FEATHERED } else { MASKED };
         for seed in surface_seeds(self) {
-            if self.mask().at(seed.voxel) >= MASKED {
+            if self.mask().at(seed.voxel) >= threshold {
                 masked.push(seed.point);
             } else {
                 rest.push(seed.point);
             }
         }
+        // How full the mask is at each masked seed's own point on the
+        // surface, 0..=1, read between voxels so that it changes smoothly
+        // from one seed to the next.
+        let share: Vec<f32> = if how.feathered {
+            masked.iter().map(|point| self.mask_between(*point)).collect()
+        } else {
+            Vec::new()
+        };
+        let offset = how.offset_mm / voxel_size;
         if masked.is_empty() {
             return Err(ExtractError::NothingMasked);
         }
@@ -134,8 +179,23 @@ impl Volume {
                     for y in 0..BRICK_DIM {
                         for x in 0..BRICK_DIM {
                             let voxel = voxel_of(origin, x, y, z);
-                            let Some(to_masked) = near_masked.distance(voxel) else {
+                            let Some((nearest, to_masked)) = near_masked.nearest(voxel) else {
                                 continue;
+                            };
+                            // The faces, feathered: as far from the offset as
+                            // the mask is full at the surface this voxel is
+                            // nearest.
+                            let (inner, outer, thin) = match share.get(nearest) {
+                                Some(full) => (
+                                    offset + (inner - offset) * full,
+                                    offset + (outer - offset) * full,
+                                    // Thinner than a voxel, a plate frays into
+                                    // hair on the screen (seen 2026-11-28): it
+                                    // ends there instead, where it is a voxel
+                                    // thick, and positive past that.
+                                    MOST_FEATHER_EDGE - (outer - inner) * full,
+                                ),
+                                None => (inner, outer, f32::NEG_INFINITY),
                             };
                             let to_rest = near_rest.distance(voxel).unwrap_or(f32::INFINITY);
                             let stored = self.sample_voxel(voxel);
@@ -162,7 +222,8 @@ impl Volume {
                             exact[brick_index(x, y, z)] = stored.abs() < NARROW_BAND - 0.5
                                 && front >= inner - s
                                 && front >= lateral;
-                            data[brick_index(x, y, z)] = slab.max(lateral).clamp(INSIDE, OUTSIDE);
+                            data[brick_index(x, y, z)] =
+                                slab.max(lateral).max(thin).clamp(INSIDE, OUTSIDE);
                         }
                     }
                 }
@@ -425,12 +486,52 @@ mod tests {
         (sum / count as f32).sqrt()
     }
 
+    /// Feathered, the plate is as thick as the mask is full: the whole of
+    /// it where the mask is full, half where it is half, tapering to
+    /// nothing through the feather and none past it.
+    #[test]
+    fn a_feathered_plate_is_as_thick_as_the_mask_is_full() {
+        let volume = feathered_ball();
+        let how = Extraction { thickness_mm: 2.0, inward: 0.0, offset_mm: 0.0, feathered: true };
+        let plate = volume.extracted(how).expect("extracted");
+        // How far out the plate reaches over the ball's surface at height `y`.
+        let reach_at = |y: f32| {
+            let way = Vec3::new((100.0 - y * y).max(0.0).sqrt(), y, 0.0).normalize();
+            (0..=60)
+                .map(|step| 10.0 + step as f32 * 0.05)
+                .filter(|r| solid(&plate, way * *r))
+                .fold(0.0_f32, |most, r| most.max(r - 10.0))
+        };
+        let full = reach_at(9.0);
+        let half = reach_at(6.0);
+        let faint = reach_at(5.45);
+        assert!((full - 2.0).abs() < 0.2, "the full mask made {full} mm");
+        assert!((half - 1.0).abs() < 0.25, "the half mask made {half} mm");
+        assert!(faint < half && faint < 0.5, "the faint mask made {faint} mm");
+        assert_eq!(reach_at(4.5), 0.0, "past the feather there is plate");
+        // Square, as before, without the switch: the whole thickness at half.
+        let square = volume.extracted(Extraction { feathered: false, ..how }).expect("extracted");
+        let at_half = {
+            let way = Vec3::new(8.0, 6.0, 0.0).normalize();
+            (0..=60)
+                .map(|step| 10.0 + step as f32 * 0.05)
+                .filter(|r| solid(&square, way * *r))
+                .fold(0.0_f32, |most, r| most.max(r - 10.0))
+        };
+        assert!(at_half > 1.7, "square at the mask's half it made {at_half} mm");
+    }
+
     #[test]
     #[ignore]
     fn what_the_faces_of_a_plate_measure() {
         let volume = capped_ball();
         let plate = volume
-            .extracted(Extraction { thickness_mm: 2.0, inward: 1.0, offset_mm: 0.0 })
+            .extracted(Extraction {
+                thickness_mm: 2.0,
+                inward: 1.0,
+                offset_mm: 0.0,
+                feathered: false,
+            })
             .expect("extracted");
         println!(
             "front {:.4} mm, back {:.4} mm",
@@ -442,7 +543,12 @@ mod tests {
         println!("the plate's wall {:.4} mm", wall_jaggedness(&plate));
         let feathered = feathered_ball();
         let soft = feathered
-            .extracted(Extraction { thickness_mm: 2.0, inward: 1.0, offset_mm: 0.0 })
+            .extracted(Extraction {
+                thickness_mm: 2.0,
+                inward: 1.0,
+                offset_mm: 0.0,
+                feathered: false,
+            })
             .expect("extracted");
         println!("the plate's wall, from a feathered mask {:.4} mm", wall_jaggedness(&soft));
     }
@@ -450,7 +556,7 @@ mod tests {
     #[test]
     fn the_plate_straddles_the_surface_by_the_share_asked() {
         let volume = capped_ball();
-        let how = Extraction { thickness_mm: 2.0, inward: 0.5, offset_mm: 0.0 };
+        let how = Extraction { thickness_mm: 2.0, inward: 0.5, offset_mm: 0.0, feathered: false };
         let plate = volume.extracted(how).expect("extracted");
         assert!(solid(&plate, Vec3::Y * 9.2), "a millimetre in is plate");
         assert!(solid(&plate, Vec3::Y * 10.8), "a millimetre out is plate");
@@ -464,7 +570,7 @@ mod tests {
     #[test]
     fn an_offset_lifts_the_plate_off_the_surface() {
         let volume = capped_ball();
-        let how = Extraction { thickness_mm: 1.0, inward: 0.0, offset_mm: 1.0 };
+        let how = Extraction { thickness_mm: 1.0, inward: 0.0, offset_mm: 1.0, feathered: false };
         let plate = volume.extracted(how).expect("extracted");
         assert!(!solid(&plate, Vec3::Y * 10.5), "a gap under the plate");
         assert!(solid(&plate, Vec3::Y * 11.5), "the plate");
@@ -474,7 +580,7 @@ mod tests {
     #[test]
     fn the_plate_stops_at_the_masks_edge() {
         let volume = capped_ball();
-        let how = Extraction { thickness_mm: 1.0, inward: 0.5, offset_mm: 0.0 };
+        let how = Extraction { thickness_mm: 1.0, inward: 0.5, offset_mm: 0.0, feathered: false };
         let plate = volume.extracted(how).expect("extracted");
         // The mask's edge on the surface is at y = 6, where the ball's
         // radius in x is 8.
@@ -489,7 +595,7 @@ mod tests {
     #[test]
     fn a_plate_peeled_off_leaves_no_material_in_both() {
         let volume = capped_ball();
-        let how = Extraction { thickness_mm: 2.0, inward: 0.5, offset_mm: 0.0 };
+        let how = Extraction { thickness_mm: 2.0, inward: 0.5, offset_mm: 0.0, feathered: false };
         let plate = volume.extracted(how).expect("extracted");
         let rest = volume.without(&plate);
         assert!(solid(&volume, Vec3::Y * 9.2) && !solid(&rest, Vec3::Y * 9.2), "not peeled");
@@ -545,7 +651,7 @@ mod tests {
     fn nothing_masked_or_too_thin_is_refused() {
         let mut volume = Volume::new(0.25);
         volume.seed_sphere(Vec3::ZERO, 5.0);
-        let how = Extraction { thickness_mm: 1.0, inward: 0.5, offset_mm: 0.0 };
+        let how = Extraction { thickness_mm: 1.0, inward: 0.5, offset_mm: 0.0, feathered: false };
         assert_eq!(volume.extracted(how).err(), Some(ExtractError::NothingMasked));
         let thin = Extraction { thickness_mm: 0.1, ..how };
         assert_eq!(volume.extracted(thin).err(), Some(ExtractError::TooThin(0.25)));
