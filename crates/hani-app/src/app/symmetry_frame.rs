@@ -24,19 +24,88 @@ impl Hani {
     /// The symmetry a stroke lays copies with: the session's planes and
     /// copies, in the active body's frame.
     pub(super) fn framed_symmetry(&self) -> Symmetry {
-        self.symmetry.in_frame(self.doc.symmetry_frame(self.doc.active()))
+        let active = self.doc.active();
+        let frame = self.doc.symmetry_frame(active);
+        // Under the gizmo, the planes are where the placement has the body,
+        // handle held or not: the frame itself is only moved when the gizmo
+        // is put away (`move_frames`), and the body is drawn and baked at the
+        // placement before then.
+        let held = self.gizmo.filter(|gizmo| self.holds(gizmo.body, active));
+        self.symmetry.in_frame(held.map_or(frame, |gizmo| frame.moved(gizmo.placement)))
+    }
+
+    /// Whether the gizmo's row is the body or a folder above it.
+    fn holds(&self, row: NodeId, body: NodeId) -> bool {
+        let mut at = Some(body);
+        while let Some(id) = at {
+            if id == row {
+                return true;
+            }
+            at = self.doc.parent_of(id);
+        }
+        false
+    }
+
+    /// A new body's planes: through its own middle, unturned. A body made
+    /// from another takes [`Hani::frame_from`] instead.
+    pub(super) fn frame_at_middle(&mut self, body: NodeId) {
+        let bounds = self.doc.volume(body).and_then(hani_core::Volume::surface_bounds);
+        if let Some((low, high)) = bounds {
+            let origin = (low + high) * 0.5 - super::MIRROR_CENTRE;
+            self.doc.set_symmetry_frame(body, SymmetryFrame { origin, ..SymmetryFrame::IDENTITY });
+        }
+    }
+
+    /// A body made from another, a copy or a shell or an extract, keeps
+    /// that one's planes.
+    pub(super) fn frame_from(&mut self, body: NodeId, source: NodeId) {
+        let frame = self.doc.symmetry_frame(source);
+        self.doc.set_symmetry_frame(body, frame);
+    }
+
+    /// Whether the radial axis passes through the active body: the two
+    /// planes that hold the axis both straddled. An empty body passes.
+    pub(super) fn radial_reaches(&self) -> bool {
+        let Some(bounds) = self.doc.active_volume().surface_bounds() else {
+            return true;
+        };
+        let axis = self.symmetry.radial_axis();
+        let frame = self.framed_symmetry().frame();
+        hani_core::MirrorAxis::ALL
+            .into_iter()
+            .filter(|plane| *plane != axis)
+            .all(|plane| super::straddles(bounds, plane, frame))
+    }
+
+    /// Turn the radial copies off where the axis misses the active body,
+    /// saying so: every copy would land in empty space.
+    pub(super) fn refuse_radial_off_axis(&mut self, verb: &str) {
+        if self.symmetry.radial() <= 1 || self.radial_reaches() {
+            return;
+        }
+        let axis = self.symmetry.radial_axis();
+        self.symmetry = self.symmetry.with_radial(1, axis);
+        let name = self.doc.node(self.doc.active()).map_or("the body", |node| node.name.as_str());
+        self.status = format!(
+            "radial copies {verb}: the {} axis misses {name}, so every copy would land in empty \
+             space",
+            axis.label(),
+        );
     }
 
     /// Carry each body's frame by the placement the gizmo left it at, and
     /// answer the changes that put them back, for the gizmo's one entry.
     pub(super) fn move_frames(&mut self, bodies: &[NodeId], placement: Similarity) -> Vec<Change> {
-        bodies
+        let changes: Vec<Change> = bodies
             .iter()
             .filter_map(|body| {
                 let frame = self.doc.symmetry_frame(*body).moved(placement);
                 self.doc.set_symmetry_frame(*body, frame)
             })
-            .collect()
+            .collect();
+        // The planes were drawn through the gizmo; now through the frame.
+        self.refresh_overlay();
+        changes
     }
 
     /// Whether the active body's frame is the room's.
@@ -145,10 +214,11 @@ mod tests {
         let (folder, _) = app.doc.group(first, "Pair").expect("room for a folder");
         app.doc.move_to_folder(cube, Some(folder)).expect("moved");
         let step = Vec3::X * app.doc.voxel_size() * 8.0;
+        let was = [first, cube].map(|body| app.doc.symmetry_frame(body).origin);
         moved(&mut app, folder, Similarity { translation: step, ..Similarity::IDENTITY });
-        for body in [first, cube] {
+        for (body, was) in [first, cube].into_iter().zip(was) {
             let origin = app.doc.symmetry_frame(body).origin;
-            assert!(origin.distance(step) < 1.0e-5, "{body:?} frame at {origin}");
+            assert!(origin.distance(was + step) < 1.0e-4, "{body:?} frame at {origin}");
         }
         update(&mut app, Message::BodySelected(cube));
         assert!(!app.frame_is_the_rooms());
@@ -159,6 +229,72 @@ mod tests {
         assert!(app.doc.symmetry_frame(first).origin.distance(step) < 1.0e-5, "reset is one body");
         update(&mut app, Message::Undo);
         assert!(!app.frame_is_the_rooms(), "reset was not undone");
+    }
+
+    /// While the gizmo holds a body, its planes are where the placement has
+    /// it, handle held or not; the frame kept is moved only when the gizmo
+    /// is put away.
+    #[test]
+    fn the_planes_follow_a_held_handle() {
+        let mut app = Hani::with_tablet(crate::tablet::Tablet::inert());
+        let body = app.doc.active();
+        update(&mut app, Message::ToolChanged(super::super::Tool::Sculpt));
+        update(&mut app, Message::ToolChanged(super::super::Tool::Transform));
+        update(&mut app, Message::BodySelected(body));
+        let step = Vec3::new(12.0, 0.0, 3.0);
+        if let Some(gizmo) = app.gizmo.as_mut() {
+            gizmo.placement = Similarity { translation: step, ..Similarity::IDENTITY };
+        }
+        assert!(app.framed_symmetry().frame().origin.distance(step) < 1.0e-5);
+        assert_eq!(app.doc.symmetry_frame(body), SymmetryFrame::IDENTITY, "kept before commit");
+        if let Some(gizmo) = app.gizmo.as_mut() {
+            gizmo.placement = Similarity::IDENTITY;
+        }
+        assert_eq!(app.framed_symmetry().frame(), SymmetryFrame::IDENTITY);
+    }
+
+    /// A shape added has its planes through its own middle; a copy keeps
+    /// its source's.
+    #[test]
+    fn a_new_body_has_its_own_planes_and_a_copy_its_sources() {
+        let mut app = Hani::with_tablet(crate::tablet::Tablet::inert());
+        update(&mut app, Message::PrimitiveAdded(hani_core::PrimitiveKind::Cube));
+        let cube = app.doc.active();
+        let frame = app.doc.symmetry_frame(cube);
+        assert!(frame.origin.distance(middle(&app, cube)) < 1.0e-4, "{frame:?}");
+        let turned = SymmetryFrame { rotation: Quat::from_rotation_y(0.3), ..frame };
+        app.doc.set_symmetry_frame(cube, turned);
+        update(&mut app, Message::BodyDuplicated);
+        let copy = app.doc.active();
+        assert_ne!(copy, cube, "{}", app.status);
+        assert_eq!(app.doc.symmetry_frame(copy), turned);
+    }
+
+    /// Radial copies round an axis that misses the body are refused, and
+    /// turned off when the body chosen is one the axis misses.
+    #[test]
+    fn radial_copies_round_an_axis_the_body_misses_are_refused() {
+        let mut app = Hani::with_tablet(crate::tablet::Tablet::inert());
+        let ball = app.doc.active();
+        let (low, high) = app.doc.active_volume().surface_bounds().expect("the ball");
+        let away = Vec3::X * (high.x - low.x) * 2.0;
+        let shifted =
+            app.doc.active_volume().shifted((away / app.doc.voxel_size()).round().as_ivec3());
+        let other = app.doc.add_body("Away", shifted);
+        update(&mut app, Message::Radial(super::super::RadialMessage::Copies(6.0)));
+        assert_eq!(app.symmetry.radial(), 6, "the ball is on the axis: {}", app.status);
+        update(&mut app, Message::BodySelected(other));
+        assert_eq!(app.symmetry.radial(), 1, "the axis misses the body moved away");
+        assert!(app.status.contains("radial copies turned off"), "{}", app.status);
+        update(&mut app, Message::Radial(super::super::RadialMessage::Copies(6.0)));
+        assert_eq!(app.symmetry.radial(), 1);
+        assert!(app.status.contains("radial copies refused"), "{}", app.status);
+        // Round X, the axis runs along the moved body: allowed.
+        update(&mut app, Message::Radial(super::super::RadialMessage::Axis(MirrorAxis::X)));
+        update(&mut app, Message::Radial(super::super::RadialMessage::Copies(6.0)));
+        assert_eq!(app.symmetry.radial(), 6, "{}", app.status);
+        update(&mut app, Message::BodySelected(ball));
+        assert_eq!(app.symmetry.radial(), 6);
     }
 
     /// Recentred, a plane the body no longer straddles is turned off, as

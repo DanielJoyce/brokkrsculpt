@@ -895,6 +895,8 @@ impl Hani {
             _ => (self.doc.node_count(), 0),
         };
         let id = self.doc.insert_body(at, depth, name.clone(), made);
+        // Its planes through its own middle. See `app/symmetry_frame.rs`.
+        self.frame_at_middle(id);
         let before = self.history.stats();
         self.history.push(Entry::new(vec![Change::NodeAdded { at, id }]));
         self.record_history(before);

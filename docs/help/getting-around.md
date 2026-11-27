@@ -61,8 +61,12 @@ Rest the pointer on a button to see what it does.
   moved. Two to sixteen copies, with the mirror
   planes as well if they are on.
 - The planes and the axis belong to the body: moved or turned with the
-  Transform tool, they go with it. **Recentre**, under Symmetry, puts the
-  body's back through the middle of the room, unturned.
+  Transform tool, they go with it, while the handle is still held. A new
+  shape's planes go through its own middle, and a copy, a shell or an
+  extract keeps those of the body it came from. **Recentre**, under
+  Symmetry, puts the body's back through the middle of the room, unturned.
+- Radial copies round an axis that misses the body are refused, as a
+  mirror plane that misses it is.
 - **M** picks the mask: masked parts are protected from brushes, and a softly
   painted mask protects softly.
 - **Right click** brings up the tool's own settings where the pointer is.

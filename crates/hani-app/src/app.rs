@@ -3142,6 +3142,10 @@ impl Hani {
             drawn => drawn.into_iter().collect(),
         };
         self.shared.set_moving(drawn);
+        // The planes go with the placement. See `app/symmetry_frame.rs`.
+        if !self.symmetry.is_off() {
+            self.refresh_overlay();
+        }
     }
 
     /// Take the active body under the gizmo, or say why not.
@@ -4005,6 +4009,8 @@ impl Hani {
         let volume = hani_core::primitive::build(kind, self.doc.voxel_size(), centre, half);
         let id = self.doc.add_body(kind.label(), volume);
         let at = self.doc.node_count() - 1;
+        // Its planes through its own middle. See `app/symmetry_frame.rs`.
+        self.frame_at_middle(id);
 
         let before = self.history.stats();
         self.history.push(Entry::new(vec![Change::NodeAdded { at, id }]));
@@ -4106,6 +4112,8 @@ impl Hani {
         // in. `insert_body` and not `add_body`: at sixty-four rows the bottom
         // of the list is off screen.
         let new_id = self.doc.insert_body(at + 1, depth, copy_name.clone(), copy);
+        // The copy keeps the source's planes. See `app/symmetry_frame.rs`.
+        self.frame_from(new_id, id);
 
         let before = self.history.stats();
         self.history.push(Entry::new(vec![Change::NodeAdded { at: at + 1, id: new_id }]));
@@ -5111,6 +5119,8 @@ impl Hani {
             self.symmetry = self.symmetry.with_axis(axis, false);
             self.status = self.mirror_refusal(axis, verb);
         }
+        // And the radial axis. See `app/symmetry_frame.rs`.
+        self.refuse_radial_off_axis(verb);
     }
 
     /// Whether the active body has material on both sides of one mirror plane.
@@ -18853,16 +18863,16 @@ mod body_panel_tests {
         );
     }
 
-    /// **The cost of placing a primitive off the origin, paid.**
+    /// **A primitive placed off the origin mirrors about its own middle.**
     ///
-    /// [`MIRROR_CENTRE`] is the lattice origin, so a dent carved into a body at
-    /// x = +80 has its twin written at x = -80: free-floating geometry in empty
-    /// space that exports as an extra shell no slicer can print. The first body
-    /// a user can create off-origin is a primitive, which makes this the
-    /// increment where that stops being hypothetical -- and selecting it is what
-    /// turns the mirror off and says why.
+    /// While every plane went through [`MIRROR_CENTRE`], a dent carved into a
+    /// body at x = +80 had its twin written at x = -80, free-floating geometry
+    /// in empty space, and selecting the new cube turned the mirror off and
+    /// said why. Since symmetry became the body's own
+    /// (`app/symmetry_frame.rs`), a new primitive's planes go through its own
+    /// middle: the mirror stays on, and a stroke's twin lands on the cube.
     #[test]
-    fn adding_a_primitive_clear_of_the_model_turns_off_a_mirror_it_cannot_use() {
+    fn adding_a_primitive_clear_of_the_model_keeps_a_mirror_through_its_middle() {
         let mut app = app();
         update(&mut app, Message::SymmetryAxisToggled(hani_core::MirrorAxis::X));
         assert!(app.symmetry.axis(hani_core::MirrorAxis::X), "the ball straddles X");
@@ -18870,11 +18880,14 @@ mod body_panel_tests {
         update(&mut app, Message::PrimitiveAdded(PrimitiveKind::Cube));
 
         assert!(
-            !app.symmetry.axis(hani_core::MirrorAxis::X),
-            "X mirroring stayed on for a cube sitting entirely to one side of the plane, so \
-             every stroke on it would write a twin into empty space"
+            app.symmetry.axis(hani_core::MirrorAxis::X),
+            "X mirroring went off for a cube whose own plane runs through it: {}",
+            app.status
         );
-        assert!(app.status.contains("empty space"), "the refusal said nothing: {}", app.status);
+        let (low, high) = app.doc.active_volume().surface_bounds().expect("the cube has a surface");
+        let plane = app.framed_symmetry().frame().origin + MIRROR_CENTRE;
+        assert!(low.x < plane.x && plane.x < high.x, "the plane at {plane} misses the cube");
+        assert!(low.x > 0.0, "the fixture's cube is no longer clear of the room's plane");
     }
 
     /// A document always holds one body, so the last one cannot go. Refused
