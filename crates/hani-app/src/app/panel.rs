@@ -1031,6 +1031,9 @@ impl Hani {
                             .width(Length::Fill),
                     );
                     items = items.push(recent);
+                    // The list is kept in a file, so it is the user's to clear
+                    // (`app/kept_settings.rs`).
+                    items = items.push(entry("Clear recent files", Message::RecentCleared));
                     items = items.push(separator());
                 }
                 let items = items
@@ -1941,14 +1944,16 @@ impl Hani {
             Some(device) => {
                 text(device.name.clone()).size(theme::LABEL_SIZE).color(theme::TEXT_DIM).into()
             }
-            None => text(status.explain())
-                .size(theme::LABEL_SIZE)
-                .color(if status == spacemouse::Diagnosis::NoDevice {
-                    theme::TEXT_MUTE
-                } else {
-                    theme::WARN
-                })
-                .into(),
+            None => crate::ui::tip(
+                text(status.short()).size(theme::LABEL_SIZE).color(
+                    if status == spacemouse::Diagnosis::NoDevice {
+                        theme::TEXT_MUTE
+                    } else {
+                        theme::WARN
+                    },
+                ),
+                status.explain(),
+            ),
         };
 
         // One line per raw axis: name, a bar, and the number. Scaled against
@@ -2097,6 +2102,20 @@ impl Hani {
                 )
                 .step(1.0)
                 .shown(format!("{:.0}", config.deadzone))
+                .on_release(Message::SpaceMouse(SpaceMouseSetting::Save)),
+                // Kept in `spacemouse.conf` and had no control: the
+                // settings rule of 2026-11-28 (`app/kept_settings.rs`).
+                crate::ui::number(
+                    &self.drafts,
+                    "spacemouse.stale_ms",
+                    "Still after",
+                    config.stale_ms as f32,
+                    20.0..=1000.0,
+                    |value| Message::SpaceMouse(SpaceMouseSetting::StaleMs(value))
+                )
+                .step(10.0)
+                .shown(format!("{} ms", config.stale_ms))
+                .tip("How long the puck reports nothing before it is taken to be let go")
                 .on_release(Message::SpaceMouse(SpaceMouseSetting::Save)),
             ]
             .spacing(theme::S1),
@@ -3106,10 +3125,9 @@ impl Hani {
     /// directly above EXPORT: it is read at the moment somebody sends a model
     /// to a printer, not while they sculpt.
     ///
-    /// Read-only for now. A slot is edited by hand in `filaments.conf` or taken
-    /// from the machine with the button; there is no colour picker here because
-    /// the answer that matters is what is physically loaded, and the printer
-    /// knows that better than a mouse does.
+    /// Each slot's name, colour and material are fields, Enter keeping them
+    /// in `filaments.conf` (`app/kept_settings.rs`), as the settings rule of
+    /// 2026-11-28 asks; the button still takes them from the machine.
     pub(super) fn filament_panel(&self) -> Element<'_, Message> {
         let rows = self.palette.slots.iter().enumerate().fold(
             column![].spacing(theme::S1),
@@ -3123,10 +3141,41 @@ impl Hani {
                             .width(14)
                             .height(14)
                             .style(theme::swatch(slot.swatch())),
-                        text(format!("{}. {}", index + 1, slot.name))
-                            .size(theme::LABEL_SIZE)
-                            .color(theme::TEXT),
-                        text(slot.material.clone()).size(theme::LABEL_SIZE).color(theme::TEXT_MUTE),
+                        // Each field edits the slot and Enter keeps them all:
+                        // `app/kept_settings.rs`.
+                        text(format!("{}.", index + 1)).size(theme::LABEL_SIZE).color(theme::TEXT),
+                        crate::ui::tip(
+                            text_input("name", &slot.name)
+                                .on_input(move |typed| Message::Kept(
+                                    crate::app::KeptMessage::SlotName(index, typed)
+                                ))
+                                .on_submit(Message::Kept(crate::app::KeptMessage::SlotsKept))
+                                .size(theme::LABEL_SIZE)
+                                .padding(theme::PAD_FIELD),
+                            "What to call this filament; Enter keeps the slots",
+                        ),
+                        crate::ui::tip(
+                            text_input("#RRGGBB", &slot.colour)
+                                .on_input(move |typed| Message::Kept(
+                                    crate::app::KeptMessage::SlotColour(index, typed)
+                                ))
+                                .on_submit(Message::Kept(crate::app::KeptMessage::SlotsKept))
+                                .size(theme::LABEL_SIZE)
+                                .padding(theme::PAD_FIELD)
+                                .width(Length::Fixed(76.0)),
+                            "Its colour, #RRGGBB; Enter keeps the slots",
+                        ),
+                        crate::ui::tip(
+                            text_input("PLA", &slot.material)
+                                .on_input(move |typed| Message::Kept(
+                                    crate::app::KeptMessage::SlotMaterial(index, typed)
+                                ))
+                                .on_submit(Message::Kept(crate::app::KeptMessage::SlotsKept))
+                                .size(theme::LABEL_SIZE)
+                                .padding(theme::PAD_FIELD)
+                                .width(Length::Fixed(56.0)),
+                            "Its material; Enter keeps the slots",
+                        ),
                     ]
                     .spacing(theme::S2)
                     .align_y(iced::Alignment::Center),

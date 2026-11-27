@@ -101,6 +101,8 @@ impl Hani {
             // See `app/pooling.rs`.
             heading("PAINT"),
             self.pooling_numbers(),
+            // See `app/kept_settings.rs`.
+            self.kept_settings_block(),
         ]
         .spacing(theme::S2);
         let card = container(

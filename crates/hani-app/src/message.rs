@@ -1152,6 +1152,8 @@ pub enum SpaceMouseSetting {
     PanSens(f32),
     ZoomSens(f32),
     OrbitSens(f32),
+    /// How long a still puck is taken to be still, in milliseconds.
+    StaleMs(f32),
     /// Which raw axis drives an action.
     Binding(Action, Axis),
     Invert(Action, bool),
@@ -1316,6 +1318,9 @@ pub enum Message {
     Help(HelpMessage),
     /// The About card, opened or closed. See `app/about.rs`.
     About(bool),
+    /// A setting kept in a file that had no control. See
+    /// `app/kept_settings.rs`.
+    Kept(crate::app::KeptMessage),
     /// Saving in a browser. See `app/shelf.rs`.
     Shelf(ShelfMessage),
     /// Snip and report. See `app/snip.rs`.
@@ -1337,6 +1342,8 @@ pub enum Message {
     OpenChosen(Option<std::path::PathBuf>),
     /// Open a named file straight from the recent list, with no dialog.
     OpenRecent(std::path::PathBuf),
+    /// Forget every recent file.
+    RecentCleared,
     /// Load the crash net left behind by a session that did not save.
     RecoverAutosave,
     /// Show the welcome screen, from the Help menu.

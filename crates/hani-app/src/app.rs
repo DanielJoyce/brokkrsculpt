@@ -8,7 +8,9 @@ mod adding;
 mod autosave;
 mod cards;
 mod context;
+mod kept_settings;
 mod keys;
+pub(crate) use kept_settings::KeptMessage;
 // The active body's layers of paint. See `app/layers.rs`.
 mod layers;
 // Racks of paints, and the index they are filled from. See `app/rack.rs`.
@@ -831,6 +833,9 @@ pub struct Hani {
     help: help::HelpState,
     /// Whether the About card is up. See `app/about.rs`.
     about_open: bool,
+    /// What is typed in the printer's and the slicer's fields. See
+    /// `app/kept_settings.rs`.
+    kept: kept_settings::KeptSettings,
     /// Saving in a browser. See `app/shelf.rs`.
     shelf: shelf::ShelfState,
     /// Snip and report. See `app/snip.rs`.
@@ -2299,6 +2304,7 @@ impl Hani {
             shortcuts: false,
             help: help::HelpState::default(),
             about_open: false,
+            kept: kept_settings::KeptSettings::read(),
             shelf: shelf::ShelfState::default(),
             snip: snip::SnipState::default(),
             welcome_on_startup: true,
@@ -8140,6 +8146,10 @@ impl Hani {
                 config.zoom_sens = value;
                 persist = false;
             }
+            SpaceMouseSetting::StaleMs(value) => {
+                config.stale_ms = value.clamp(20.0, 1000.0) as u64;
+                persist = false;
+            }
             SpaceMouseSetting::OrbitSens(value) => {
                 config.orbit_sens = value;
                 persist = false;
@@ -10094,6 +10104,7 @@ impl Hani {
             // See `app/help.rs`.
             Message::Help(message) => self.help_changed(message),
             Message::About(open) => self.about_open = open,
+            Message::Kept(message) => self.kept_changed(message),
             Message::Shelf(message) => return self.shelf_changed(message),
             Message::Snip(message) => return self.snip_changed(message),
             Message::WelcomeOpened => {
@@ -11048,6 +11059,11 @@ impl Hani {
             // is not an error and must leave everything alone.
             Message::OpenRequested => return self.guard(PendingAction::Open),
             Message::OpenRecent(path) => return self.guard(PendingAction::OpenRecent(path)),
+            Message::RecentCleared => {
+                self.recent.clear();
+                self.top_menu = None;
+                self.status = "recent files cleared".to_string();
+            }
             Message::RecoverAutosave => return self.guard(PendingAction::RecoverAutosave),
 
             // --- importing a mesh --------------------------------------------
