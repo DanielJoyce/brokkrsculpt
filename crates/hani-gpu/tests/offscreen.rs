@@ -3635,6 +3635,61 @@ fn a_moving_body_is_drawn_through_its_map() {
     assert_eq!(mask(&harness.frame(&renderer)), plain, "with no map it is not where it was");
 }
 
+/// A part the gizmo drags is tinted for overhangs where the drag has it, and
+/// an exploded one where it stands: the same ball drawn the same distance
+/// down, once by each, below a plate, is tinted far less dragged than
+/// exploded. See `spread.rs`.
+#[test]
+fn a_dragged_part_is_read_for_overhangs_where_it_is_dragged() {
+    let Some(harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the dragged overhang test");
+        return;
+    };
+    use hani_core::overhang;
+    let distance = MODEL_RADIUS * 4.0;
+    let mut renderer = SculptRenderer::new(&harness.device, &harness.queue, TARGET_FORMAT);
+    renderer.resize(&harness.device, WIDTH, HEIGHT);
+    let mut volume = Volume::new(VOXEL_SIZE);
+    volume.seed_sphere(Vec3::ZERO, MODEL_RADIUS * 0.6);
+    upload_all(&mut renderer, &harness.device, &harness.queue, &mut volume);
+    let eye = Vec3::new(0.3, -0.6, 1.0).normalize() * distance;
+    let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y);
+    let projection = glam::camera::rh::proj::directx::perspective(
+        45f32.to_radians(),
+        WIDTH as f32 / HEIGHT as f32,
+        0.1,
+        distance * 4.0,
+    );
+    let shown = Uniforms {
+        view_projection: (projection * view).to_cols_array_2d(),
+        view: view.to_cols_array_2d(),
+        // The plate just under the ball, which reaches 0.6 of the radius
+        // down: where it stands, all of its underside overhangs; a radius
+        // lower, none of it is over the plate.
+        cavity: [0.0, 0.0, overhang::limit(45.0), -MODEL_RADIUS * 0.7],
+        ..uniforms(distance)
+    };
+    renderer.write_uniforms(&harness.queue, &shown);
+    let tinted = |pixels: &[u8]| {
+        pixels.chunks(4).filter(|pixel| i32::from(pixel[0]) - i32::from(pixel[2]) > 60).count()
+    };
+    let down = Vec3::new(0.0, -MODEL_RADIUS, 0.0);
+
+    renderer.set_spread(&harness.queue, &[(THE_ONLY_BODY, down.extend(0.0))]);
+    let exploded = harness.frame(&renderer);
+    renderer.set_spread(&harness.queue, &[]);
+    renderer.set_moving(&harness.queue, Some((THE_ONLY_BODY, glam::Mat4::from_translation(down))));
+    let dragged = harness.frame(&renderer);
+    dump("overhang-dragged", &dragged);
+    assert_eq!(mask(&exploded), mask(&dragged), "the two are not drawn in the same place");
+    let (by_explode, by_drag) = (tinted(&exploded), tinted(&dragged));
+    assert!(by_explode > 1000, "the exploded ball shows {by_explode} tinted pixels");
+    assert!(
+        by_drag * 4 < by_explode,
+        "dragged below the plate it still shows {by_drag} of {by_explode}"
+    );
+}
+
 /// A reference picture shows round the model and never over it, even when
 /// its plane stands in front of the model. See `reference.rs`.
 #[test]

@@ -185,10 +185,10 @@ fn vertex_main(
     @location(2) attributes: vec4<f32>,
     @location(3) paint: vec4<f32>,
     // How far this body is drawn from where it is: the hierarchy's Explode,
-    // `hani_gpu::spread`. Zero for every body not exploded. Only where it
-    // is DRAWN moves: `world` and `height` stay the model's own, so the
-    // overhang tint and the ring cut's see-through read the real body. In
-    // `w`, the share of the body screened away.
+    // `hani_gpu::spread`. Zero for every body not exploded. Explode moves
+    // only where it is DRAWN: `world` and `height` take its offset back off,
+    // so the overhang tint and the ring cut's see-through read the real
+    // body. In `w`, the share of the body screened away.
     //
     // And a body the transform gizmo is dragging, turned and scaled where
     // the drag has it: three columns of a linear part, each less the
@@ -215,9 +215,13 @@ fn vertex_main(
     // The view matrix is a rigid transform, so its upper 3x3 rotates normals
     // correctly without an inverse transpose.
     out.view_normal = (uniforms.view * vec4<f32>(turned_normal, 0.0)).xyz;
-    out.world_normal = normal;
-    out.world = position;
-    out.height = position.y;
+    // Where the part IS, for the overhang tint and the ring cut's
+    // see-through: where it is drawn, less Explode's offset, which is in
+    // the columns' `w` (`hani_gpu::spread`). A part the gizmo is dragging
+    // is read where the drag has it; an exploded one where it stands.
+    out.world_normal = turned_normal;
+    out.world = drawn - vec3<f32>(turn_x.w, turn_y.w, turn_z.w);
+    out.height = out.world.y;
     out.mask = attributes.r;
     // `Unorm8x4` hands the byte back as `n / 255`; the round undoes it exactly.
     out.slot = u32(round(attributes.g * 255.0));

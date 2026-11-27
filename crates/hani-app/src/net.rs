@@ -365,10 +365,20 @@ mod tests {
             let port = listener.local_addr().unwrap().port();
             let server = std::thread::spawn(move || {
                 let (mut stream, _) = listener.accept().unwrap();
-                let mut asked = [0u8; 1024];
-                let read = stream.read(&mut asked).unwrap();
+                // To the end of the headers, however many reads that takes:
+                // the request is written in parts, and one read of it came
+                // back "GET " now and then (seen in the gate, 2026-11-28).
+                let mut asked = Vec::new();
+                let mut chunk = [0u8; 1024];
+                while !asked.windows(4).any(|end| end == b"\r\n\r\n") {
+                    let read = stream.read(&mut chunk).unwrap();
+                    if read == 0 {
+                        break;
+                    }
+                    asked.extend_from_slice(&chunk[..read]);
+                }
                 stream.write_all(reply.as_bytes()).unwrap();
-                String::from_utf8_lossy(&asked[..read]).into_owned()
+                String::from_utf8_lossy(&asked).into_owned()
             });
             (port, server)
         };
