@@ -86,9 +86,13 @@ impl Workspace {
             Workspace::Sculpt => Rail::Brush,
             Workspace::Transform => Rail::Transform,
             Workspace::Paint => Rail::Paint,
-            // Print is for looking, measuring and cutting, and a drag that
-            // sculpted there would be a surprise: it opens measuring.
-            Workspace::Print => Rail::Measure,
+            // Print is for cutting, measuring and looking, and a drag that
+            // sculpted there would be a surprise: it opens with the cut. It
+            // opened measuring until 2026-11-27, and then measuring came back
+            // every time a cut was made or measuring was put down, since this
+            // is what Print falls back to: "Measure seems to be stuck on all
+            // the time in print mode", the maintainer found.
+            Workspace::Print => Rail::Cut,
         }
     }
 
@@ -659,6 +663,22 @@ mod tests {
         assert!(app.parting_cut(), "a cut in Print does not part");
         // And in Print a drag never strokes: what is lit is Print's.
         assert!(Workspace::Print.tools().contains(&app.rail_lit()));
+    }
+
+    /// Print opens with the cut, and comes back to it: measuring put down
+    /// leaves the cut in hand, not measuring again. Found by the
+    /// maintainer on 2026-11-27: "Measure seems to be stuck on all the time
+    /// in print mode".
+    #[test]
+    fn print_opens_with_the_cut_and_measuring_put_down_leaves_it() {
+        let mut app = app();
+        update(&mut app, Message::WorkspaceChosen(Workspace::Print));
+        assert_eq!(app.rail_lit(), Rail::Cut, "Print did not open with the cut");
+        update(&mut app, Message::RailChosen(Rail::Measure));
+        assert!(app.measure.armed, "Measure did not arm");
+        update(&mut app, Message::RailChosen(Rail::Measure));
+        assert!(!app.measure.armed, "Measure pressed again stayed on");
+        assert_eq!(app.rail_lit(), Rail::Cut, "measuring put down left {:?}", app.rail_lit());
     }
 
     /// The keys 1 to 8 pick from the open workspace's library: the

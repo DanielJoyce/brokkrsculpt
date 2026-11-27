@@ -340,3 +340,25 @@ or adding one, is not offered.
 ## Open questions
 
 None open.
+
+## Peg size and shape, and a quicker drag (2026-11-27)
+
+The maintainer found, on 2026-11-27, that the pegs could not be scaled or
+made square, and that moving the ring was "super slow".
+
+- **Pegs in the bar.** While a cut is proposed its bar has *Round* or
+  *Square* and *Peg*, the size (a round peg's radius, a square one's
+  half-side). The pegs were planned once, when the cut was proposed, so the
+  key settings in Print's export panel, which were there, changed nothing
+  that showed: any key setting now plans the proposal's pegs again
+  (`replan_ring_keys`). A square key is a tapered square in the core
+  (`hani_core::part::KeyShape`), its socket the clearance bigger, fitted on
+  the face by its corners, and drawn as its square.
+- **A quicker drag.** A handle or a point dragged fits the cut roughly (the
+  islands looked at every two voxels, and no keys), and exactly when let go.
+  Measured on the ball a session opens with (`what_fitting_the_ring_costs`,
+  release build, five runs each): an exact fit 26.7 ms a move, of which the
+  keys 14.7 ms and the islands 9.5 ms; a rough one 4.3 ms.
+
+Not done: the pegs are not drawn while a handle is dragged, only once it is
+let go; a key dragged by hand is planned again by any key setting.

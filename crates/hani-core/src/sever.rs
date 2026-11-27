@@ -386,7 +386,7 @@ impl Volume {
                 .map(|step| {
                     let offset = step as f32 / STEPS_EACH_WAY as f32 * radius;
                     let trial = Disc::round(first.centre + normal * offset, normal, radius);
-                    match self.fit(&trial) {
+                    match self.fit(&trial, 1.0) {
                         Fit::Fitted(disc) => {
                             let area = disc.region.as_ref().map_or(0, |region| region.area());
                             (offset, Some(area as f32), Some(disc))
@@ -619,18 +619,27 @@ impl Volume {
     /// along a torso) is not a piece the ring is round. `None` when no
     /// island qualifies.
     pub fn fit_to_islands(&self, disc: &Disc) -> Option<Disc> {
-        match self.fit(disc) {
+        self.fit_to_islands_every(disc, 1.0)
+    }
+
+    /// [`Volume::fit_to_islands`], looking every `voxels` voxels and not
+    /// at every one: a rough fit, for a cut being dragged about, which is
+    /// fitted again exactly when it is let go. At 2, a quarter of the
+    /// looking (asked for by the maintainer on 2026-11-27: "moving the ring
+    /// itself seems super slow").
+    pub fn fit_to_islands_every(&self, disc: &Disc, voxels: f32) -> Option<Disc> {
+        match self.fit(disc, voxels.max(1.0)) {
             Fit::Fitted(disc) => Some(disc),
             Fit::Empty | Fit::TooBig => None,
         }
     }
 
-    /// [`Volume::fit_to_islands`], saying why there is no fit.
-    fn fit(&self, disc: &Disc) -> Fit {
+    /// [`Volume::fit_to_islands_every`], saying why there is no fit.
+    fn fit(&self, disc: &Disc, voxels: f32) -> Fit {
         let voxel = self.voxel_size();
         let normal = disc.normal.normalize_or(Vec3::Z);
         let (u, v) = normal.any_orthonormal_pair();
-        let pitch = voxel;
+        let pitch = voxel * voxels;
         let ring = (disc.radius / pitch).ceil() as i32;
         let half = ring * ISLAND_REACH;
         let side = (2 * half + 1) as usize;
