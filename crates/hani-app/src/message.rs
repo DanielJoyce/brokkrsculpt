@@ -1310,6 +1310,8 @@ pub enum Message {
     /// Help: opened, a page, a search, a link in a page, closed. See
     /// `app/help.rs`.
     Help(HelpMessage),
+    /// The About card, opened or closed. See `app/about.rs`.
+    About(bool),
     /// Saving in a browser. See `app/shelf.rs`.
     Shelf(ShelfMessage),
     /// Snip and report. See `app/snip.rs`.

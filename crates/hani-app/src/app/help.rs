@@ -209,6 +209,9 @@ impl Hani {
         let card = container(
             column![
                 row![
+                    // The mark, the simple icon, as the maintainer asked on
+                    // 2026-11-27; the lockup is About's. See `app/about.rs`.
+                    crate::logo::mark(32.0),
                     text("Help").size(theme::TITLE_SIZE).color(theme::TEXT),
                     space().width(Length::Fill),
                     text_input("Search help", &self.help.query)

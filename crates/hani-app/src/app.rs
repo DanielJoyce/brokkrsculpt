@@ -2,6 +2,7 @@
 
 //! Application state, input handling and the widget tree.
 
+mod about;
 mod adding;
 // The crash net, written without stopping the drawing. See `app/autosave.rs`.
 mod autosave;
@@ -828,6 +829,8 @@ pub struct Hani {
     shortcuts: bool,
     /// Help, open or not. See `app/help.rs`.
     help: help::HelpState,
+    /// Whether the About card is up. See `app/about.rs`.
+    about_open: bool,
     /// Saving in a browser. See `app/shelf.rs`.
     shelf: shelf::ShelfState,
     /// Snip and report. See `app/snip.rs`.
@@ -2295,6 +2298,7 @@ impl Hani {
             key_menu: None,
             shortcuts: false,
             help: help::HelpState::default(),
+            about_open: false,
             shelf: shelf::ShelfState::default(),
             snip: snip::SnipState::default(),
             welcome_on_startup: true,
@@ -9285,6 +9289,8 @@ impl Hani {
             || self.shortcuts
             // See `app/help.rs`.
             || self.help.open
+            // See `app/about.rs`.
+            || self.about_open
             // See `app/shelf.rs`.
             || self.shelf.open
             // See `app/snip.rs`.
@@ -9339,6 +9345,10 @@ impl Hani {
                 }
                 // Help, as those. See `app/help.rs`.
                 if self.help_escaped() {
+                    return Task::none();
+                }
+                // About, as those. See `app/about.rs`.
+                if self.about_escaped() {
                     return Task::none();
                 }
                 // And the browser's card. See `app/shelf.rs`.
@@ -10083,6 +10093,7 @@ impl Hani {
             Message::ShortcutsClosed => self.shortcuts = false,
             // See `app/help.rs`.
             Message::Help(message) => self.help_changed(message),
+            Message::About(open) => self.about_open = open,
             Message::Shelf(message) => return self.shelf_changed(message),
             Message::Snip(message) => return self.snip_changed(message),
             Message::WelcomeOpened => {
