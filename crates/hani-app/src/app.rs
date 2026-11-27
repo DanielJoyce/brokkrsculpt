@@ -8,6 +8,9 @@ mod adapter;
 mod adding;
 // The crash net, written without stopping the drawing. See `app/autosave.rs`.
 mod autosave;
+// Boolean groups in the list and on the model. See `app/booleans.rs`.
+mod booleans;
+pub(crate) use booleans::BooleanMessage;
 mod cards;
 mod context;
 mod kept_settings;
@@ -8307,6 +8310,10 @@ impl Hani {
                 self.hidden_bodies.push(node.id);
             }
         }
+        // Operands drawn through a boolean group's result. See
+        // `app/booleans.rs`.
+        self.refresh_booleans();
+        self.hide_boolean_rows();
         self.shared.set_hidden(&self.hidden_bodies);
         // Explode lays the drawn bodies out again. See `app/explode.rs`.
         self.publish_spread();
@@ -10117,6 +10124,8 @@ impl Hani {
             // See `app/help.rs`.
             Message::Help(message) => self.help_changed(message),
             Message::About(open) => return self.about_changed(open),
+            // See `app/booleans.rs`.
+            Message::Boolean(message) => self.boolean_changed(message),
             Message::GraphicsNamed(name) => self.graphics = Some(name),
             Message::Kept(message) => self.kept_changed(message),
             Message::Shelf(message) => return self.shelf_changed(message),

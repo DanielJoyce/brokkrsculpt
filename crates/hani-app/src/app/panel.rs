@@ -2623,6 +2623,8 @@ impl Hani {
         let managing = self.desk.now == crate::message::Workspace::Transform;
         if managing {
             stacked = stacked.push(verbs);
+            // See `app/booleans.rs`.
+            stacked = stacked.push(self.boolean_verbs());
         }
 
         if self.adding && managing {
@@ -2791,6 +2793,12 @@ impl Hani {
                     .on_press(Message::FolderCollapseToggled(node.id)),
                 "Fold or unfold",
             ));
+        }
+
+        // Whether a folder combines, or how a row joins one that does. See
+        // `app/booleans.rs`.
+        if let Some(chip) = self.boolean_chip(node) {
+            line = line.push(chip);
         }
 
         // At most one row is being renamed, so this is one `NodeId` compare and

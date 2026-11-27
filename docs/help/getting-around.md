@@ -74,6 +74,24 @@ and shows a row, and rows can be dragged into folders. Above the list,
 *Explode* spreads the parts apart so a small one can be picked, and the button
 beside it shows only the active body.
 
+### Boolean groups
+
+A folder can **combine** its rows into one solid: press the **∪** chip on
+its row. Read the rows top to bottom. The first is the base; each row
+after it is **added** (**+**), **cut** (**−**) or **kept** where it
+meets what is above (**∩**), by the chip on its row, which a press turns
+through the three. The order matters: a row moved up or down changes the
+result at once. A folder inside a combining folder is a bracket, standing
+for its own result. Hover the **∪** chip to see the whole fold written out,
+as `((Body 1 − Hole) + Boss)`.
+
+In Transform, **+**, **−** and **∩** under the list put the active body and
+the body below it into a new combining folder. While you work on a row of
+one, the rows that cut or keep are drawn see-through so you can see and
+sculpt them. A hidden row is left out. **Bake** collapses the folder into
+one body that holds the result; Undo puts it all back. See
+`docs/BOOLEANS.md`.
+
 ## Reference pictures and the floor
 
 REFERENCES, in Sculpt and Transform, holds a picture for each of the front,

@@ -429,6 +429,12 @@ true of it too, and what it adds is this.
   browser, *Save to computer* and every export download a file, and
   *Open…* and *Import and replace…* take one from the computer. See
   [`docs/WEB.md`](docs/WEB.md).
+- **Boolean groups.** A folder in the bodies list can combine its rows into
+  one solid, read top to bottom: the first the base, each after it added,
+  cut or kept by the chip on its row, a nested folder a bracket. The result
+  is drawn live, the rows that cut drawn see-through while you work on them,
+  and *Bake* collapses the folder into one body. See
+  [`docs/BOOLEANS.md`](docs/BOOLEANS.md).
 - **Shell and extract.** *Shell* in FORM hollows a body to a wall of the
   thickness asked, its surface the outside of the wall, for a print that
   uses a fraction of the material. EXTRACT takes the masked part of the
