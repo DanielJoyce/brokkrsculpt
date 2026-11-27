@@ -323,7 +323,13 @@ impl Hani {
 
     /// The ring let go: the cut it proposes.
     pub(super) fn ring_released(&mut self) {
-        if self.ring_cut.held.take().is_some() {
+        if let Some(held) = self.ring_cut.held.take() {
+            // A handle or a point let go: the rough fit of the drag made
+            // exact, and the keys planned. See `fit_the_ring_as`.
+            if matches!(held, Taken::Handle(_) | Taken::Point(_)) {
+                self.fit_the_ring();
+                self.refresh_overlay();
+            }
             return;
         }
         let Some(press) = self.ring_cut.press.take() else {
@@ -378,8 +384,22 @@ impl Hani {
         self.refresh_overlay();
     }
 
-    /// Fit the proposed ring to what it crosses, and its band, again.
+    /// Fit the proposed ring to what it crosses, and its band, again:
+    /// exactly, and its keys planned.
     fn fit_the_ring(&mut self) {
+        self.fit_the_ring_as(Fitting::Exactly);
+    }
+
+    /// Fit the proposed ring, roughly or exactly.
+    ///
+    /// **Roughly while a handle or a point is being dragged**: the islands
+    /// looked for every two voxels and not every one, and the keys left
+    /// until the drag is let go, when it is fitted exactly. Measured on the
+    /// ball a session opens with (`what_fitting_the_ring_costs`, release
+    /// build, five runs each): an exact fit 25.6 ms a move, of it 16.5 ms
+    /// the keys and 9.3 ms the islands. The maintainer found moving the
+    /// ring "super slow" on 2026-11-27.
+    fn fit_the_ring_as(&mut self, fitting: Fitting) {
         let Some(proposal) = &self.ring_cut.proposal else {
             return;
         };
@@ -389,7 +409,11 @@ impl Hani {
         };
         // The bend comes in over most of the way out to where the flat cut
         // meets the surface, so that the middle of the face stays flat.
-        let flat = volume.fit_to_islands(&ring.disc());
+        let every = match fitting {
+            Fitting::Exactly => 1.0,
+            Fitting::Roughly => 2.0,
+        };
+        let flat = volume.fit_to_islands_every(&ring.disc(), every);
         let reach = flat
             .as_ref()
             .map(|disc| rim_points(volume, disc, &ring))
@@ -401,21 +425,43 @@ impl Hani {
         let disc = if lifts.iter().all(|lift| *lift == 0.0) {
             flat
         } else {
-            volume.fit_to_islands(&ring.bent(&lifts, reach))
+            volume.fit_to_islands_every(&ring.bent(&lifts, reach), every)
         };
         let points = disc.as_ref().map(|disc| rim_points(volume, disc, &ring)).unwrap_or_default();
         let width = BAND_PX * self.world_per_pixel(ring.centre);
         let band = disc.as_ref().map(|disc| contour(volume, disc, width)).unwrap_or_default();
         // Planned again with the cut: a key moved by hand stays only until
         // the cut itself is moved.
-        let keys =
-            disc.as_ref().map(|disc| volume.plan_keys(disc, self.key_spec)).unwrap_or_default();
+        let keys = match fitting {
+            Fitting::Exactly => {
+                disc.as_ref().map(|disc| volume.plan_keys(disc, self.key_spec)).unwrap_or_default()
+            }
+            Fitting::Roughly => Vec::new(),
+        };
         if let Some(proposal) = self.ring_cut.proposal.as_mut() {
             proposal.disc = disc;
             proposal.contour = band;
             proposal.keys = keys;
             proposal.points = points;
         }
+    }
+
+    /// The proposed cut's keys planned again, with the key settings as they
+    /// are now: a change of size or shape shows on the cut at once. The cut
+    /// itself is not fitted again.
+    pub(super) fn replan_ring_keys(&mut self) {
+        let Some(proposal) = &self.ring_cut.proposal else {
+            return;
+        };
+        let (Some(disc), Some(volume)) = (proposal.disc.as_ref(), self.doc.volume(proposal.body))
+        else {
+            return;
+        };
+        let keys = volume.plan_keys(disc, self.key_spec);
+        if let Some(proposal) = self.ring_cut.proposal.as_mut() {
+            proposal.keys = keys;
+        }
+        self.refresh_overlay();
     }
 
     /// A point round the cut dragged to `pixel`: its height is how far
@@ -437,7 +483,7 @@ impl Hani {
         {
             *lift = height.clamp(-most, most);
         }
-        self.fit_the_ring();
+        self.fit_the_ring_as(Fitting::Roughly);
         self.refresh_overlay();
     }
 
@@ -512,7 +558,7 @@ impl Hani {
         if let Some(proposal) = self.ring_cut.proposal.as_mut() {
             proposal.ring = moved;
         }
-        self.fit_the_ring();
+        self.fit_the_ring_as(Fitting::Roughly);
         self.refresh_overlay();
     }
 
@@ -670,8 +716,26 @@ impl Hani {
             let ring = proposal.ring;
             // Each key on the cut face: its rim, and its middle to drag.
             for key in &proposal.keys {
-                let (across, beside) = key.axis.any_orthonormal_pair();
-                circle(batch, key.centre, across, beside, key.radius_mm, HANDLE);
+                if key.shape == hani_core::part::KeyShape::Square {
+                    // Its square, turned as its solid is: its sides along
+                    // the axis's own frame (`hani_core::part::Key`).
+                    let across = key.axis.any_orthonormal_vector();
+                    let beside = key.axis.cross(across);
+                    let corner =
+                        |a: f32, b: f32| key.centre + (across * a + beside * b) * key.radius_mm;
+                    let corners = [
+                        corner(-1.0, -1.0),
+                        corner(1.0, -1.0),
+                        corner(1.0, 1.0),
+                        corner(-1.0, 1.0),
+                    ];
+                    for side in 0..4 {
+                        batch.push_line(corners[side], corners[(side + 1) % 4], HANDLE);
+                    }
+                } else {
+                    let (across, beside) = key.axis.any_orthonormal_pair();
+                    circle(batch, key.centre, across, beside, key.radius_mm, HANDLE);
+                }
                 let half = HANDLE_PX * 0.6 * self.world_per_pixel(key.centre);
                 let lift = (self.camera.eye() - key.centre).normalize_or(ring.normal) * half * 3.0;
                 let at = key.centre + lift;
@@ -756,6 +820,27 @@ impl Hani {
                             proposal.disc.is_some().then_some(Message::Ring(RingMessage::Split)),
                         ),
                 )
+                // The pegs' shape and size, here where they are seen, and
+                // planned again as they change. Their kind, depth and
+                // clearance are with the export settings, the printer's.
+                .push(crate::ui::segmented(
+                    hani_core::part::KeyShape::ALL.map(|shape| (shape, shape.label())),
+                    self.key_spec.shape,
+                    |shape| Message::KeySettingChanged(crate::message::KeySetting::Shape(shape)),
+                ))
+                .push(
+                    crate::ui::number(
+                        &self.drafts,
+                        "ring.peg",
+                        "Peg",
+                        self.key_spec.radius_mm,
+                        0.5..=6.0,
+                        |mm| Message::KeySettingChanged(crate::message::KeySetting::Radius(mm)),
+                    )
+                    .step(0.1)
+                    .shown(format!("{:.1} mm", self.key_spec.radius_mm))
+                    .inline(),
+                )
                 .push(
                     button(text("Part with pegs").size(theme::LABEL_SIZE))
                         .padding(theme::PAD_CHOICE)
@@ -778,6 +863,14 @@ impl Hani {
         }
         line.into()
     }
+}
+
+/// How closely a ring is fitted: roughly while it is dragged, exactly when
+/// it is let go. See [`Hani::fit_the_ring_as`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fitting {
+    Roughly,
+    Exactly,
 }
 
 /// Whether the piece a cut takes off is in front of its plane: the side
@@ -1249,6 +1342,113 @@ mod tests {
     /// Keys are planned on a cut that fits; one dragged through the
     /// pointer moves across the cut face and stays on it; Part with pegs
     /// parts the arm off with a peg standing in its socket, one undo.
+    /// What each step of fitting the ring costs, on the ball a session
+    /// opens with. A measurement, not a claim: run by hand with
+    /// `cargo test --release -p hani-app -- --ignored what_fitting_the_ring_costs --nocapture`.
+    #[test]
+    #[ignore = "a measurement, not a claim: run by hand"]
+    fn what_fitting_the_ring_costs() {
+        let mut app = Hani::with_tablet(crate::tablet::Tablet::inert());
+        app.viewport_size = Vec2::new(SIZE.x, SIZE.y);
+        let body = app.doc.active();
+        let ring = Ring {
+            centre: Vec3::ZERO,
+            normal: Vec3::X,
+            across: Vec3::Y,
+            radius: super::super::MODEL_RADIUS_MM * 1.1,
+        };
+        app.ring_cut.proposal = Some(Proposal {
+            body,
+            ring,
+            disc: None,
+            contour: Vec::new(),
+            keys: Vec::new(),
+            lifts: [0.0; POINTS],
+            points: Vec::new(),
+        });
+        let volume = app.doc.volume(body).unwrap().duplicated(glam::IVec3::ZERO);
+        let time = |name: &str, work: &mut dyn FnMut()| {
+            let began = web_time::Instant::now();
+            for _ in 0..5 {
+                work();
+            }
+            eprintln!("{name}: {:.1} ms", began.elapsed().as_secs_f64() * 1000.0 / 5.0);
+        };
+        let disc = volume.fit_to_islands(&ring.disc()).expect("the ball is cut");
+        time("fit_to_islands", &mut || drop(volume.fit_to_islands(&ring.disc())));
+        time("rim_points", &mut || drop(rim_points(&volume, &disc, &ring)));
+        time("contour", &mut || drop(contour(&volume, &disc, 0.5)));
+        time("plan_keys", &mut || drop(volume.plan_keys(&disc, app.key_spec)));
+        time("fit_the_ring", &mut || app.fit_the_ring());
+        time("fit_the_ring, roughly", &mut || app.fit_the_ring_as(Fitting::Roughly));
+    }
+
+    /// While a point or a handle is dragged the cut is fitted roughly and
+    /// without keys; let go, it is fitted exactly and its keys planned, the
+    /// same as a cut that was never dragged.
+    #[test]
+    fn a_dragged_cut_is_rough_and_let_go_it_is_exact() {
+        let mut app = armed_with_a_cut();
+        app.key_spec = hani_core::part::KeySpec {
+            radius_mm: 0.5,
+            depth_mm: 1.0,
+            clearance_mm: 0.1,
+            wall_mm: 0.4,
+            ..hani_core::part::KeySpec::peg()
+        };
+        app.fit_the_ring();
+        let exact = app.ring_cut.proposal.clone().expect("a cut");
+        assert!(!exact.keys.is_empty(), "no keys on the exact fit");
+
+        app.fit_the_ring_as(Fitting::Roughly);
+        let rough = app.ring_cut.proposal.clone().expect("a cut");
+        assert!(rough.keys.is_empty(), "keys were planned on every move of a drag");
+        assert!(rough.disc.is_some(), "the rough fit found nothing");
+
+        // Let go of a point: exact again, keys and all.
+        app.ring_cut.held = Some(Taken::Point(0));
+        app.ring_released();
+        let again = app.ring_cut.proposal.clone().expect("a cut");
+        assert_eq!(again.keys, exact.keys, "let go, the keys are not the exact fit's");
+        assert_eq!(
+            again.disc.as_ref().map(|disc| disc.radius),
+            exact.disc.as_ref().map(|disc| disc.radius),
+            "let go, the cut is not the exact fit's"
+        );
+    }
+
+    /// The proposed cut's pegs follow the settings in its bar: a bigger
+    /// size plans bigger pegs, and Square square ones, without the cut
+    /// being drawn again. Found by the maintainer on 2026-11-27: "I can't
+    /// seem to scale the pegs in the ring cut or change their shape".
+    #[test]
+    fn the_proposed_pegs_follow_their_size_and_shape() {
+        use crate::message::KeySetting;
+        use hani_core::part::KeyShape;
+        let mut app = armed_with_a_cut();
+        app.key_spec = hani_core::part::KeySpec {
+            radius_mm: 0.5,
+            depth_mm: 1.0,
+            clearance_mm: 0.1,
+            wall_mm: 0.4,
+            ..hani_core::part::KeySpec::peg()
+        };
+        app.fit_the_ring();
+        let small = app.ring_cut.proposal.as_ref().expect("a cut").keys[0];
+        drop(app.ring_cut_bar());
+        update(&mut app, Message::KeySettingChanged(KeySetting::Radius(0.7)));
+        let bigger = app.ring_cut.proposal.as_ref().expect("a cut").keys[0];
+        assert!(
+            bigger.radius_mm > small.radius_mm,
+            "{} after {}",
+            bigger.radius_mm,
+            small.radius_mm
+        );
+        update(&mut app, Message::KeySettingChanged(KeySetting::Shape(KeyShape::Square)));
+        let keys = &app.ring_cut.proposal.as_ref().expect("a cut").keys;
+        assert!(!keys.is_empty() && keys.iter().all(|key| key.shape == KeyShape::Square));
+    }
+
     #[test]
     fn part_with_pegs_keys_the_arm_to_the_body() {
         let mut app = armed_with_a_cut();

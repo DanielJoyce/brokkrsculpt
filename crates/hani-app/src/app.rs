@@ -10786,12 +10786,20 @@ impl Hani {
             Message::ExportDetailChanged(detail) => self.export_detail = detail,
             // Clamped on arrival to the sliders' own ranges, so a value from
             // anywhere else cannot ask the engine for a key of no size.
-            Message::KeySettingChanged(setting) => match setting {
-                KeySetting::Kind(kind) => self.key_spec.kind = kind,
-                KeySetting::Radius(mm) => self.key_spec.radius_mm = mm.clamp(0.5, 6.0),
-                KeySetting::Depth(mm) => self.key_spec.depth_mm = mm.clamp(0.5, 8.0),
-                KeySetting::Clearance(mm) => self.key_spec.clearance_mm = mm.clamp(0.0, 0.6),
-            },
+            Message::KeySettingChanged(setting) => {
+                match setting {
+                    KeySetting::Kind(kind) => self.key_spec.kind = kind,
+                    KeySetting::Radius(mm) => self.key_spec.radius_mm = mm.clamp(0.5, 6.0),
+                    KeySetting::Depth(mm) => self.key_spec.depth_mm = mm.clamp(0.5, 8.0),
+                    KeySetting::Clearance(mm) => {
+                        self.key_spec.clearance_mm = mm.clamp(0.0, 0.6);
+                    }
+                    KeySetting::Shape(shape) => self.key_spec.shape = shape,
+                }
+                // A ring cut's pegs are planned when it is proposed: planned
+                // again, so the change shows. See `app/ring_cut.rs`.
+                self.replan_ring_keys();
+            }
             // With paints in use the meshes carry the signal whatever this
             // says, because a wash reads it, and then this is the view toggle
             // it looks like and there is nothing to remesh.

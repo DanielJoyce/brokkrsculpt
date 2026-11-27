@@ -3154,6 +3154,11 @@ impl Hani {
             })
             .text_size(theme::LABEL_SIZE)
             .width(Length::Fill),
+            crate::ui::segmented(
+                hani_core::part::KeyShape::ALL.map(|shape| (shape, shape.label())),
+                key.shape,
+                |shape| Message::KeySettingChanged(KeySetting::Shape(shape)),
+            ),
             crate::ui::number(
                 &self.drafts,
                 "key.radius",

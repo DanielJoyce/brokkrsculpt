@@ -128,6 +128,7 @@ pub fn coupon(spec: KeySpec, voxel_size: f32) -> Result<Coupon, CouponError> {
             radius_mm: spec.radius_mm,
             depth_mm: spec.depth_mm,
             clearance_mm: clearance,
+            shape: spec.shape,
         };
         plate.carve(key.bounds(voxel_size), move |at| key.solid(at, voxel_size) - clearance);
         sockets.push(centre);
@@ -155,6 +156,7 @@ pub fn coupon(spec: KeySpec, voxel_size: f32) -> Result<Coupon, CouponError> {
             radius_mm: spec.radius_mm,
             depth_mm: spec.depth_mm,
             clearance_mm: 0.0,
+            shape: spec.shape,
         };
         peg.unite(key.bounds(voxel_size), move |at| key.solid(at, voxel_size));
         peg

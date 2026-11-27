@@ -821,6 +821,8 @@ pub enum KeySetting {
     Depth(f32),
     /// The gap left per side, in millimetres.
     Clearance(f32),
+    /// Round or square.
+    Shape(hani_core::part::KeyShape),
 }
 
 /// Which pointer button an event refers to.

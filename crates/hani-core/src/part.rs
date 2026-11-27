@@ -104,6 +104,37 @@ impl KeyKind {
     }
 }
 
+/// The cross-section of a key: round, or square, which cannot turn in its
+/// socket. Asked for by the maintainer on 2026-11-27 ("change their shape
+/// (round versus square)").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeyShape {
+    #[default]
+    Round,
+    Square,
+}
+
+impl KeyShape {
+    pub const ALL: [KeyShape; 2] = [KeyShape::Round, KeyShape::Square];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            KeyShape::Round => "Round",
+            KeyShape::Square => "Square",
+        }
+    }
+
+    /// How far from its axis a key of radius 1 reaches: 1 for a round one,
+    /// the half-diagonal for a square one, whose radius is half its side.
+    /// What a key needs room for on the face.
+    pub fn reach(self) -> f32 {
+        match self {
+            KeyShape::Round => 1.0,
+            KeyShape::Square => std::f32::consts::SQRT_2,
+        }
+    }
+}
+
 impl std::fmt::Display for KeyKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.label())
@@ -126,12 +157,21 @@ pub struct KeySpec {
     pub clearance_mm: f32,
     /// The least solid left round and under a socket.
     pub wall_mm: f32,
+    /// Round or square. For a square key the radius is half its side.
+    pub shape: KeyShape,
 }
 
 impl KeySpec {
     /// A peg sized for a part of a few centimetres on a filament printer.
     pub fn peg() -> Self {
-        Self { kind: KeyKind::Peg, radius_mm: 2.0, depth_mm: 3.0, clearance_mm: 0.2, wall_mm: 1.0 }
+        Self {
+            kind: KeyKind::Peg,
+            radius_mm: 2.0,
+            depth_mm: 3.0,
+            clearance_mm: 0.2,
+            wall_mm: 1.0,
+            shape: KeyShape::Round,
+        }
     }
 }
 
@@ -158,6 +198,7 @@ pub struct Key {
     pub radius_mm: f32,
     pub depth_mm: f32,
     pub clearance_mm: f32,
+    pub shape: KeyShape,
 }
 
 /// Why an island of the cut face got no key.
@@ -483,6 +524,9 @@ impl Key {
     /// the other two kinds: the hole or pocket, which runs both ways from the
     /// face.
     fn solid(&self, at: Vec3, voxel: f32) -> f32 {
+        if self.shape == KeyShape::Square {
+            return self.square(at, voxel);
+        }
         let offset = at - self.centre;
         let along = offset.dot(self.axis);
         let out = (offset - self.axis * along).length();
@@ -511,9 +555,45 @@ impl Key {
         }
     }
 
+    /// [`Key::solid`] for a square key: a square of half-side `radius_mm`
+    /// across the axis, tapering as a round peg does, its edges and corners
+    /// rounded as a round one's are. Its sides face the key's own frame,
+    /// `axis.any_orthonormal_vector()`, the same for the peg and its socket.
+    ///
+    /// The taper makes this a little more than the distance off the sloping
+    /// sides; it is never more than about the slope's cosine out (0.99 at
+    /// the default peg), which a join of a few voxels does not see.
+    fn square(&self, at: Vec3, voxel: f32) -> f32 {
+        let offset = at - self.centre;
+        let along = offset.dot(self.axis);
+        let u = self.axis.any_orthonormal_vector();
+        let v = self.axis.cross(u);
+        let across = Vec2::new(offset.dot(u).abs(), offset.dot(v).abs());
+        let round = self.rounding(voxel);
+        let (from, to, half_from, half_to) = match self.kind {
+            KeyKind::Peg => {
+                let root = PEG_ROOT_VOXELS * voxel;
+                let tip = self.radius_mm * PEG_TAPER;
+                let slope = (self.radius_mm - tip) / self.depth_mm;
+                (-root, self.depth_mm - round, self.radius_mm + slope * root - round, tip - round)
+            }
+            KeyKind::PinHole | KeyKind::MagnetPocket => {
+                let half = self.radius_mm - round;
+                (-self.depth_mm + round, self.depth_mm - round, half, half)
+            }
+        };
+        let share = ((along - from) / (to - from)).clamp(0.0, 1.0);
+        let half = half_from + (half_to - half_from) * share;
+        let side = across - Vec2::splat(half);
+        let flat = side.max(Vec2::ZERO).length() + side.max_element().min(0.0);
+        let ends = (from - along).max(along - to);
+        let both = Vec2::new(flat, ends);
+        both.max(Vec2::ZERO).length() + both.max_element().min(0.0) - round
+    }
+
     /// The box of world space the key and its clearance can reach.
     fn bounds(&self, voxel: f32) -> (Vec3, Vec3) {
-        let reach = self.radius_mm.max(self.depth_mm)
+        let reach = (self.radius_mm * self.shape.reach()).max(self.depth_mm)
             + self.clearance_mm
             + (PEG_ROOT_VOXELS + 4.0) * voxel
             + self.depth_mm;
@@ -609,7 +689,9 @@ impl Volume {
                 refused: None,
             };
 
-            let radius = spec.radius_mm.min(inscribed - margin);
+            // A square key needs room for its corners.
+            let reach = spec.shape.reach();
+            let radius = spec.radius_mm.min((inscribed - margin) / reach);
             if radius < least_radius {
                 island.refused = Some(NoKey::TooNarrow { inscribed_mm: inscribed });
                 plan.islands.push(island);
@@ -641,8 +723,8 @@ impl Volume {
             let mut candidates: Vec<usize> = cells
                 .iter()
                 .copied()
-                .filter(|cell| face.inset[*cell] - margin >= first.radius_mm)
-                .filter(|cell| apart(*cell) >= 2.0 * (first.radius_mm + margin))
+                .filter(|cell| face.inset[*cell] - margin >= first.radius_mm * reach)
+                .filter(|cell| apart(*cell) >= 2.0 * (first.radius_mm * reach + margin))
                 .collect();
             candidates.sort_by(|a, b| apart(*b).total_cmp(&apart(*a)).then(a.cmp(b)));
             // Not every cell: a face has tens of thousands, and neighbours
@@ -669,7 +751,7 @@ impl Volume {
         let u = axis.any_orthonormal_vector();
         let v = axis.cross(u);
         // The axis, and eight points round the rim of the socket's wall.
-        let rim = radius + spec.clearance_mm + spec.wall_mm;
+        let rim = radius * spec.shape.reach() + spec.clearance_mm + spec.wall_mm;
         let feelers: Vec<Vec3> = std::iter::once(Vec3::ZERO)
             .chain((0..8).map(|step| {
                 let angle = step as f32 * std::f32::consts::FRAC_PI_4;
@@ -714,6 +796,7 @@ impl Volume {
             radius_mm: radius,
             depth_mm: depth,
             clearance_mm: spec.clearance_mm,
+            shape: spec.shape,
         })
     }
 
@@ -948,6 +1031,46 @@ mod tests {
             expected < key.radius_mm - 0.5 * voxel,
             "the fixture's taper is too slight for this measurement to see"
         );
+    }
+
+    /// A square peg is square: solid out at its corner, where a round peg
+    /// of the same radius is not, its socket the clearance bigger all
+    /// round, and the two parts still apart. Asked for by the maintainer on
+    /// 2026-11-27.
+    #[test]
+    fn a_square_peg_has_its_corners_and_its_socket_fits_round_them() {
+        let voxel = 0.25;
+        let volume = ball(16.0, voxel);
+        let plane = through_the_middle();
+        let round = KeySpec { clearance_mm: 0.3, ..KeySpec::peg() };
+        let square = KeySpec { shape: KeyShape::Square, ..round };
+        let corner_of = |plan: &PartPlan| {
+            let key = plan.keys[0];
+            let u = key.axis.any_orthonormal_vector();
+            let v = key.axis.cross(u);
+            // Half way up, 85% of the way out to the corner of the square
+            // there, which is outside the round peg.
+            let half = key.radius_mm * (1.0 + PEG_TAPER) * 0.5;
+            (key, key.centre + key.axis * (key.depth_mm * 0.5) + (u + v) * (half * 0.85))
+        };
+        let square_plan = volume.part_plan(plane, square);
+        let (first, second) = volume.parted(&square_plan);
+        let (key, corner) = corner_of(&square_plan);
+        assert_eq!(key.shape, KeyShape::Square);
+        assert!(first.sample_world(corner) < 0.0, "the square peg has no corner");
+        assert!(second.sample_world(corner) > 0.0, "the socket does not clear the corner");
+
+        let round_plan = volume.part_plan(plane, round);
+        let (round_first, _) = volume.parted(&round_plan);
+        assert!(round_first.sample_world(corner) > 0.0, "a round peg reaches the square's corner");
+
+        // Just past the peg's flat side, across: the clearance, empty in both.
+        let side = key.centre
+            + key.axis * (key.depth_mm * 0.5)
+            + key.axis.any_orthonormal_vector()
+                * (key.radius_mm * (1.0 + PEG_TAPER) * 0.5 + square.clearance_mm * 0.5);
+        assert!(first.sample_world(side) > 0.0, "the peg is wider than it says");
+        assert!(second.sample_world(side) > 0.0, "the socket is tighter than the clearance");
     }
 
     #[test]
