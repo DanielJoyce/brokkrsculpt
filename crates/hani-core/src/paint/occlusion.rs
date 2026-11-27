@@ -35,6 +35,16 @@ pub const POOLING: f32 = 1.5;
 /// How strongly it may be set to pool, from none to twice the usual.
 pub const POOLING_RANGE: std::ops::RangeInclusive<f32> = 0.0..=3.0;
 
+/// How far a wash or a contrast reaches round a recess to pool: what the
+/// rays' steps are multiplied by. At one they step out 0.5, 1, 2 and 4 mm;
+/// at a quarter to 1 mm, which keeps pooling in the finest creases; at four
+/// to 16 mm, which shades a whole form. Asked for by the maintainer on
+/// 2026-11-28: "shrink/expand the bleed of AO".
+pub const POOLING_REACH: f32 = 1.0;
+
+/// How far it may be set to reach.
+pub const POOLING_REACH_RANGE: std::ops::RangeInclusive<f32> = 0.25..=4.0;
+
 /// The crease a point is, -1 a full edge to 1 shut in all round, from how
 /// shut in it is (`occlusion`, 0..=1), the field's own edge there (`edge`,
 /// -1..=0) and how strongly the paint pools (`pooling`).
@@ -63,7 +73,7 @@ impl Volume {
         // Just off the surface, whichever side of it the voxel is.
         let start = voxel.as_vec3() - normal * sample(voxel) + normal * 1.0;
         let (across, along) = normal.any_orthonormal_pair();
-        let first = (FIRST_STEP_MM / self.voxel_size()).max(1.0);
+        let first = (FIRST_STEP_MM * self.pooling_reach / self.voxel_size()).max(1.0);
         let mut shut = 0.0;
         let rays = 6;
         for ray in 0..rays {
@@ -119,6 +129,25 @@ impl Volume {
         self.pooling
     }
 
+    /// How far a wash or a contrast reaches round a recess on this body.
+    pub fn pooling_reach(&self) -> f32 {
+        self.pooling_reach
+    }
+
+    /// Reach this far, within [`POOLING_REACH_RANGE`]: every brick a
+    /// pooling layer has paint in is put together again.
+    pub fn set_pooling_reach(&mut self, reach: f32) {
+        let reach = if reach.is_nan() { POOLING_REACH } else { reach };
+        let reach = reach.clamp(*POOLING_REACH_RANGE.start(), *POOLING_REACH_RANGE.end());
+        if reach == self.pooling_reach {
+            return;
+        }
+        self.pooling_reach = reach;
+        if self.layers_read_the_shape() {
+            self.restack();
+        }
+    }
+
     /// Pool a wash or a contrast this strongly, within [`POOLING_RANGE`]:
     /// every brick a pooling layer has paint in is put together again.
     pub fn set_pooling(&mut self, pooling: f32) {
@@ -149,6 +178,32 @@ mod tests {
             let _ = volume.end_stroke();
         }
         volume
+    }
+
+    /// The reach: at the bottom of a trench 8 mm wide and 5 mm deep, a short
+    /// reach finds open sky and a long one finds the walls; and the setting
+    /// is held to its range.
+    #[test]
+    fn a_longer_reach_finds_a_wider_recess() {
+        let mut volume = Volume::new(0.25);
+        let reach = Vec3::splat(14.0);
+        volume.edit_box(-reach, reach, |position, _| {
+            let slab = position.y;
+            let trench = (position.x.abs() - 4.0).max(-5.0 - position.y);
+            (slab.max(-trench) / 0.25).clamp(crate::brick::INSIDE, crate::brick::OUTSIDE)
+        });
+        let bottom = (Vec3::new(0.0, -5.0, 0.0) / 0.25).round().as_ivec3();
+        volume.set_pooling_reach(0.25);
+        let near = volume.occlusion_at(bottom);
+        volume.set_pooling_reach(4.0);
+        let far = volume.occlusion_at(bottom);
+        assert!(near < 0.1, "a reach of a quarter saw the walls: {near}");
+        assert!(far > near + 0.3, "a reach of four saw no more: {near} then {far}");
+
+        volume.set_pooling_reach(100.0);
+        assert_eq!(volume.pooling_reach(), *POOLING_REACH_RANGE.end());
+        volume.set_pooling_reach(f32::NAN);
+        assert_eq!(volume.pooling_reach(), POOLING_REACH);
     }
 
     /// The surface near where two balls meet is far more shut in than the

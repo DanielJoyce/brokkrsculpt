@@ -458,7 +458,7 @@ impl Hani {
         .align_y(Alignment::Center);
 
         // How strongly washes and contrasts pool. See `app/pooling.rs`.
-        column![list, actions, blend, opacity, self.pooling_number()].spacing(theme::S2).into()
+        column![list, actions, blend, opacity, self.pooling_numbers()].spacing(theme::S2).into()
     }
 }
 

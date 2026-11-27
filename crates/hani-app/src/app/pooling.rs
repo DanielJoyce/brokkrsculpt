@@ -6,7 +6,9 @@
 //! Asked for by the maintainer on 2026-11-25: "Contrast / speed paints /
 //! washes tend to pull in and around details ... I think maybe we just need
 //! a AO intensity slider for the paint engine." It is *Pooling* in Paint's
-//! LAYERS block, which sets it on every body at once; a body made later (a
+//! LAYERS block, which sets it on every body at once (and, since
+//! 2026-11-28, how far it reaches round a recess, beside it, in the Wash
+//! and Contrast touches and in Preferences too); a body made later (a
 //! split, a new body, a file opened) is given it on the next frame. It is
 //! a setting, `paint.conf`, kept when the slider is let go.
 
@@ -18,25 +20,36 @@ use crate::message::{Message, PaintingMessage};
 /// The setting's file.
 const FILE: &str = "paint.conf";
 
-/// The pooling the settings hold, or the usual. Not read by a test, which
-/// must not depend on the user's files.
-pub(super) fn kept() -> f32 {
-    use hani_core::paint::occlusion::{POOLING, POOLING_RANGE};
+/// One number the settings hold, or `usual`: within `range`, and never
+/// read by a test, which must not depend on the user's files.
+fn kept_value(key: &str, usual: f32, range: std::ops::RangeInclusive<f32>) -> f32 {
     if cfg!(test) {
-        return POOLING;
+        return usual;
     }
     crate::paths::config_file(FILE)
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|text| {
             crate::paths::entries(&text)
-                .find(|(key, _)| *key == "pooling")
+                .find(|(each, _)| *each == key)
                 .and_then(|(_, value)| value.parse::<f32>().ok())
         })
         .filter(|value| value.is_finite())
-        .map_or(POOLING, |value| value.clamp(*POOLING_RANGE.start(), *POOLING_RANGE.end()))
+        .map_or(usual, |value| value.clamp(*range.start(), *range.end()))
 }
 
-fn keep(pooling: f32) -> Result<(), String> {
+/// The pooling the settings hold, or the usual.
+pub(super) fn kept() -> f32 {
+    use hani_core::paint::occlusion::{POOLING, POOLING_RANGE};
+    kept_value("pooling", POOLING, POOLING_RANGE)
+}
+
+/// How far the pooling reaches, as the settings hold it, or the usual.
+pub(super) fn kept_reach() -> f32 {
+    use hani_core::paint::occlusion::{POOLING_REACH, POOLING_REACH_RANGE};
+    kept_value("reach", POOLING_REACH, POOLING_REACH_RANGE)
+}
+
+fn keep(pooling: f32, reach: f32) -> Result<(), String> {
     if cfg!(test) {
         return Ok(());
     }
@@ -44,7 +57,8 @@ fn keep(pooling: f32) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|why| why.to_string())?;
     }
-    std::fs::write(path, format!("pooling = {pooling}\n")).map_err(|why| why.to_string())
+    std::fs::write(path, format!("pooling = {pooling}\nreach = {reach}\n"))
+        .map_err(|why| why.to_string())
 }
 
 impl Hani {
@@ -57,9 +71,19 @@ impl Hani {
         self.remesh_dirty();
     }
 
+    /// A new reach from the slider, on every body as the pooling is.
+    pub(super) fn pool_reach(&mut self, reach: f32) {
+        use hani_core::paint::occlusion::{POOLING_REACH, POOLING_REACH_RANGE};
+        let reach = if reach.is_nan() { POOLING_REACH } else { reach };
+        self.painting.pooling_reach =
+            reach.clamp(*POOLING_REACH_RANGE.start(), *POOLING_REACH_RANGE.end());
+        self.keep_pooling();
+        self.remesh_dirty();
+    }
+
     /// The slider let go: keep the setting.
     pub(super) fn pooling_kept(&mut self) {
-        if let Err(why) = keep(self.painting.pooling) {
+        if let Err(why) = keep(self.painting.pooling, self.painting.pooling_reach) {
             self.status = format!("the pooling was not kept: {why}");
         }
     }
@@ -68,27 +92,48 @@ impl Hani {
     /// every frame, so that a body made since is given it. A comparison a
     /// body when nothing changed.
     pub(super) fn keep_pooling(&mut self) {
-        let pooling = self.painting.pooling;
+        let (pooling, reach) = (self.painting.pooling, self.painting.pooling_reach);
         for (_, volume) in self.doc.bodies_mut() {
             if volume.pooling() != pooling {
                 volume.set_pooling(pooling);
             }
+            if volume.pooling_reach() != reach {
+                volume.set_pooling_reach(reach);
+            }
         }
     }
 
-    /// The number in the LAYERS block.
-    pub(super) fn pooling_number(&self) -> Element<'_, Message> {
-        use hani_core::paint::occlusion::POOLING_RANGE;
-        crate::ui::number(
-            &self.drafts,
-            "paint.pooling",
-            "Pooling",
-            self.painting.pooling,
-            POOLING_RANGE,
-            |pooling| Message::Painting(PaintingMessage::Pooling(pooling)),
-        )
-        .on_release(Message::Painting(PaintingMessage::PoolingKept))
-        .shown(format!("{:.2}", self.painting.pooling))
+    /// How strongly and how far washes and contrasts pool: the two numbers
+    /// shown in Paint's LAYERS block, in the Wash and Contrast touches'
+    /// settings and in Preferences, all the same setting.
+    pub(super) fn pooling_numbers(&self) -> Element<'_, Message> {
+        use hani_core::paint::occlusion::{POOLING_RANGE, POOLING_REACH_RANGE};
+        iced::widget::column![
+            crate::ui::number(
+                &self.drafts,
+                "paint.pooling",
+                "Pooling",
+                self.painting.pooling,
+                POOLING_RANGE,
+                |pooling| Message::Painting(PaintingMessage::Pooling(pooling)),
+            )
+            .on_release(Message::Painting(PaintingMessage::PoolingKept))
+            .shown(format!("{:.2}", self.painting.pooling))
+            .tip("How dark washes and contrasts pool in recesses"),
+            crate::ui::number(
+                &self.drafts,
+                "paint.pooling_reach",
+                "Pooling reach",
+                self.painting.pooling_reach,
+                POOLING_REACH_RANGE,
+                |reach| Message::Painting(PaintingMessage::PoolingReach(reach)),
+            )
+            .step(0.05)
+            .on_release(Message::Painting(PaintingMessage::PoolingKept))
+            .shown(format!("{:.1} mm", self.painting.pooling_reach * 4.0))
+            .tip("How far round a recess washes and contrasts pool"),
+        ]
+        .spacing(crate::theme::S2)
         .into()
     }
 }
@@ -121,6 +166,10 @@ mod tests {
         assert!(app.doc.bodies().all(|(_, volume)| volume.pooling() == 2.5));
         update(&mut app, Message::Painting(PaintingMessage::Pooling(99.0)));
         assert_eq!(app.painting.pooling, 3.0);
-        drop(app.pooling_number());
+        update(&mut app, Message::Painting(PaintingMessage::PoolingReach(2.0)));
+        assert!(app.doc.bodies().all(|(_, volume)| volume.pooling_reach() == 2.0));
+        update(&mut app, Message::Painting(PaintingMessage::PoolingReach(50.0)));
+        assert_eq!(app.painting.pooling_reach, 4.0);
+        drop(app.pooling_numbers());
     }
 }

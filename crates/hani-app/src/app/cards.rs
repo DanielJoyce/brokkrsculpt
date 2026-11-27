@@ -98,6 +98,9 @@ impl Hani {
             // See `app/ui_scale.rs`.
             heading("INTERFACE SIZE"),
             self.scale_block(),
+            // See `app/pooling.rs`.
+            heading("PAINT"),
+            self.pooling_numbers(),
         ]
         .spacing(theme::S2);
         let card = container(

@@ -524,6 +524,8 @@ pub enum PaintingMessage {
     Pooling(f32),
     /// The pooling slider let go: keep it.
     PoolingKept,
+    /// How far round a recess washes and contrasts pool.
+    PoolingReach(f32),
 }
 
 /// A change to the active body's layers of paint. See `app/layers.rs`.

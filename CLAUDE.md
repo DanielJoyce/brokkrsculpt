@@ -124,6 +124,21 @@ when the build machine could not measure it (it has no graphics card).
   status line after an action are what a panel says. What a user may
   need to know beyond that goes in the documents, with a ticket.
 
+- **No extraneous text in the UI.** Said by the maintainer on 2026-11-28:
+  explanations of what a field is or does go either in a tooltip or in
+  Help. On screen, a control has its label, its value and its unit, and a
+  panel has a heading and a status line after an action; nothing more. A
+  sentence that explains, a hint under a field, a note of where something
+  is kept: a tooltip (`crate::ui::tip`, or a number's `.tip`), or a page of
+  `docs/help/`.
+
+- **Every setting kept in a file is editable in the UI.** Said by the
+  maintainer on 2026-11-28. Whatever the application writes to a settings
+  file under the configuration or data directory has a control that
+  changes it: in Preferences, or beside the tool it belongs to, or both.
+  A new setting that is kept comes with its control in the same pull
+  request, and one that is not kept says so in the pull request.
+
 - No em-dashes in prose, comments, documents or commit messages.
 - An `SPDX-License-Identifier: AGPL-3.0-only` header on every new source
   file.
