@@ -92,8 +92,7 @@ pub use orientation::{AxisRotation, Facing, from_print_space, resting_up, to_pri
 pub use pattern::{MAX_SCALE_MM, MIN_SCALE_VOXELS, Pattern, PatternKind};
 pub use primitive::PrimitiveKind;
 pub use project::{
-    Keyframe, MAX_NAME_BYTES, MAX_VOLUME_BYTES, Outline, ProjectError, ProjectState, View,
-    name_that_fits,
+    MAX_NAME_BYTES, MAX_VOLUME_BYTES, Outline, ProjectError, ProjectState, View, name_that_fits,
 };
 pub use pyramid::FormPyramid;
 pub use raycast::{Hit, SolidSpans, Span, first_solid_spans, raycast};

@@ -50,6 +50,15 @@ without touching a byte of either file — checked, not assumed: both fixtures
 still compare byte for byte against what this build produces for the old
 layouts, and both still open as one body named `Body 1`.
 
+**Version 4 took the key trailer back out**, on 2026-11-27, with the
+timeline. A version 4 file goes from its last body's streams straight to its
+tagged sections. The reader still reads a version 2 or 3 trailer and steps over
+the keys. This build writes no trailer, so the manufacturing step now writes
+one onto a version 2 file itself, in the bytes the old writer used; the
+fixtures still compare byte for byte and were not regenerated. `field-v2.hani`,
+a version 3 file with a mask, is now compared byte for byte too, against this
+build's output stamped 3 with an empty trailer added.
+
 **The mask did not touch them either, and that is the point of the field
 version being a range.** Field version 2 appends a per-body mask stream after
 that body's bricks, and the writer stamps the *lowest* version a document needs

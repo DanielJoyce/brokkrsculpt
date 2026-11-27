@@ -2064,9 +2064,9 @@ fn solid_in_both(here: &Volume, there: &Volume, coord: BrickCoord) -> usize {
 /// `ProjectState`, and above all not of `View`. `project::write(out, doc,
 /// state)` takes exactly two data parameters and solo is a field of neither, so
 /// there is no expression that can pass solo to the writer. That is not
-/// discipline; the call does not typecheck. `View` is written to the file *and*
-/// is the payload of every timeline keyframe, so solo there would make jumping
-/// to a key change which bodies exist on screen.
+/// discipline; the call does not typecheck. `View` is written to the file, so
+/// solo there would make reopening a file change which bodies exist on
+/// screen.
 ///
 /// Solo NARROWS and never widens, for the same reason the other two masks do:
 /// soloing a body whose own eye is off leaves it hidden here. Making that
