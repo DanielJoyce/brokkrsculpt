@@ -122,7 +122,7 @@ fn combined(
     if let Some((body, map)) = moving {
         let map = Affine3A::from_mat4(map);
         match out.iter_mut().find(|(id, _, _)| *id == body) {
-            Some((_, drawn, _)) => *drawn = *drawn * map,
+            Some((_, drawn, _)) => *drawn *= map,
             None => out.push((body, map, 0.0)),
         }
     }
