@@ -1277,7 +1277,6 @@ impl Hani {
                             "Put the downloaded build in place and start it",
                             Message::UpdateInstallPressed,
                         )
-                        .into()
                     } else if self
                         .offer
                         .as_ref()
@@ -1288,7 +1287,6 @@ impl Hani {
                             "Fetch the build on offer",
                             Message::UpdateDownloadRequested,
                         )
-                        .into()
                     } else {
                         space::vertical().height(0).into()
                     };
@@ -1308,8 +1306,7 @@ impl Hani {
                             "Go back to the previous build",
                             "Put back the build that ran before the last update",
                             Message::UpdateRevertRequested,
-                        )
-                        .into(),
+                        ),
                         None => space::vertical().height(0).into(),
                     };
                     revert
