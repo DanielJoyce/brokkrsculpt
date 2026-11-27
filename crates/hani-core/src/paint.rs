@@ -64,6 +64,7 @@
 //! by grey does not.
 
 pub mod bake;
+pub mod carry;
 pub mod coats;
 pub mod decal;
 pub mod field;

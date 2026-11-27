@@ -914,6 +914,28 @@ doing:
 Nothing in this section was measured on a graphics card; the build
 machine has none.
 
+### Paint carried onto a sculpted surface (2026-11-27)
+
+New work in a sculpting stroke over paint: after each pointer event's
+stamps, each voxel that has come into the band since the stroke began and
+holds no paint takes the paint along its normal (`paint/carry.rs`). Measured
+with `what_carrying_paint_costs` (`app/paint_carry.rs`, run with `--ignored
+--nocapture`) on the build machine, the dev profile, which is optimized
+here: 60 pointer events of a Draw stroke over the default ball coated red,
+the time in the carry against the event's whole handling, which includes
+one carry.
+
+| Brush radius | First version | Saturated bricks passed over | Whole event, after |
+|---|---|---|---|
+| 3 mm | 0.23 ms | 0.18 ms | 1.03 ms |
+| 10 mm | 1.26 ms | 0.63 ms | 1.95 ms |
+
+The first version read every voxel of a stamp's box through the volume's
+brick map; the second passes over a brick that is saturated throughout,
+which has no voxel in the band and is most of the box, before asking after
+its paint, and reads a dense brick's voxels directly. A body with no paint
+costs the carry one look at each layer's field and nothing more.
+
 ## The renderer: looked at, and not built
 
 Nothing below was changed, because nothing below can be judged on a machine
