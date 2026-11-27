@@ -38,6 +38,9 @@ Rest the pointer on a button to see what it does.
 
 - **Middle or right drag** turns the view, the same with **Shift** held pans
   it, and the **wheel** zooms about the surface under the pointer.
+- **On a touch screen**, one finger on the model is the tool and one finger
+  off it turns the view; two fingers slide the view as they move and zoom it
+  as they spread or pinch. A tap is a click.
 - The **cube** in the corner shows which way you are looking. Click a face to
   look straight at it.
 - **F** frames the active body.

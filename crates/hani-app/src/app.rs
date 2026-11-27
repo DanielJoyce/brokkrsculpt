@@ -77,6 +77,7 @@ mod panel;
 mod shelf;
 mod snip;
 mod tips;
+mod touch;
 // Where a frame's time goes. See `app/phases.rs`.
 mod phases;
 mod presets;
@@ -833,6 +834,8 @@ pub struct Hani {
     help: help::HelpState,
     /// Whether the About card is up. See `app/about.rs`.
     about_open: bool,
+    /// The fingers on a touch screen. See `app/touch.rs`.
+    touches: touch::Touches,
     /// What is typed in the printer's and the slicer's fields. See
     /// `app/kept_settings.rs`.
     kept: kept_settings::KeptSettings,
@@ -2304,6 +2307,7 @@ impl Hani {
             shortcuts: false,
             help: help::HelpState::default(),
             about_open: false,
+            touches: touch::Touches::default(),
             kept: kept_settings::KeptSettings::read(),
             shelf: shelf::ShelfState::default(),
             snip: snip::SnipState::default(),
@@ -9405,6 +9409,11 @@ impl Hani {
     }
 
     fn on_pointer(&mut self, event: PointerEvent) {
+        // Fingers become the mouse's events, or the view's: `app/touch.rs`.
+        if let PointerEvent::Touch { finger, phase, position, size } = event {
+            self.touched(finger, phase, Vec2::new(position.x, position.y), size);
+            return;
+        }
         // While a modal prompt is up, the pointer belongs to it. The scrim in
         // `view` now genuinely swallows presses -- it is wrapped in
         // `iced::widget::opaque`, which captures them, where the bare styled
@@ -9427,6 +9436,8 @@ impl Hani {
         }
         self.last_activity = Instant::now();
         match event {
+            // Taken off at the top of this function.
+            PointerEvent::Touch { .. } => {}
             PointerEvent::Modifiers { shift, control, alt } => {
                 self.shift = shift;
                 self.control = control;
@@ -10003,6 +10014,8 @@ impl Hani {
             }
             Message::Frame => {
                 let elapsed_ms = self.perf.record_frame();
+                // A finger held still on the model. See `app/touch.rs`.
+                self.touch_held();
                 // A body made since is given the pooling. See `app/pooling.rs`.
                 self.keep_pooling();
                 // **The update took.** Cleared on the first drawn frame, which

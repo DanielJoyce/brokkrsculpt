@@ -869,6 +869,23 @@ pub enum PointerEvent {
         control: bool,
         alt: bool,
     },
+    /// A finger on a touch screen, or a Windows pen, which arrives as one:
+    /// which finger, what it did, and where. See `app/touch.rs`.
+    Touch {
+        finger: u64,
+        phase: TouchPhase,
+        position: Vector,
+        size: Vector,
+    },
+}
+
+/// What a finger did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TouchPhase {
+    Down,
+    Moved,
+    /// Lifted, or lost: the window lost it, or a pen left range.
+    Up,
 }
 
 /// A menu on the bar along the top.
