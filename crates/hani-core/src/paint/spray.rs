@@ -194,7 +194,12 @@ mod tests {
     use crate::paint::stroke::Mode;
     use proptest::prelude::*;
 
-    const RED: Pigment = Pigment { colour: [220, 20, 20], opacity: 1.0, mode: Mode::Paint };
+    const RED: Pigment = Pigment {
+        colour: [220, 20, 20],
+        opacity: 1.0,
+        mode: Mode::Paint,
+        glaze: crate::paint::stroke::GLAZE_KEEPS,
+    };
 
     fn ball() -> Volume {
         let mut volume = Volume::new(0.5);

@@ -40,6 +40,7 @@ fn pigment() -> impl Strategy<Value = Pigment> {
         colour,
         opacity,
         mode,
+        ..Pigment::default()
     })
 }
 
@@ -138,7 +139,7 @@ proptest! {
     /// All of a paint, at full opacity, is the paint: whatever was there.
     #[test]
     fn a_full_coat_is_the_colour(before in rgba(), colour in any::<[u8; 3]>()) {
-        let all = laid(before, Pigment { colour, opacity: 1.0, mode: Mode::Paint }, 1.0);
+        let all = laid(before, Pigment { colour, opacity: 1.0, mode: Mode::Paint, ..Pigment::default() }, 1.0);
         prop_assert_eq!(all, [colour[0], colour[1], colour[2], 255]);
     }
 
@@ -159,7 +160,7 @@ proptest! {
         colour in any::<[u8; 3]>(),
         amount in 0.0_f32..=1.0,
     ) {
-        let glaze = Pigment { colour, opacity: 1.0, mode: Mode::Glaze };
+        let glaze = Pigment { colour, opacity: 1.0, mode: Mode::Glaze, ..Pigment::default() };
         let after = laid([under[0], under[1], under[2], 255], glaze, amount);
         prop_assert_eq!(after[3], 255);
         let luma = |c: [u8; 3]| {

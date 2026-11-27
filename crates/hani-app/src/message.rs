@@ -510,6 +510,8 @@ pub enum PaintingMessage {
     /// How much of itself a full touch of the brush lays.
     Opacity(f32),
     Mode(PaintMode),
+    /// How much of the lightness under it a glaze keeps, 0..=1.
+    GlazeKeeps(f32),
     /// How unlike the paint it began on a fill of colour will still run
     /// over, in levels of 255.
     FillLike(u8),

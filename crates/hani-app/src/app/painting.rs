@@ -48,6 +48,10 @@ pub(super) struct PaintingState {
     pub colour: [u8; 3],
     pub opacity: f32,
     pub mode: PaintMode,
+    /// How much of the lightness a glaze's film takes it gives back,
+    /// 0..=1: [`hani_core::paint::stroke::Pigment::glaze`]. Asked for, as
+    /// a setting, on 2026-11-27.
+    pub glaze: f32,
     /// Whether the eyedropper is armed: the next press on the model takes
     /// the colour there.
     pub picking: bool,
@@ -79,6 +83,7 @@ impl Default for PaintingState {
         Self {
             colour: FIRST_COLOUR,
             opacity: 1.0,
+            glaze: hani_core::paint::stroke::GLAZE_KEEPS,
             mode: PaintMode::default(),
             picking: false,
             held_off: false,
@@ -104,7 +109,7 @@ impl PaintingState {
             (_, PaintMode::Paint) => Mode::Paint,
             (_, PaintMode::Glaze) => Mode::Glaze,
         };
-        Pigment { colour: self.colour, opacity: self.opacity, mode }
+        Pigment { colour: self.colour, opacity: self.opacity, mode, glaze: self.glaze }
     }
 }
 
@@ -135,6 +140,9 @@ impl Hani {
                 self.painting.opacity = opacity.clamp(*OPACITY_RANGE.start(), *OPACITY_RANGE.end());
             }
             PaintingMessage::Mode(mode) => self.painting.mode = mode,
+            PaintingMessage::GlazeKeeps(keeps) => {
+                self.painting.glaze = if keeps.is_nan() { 0.0 } else { keeps.clamp(0.0, 1.0) };
+            }
             PaintingMessage::FillLike(levels) => self.painting.fill_like = levels,
             PaintingMessage::PickArmed => self.painting.picking = !self.painting.picking,
             PaintingMessage::Coated => self.coat_the_body_in_colour(),
@@ -366,6 +374,22 @@ impl Hani {
             .shown(format!("{:.2}", painting.opacity)),
         ]
         .spacing(theme::S2);
+        // A glaze's own setting, while it is a glaze in hand.
+        if painting.mode == PaintMode::Glaze {
+            picker = picker.push(
+                crate::ui::number(
+                    &self.drafts,
+                    "paint.glaze_keeps",
+                    "Keeps light",
+                    painting.glaze,
+                    0.0..=1.0,
+                    |keeps| Message::Painting(PaintingMessage::GlazeKeeps(keeps)),
+                )
+                .step(0.01)
+                .shown(format!("{:.0}%", painting.glaze * 100.0))
+                .tip("How much of the lightness under it the glaze keeps: none is a full film"),
+            );
+        }
         if !editing {
             return picker.into();
         }
@@ -402,6 +426,36 @@ mod tests {
 
     const SIZE: Vector = Vector { x: 800.0, y: 600.0 };
     const CENTRE: Vector = Vector { x: 400.0, y: 300.0 };
+
+    /// The glaze setting reaches the pigment, held to 0..=1, and is the
+    /// glaze's alone: a paint or an eraser lays the same whatever it says.
+    #[test]
+    fn the_glaze_setting_reaches_the_glaze_and_nothing_else() {
+        let mut app = Hani::with_tablet(crate::tablet::Tablet::inert());
+        update(&mut app, Message::Painting(PaintingMessage::Mode(PaintMode::Glaze)));
+        update(&mut app, Message::Painting(PaintingMessage::GlazeKeeps(0.2)));
+        assert_eq!(app.painting.pigment(hani_core::BrushDirection::Add).glaze, 0.2);
+        update(&mut app, Message::Painting(PaintingMessage::GlazeKeeps(4.0)));
+        assert_eq!(app.painting.glaze, 1.0);
+        update(&mut app, Message::Painting(PaintingMessage::GlazeKeeps(f32::NAN)));
+        assert_eq!(app.painting.glaze, 0.0);
+
+        let under = [180, 170, 150, 255];
+        let lays = |app: &Hani| {
+            hani_core::paint::stroke::laid(
+                under,
+                app.painting.pigment(hani_core::BrushDirection::Add),
+                1.0,
+            )
+        };
+        let film = lays(&app);
+        update(&mut app, Message::Painting(PaintingMessage::GlazeKeeps(1.0)));
+        assert_ne!(lays(&app), film, "the setting changed nothing of a glaze");
+        update(&mut app, Message::Painting(PaintingMessage::Mode(PaintMode::Paint)));
+        let painted = lays(&app);
+        update(&mut app, Message::Painting(PaintingMessage::GlazeKeeps(0.0)));
+        assert_eq!(lays(&app), painted, "the glaze setting changed a paint");
+    }
 
     fn update(app: &mut Hani, message: Message) {
         drop(app.update(message));

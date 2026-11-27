@@ -25,7 +25,12 @@ fn main() {
     let mut meshes: Vec<BrickMesh> = Vec::new();
     for radius in [2.0_f32, 5.0, 10.0] {
         let brush = Brush { kind: BrushKind::Paint, radius, ..Brush::default() };
-        let pigment = Pigment { colour: [180, 40, 30], opacity: 0.8, mode: Mode::Paint };
+        let pigment = Pigment {
+            colour: [180, 40, 30],
+            opacity: 0.8,
+            mode: Mode::Paint,
+            ..Pigment::default()
+        };
         let mut stroke = PaintStroke::new();
         volume.begin_stroke();
         stroke.begin();

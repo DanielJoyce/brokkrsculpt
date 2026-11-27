@@ -207,7 +207,8 @@ impl Volume {
                     return held;
                 };
                 let free = 1.0 - f32::from(protection) / f32::from(PROTECTED);
-                let pigment = Pigment { colour, opacity: 1.0, mode: Mode::Paint };
+                let pigment =
+                    Pigment { colour, opacity: 1.0, mode: Mode::Paint, ..Pigment::default() };
                 laid(held, pigment, (amount * free).clamp(0.0, 1.0))
             });
         }
