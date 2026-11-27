@@ -325,7 +325,7 @@ impl Hani {
             row![].spacing(theme::S1),
             |assembled, which| {
                 let on = which == tab;
-                assembled.push(
+                assembled.push(crate::ui::tip(
                     button(text(which.label(now)).size(theme::LABEL_SIZE).color(if on {
                         theme::TEXT
                     } else {
@@ -334,7 +334,8 @@ impl Hani {
                     .padding(iced::Padding { top: 2.0, bottom: 4.0, left: 6.0, right: 6.0 })
                     .style(if on { theme::tool_button } else { theme::section_heading })
                     .on_press(Message::DockTabChosen(which)),
-                )
+                    super::tips::dock_tab(which),
+                ))
             },
         );
         let body = match tab {

@@ -1141,12 +1141,16 @@ impl Hani {
         let live = self.studio.profile(self.brush.falloff).shape;
         column![
             crate::ui::sub_label("Profile"),
-            crate::ui::segmented(Shape::ALL.map(|shape| (shape, shape.label())), live, |shape| {
-                match shape.curve() {
-                    Some(curve) => Message::FalloffChanged(curve),
-                    None => Message::Studio(StudioMessage::RoundChosen),
+            crate::ui::segmented_tips(
+                Shape::ALL.map(|shape| (shape, shape.label(), super::tips::profile(shape))),
+                live,
+                |shape| {
+                    match shape.curve() {
+                        Some(curve) => Message::FalloffChanged(curve),
+                        None => Message::Studio(StudioMessage::RoundChosen),
+                    }
                 }
-            }),
+            ),
             crate::ui::number(
                 &self.drafts,
                 "studio.plateau",
@@ -1261,10 +1265,11 @@ impl Hani {
         let name = palette.get(place)?.0.name.clone();
         let on = self.key_of_place(place);
         let keys = (0..super::keys::KEYS).fold(row![].spacing(2), |assembled, key| {
-            assembled.push(
+            assembled.push(crate::ui::tip(
                 crate::ui::toggle((key + 1).to_string(), on == Some(key), Message::KeyPut(key))
                     .width(Length::Fill),
-            )
+                format!("Pick it with the {} key", key + 1),
+            ))
         });
         Some(
             column![
@@ -1320,23 +1325,34 @@ impl Hani {
                     .padding(theme::PAD_FIELD)
                     .size(theme::LABEL_SIZE)
                     .width(Length::Fill),
-                button(text("Keep").size(theme::LABEL_SIZE))
-                    .style(theme::tool_button)
-                    .on_press(changed(StudioMessage::PresetSaved)),
+                crate::ui::tip(
+                    button(text("Keep").size(theme::LABEL_SIZE))
+                        .style(theme::tool_button)
+                        .on_press(changed(StudioMessage::PresetSaved)),
+                    "Keep the brush in hand as one of your own, under this name"
+                ),
             ]
             .spacing(theme::S1),
             // A brush is a file, and files come from elsewhere: take some
             // in, or read the directory again after putting some there by
             // hand.
             row![
-                button(text("Import\u{2026}").size(theme::LABEL_SIZE).width(Length::Fill).center())
+                crate::ui::tip(
+                    button(
+                        text("Import\u{2026}").size(theme::LABEL_SIZE).width(Length::Fill).center()
+                    )
                     .width(Length::Fill)
                     .style(theme::tool_button)
                     .on_press(changed(StudioMessage::BrushImportRequested)),
-                button(text("Read again").size(theme::LABEL_SIZE).width(Length::Fill).center())
-                    .width(Length::Fill)
-                    .style(theme::tool_button)
-                    .on_press(changed(StudioMessage::BrushesReloaded)),
+                    "Take in brush files from elsewhere"
+                ),
+                crate::ui::tip(
+                    button(text("Read again").size(theme::LABEL_SIZE).width(Length::Fill).center())
+                        .width(Length::Fill)
+                        .style(theme::tool_button)
+                        .on_press(changed(StudioMessage::BrushesReloaded)),
+                    "Read the brushes again, after adding brush files by hand"
+                ),
             ]
             .spacing(theme::S1),
         ]
@@ -1344,16 +1360,19 @@ impl Hani {
         // Adding a brush, over the palette. The palette at the pointer had
         // a button beside it; the maintainer had it out on 2026-11-25 as a
         // second way to the `b` key, which the shortcuts card names.
-        let heading = button(
-            text(if self.studio.adding { "Done adding" } else { "+ Add a brush" })
-                .size(theme::LABEL_SIZE)
-                .width(Length::Fill)
-                .center(),
-        )
-        .width(Length::Fill)
-        .padding(theme::PAD_CHOICE)
-        .style(if self.studio.adding { theme::tool_button_active } else { theme::tool_button })
-        .on_press(changed(StudioMessage::AddToggled));
+        let heading = crate::ui::tip(
+            button(
+                text(if self.studio.adding { "Done adding" } else { "+ Add a brush" })
+                    .size(theme::LABEL_SIZE)
+                    .width(Length::Fill)
+                    .center(),
+            )
+            .width(Length::Fill)
+            .padding(theme::PAD_CHOICE)
+            .style(if self.studio.adding { theme::tool_button_active } else { theme::tool_button })
+            .on_press(changed(StudioMessage::AddToggled)),
+            "Keep the brush in hand as a brush of your own",
+        );
         let mut panel = column![heading].spacing(theme::S1);
         if let Some(row) = self.key_row() {
             panel = panel.push(row);
@@ -1367,7 +1386,7 @@ impl Hani {
         // means. With one that stands in for a brush that came with the
         // application, forgetting it puts that one back.
         if let Some(index) = forgettable {
-            panel = panel.push(
+            panel = panel.push(crate::ui::tip(
                 button(
                     text(match palette[index].1 {
                         Place::Changed => "Restore the one that came with it",
@@ -1380,7 +1399,8 @@ impl Hani {
                 .width(Length::Fill)
                 .style(theme::tool_button)
                 .on_press(changed(StudioMessage::PresetRemoved(index))),
-            );
+                "Take your brush off the palette, or put back the one it changed",
+            ));
         }
         panel.into()
     }
@@ -1433,15 +1453,18 @@ impl Hani {
             } else {
                 face.into()
             };
-            button(face)
-                .width(Length::Fill)
-                .padding(iced::Padding { top: 3.0, bottom: 3.0, left: 2.0, right: 2.0 })
-                .style(if lit == Some(index) {
-                    theme::tool_button_active
-                } else {
-                    theme::tool_button
-                })
-                .on_press(Message::Studio(StudioMessage::PresetChosen(index)))
+            crate::ui::tip(
+                button(face)
+                    .width(Length::Fill)
+                    .padding(iced::Padding { top: 3.0, bottom: 3.0, left: 2.0, right: 2.0 })
+                    .style(if lit == Some(index) {
+                        theme::tool_button_active
+                    } else {
+                        theme::tool_button
+                    })
+                    .on_press(Message::Studio(StudioMessage::PresetChosen(index))),
+                "Take this brush; a right click puts it on a key",
+            )
         };
         // A right click on a tile offers the keys to put it on.
         let brush = |index: usize| {
@@ -1568,7 +1591,7 @@ impl Hani {
             pictures =
                 pictures.push(kinds.iter().fold(row![].spacing(theme::S1), |assembled, kind| {
                     let live = self.studio.built_in == Some(*kind);
-                    assembled.push(
+                    assembled.push(crate::ui::tip(
                         button(text(kind.label()).size(theme::LABEL_SIZE))
                             .width(Length::Fill)
                             .style(if live {
@@ -1577,7 +1600,8 @@ impl Hani {
                                 theme::tool_button
                             })
                             .on_press(changed(StudioMessage::StampChosen(*kind))),
-                    )
+                        "This picture across the tip",
+                    ))
                 }));
         }
         // The user's own, kept, three to a row after the application's. See
@@ -1585,12 +1609,13 @@ impl Hani {
         for names in self.studio.own.chunks(3) {
             let mut line = names.iter().fold(row![].spacing(theme::S1), |assembled, name| {
                 let live = self.studio.built_in.is_none() && self.studio.own_in_hand == Some(*name);
-                assembled.push(
+                assembled.push(crate::ui::tip(
                     button(text(name.as_str().to_string()).size(theme::LABEL_SIZE))
                         .width(Length::Fill)
                         .style(if live { theme::tool_button_active } else { theme::tool_button })
                         .on_press(changed(StudioMessage::OwnPictureChosen(*name))),
-                )
+                    "Your picture across the tip",
+                ))
             });
             for _ in names.len()..3 {
                 line = line.push(iced::widget::space().width(Length::Fill));
@@ -1600,7 +1625,7 @@ impl Hani {
         // A picture in hand that is not kept: one from before pictures were.
         let unkept = self.studio.built_in.is_none() && self.studio.own_in_hand.is_none();
         pictures
-            .push(
+            .push(crate::ui::tip(
                 button(
                     text(if unkept {
                         format!("Picture: {}", self.studio.alpha_name)
@@ -1612,7 +1637,8 @@ impl Hani {
                 .width(Length::Fill)
                 .style(if unkept { theme::tool_button_active } else { theme::tool_button })
                 .on_press(changed(StudioMessage::StampImageRequested)),
-            )
+                "Take in a picture of your own for the tip",
+            ))
             .into()
     }
 
@@ -1694,10 +1720,9 @@ impl Hani {
     pub(super) fn stroke_panel(&self) -> Element<'_, Message> {
         let changed = |message: StudioMessage| Message::Studio(message);
         let stamping = self.studio.stamp_on;
-        let mut stamp = column![crate::ui::toggle(
-            "Stamp",
-            stamping,
-            changed(StudioMessage::StampToggled(!stamping)),
+        let mut stamp = column![crate::ui::tip(
+            crate::ui::toggle("Stamp", stamping, changed(StudioMessage::StampToggled(!stamping)),),
+            "Press the brush in once, sized and turned by the drag"
         )]
         .spacing(theme::S2);
         if stamping {
@@ -1717,14 +1742,17 @@ impl Hani {
                     )
                     .step(0.01),
                 )
-                .push(crate::ui::toggle(
-                    "Along the stroke",
-                    along,
-                    changed(StudioMessage::StampAlongChanged(if along {
-                        0.0
-                    } else {
-                        DEFAULT_ALONG
-                    })),
+                .push(crate::ui::tip(
+                    crate::ui::toggle(
+                        "Along the stroke",
+                        along,
+                        changed(StudioMessage::StampAlongChanged(if along {
+                            0.0
+                        } else {
+                            DEFAULT_ALONG
+                        })),
+                    ),
+                    "A row of stamps along the stroke, at the brush's size",
                 ));
             if along {
                 stamp = stamp.push(

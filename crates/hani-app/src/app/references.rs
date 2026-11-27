@@ -120,16 +120,20 @@ impl Hani {
             .label("Floor")
             .on_toggle(|on| Message::Reference(ReferenceMessage::Floor(on)))
             .text_size(theme::LABEL_SIZE);
-        let planes =
-            crate::ui::segmented(Plane::ALL.map(|each| (each, each.label())), plane, |each| {
-                Message::Reference(ReferenceMessage::Editing(each))
-            });
+        let planes = crate::ui::segmented_tips(
+            Plane::ALL.map(|each| (each, each.label(), super::tips::reference_plane(each))),
+            plane,
+            |each| Message::Reference(ReferenceMessage::Editing(each)),
+        );
         let mut block = column![floor, planes].spacing(theme::S2);
         let Some(reference) = references.on(plane) else {
             return block
-                .push(crate::ui::button_secondary(
-                    "Load picture…",
-                    Some(Message::Reference(ReferenceMessage::Load)),
+                .push(crate::ui::tip(
+                    crate::ui::button_secondary(
+                        "Load picture…",
+                        Some(Message::Reference(ReferenceMessage::Load)),
+                    ),
+                    "Stand a picture on this plane, to sculpt against",
                 ))
                 .into();
         };
@@ -213,13 +217,19 @@ impl Hani {
             )
             .push(
                 row![
-                    crate::ui::button_secondary(
-                        "Replace…",
-                        Some(Message::Reference(ReferenceMessage::Load))
+                    crate::ui::tip(
+                        crate::ui::button_secondary(
+                            "Replace…",
+                            Some(Message::Reference(ReferenceMessage::Load))
+                        ),
+                        "Stand another picture here in its place"
                     ),
-                    crate::ui::button_secondary(
-                        "Remove",
-                        Some(Message::Reference(ReferenceMessage::Remove))
+                    crate::ui::tip(
+                        crate::ui::button_secondary(
+                            "Remove",
+                            Some(Message::Reference(ReferenceMessage::Remove))
+                        ),
+                        "Take the picture off this plane"
                     ),
                 ]
                 .spacing(theme::S2),

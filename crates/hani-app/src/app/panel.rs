@@ -413,7 +413,7 @@ impl Hani {
         let menus = TopMenu::ALL.into_iter().fold(
             row![].spacing(theme::S2).align_y(Alignment::Center),
             |assembled, menu| {
-                assembled.push(
+                assembled.push(crate::ui::tip(
                     button(text(menu.label()).size(theme::TEXT_SIZE_SMALL))
                         .padding(theme::PAD_BUTTON)
                         .style(if self.top_menu == Some(menu) {
@@ -422,7 +422,9 @@ impl Hani {
                             theme::section_heading
                         })
                         .on_press(Message::TopMenuToggled(menu)),
-                )
+                    // See `app/tips.rs`.
+                    super::tips::top_menu(menu),
+                ))
             },
         );
 
@@ -528,17 +530,21 @@ impl Hani {
         // the first call fixes the closure to one specific function's type and
         // the other two stop compiling.
         type ButtonStyle = fn(&iced::Theme, button::Status) -> button::Style;
-        let answer = |label: &'static str, choice: ConfirmChoice, style: ButtonStyle| {
-            button(text(label).size(theme::TEXT_SIZE))
-                .padding(Padding {
-                    top: theme::S2,
-                    bottom: theme::S2,
-                    left: theme::S5,
-                    right: theme::S5,
-                })
-                .style(style)
-                .on_press(Message::ConfirmAnswered(choice))
-        };
+        let answer =
+            |label: &'static str, what: &'static str, choice: ConfirmChoice, style: ButtonStyle| {
+                crate::ui::tip(
+                    button(text(label).size(theme::TEXT_SIZE))
+                        .padding(Padding {
+                            top: theme::S2,
+                            bottom: theme::S2,
+                            left: theme::S5,
+                            right: theme::S5,
+                        })
+                        .style(style)
+                        .on_press(Message::ConfirmAnswered(choice)),
+                    what,
+                )
+            };
 
         let card = container(
             column![
@@ -553,9 +559,24 @@ impl Hani {
                 .size(theme::TEXT_SIZE_SMALL)
                 .color(theme::TEXT_DIM),
                 row![
-                    answer("Save", ConfirmChoice::Save, theme::tool_button_active),
-                    answer("Discard", ConfirmChoice::Discard, theme::danger_button),
-                    answer("Cancel", ConfirmChoice::Cancel, theme::tool_button),
+                    answer(
+                        "Save",
+                        "Save the sculpt, then go on",
+                        ConfirmChoice::Save,
+                        theme::tool_button_active
+                    ),
+                    answer(
+                        "Discard",
+                        "Go on and lose the changes",
+                        ConfirmChoice::Discard,
+                        theme::danger_button
+                    ),
+                    answer(
+                        "Cancel",
+                        "Stay with the sculpt as it is",
+                        ConfirmChoice::Cancel,
+                        theme::tool_button
+                    ),
                 ]
                 .spacing(theme::S3),
             ]
@@ -580,23 +601,42 @@ impl Hani {
         let lockup = crate::logo::lockup(112.0);
 
         type ButtonStyle = fn(&iced::Theme, button::Status) -> button::Style;
-        let action = |label: &'static str, message: Message, style: ButtonStyle| {
-            button(text(label).size(theme::TEXT_SIZE))
-                .width(Length::Fill)
-                .padding(Padding {
-                    top: theme::S2,
-                    bottom: theme::S2,
-                    left: theme::S4,
-                    right: theme::S4,
-                })
-                .style(style)
-                .on_press(message)
-        };
+        let action =
+            |label: &'static str, what: &'static str, message: Message, style: ButtonStyle| {
+                crate::ui::tip(
+                    button(text(label).size(theme::TEXT_SIZE))
+                        .width(Length::Fill)
+                        .padding(Padding {
+                            top: theme::S2,
+                            bottom: theme::S2,
+                            left: theme::S4,
+                            right: theme::S4,
+                        })
+                        .style(style)
+                        .on_press(message),
+                    what,
+                )
+            };
 
         let mut left = column![
-            action("New sculpt", Message::NewSculpt, theme::tool_button_active),
-            action("Open…", Message::OpenRequested, theme::tool_button),
-            action("Import mesh…", Message::ImportRequested, theme::tool_button),
+            action(
+                "New sculpt",
+                "Start again from a ball",
+                Message::NewSculpt,
+                theme::tool_button_active
+            ),
+            action(
+                "Open…",
+                "Open a sculpt saved as .hani",
+                Message::OpenRequested,
+                theme::tool_button
+            ),
+            action(
+                "Import mesh…",
+                "Open a mesh file as the whole sculpt",
+                Message::ImportRequested,
+                theme::tool_button
+            ),
         ]
         .spacing(theme::S2)
         .width(Length::Fixed(220.0));
@@ -605,6 +645,7 @@ impl Hani {
         {
             left = left.push(action(
                 "Sculpts in this browser…",
+                "The sculpts saved in this browser: open, download or delete",
                 Message::Shelf(crate::message::ShelfMessage::Opened),
                 theme::tool_button,
             ));
@@ -630,7 +671,9 @@ impl Hani {
                         .map(|dir| dir.to_string_lossy().into_owned())
                         .unwrap_or_default(),
                 );
-                left = left.push(
+                // The whole path on hover: the folder under the name is
+                // shortened to fit.
+                left = left.push(crate::ui::tip(
                     button(
                         column![
                             text(name).size(theme::TEXT_SIZE).color(theme::TEXT),
@@ -647,7 +690,8 @@ impl Hani {
                     })
                     .style(theme::tool_button)
                     .on_press(Message::OpenRecent(path.clone())),
-                );
+                    path.display().to_string(),
+                ));
             }
         }
 
@@ -662,14 +706,17 @@ impl Hani {
                 .size(theme::TEXT_SIZE)
                 .color(theme::TEXT_DIM),
             // The repository, asked for on 2026-11-26. See `links.rs`.
-            button(
-                text("github.com/DanielJoyce/hanisculpt")
-                    .size(theme::TEXT_SIZE_SMALL)
-                    .color(theme::ACCENT)
-            )
-            .padding(0)
-            .style(theme::section_heading)
-            .on_press(Message::LinkOpened(crate::links::REPOSITORY.to_string())),
+            crate::ui::tip(
+                button(
+                    text("github.com/DanielJoyce/hanisculpt")
+                        .size(theme::TEXT_SIZE_SMALL)
+                        .color(theme::ACCENT)
+                )
+                .padding(0)
+                .style(theme::section_heading)
+                .on_press(Message::LinkOpened(crate::links::REPOSITORY.to_string())),
+                "The source, the releases and the issues",
+            ),
         ]
         .spacing(theme::S1);
 
@@ -708,21 +755,21 @@ impl Hani {
                 } else {
                     Message::LinkOpened(crate::links::RELEASE_PAGE.to_string())
                 };
-                let mut pressable = button(text(label).size(theme::TEXT_SIZE_SMALL))
-                    .padding(Padding {
-                        top: theme::S2,
-                        bottom: theme::S2,
-                        left: theme::S4,
-                        right: theme::S4,
-                    })
-                    .style(theme::tool_button_active);
                 // **No `on_press` while busy**, which is what actually disables
                 // an iced button -- and the swap can take a minute on Windows,
                 // where it waits for antivirus to release the staged file.
-                if !busy {
-                    pressable = pressable.on_press(action);
-                }
-                pressable.into()
+                crate::ui::tip(
+                    button(text(label).size(theme::TEXT_SIZE_SMALL))
+                        .padding(Padding {
+                            top: theme::S2,
+                            bottom: theme::S2,
+                            left: theme::S4,
+                            right: theme::S4,
+                        })
+                        .style(theme::tool_button_active)
+                        .on_press_maybe((!busy).then_some(action)),
+                    "The build on offer: fetch it, put it in place, or see its release",
+                )
             }
             None => space::horizontal().into(),
         };
@@ -760,15 +807,18 @@ impl Hani {
             space::horizontal(),
             update,
             space::horizontal(),
-            button(text("Close").size(theme::TEXT_SIZE))
-                .padding(Padding {
-                    top: theme::S2,
-                    bottom: theme::S2,
-                    left: theme::S5,
-                    right: theme::S5
-                })
-                .style(theme::tool_button)
-                .on_press(Message::WelcomeClosed),
+            crate::ui::tip(
+                button(text("Close").size(theme::TEXT_SIZE))
+                    .padding(Padding {
+                        top: theme::S2,
+                        bottom: theme::S2,
+                        left: theme::S5,
+                        right: theme::S5
+                    })
+                    .style(theme::tool_button)
+                    .on_press(Message::WelcomeClosed),
+                "To the sculpt; Help, Welcome screen brings this back",
+            ),
         ]
         .align_y(Alignment::Center)
         .spacing(theme::S3);
@@ -864,16 +914,22 @@ impl Hani {
         };
 
         type ButtonStyle = fn(&iced::Theme, button::Status) -> button::Style;
-        let action = |label: &'static str, message: Option<Message>, style: ButtonStyle| {
-            button(text(label).size(theme::TEXT_SIZE))
-                .padding(Padding {
-                    top: theme::S2,
-                    bottom: theme::S2,
-                    left: theme::S5,
-                    right: theme::S5,
-                })
-                .style(style)
-                .on_press_maybe(message)
+        let action = |label: &'static str,
+                      what: &'static str,
+                      message: Option<Message>,
+                      style: ButtonStyle| {
+            crate::ui::tip(
+                button(text(label).size(theme::TEXT_SIZE))
+                    .padding(Padding {
+                        top: theme::S2,
+                        bottom: theme::S2,
+                        left: theme::S5,
+                        right: theme::S5,
+                    })
+                    .style(style)
+                    .on_press_maybe(message),
+                what,
+            )
         };
 
         let card = container(
@@ -893,6 +949,7 @@ impl Hani {
                 row![
                     action(
                         "Open an issue on GitHub",
+                        "Open a new issue with this filled in, in the browser",
                         ready.then_some(Message::BugReportSubmitted),
                         // Styled by whether it will actually do something. A
                         // button that looks pressable and is not is a worse
@@ -905,10 +962,16 @@ impl Hani {
                     // issue themselves, gets the same bytes.
                     action(
                         "Copy",
+                        "Copy the report, to paste where you like",
                         payload.is_some().then_some(Message::BugReportCopied),
                         theme::tool_button,
                     ),
-                    action("Cancel", Some(Message::BugReportDismissed), theme::tool_button),
+                    action(
+                        "Cancel",
+                        "Close without sending",
+                        Some(Message::BugReportDismissed),
+                        theme::tool_button
+                    ),
                 ]
                 .spacing(theme::S3),
             ]
@@ -929,27 +992,37 @@ impl Hani {
     /// releases, and this codebase is pinned to iced 0.14 and wgpu 27 for
     /// reasons that have already cost a session.
     fn top_menu_panel(&self, which: TopMenu) -> Element<'_, Message> {
-        let entry = |label: &'static str, message: Message| {
-            button(text(label).size(theme::TEXT_SIZE_SMALL))
-                .width(Length::Fill)
-                .padding(theme::PAD_MENU_ITEM)
-                .style(theme::section_heading)
-                .on_press(message)
+        // Each entry says more of what it does on hover.
+        let entry = |label: &'static str, what: &'static str, message: Message| {
+            crate::ui::tip(
+                button(text(label).size(theme::TEXT_SIZE_SMALL))
+                    .width(Length::Fill)
+                    .padding(theme::PAD_MENU_ITEM)
+                    .style(theme::section_heading)
+                    .on_press(message),
+                what,
+            )
         };
         // An entry with its key at the right, the way every menu bar shows
         // one. Greyed when there is nothing for it to do.
-        let keyed = |label: &'static str, key: &'static str, message: Option<Message>| {
-            button(
-                row![
-                    text(label).size(theme::TEXT_SIZE_SMALL).width(Length::Fill),
-                    text(key).size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
-                ]
-                .align_y(Alignment::Center),
+        let keyed = |label: &'static str,
+                     key: &'static str,
+                     what: &'static str,
+                     message: Option<Message>| {
+            crate::ui::tip(
+                button(
+                    row![
+                        text(label).size(theme::TEXT_SIZE_SMALL).width(Length::Fill),
+                        text(key).size(theme::CAPTION_SIZE).color(theme::TEXT_MUTE),
+                    ]
+                    .align_y(Alignment::Center),
+                )
+                .width(Length::Fill)
+                .padding(theme::PAD_MENU_ITEM)
+                .style(theme::section_heading)
+                .on_press_maybe(message),
+                what,
             )
-            .width(Length::Fill)
-            .padding(theme::PAD_MENU_ITEM)
-            .style(theme::section_heading)
-            .on_press_maybe(message)
         };
         // A view setting: a tick and its name.
         let switch = |label: &'static str, on: bool, message: Message| {
@@ -982,6 +1055,7 @@ impl Hani {
                                 ExportFormat::Textured => "Export OBJ with a texture…",
                                 ExportFormat::Glb => "Export GLB, texture inside…",
                             },
+                            super::tips::export(format),
                             Message::ExportRequested(format),
                         ))
                     },
@@ -996,32 +1070,42 @@ impl Hani {
                             .file_name()
                             .map(|name| name.to_string_lossy().into_owned())
                             .unwrap_or_else(|| path.display().to_string());
-                        assembled.push(
+                        // The whole path on hover, the entry being its name.
+                        assembled.push(crate::ui::tip(
                             button(text(label).size(theme::TEXT_SIZE_SMALL))
                                 .width(Length::Fill)
                                 .padding(theme::PAD_MENU_ITEM)
                                 .style(theme::section_heading)
                                 .on_press(Message::OpenRecent(path.clone())),
-                        )
+                            path.display().to_string(),
+                        ))
                     });
 
                 let mut items = column![
-                    entry("New", Message::NewSculpt),
-                    entry("Open…", Message::OpenRequested),
+                    entry("New", "Start again from a ball", Message::NewSculpt),
+                    entry("Open…", "Open a sculpt saved as .hani", Message::OpenRequested),
                     // "and replace" because that is what it does: the mesh
                     // becomes the whole document, and every body already in it
                     // goes. Named "Import mesh…" it read as an add, which is
                     // the one thing it is not -- and the day importing a mesh
                     // AS a new body ships, both entries can sit here and say
                     // which is which.
-                    entry("Import and replace…", Message::ImportRequested),
+                    entry(
+                        "Import and replace…",
+                        "Open a mesh file as the whole sculpt, in place of every body",
+                        Message::ImportRequested
+                    ),
                 ]
                 .spacing(1);
                 // Only when there is one to recover. A permanently greyed item
                 // would say "this application crashes" every time the menu is
                 // opened.
                 if self.has_autosave() {
-                    items = items.push(entry("Recover autosave", Message::RecoverAutosave));
+                    items = items.push(entry(
+                        "Recover autosave",
+                        "Open what was kept when the application last stopped",
+                        Message::RecoverAutosave,
+                    ));
                 }
                 if !self.recent.is_empty() {
                     items = items.push(separator()).push(
@@ -1033,22 +1117,32 @@ impl Hani {
                     items = items.push(recent);
                     // The list is kept in a file, so it is the user's to clear
                     // (`app/kept_settings.rs`).
-                    items = items.push(entry("Clear recent files", Message::RecentCleared));
+                    items = items.push(entry(
+                        "Clear recent files",
+                        "Forget the files listed here",
+                        Message::RecentCleared,
+                    ));
                     items = items.push(separator());
                 }
                 let items = items
-                    .push(entry("Save", Message::SaveRequested))
-                    .push(entry("Save As…", Message::SaveAsRequested));
+                    .push(entry("Save", "Write the sculpt to its file", Message::SaveRequested))
+                    .push(entry(
+                        "Save As…",
+                        "Write the sculpt to a file of a new name",
+                        Message::SaveAsRequested,
+                    ));
                 // In a browser, Save keeps the sculpt there; these list what
                 // it keeps and download one. See `app/shelf.rs`.
                 #[cfg(target_arch = "wasm32")]
                 let items = items
                     .push(entry(
                         "Sculpts in this browser…",
+                        "The sculpts saved in this browser: open, download or delete",
                         Message::Shelf(crate::message::ShelfMessage::Opened),
                     ))
                     .push(entry(
                         "Save to computer",
+                        "Download the sculpt as a .hani file",
                         Message::Shelf(crate::message::ShelfMessage::ToComputer),
                     ));
                 let items = items.push(separator()).push(exports);
@@ -1057,22 +1151,50 @@ impl Hani {
                 // browser, which can start no slicer and reach no printer.
                 #[cfg(not(target_arch = "wasm32"))]
                 let items = items
-                    .push(entry("Open in OrcaSlicer", Message::OpenInSlicer))
-                    .push(entry("Check the printer", Message::PrinterChecked));
+                    .push(entry(
+                        "Open in OrcaSlicer",
+                        "Export the bodies and open them in OrcaSlicer",
+                        Message::OpenInSlicer,
+                    ))
+                    .push(entry(
+                        "Check the printer",
+                        "Ask the printer in Preferences whether it answers",
+                        Message::PrinterChecked,
+                    ));
                 items
             }
             TopMenu::Edit => column![
-                keyed("Undo", "Ctrl Z", self.history.can_undo().then_some(Message::Undo)),
-                keyed("Redo", "Ctrl Shift Z", self.history.can_redo().then_some(Message::Redo)),
+                keyed(
+                    "Undo",
+                    "Ctrl Z",
+                    "Take back the last change",
+                    self.history.can_undo().then_some(Message::Undo)
+                ),
+                keyed(
+                    "Redo",
+                    "Ctrl Shift Z",
+                    "Put back what was taken back",
+                    self.history.can_redo().then_some(Message::Redo)
+                ),
                 separator(),
-                keyed("Invert the mask", "", Some(Message::MaskInverted)),
-                keyed("Clear the mask", "", Some(Message::MaskCleared)),
+                keyed(
+                    "Invert the mask",
+                    "",
+                    "Protect what was free and free what was protected",
+                    Some(Message::MaskInverted)
+                ),
+                keyed("Clear the mask", "", "Free the whole body", Some(Message::MaskCleared)),
                 separator(),
                 // The settings of the application rather than of the
                 // document: the pen, the SpaceMouse, the update check. They
                 // left the panel for this card, where they are set once and
                 // not every stroke.
-                keyed("Preferences\u{2026}", "", Some(Message::PreferencesOpened)),
+                keyed(
+                    "Preferences\u{2026}",
+                    "",
+                    "The pen, the SpaceMouse, paint and the other settings",
+                    Some(Message::PreferencesOpened)
+                ),
             ]
             .spacing(1),
             TopMenu::View => column![
@@ -1088,18 +1210,34 @@ impl Hani {
                 switch("Pictures in the bodies list", self.thumbnails, Message::ThumbnailsToggled),
                 switch("Frame stats", self.stats_open, Message::StatsToggled),
                 separator(),
-                keyed("Frame the body", "F", Some(Message::CameraFramedOnActive)),
+                keyed(
+                    "Frame the body",
+                    "F",
+                    "Fit the active body to the view",
+                    Some(Message::CameraFramedOnActive)
+                ),
             ]
             .spacing(1),
             TopMenu::Help => column![
                 // See `app/help.rs`.
-                keyed("Help", "", Some(Message::Help(crate::message::HelpMessage::Opened))),
-                keyed("Keyboard shortcuts", "?", Some(Message::ShortcutsOpened)),
+                keyed(
+                    "Help",
+                    "",
+                    "The pages of help, with a search",
+                    Some(Message::Help(crate::message::HelpMessage::Opened))
+                ),
+                keyed(
+                    "Keyboard shortcuts",
+                    "?",
+                    "Every key and what it does",
+                    Some(Message::ShortcutsOpened)
+                ),
                 // See `app/snip.rs`. Not in a browser, which has no
                 // screenshot to give it.
                 keyed(
                     "Snip and report\u{2026}",
                     "Ctrl ?",
+                    "A picture of part of the window, marked up, for an issue",
                     (!cfg!(target_arch = "wasm32"))
                         .then_some(Message::Snip(crate::message::SnipMessage::Started))
                 ),
@@ -1107,7 +1245,12 @@ impl Hani {
                 // licence and how fresh the update channel is were lines
                 // here; they are on the About card now, with the platform
                 // and what it was compiled with. See `app/about.rs`.
-                keyed("About HaniSculpt", "", Some(Message::About(true))),
+                keyed(
+                    "About HaniSculpt",
+                    "",
+                    "The version, the build, the platform and the graphics",
+                    Some(Message::About(true))
+                ),
                 separator(),
                 // **The update tick's second home.** The default is `always`,
                 // so the switch has to be reachable without the welcome screen
@@ -1130,14 +1273,21 @@ impl Hani {
                 // the call; the numbers are in the status line and on the card.
                 {
                     let offer: Element<'_, Message> = if self.downloaded_update.is_some() {
-                        entry("Install the update and restart", Message::UpdateInstallPressed)
-                            .into()
+                        entry(
+                            "Install the update and restart",
+                            "Put the downloaded build in place and start it",
+                            Message::UpdateInstallPressed,
+                        )
                     } else if self
                         .offer
                         .as_ref()
                         .is_some_and(|o| o.payload.is_some() && !o.requires_reinstall)
                     {
-                        entry("Download the update", Message::UpdateDownloadRequested).into()
+                        entry(
+                            "Download the update",
+                            "Fetch the build on offer",
+                            Message::UpdateDownloadRequested,
+                        )
                     } else {
                         space::vertical().height(0).into()
                     };
@@ -1153,18 +1303,35 @@ impl Hani {
                     // formatted one cannot outlive the call. The ordinal goes to
                     // the status line, where the outcome is already reported.
                     let revert: Element<'_, Message> = match self.crash_revert {
-                        Some(_) => {
-                            entry("Go back to the previous build", Message::UpdateRevertRequested)
-                                .into()
-                        }
+                        Some(_) => entry(
+                            "Go back to the previous build",
+                            "Put back the build that ran before the last update",
+                            Message::UpdateRevertRequested,
+                        ),
                         None => space::vertical().height(0).into(),
                     };
                     revert
                 },
-                entry("Welcome screen", Message::WelcomeOpened),
-                entry("Copy diagnostics", Message::DiagnosticsCopied),
-                entry("Report a bug…", Message::BugReportOpened),
-                entry("Open the issue tracker", Message::IssueOpened),
+                entry(
+                    "Welcome screen",
+                    "New, open, recent files and the keys",
+                    Message::WelcomeOpened
+                ),
+                entry(
+                    "Copy diagnostics",
+                    "Copy the build, the platform and the settings, for a report",
+                    Message::DiagnosticsCopied
+                ),
+                entry(
+                    "Report a bug…",
+                    "Write what happened and open an issue for it",
+                    Message::BugReportOpened
+                ),
+                entry(
+                    "Open the issue tracker",
+                    "The issues on GitHub, in the browser",
+                    Message::IssueOpened
+                ),
             ]
             .spacing(theme::S1),
         };
@@ -1546,14 +1713,18 @@ impl Hani {
             column![].spacing(theme::S1),
             |assembled, facing| {
                 let current = facing == menu.facing;
-                assembled.push(
+                assembled.push(crate::ui::tip(
                     button(text(crate::navcube::facing_label(facing)).size(theme::CAPTION_SIZE))
                         .width(Length::Fill)
                         .style(if current { theme::tool_button_active } else { theme::tool_button })
                         // The face is already there, so there is nothing to do
                         // and a button that says so beats one that no-ops.
                         .on_press_maybe((!current).then_some(Message::OrientFace(facing))),
-                )
+                    format!(
+                        "Turn the model so this face looks {}",
+                        crate::navcube::facing_label(facing).to_lowercase()
+                    ),
+                ))
             },
         );
 
@@ -1588,16 +1759,19 @@ impl Hani {
     /// clicks through to the sliders underneath.
     fn orient_prompt_card(&self, up: hani_core::Facing) -> Element<'_, Message> {
         type ButtonStyle = fn(&iced::Theme, button::Status) -> button::Style;
-        let answer = |label: &'static str, accept: bool, style: ButtonStyle| {
-            button(text(label).size(theme::TEXT_SIZE))
-                .padding(Padding {
-                    top: theme::S2,
-                    bottom: theme::S2,
-                    left: theme::S5,
-                    right: theme::S5,
-                })
-                .style(style)
-                .on_press(Message::OrientPromptAnswered(accept))
+        let answer = |label: &'static str, what: &'static str, accept: bool, style: ButtonStyle| {
+            crate::ui::tip(
+                button(text(label).size(theme::TEXT_SIZE))
+                    .padding(Padding {
+                        top: theme::S2,
+                        bottom: theme::S2,
+                        left: theme::S5,
+                        right: theme::S5,
+                    })
+                    .style(style)
+                    .on_press(Message::OrientPromptAnswered(accept)),
+                what,
+            )
         };
 
         let card = container(
@@ -1617,8 +1791,13 @@ impl Hani {
                     .size(theme::CAPTION_SIZE)
                     .color(theme::TEXT_DIM),
                 row![
-                    answer("Stand it up", true, theme::tool_button_active),
-                    answer("Leave it", false, theme::tool_button),
+                    answer(
+                        "Stand it up",
+                        "Turn the import so that this face is up",
+                        true,
+                        theme::tool_button_active
+                    ),
+                    answer("Leave it", "Keep the import as it came", false, theme::tool_button),
                 ]
                 .spacing(theme::S3),
             ]
@@ -2069,14 +2248,20 @@ impl Hani {
                 unkept
             },
             row![
-                button(text("Invert all").size(theme::LABEL_SIZE))
-                    .width(Length::Fill)
-                    .style(theme::tool_button)
-                    .on_press(Message::SpaceMouse(SpaceMouseSetting::InvertAll)),
-                button(text("Reset").size(theme::LABEL_SIZE))
-                    .width(Length::Fill)
-                    .style(theme::tool_button)
-                    .on_press(Message::SpaceMouse(SpaceMouseSetting::Reset)),
+                crate::ui::tip(
+                    button(text("Invert all").size(theme::LABEL_SIZE))
+                        .width(Length::Fill)
+                        .style(theme::tool_button)
+                        .on_press(Message::SpaceMouse(SpaceMouseSetting::InvertAll)),
+                    "Turn every axis the other way",
+                ),
+                crate::ui::tip(
+                    button(text("Reset").size(theme::LABEL_SIZE))
+                        .width(Length::Fill)
+                        .style(theme::tool_button)
+                        .on_press(Message::SpaceMouse(SpaceMouseSetting::Reset)),
+                    "Every SpaceMouse setting back as it came",
+                ),
             ]
             .spacing(theme::S2),
             row![
@@ -2447,12 +2632,13 @@ impl Hani {
             let choices = hani_core::PrimitiveKind::ALL.into_iter().fold(
                 row![].spacing(theme::S1),
                 |assembled, kind| {
-                    assembled.push(
+                    assembled.push(crate::ui::tip(
                         button(text(kind.label()).size(theme::LABEL_SIZE))
                             .width(Length::Fill)
                             .style(theme::tool_button)
                             .on_press(Message::PrimitiveAdded(kind)),
-                    )
+                        super::tips::primitive(kind),
+                    ))
                 },
             );
             stacked = stacked.push(choices);
@@ -2803,17 +2989,21 @@ impl Hani {
     /// prompt, for the reason documented there.
     fn delete_card<'a>(&'a self, pending: &'a super::PendingDelete) -> Element<'a, Message> {
         type ButtonStyle = fn(&iced::Theme, button::Status) -> button::Style;
-        let answer = |label: &'static str, message: Message, style: ButtonStyle| {
-            button(text(label).size(theme::TEXT_SIZE))
-                .padding(Padding {
-                    top: theme::S2,
-                    bottom: theme::S2,
-                    left: theme::S5,
-                    right: theme::S5,
-                })
-                .style(style)
-                .on_press(message)
-        };
+        let answer =
+            |label: &'static str, what: &'static str, message: Message, style: ButtonStyle| {
+                crate::ui::tip(
+                    button(text(label).size(theme::TEXT_SIZE))
+                        .padding(Padding {
+                            top: theme::S2,
+                            bottom: theme::S2,
+                            left: theme::S5,
+                            right: theme::S5,
+                        })
+                        .style(style)
+                        .on_press(message),
+                    what,
+                )
+            };
 
         let card = container(
             column![
@@ -2832,8 +3022,13 @@ impl Hani {
                 .size(theme::CAPTION_SIZE)
                 .color(theme::TEXT_MUTE),
                 row![
-                    answer("Delete", Message::BodyDeleteConfirmed, theme::danger_button),
-                    answer("Cancel", Message::BodyDeleteCancelled, theme::tool_button),
+                    answer(
+                        "Delete",
+                        "Delete it; undo brings it back while there is room",
+                        Message::BodyDeleteConfirmed,
+                        theme::danger_button
+                    ),
+                    answer("Cancel", "Keep it", Message::BodyDeleteCancelled, theme::tool_button),
                 ]
                 .spacing(theme::S3),
             ]
@@ -2856,17 +3051,21 @@ impl Hani {
     /// which is how it reaches six times the stroke budget.
     fn merge_card<'a>(&'a self, pending: &'a super::PendingMerge) -> Element<'a, Message> {
         type ButtonStyle = fn(&iced::Theme, button::Status) -> button::Style;
-        let answer = |label: &'static str, message: Message, style: ButtonStyle| {
-            button(text(label).size(theme::TEXT_SIZE))
-                .padding(Padding {
-                    top: theme::S2,
-                    bottom: theme::S2,
-                    left: theme::S5,
-                    right: theme::S5,
-                })
-                .style(style)
-                .on_press(message)
-        };
+        let answer =
+            |label: &'static str, what: &'static str, message: Message, style: ButtonStyle| {
+                crate::ui::tip(
+                    button(text(label).size(theme::TEXT_SIZE))
+                        .padding(Padding {
+                            top: theme::S2,
+                            bottom: theme::S2,
+                            left: theme::S5,
+                            right: theme::S5,
+                        })
+                        .style(style)
+                        .on_press(message),
+                    what,
+                )
+            };
         let mb = |bytes: usize| bytes as f64 / (1024.0 * 1024.0);
 
         let card = container(
@@ -2887,8 +3086,18 @@ impl Hani {
                 .size(theme::CAPTION_SIZE)
                 .color(theme::TEXT_MUTE),
                 row![
-                    answer("Merge", Message::BodyMergeConfirmed, theme::danger_button),
-                    answer("Cancel", Message::BodyMergeCancelled, theme::tool_button),
+                    answer(
+                        "Merge",
+                        "Merge it into the body below",
+                        Message::BodyMergeConfirmed,
+                        theme::danger_button
+                    ),
+                    answer(
+                        "Cancel",
+                        "Keep the two bodies apart",
+                        Message::BodyMergeCancelled,
+                        theme::tool_button
+                    ),
                 ]
                 .spacing(theme::S3),
             ]
@@ -2916,17 +3125,21 @@ impl Hani {
     /// answered by tidying up and pressing again.
     fn split_card<'a>(&'a self, pending: &'a super::PendingSplit) -> Element<'a, Message> {
         type ButtonStyle = fn(&iced::Theme, button::Status) -> button::Style;
-        let answer = |label: &'static str, message: Message, style: ButtonStyle| {
-            button(text(label).size(theme::TEXT_SIZE))
-                .padding(Padding {
-                    top: theme::S2,
-                    bottom: theme::S2,
-                    left: theme::S5,
-                    right: theme::S5,
-                })
-                .style(style)
-                .on_press(message)
-        };
+        let answer =
+            |label: &'static str, what: &'static str, message: Message, style: ButtonStyle| {
+                crate::ui::tip(
+                    button(text(label).size(theme::TEXT_SIZE))
+                        .padding(Padding {
+                            top: theme::S2,
+                            bottom: theme::S2,
+                            left: theme::S5,
+                            right: theme::S5,
+                        })
+                        .style(style)
+                        .on_press(message),
+                    what,
+                )
+            };
 
         let plan = &pending.plan;
         let detail = if plan.has_fragments() {
@@ -2970,8 +3183,18 @@ impl Hani {
                 .size(theme::CAPTION_SIZE)
                 .color(theme::TEXT_MUTE),
                 row![
-                    answer("Split", Message::BodySplitConfirmed, theme::danger_button),
-                    answer("Cancel", Message::BodySplitCancelled, theme::tool_button),
+                    answer(
+                        "Split",
+                        "Make each separate piece a body of its own",
+                        Message::BodySplitConfirmed,
+                        theme::danger_button
+                    ),
+                    answer(
+                        "Cancel",
+                        "Keep it in one",
+                        Message::BodySplitCancelled,
+                        theme::tool_button
+                    ),
                 ]
                 .spacing(theme::S3),
             ]
@@ -2995,7 +3218,7 @@ impl Hani {
         let kinds =
             PatternKind::ALL.into_iter().fold(column![].spacing(theme::S1), |assembled, kind| {
                 let (style, ink) = theme::tool_toggle(kind == pattern.kind);
-                assembled.push(
+                assembled.push(crate::ui::tip(
                     button(
                         // A container, because a row lays its children out from
                         // its left edge and a button does not centre `Shrink`
@@ -3019,7 +3242,8 @@ impl Hani {
                     .width(Length::Fill)
                     .style(style)
                     .on_press(Message::PatternChanged(kind)),
-                )
+                    super::tips::pattern(kind),
+                ))
             });
 
         // The size and depth sliders only mean anything once a pattern is
@@ -3205,11 +3429,12 @@ impl Hani {
         let buttons = ExportFormat::ALL.into_iter().filter(|format| !format.has_texture()).fold(
             row![].spacing(theme::S2),
             |assembled, format| {
-                assembled.push(
+                assembled.push(crate::ui::tip(
                     button(text(format.label()).size(theme::LABEL_SIZE))
                         .style(theme::tool_button)
                         .on_press(Message::Export(format)),
-                )
+                    super::tips::export(format),
+                ))
             },
         );
 

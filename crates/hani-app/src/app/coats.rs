@@ -337,13 +337,17 @@ impl Hani {
             row![label("Varnish").width(Length::Fill), apply(CoatsMessage::VarnishCoat)]
                 .spacing(theme::S2)
                 .align_y(Alignment::Center),
-            crate::ui::segmented(
+            crate::ui::segmented_tips(
                 [
                     hani_core::paint::Finish::Matte,
                     hani_core::paint::Finish::Satin,
                     hani_core::paint::Finish::Gloss,
                 ]
-                .map(|finish| (finish, finish.label())),
+                .map(|finish| (
+                    finish,
+                    finish.label(),
+                    super::tips::finish(finish)
+                )),
                 coats.varnish,
                 |finish| Message::Coats(CoatsMessage::Varnish(finish)),
             ),

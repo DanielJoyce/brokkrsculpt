@@ -219,10 +219,13 @@ impl Hani {
                         .size(theme::LABEL_SIZE)
                         .padding(theme::S2)
                         .width(Length::Fixed(260.0)),
-                    button(text("Close").size(theme::LABEL_SIZE))
-                        .padding(theme::PAD_BUTTON)
-                        .style(theme::tool_button)
-                        .on_press(Message::Help(HelpMessage::Closed)),
+                    crate::ui::tip(
+                        button(text("Close").size(theme::LABEL_SIZE))
+                            .padding(theme::PAD_BUTTON)
+                            .style(theme::tool_button)
+                            .on_press(Message::Help(HelpMessage::Closed)),
+                        "Back to the sculpt"
+                    ),
                 ]
                 .spacing(theme::S3)
                 .align_y(Alignment::Center),
@@ -253,7 +256,7 @@ impl Hani {
             .into_iter()
             .fold(column![].spacing(theme::S2), |list, each| {
                 let title = PAGES[each.page].1;
-                list.push(
+                list.push(crate::ui::tip(
                     button(
                         column![
                             text(format!("{title}: {}", each.heading))
@@ -267,7 +270,8 @@ impl Hani {
                     .padding(theme::S2)
                     .style(theme::tool_button)
                     .on_press(Message::Help(HelpMessage::Page(each.page))),
-                )
+                    "Open the page this was found on",
+                ))
             })
             .into()
     }

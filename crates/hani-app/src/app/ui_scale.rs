@@ -271,9 +271,12 @@ fn preview<'a>(relative: f32) -> Element<'a, Message> {
             icon_button(icon::IconName::Explode, false, "Explode, as it will look"),
             icon_button(icon::IconName::Solo, true, "Show only the active body, as it will look"),
             icon_button(icon::IconName::SeeThrough, false, "See-through, as it will look"),
-            button(text("Save as new…").size(at(theme::LABEL_SIZE)))
-                .padding(pad(theme::PAD_BUTTON))
-                .style(theme::tool_button),
+            crate::ui::tip(
+                button(text("Save as new…").size(at(theme::LABEL_SIZE)))
+                    .padding(pad(theme::PAD_BUTTON))
+                    .style(theme::tool_button),
+                "Save as new, as it will look"
+            ),
         ]
         .spacing(at(theme::S2))
         .align_y(Alignment::Center),

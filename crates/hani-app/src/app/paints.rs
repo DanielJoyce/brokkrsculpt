@@ -407,7 +407,7 @@ impl Hani {
     /// for each format that has one.
     pub(super) fn textured_exports(&self) -> Element<'_, Message> {
         let sizes = TEXTURE_SIZES.into_iter().fold(row![].spacing(theme::S1), |assembled, size| {
-            assembled.push(
+            assembled.push(crate::ui::tip(
                 button(text(format!("{size}")).size(theme::LABEL_SIZE))
                     .width(Length::Fill)
                     .style(if size == self.texture_size {
@@ -416,17 +416,19 @@ impl Hani {
                         theme::tool_button
                     })
                     .on_press(Message::TextureSizeChanged(size)),
-            )
+                format!("A picture {size} pixels square for each body"),
+            ))
         });
         let formats = crate::message::ExportFormat::ALL
             .into_iter()
             .filter(|format| format.has_texture())
             .fold(row![].spacing(theme::S2), |assembled, format| {
-                assembled.push(
+                assembled.push(crate::ui::tip(
                     button(text(format.label()).size(theme::LABEL_SIZE))
                         .style(theme::tool_button)
                         .on_press(Message::Export(format)),
-                )
+                    super::tips::export(format),
+                ))
             });
         column![
             text("With the paint as a texture, of size")

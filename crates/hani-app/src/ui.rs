@@ -121,39 +121,23 @@ pub fn toggle<'a>(
         .on_press(on_press)
 }
 
-/// A choice of a few, side by side, one of them lit.
+/// A choice of a few, side by side, one of them lit, each with what it
+/// does shown on hover. See `app/tips.rs`.
 ///
 /// For two to five choices. More than that wants a grid of tiles or a
-/// drop-down list.
-pub fn segmented<'a, T: Copy + PartialEq + 'a>(
-    choices: impl IntoIterator<Item = (T, &'a str)>,
-    selected: T,
-    on_choose: impl Fn(T) -> Message + 'a,
-) -> Element<'a, Message> {
-    choices
-        .into_iter()
-        .fold(row![].spacing(theme::S1), |assembled, (value, name)| {
-            // A share of the row for each letter and two for the padding:
-            // in equal shares, seen on a screen, "Smooth" ran past the edges
-            // of its button where "Wide" had room to spare.
-            let share = name.len() as u16 + 2;
-            assembled.push(
-                toggle(name, value == selected, on_choose(value)).width(Length::FillPortion(share)),
-            )
-        })
-        .into()
-}
-
-/// [`segmented`], each choice with what it does shown on hover. See
-/// `app/tips.rs`.
-pub fn segmented_tips<'a, T: Copy + PartialEq + 'a>(
-    choices: impl IntoIterator<Item = (T, &'a str, &'a str)>,
+/// drop-down list. There is no form of it without the tips: every button
+/// says what it does (`every_button_says_what_it_does_on_hover`).
+pub fn segmented_tips<'a, T: Copy + PartialEq + 'a, W: text::IntoFragment<'a> + 'a>(
+    choices: impl IntoIterator<Item = (T, &'a str, W)>,
     selected: T,
     on_choose: impl Fn(T) -> Message + 'a,
 ) -> Element<'a, Message> {
     choices
         .into_iter()
         .fold(row![].spacing(theme::S1), |assembled, (value, name, what)| {
+            // A share of the row for each letter and two for the padding:
+            // in equal shares, seen on a screen, "Smooth" ran past the edges
+            // of its button where "Wide" had room to spare.
             let share = name.len() as u16 + 2;
             assembled.push(
                 container(tip(toggle(name, value == selected, on_choose(value)), what))
@@ -377,11 +361,18 @@ mod tests {
         assert_eq!(parse_number("-"), None);
     }
 
-    /// Every button that shows only an icon has its name on hover, which
-    /// it can have only through [`tip`]: a source file with a
-    /// `button(icon::icon(` not just inside a `crate::ui::tip(` fails here.
+    /// Every button says what it does when the pointer rests on it, which
+    /// it can do only through [`tip`]. Asked for by the maintainer on
+    /// 2026-11-28: tooltips on every button, held by a test.
+    ///
+    /// Read from the source: in each file but this one, outside its tests,
+    /// every call of `button`, `button_secondary` or `toggle` is the first
+    /// argument of a `tip(` (or a `tooltip(`), and `segmented` is not
+    /// called at all, [`segmented_tips`] being the one with a tip a choice.
+    /// The folding headings made here, [`section`] and [`disclosure`], are
+    /// left out: their caret says what they do.
     #[test]
-    fn every_button_that_is_only_an_icon_is_named_on_hover() {
+    fn every_button_says_what_it_does_on_hover() {
         fn rust_files(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
             for entry in std::fs::read_dir(dir).expect("the source directory reads") {
                 let path = entry.expect("an entry reads").path();
@@ -394,18 +385,46 @@ mod tests {
         }
         let mut files = Vec::new();
         rust_files(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
-        let mut unnamed = Vec::new();
+        let mut untipped = Vec::new();
         for path in files.iter().filter(|path| !path.ends_with("ui.rs")) {
             let source = std::fs::read_to_string(path).expect("a source file reads");
-            let squeezed: String = source.split_whitespace().collect();
-            for (at, _) in squeezed.match_indices("button(icon::icon(") {
-                if !squeezed[..at].ends_with("crate::ui::tip(") {
-                    let end = (at + 60).min(squeezed.len());
-                    unnamed.push(format!("{}: {}", path.display(), &squeezed[at..end]));
+            // The code, not its tests, and not its comments. Cut at the first
+            // test module and not the first `cfg(test)`, which can mark one
+            // helper above the views.
+            let code = source.split("#[cfg(test)]\nmod ").next().unwrap_or_default();
+            let code: String = code
+                .lines()
+                .map(|line| line.split("//").next().unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let squeezed: String = code.split_whitespace().collect();
+            for (open, _) in squeezed.match_indices('(') {
+                let before = &squeezed[..open];
+                let start = before
+                    .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
+                    .map_or(0, |at| at + 1);
+                let path_called = &before[start..];
+                let name = path_called.rsplit("::").next().unwrap_or_default();
+                let leading = &before[..start];
+                let called = match name {
+                    // A definition, or a method of the same name, or the
+                    // tablet's reading of a pen's button.
+                    _ if leading.ends_with("fn") || leading.ends_with('.') => continue,
+                    _ if path_called.starts_with("raw_input") => continue,
+                    "segmented" => false,
+                    "button" | "button_secondary" | "toggle" => {
+                        leading.ends_with("tip(") || leading.ends_with("tooltip(")
+                    }
+                    _ => continue,
+                };
+                if !called {
+                    let end = (open + 60).min(squeezed.len());
+                    let shown = squeezed[start..end].to_string();
+                    untipped.push(format!("{}: {shown}", path.display()));
                 }
             }
         }
-        assert!(unnamed.is_empty(), "icon-only buttons with no tooltip:\n{}", unnamed.join("\n"));
+        assert!(untipped.is_empty(), "buttons with no tip:\n{}", untipped.join("\n"));
     }
 
     /// Pressing enter sends what the slider would send for the number typed,
