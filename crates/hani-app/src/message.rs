@@ -438,6 +438,24 @@ pub enum AddMessage {
     SagChanged(f32),
 }
 
+/// Which way up an insert goes on, by its picture. See
+/// `app/insert_turn.rs`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TurnMessage {
+    /// A press on the picture: `look` for the right button, which looks
+    /// round it, and not for the left, which turns it.
+    Pressed {
+        look: bool,
+    },
+    Released,
+    Moved(iced::Point),
+    Left,
+    /// Stand the axis at this place in `insert_turn::AXES` out of the
+    /// surface.
+    Stood(usize),
+    Reset,
+}
+
 /// The workbench's controls. See `app/workbench.rs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkbenchMessage {
@@ -1618,6 +1636,8 @@ pub enum Message {
     Keep(KeepMessage),
     /// How big the interface is drawn. See `app/ui_scale.rs`.
     Scale(ScaleMessage),
+    /// Which way up an insert goes on. See `app/insert_turn.rs`.
+    Turn(TurnMessage),
     /// The revolve's axis up or away. See `app/revolve.rs`.
     Revolve(RevolveMessage),
     /// One of the controls of the brushes that add. See `app/adding.rs`.

@@ -148,6 +148,9 @@ pub(super) struct Setup {
     pub start: End,
     pub end: End,
     pub sag: f32,
+    /// Which way up it goes on, in the frame the surface gives it. See
+    /// `app/insert_turn.rs`.
+    pub turn: glam::Quat,
 }
 
 impl Setup {
@@ -161,6 +164,7 @@ impl Setup {
             start: End::Round,
             end: End::Round,
             sag: 0.0,
+            turn: glam::Quat::IDENTITY,
         }
     }
 
@@ -192,6 +196,18 @@ impl Setup {
         if matches!(self.what, Kind::Map(_)) {
             self.blend = 0.0;
             self.lift = 0.0;
+        }
+        // A turn is a shape's or a body's: a cable follows its line, and a
+        // map lies in the surface. A turn that is not one is none.
+        let length = self.turn.length();
+        if self.what.is_cable()
+            || matches!(self.what, Kind::Map(_))
+            || !length.is_finite()
+            || length < 1.0e-3
+        {
+            self.turn = glam::Quat::IDENTITY;
+        } else if (length - 1.0).abs() > 1.0e-4 {
+            self.turn = self.turn.normalize();
         }
         self
     }
@@ -244,6 +260,10 @@ pub(super) struct AddState {
     /// A coarse mesh of what a drag holds, drawn until it is set down. See
     /// `app/insert_preview.rs`.
     pub(super) preview: Vec<[Vec3; 3]>,
+    /// Which way up a shape or a body goes on, and its picture. See
+    /// `app/insert_turn.rs`.
+    pub turn: glam::Quat,
+    pub(super) view: super::insert_turn::TurnView,
 }
 
 impl Default for AddState {
@@ -267,6 +287,8 @@ impl Default for AddState {
             pieces: Vec::new(),
             cut: false,
             preview: Vec::new(),
+            turn: glam::Quat::IDENTITY,
+            view: super::insert_turn::TurnView::default(),
         }
     }
 }
@@ -276,6 +298,11 @@ impl AddState {
     pub(super) fn put_away(&mut self) {
         self.what = None;
         self.lent = None;
+    }
+
+    /// The body lent as a shape, and the box of its surface.
+    pub(super) fn lent(&self) -> Option<(&Volume, (Vec3, Vec3))> {
+        self.lent.as_ref().map(|(volume, extent)| (volume, *extent))
     }
 
     /// What is in hand to add, as a brush keeps it.
@@ -296,6 +323,7 @@ impl AddState {
                 start: self.start,
                 end: self.end,
                 sag: self.sag,
+                turn: self.turn,
             }
             .settled(),
         )
@@ -389,6 +417,9 @@ impl Hani {
         if setup.what == Kind::Hung {
             state.sag = setup.sag;
         }
+        // Which way up it goes on. See `app/insert_turn.rs`.
+        state.turn = setup.turn;
+        self.refresh_turn_picture();
     }
 
     /// Whether a drag on the model adds something and is not a stroke.
@@ -459,6 +490,8 @@ impl Hani {
                 };
             }
         }
+        // The picture of which way up it goes on. See `app/insert_turn.rs`.
+        self.refresh_turn_picture();
     }
 
     /// The model under the pointer, lifted off it for a cable: the point
@@ -536,15 +569,23 @@ impl Hani {
                 // the horizon of the surface goes on for ever, and so did the
                 // memory a shape that size took.
                 let size = drag.length().min(MAX_INSERT_VOXELS * self.doc.voxel_size());
+                // Turned in the frame the surface gives it, which way up the
+                // panel says. See `app/insert_turn.rs`.
+                let turn = self.inserts.turn;
+                let turned = |seat: Placed| Placed {
+                    frame: super::insert_turn::turned(seat.frame, turn),
+                    ..seat
+                };
                 let seat = match what {
                     Insert::Shape(form) => {
-                        Placed::on(form, centre, normal, drag, size, self.inserts.lift)
+                        Placed::on(form, centre, normal, drag, size, self.inserts.lift).map(turned)
                     }
                     // A map's square is in the plane of the surface at
                     // the press, and what it is draped on is measured
                     // from there.
                     Insert::Map(_) => Placed::on(Form::Ball, centre, normal, drag, size, 0.0),
-                    _ => Placed::on(Form::Ball, centre, normal, drag, size, self.inserts.lift),
+                    _ => Placed::on(Form::Ball, centre, normal, drag, size, self.inserts.lift)
+                        .map(turned),
                 };
                 self.inserts.pieces.clear();
                 if let Some(seat) = seat {
@@ -985,6 +1026,11 @@ impl Hani {
         if matches!(what, Insert::Map(_)) {
             return panel.into();
         }
+        // Which way up it goes on, and the surface it goes into. See
+        // `app/insert_turn.rs`.
+        if let Some(turn) = self.turn_block() {
+            panel = panel.push(turn);
+        }
         panel = panel
             .push(
                 crate::ui::number(
@@ -1168,6 +1214,53 @@ mod tests {
     /// Whether a point is inside the active body.
     fn solid_at(app: &Hani, point: Vec3) -> bool {
         app.doc.active_volume().sample_world(point) < 0.0
+    }
+
+    /// A shape turned in its picture goes on turned: stood on its +X, a
+    /// cylinder's own x is out along the surface's normal, and its axis
+    /// lies in the surface. Turned by a drag on the picture, it is turned
+    /// about the normal, which the shape's axis follows. See
+    /// `app/insert_turn.rs`.
+    #[test]
+    fn a_shape_goes_on_the_way_up_its_picture_says() {
+        use crate::message::TurnMessage;
+        let mut app = app();
+        choose(&mut app, Insert::Shape(Form::Cylinder));
+        assert!(app.inserts.view.picture.is_some(), "a shape in hand has no picture");
+        update(&mut app, Message::Turn(TurnMessage::Stood(0)));
+        press(&mut app, MIDDLE);
+        move_to(&mut app, MIDDLE + Vec2::new(40.0, 0.0));
+        let (seat, normal) = match (app.inserts.pieces.first(), app.inserts.press) {
+            (Some(Piece::Placed(seat)), Some((_, normal))) => (*seat, normal),
+            _ => panic!("a shape is being dragged out"),
+        };
+        assert!((seat.frame.x_axis - normal).length() < 1.0e-3, "its x is not out of the surface");
+        assert!(seat.frame.z_axis.dot(normal).abs() < 1.0e-3, "its axis is not in the surface");
+        release(&mut app);
+
+        // A drag across the picture turns it about the normal.
+        let before = app.inserts.turn;
+        update(&mut app, Message::Turn(TurnMessage::Moved(iced::Point::new(10.0, 50.0))));
+        update(&mut app, Message::Turn(TurnMessage::Pressed { look: false }));
+        update(&mut app, Message::Turn(TurnMessage::Moved(iced::Point::new(60.0, 50.0))));
+        update(&mut app, Message::Turn(TurnMessage::Released));
+        let after = app.inserts.turn;
+        assert!(before.angle_between(after) > 0.3, "the drag did not turn it");
+        assert!(((after * Vec3::X).z - 1.0).abs() < 1.0e-3, "a drag across tipped it");
+
+        // A right drag looks round it and leaves the turn alone.
+        update(&mut app, Message::Turn(TurnMessage::Pressed { look: true }));
+        update(&mut app, Message::Turn(TurnMessage::Moved(iced::Point::new(120.0, 80.0))));
+        update(&mut app, Message::Turn(TurnMessage::Released));
+        assert_eq!(app.inserts.turn, after, "looking round it turned it");
+
+        // Kept with a brush, and taken up again.
+        let setup = app.inserts.setup().expect("a shape in hand");
+        assert_eq!(setup.turn, after);
+        update(&mut app, Message::Turn(TurnMessage::Reset));
+        assert_eq!(app.inserts.turn, glam::Quat::IDENTITY);
+        app.take_up(setup);
+        assert_eq!(app.inserts.turn, after, "a brush's turn was not taken up");
     }
 
     /// A shape dragged out bigger than a copy of the body may hold is set

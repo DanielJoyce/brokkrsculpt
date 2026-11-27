@@ -74,6 +74,15 @@ mirrors it; *Shown* hides it without losing it. The model is always drawn
 over the pictures, wherever they stand. *Floor* draws a grid under the
 lowest point of the model, a line every round number of millimetres.
 
+## Inserts: which way up, and how deep
+
+With a shape or a body in hand to add, ADD shows it on the surface it will
+go into: up the picture is out of the surface, and the orange plane is the
+surface. Drag the picture to turn it, right drag to look round it. *+X* to
+*-Z* stand that axis of it straight out of the surface, and *Reset* puts it
+back. *Held off* moves it up out of the surface or down into it; what is
+under the plane will be inside the model.
+
 ## Interface size
 
 Edit, *Preferences…*, *Interface size*. *Auto* makes everything larger on a
