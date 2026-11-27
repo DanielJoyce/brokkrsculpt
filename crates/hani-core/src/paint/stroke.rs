@@ -835,6 +835,45 @@ mod tests {
         Brush { kind: BrushKind::Paint, radius, ..Brush::default() }
     }
 
+    /// A pass of the paint brush fades to nothing at its radius, with no
+    /// ring: asked after by the maintainer on 2026-11-27, of the paint and
+    /// mask brushes. Run then: at radius 8, half a millimetre a voxel, it
+    /// was [255, 255, 251, 237, 218, 196, 174, 151, 128, 104, 81, 59, 40,
+    /// 24, 11, 3, 0, 0] from the middle out. The mask's ring was the
+    /// mask's own (`mask_stroke.rs`).
+    #[test]
+    fn a_pass_fades_to_nothing_at_its_radius() {
+        for radius in [4.0_f32, 8.0] {
+            let brush = brush(radius);
+            let red = pigment(RED, 1.0);
+            let mut volume = cube();
+            let mut stroke = PaintStroke::new();
+            volume.begin_stroke();
+            stroke.begin();
+            let mut x = -8.0;
+            while x <= 8.0 {
+                stroke.stamp(
+                    &mut volume,
+                    &brush,
+                    &on(ON_FLAT + Vec3::X * x, Vec3::Z),
+                    &Lay::loaded(red),
+                );
+                x += 0.25;
+            }
+            let row: Vec<u8> = (0..=(radius / VOXEL) as i32 + 1)
+                .map(|y| volume.paint().at(IVec3::new(0, y, (HALF / VOXEL) as i32))[3])
+                .collect();
+            let last = (radius / VOXEL) as usize;
+            assert_eq!(row[0], 255, "{row:?}");
+            assert!(row.windows(2).all(|pair| pair[0] >= pair[1]), "{row:?}");
+            // No step anywhere across it bigger than the falloff's own
+            // steepest, a voxel's worth of it, and a little for the sum.
+            let steepest = 1.5 * VOXEL / radius * 255.0 * 1.2;
+            assert!(row.windows(2).all(|pair| f32::from(pair[0] - pair[1]) <= steepest), "{row:?}");
+            assert!(row[last - 1] <= 12 && row[last] == 0, "{row:?}");
+        }
+    }
+
     fn pigment(colour: [u8; 3], opacity: f32) -> Pigment {
         Pigment { colour, opacity, mode: Mode::Paint }
     }

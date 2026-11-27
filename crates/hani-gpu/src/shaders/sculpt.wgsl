@@ -373,12 +373,12 @@ fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) ->
     // the result sits outside anything the clay can be.
     let m = select(in.mask, 1.0 - in.mask, uniforms.mask_inverted != 0u);
     if (m > 0.0) {
-        // The floor is what makes a first pass at brush strength visible at
-        // all. It is a discontinuity at exactly zero and nowhere else, and that
-        // is deliberate: it says "there is a mask here", and every value above
-        // it is shown un-thresholded, which is the whole thing eight bits of
-        // protection bought.
-        let s = (0.30 + 0.70 * m) * uniforms.mask_tint;
+        // A light mask lifted, twice as strong as itself near nought, and
+        // with no step there. Until 2026-11-27 this had a floor of 0.3 at
+        // any protection at all, which drew a hard line round every mask
+        // at the brush's radius however finely the mask itself faded: the
+        // maintainer saw "some kind of edge / border" there.
+        let s = (1.0 - (1.0 - m) * (1.0 - m)) * uniforms.mask_tint;
         let luma = dot(colour, vec3<f32>(0.2126, 0.7152, 0.0722));
         colour = mix(colour, luma * vec3<f32>(0.345, 0.529, 1.15), s);
     }
