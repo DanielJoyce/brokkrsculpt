@@ -929,6 +929,13 @@ again), a body made later is given it on the next frame, and it is kept
 as a setting, `paint.conf`, when the slider is let go
 (`app/pooling.rs`). It was 1 before; it is 1.5 unless set.
 
+**Pooling reach**, beside it since 2026-11-28, is how far round a recess
+the occlusion looks: its rays' steps (0.5, 1, 2 and 4 mm) are multiplied
+by it, from a quarter to four times, and the slider shows the longest
+step. Held, kept and given to every body the same way, in `paint.conf` as
+`reach`. Both are shown in LAYERS, in the Wash and Contrast touches'
+settings, and in Preferences under PAINT.
+
 **Deeper in a recess.** Pooled paint is more paint: a wash or a contrast
 in a crease is now darker by up to seven tenths of a second coat of
 itself, by how shut in it is, as well as covering more. A wash still

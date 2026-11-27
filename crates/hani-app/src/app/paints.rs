@@ -512,7 +512,8 @@ impl Hani {
         let changed = |setting: TouchSetting| Message::PaintTouchChanged(setting);
         match self.touch.kind {
             PaintTouch::Loaded => {}
-            PaintTouch::Wash | PaintTouch::Contrast => {}
+            // How they pool, the same setting as LAYERS's and Preferences'.
+            PaintTouch::Wash | PaintTouch::Contrast => picker = picker.push(self.pooling_numbers()),
             PaintTouch::Airbrush => picker = picker.push(self.airbrush_settings()),
             PaintTouch::Decal => picker = picker.push(self.decal_settings()),
             PaintTouch::Drybrush => {

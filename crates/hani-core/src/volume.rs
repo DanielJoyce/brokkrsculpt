@@ -643,6 +643,8 @@ pub struct Volume {
     /// How strongly a wash or a contrast pools by the occlusion. See
     /// [`crate::paint::occlusion`].
     pub(crate) pooling: f32,
+    /// How far it reaches round a recess. See `paint/occlusion.rs`.
+    pub(crate) pooling_reach: f32,
     scratch: EditScratch,
 }
 
@@ -668,6 +670,7 @@ impl Volume {
             paint: PaintField::default(),
             layers: crate::paint::layers::Layers::default(),
             pooling: crate::paint::occlusion::POOLING,
+            pooling_reach: crate::paint::occlusion::POOLING_REACH,
             scratch: EditScratch::default(),
         }
     }

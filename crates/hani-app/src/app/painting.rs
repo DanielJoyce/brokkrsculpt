@@ -76,6 +76,8 @@ pub(super) struct PaintingState {
     pub designer: Option<super::designer::Designer>,
     /// How strongly washes and contrasts pool. See `app/pooling.rs`.
     pub pooling: f32,
+    /// How far round a recess they pool: `app/pooling.rs`.
+    pub pooling_reach: f32,
 }
 
 impl Default for PaintingState {
@@ -96,6 +98,7 @@ impl Default for PaintingState {
             decal: Default::default(),
             designer: None,
             pooling: super::pooling::kept(),
+            pooling_reach: super::pooling::kept_reach(),
         }
     }
 }
@@ -149,6 +152,7 @@ impl Hani {
             // See `app/pooling.rs`.
             PaintingMessage::Pooling(pooling) => self.pool(pooling),
             PaintingMessage::PoolingKept => self.pooling_kept(),
+            PaintingMessage::PoolingReach(reach) => self.pool_reach(reach),
         }
     }
 
