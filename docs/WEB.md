@@ -78,7 +78,9 @@ opened in the headless Chromium this container has, with WebGPU on
 SwiftShader (`--enable-unsafe-webgpu --use-angle=vulkan
 --enable-features=Vulkan`; with `--use-webgpu-adapter=swiftshader` instead,
 iced's own staging buffer failed to map, which is that adapter's and was not
-pursued):
+pursued; `--enable-unsafe-webgpu` alone fails the same way, "getMappedRange
+failed" after "A valid external Instance reference no longer exists", which
+on 2026-11-27 sent a bisect after a fault that was the flags'):
 
 - The welcome screen, the panels and the starting ball drew, with nothing in
   the console.
