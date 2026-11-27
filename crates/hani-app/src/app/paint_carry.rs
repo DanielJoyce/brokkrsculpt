@@ -123,6 +123,72 @@ mod tests {
         assert_eq!(shown, painted, "raised {:.2} mm, it shows {shown:?}", after.distance(before));
     }
 
+    /// A coated ball, its surface under the middle of the view and the paint
+    /// shown there.
+    fn coated() -> (Hani, Vec3, [u8; 4]) {
+        let mut app = Hani::with_tablet(crate::tablet::Tablet::inert());
+        app.viewport_size = glam::Vec2::new(SIZE.x, SIZE.y);
+        update(&mut app, Message::BrushKindChanged(BrushKind::Paint));
+        update(&mut app, Message::Painting(PaintingMessage::Colour([200, 0, 0])));
+        update(&mut app, Message::Painting(PaintingMessage::Coated));
+        let (at, painted) = under_the_middle(&app);
+        (app, at, painted)
+    }
+
+    /// Bulk keeps the coat on the surface it moves, past the band's depth.
+    /// It always did (`hani_core::form`, which pulls each new surface voxel's
+    /// paint from where it came from); this holds it from the application.
+    #[test]
+    fn a_bulk_keeps_the_paint_on_what_it_moves() {
+        use crate::message::FormMessage;
+        let (mut app, before, painted) = coated();
+        update(&mut app, Message::Form(FormMessage::AmountChanged(2.0)));
+        update(&mut app, Message::Form(FormMessage::BulkApplied));
+        let (after, shown) = under_the_middle(&app);
+        assert!(
+            after.distance(before) > NARROW_BAND * app.doc.voxel_size(),
+            "the bulk did not move it"
+        );
+        assert_eq!(shown, painted, "bulked {:.2} mm", after.distance(before));
+    }
+
+    /// The Move brush, pulling the ball's edge out past where it was, far
+    /// enough to lock again on its way, keeps the coat on what it pulls out.
+    /// It always did: Move warps the paint with the material
+    /// (`paint_travels_with_the_material_under_a_move` in the core).
+    #[test]
+    fn a_long_move_keeps_the_paint_on_what_it_pulls() {
+        let (mut app, _, painted) = coated();
+        // The ball's edge along the middle row of the view.
+        let row = SIZE.y * 0.5;
+        let edge = (0..SIZE.x as i32 / 2)
+            .map(|step| SIZE.x * 0.5 + step as f32)
+            .find(|x| app.surface_under(glam::Vec2::new(*x, row)).is_none())
+            .expect("the ball ends in the view");
+        let beyond = glam::Vec2::new(edge + 30.0, row);
+        assert!(app.surface_under(beyond).is_none(), "the fixture: past the edge is the ball");
+        update(&mut app, Message::BrushKindChanged(BrushKind::Move));
+        update(&mut app, Message::BrushRadiusChanged(6.0));
+        let from = Vector::new(edge - 12.0, row);
+        app.on_pointer(PointerEvent::Moved { position: from, size: SIZE });
+        app.on_pointer(PointerEvent::Pressed {
+            button: PointerButton::Left,
+            position: from,
+            size: SIZE,
+        });
+        for step in 1..=40 {
+            app.on_pointer(PointerEvent::Moved {
+                position: Vector::new(from.x + step as f32 * 2.0, row),
+                size: SIZE,
+            });
+        }
+        app.on_pointer(PointerEvent::Released { button: PointerButton::Left });
+        let at = app.surface_under(beyond).expect("the move pulled nothing out past the edge");
+        let voxel = (at / app.doc.voxel_size()).round().as_ivec3();
+        let shown = app.doc.active_volume().display_paint().at(voxel);
+        assert_eq!(shown, painted, "the pulled material at {at} shows {shown:?}");
+    }
+
     /// What carrying costs a pointer event of a Draw stroke over a coated
     /// ball, at the brush's starting size and at 10 mm: the time in
     /// `carry_paint_after_stamps` against the event's whole edit. Run with
