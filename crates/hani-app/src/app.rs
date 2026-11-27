@@ -582,6 +582,9 @@ pub struct Hani {
     /// recycled ones so a stroke never allocates.
     mesh_buffers: Vec<BrickMesh>,
     brush_scratch: BrushScratch,
+    /// The mask stroke under way: the most each voxel has been given, so a
+    /// stroke ends in the brush's falloff. See `hani_core::mask_stroke`.
+    mask_stroke: hani_core::mask_stroke::MaskStroke,
     /// Strength per brush, so switching tools restores what that tool was last
     /// set to rather than carrying a number that means something different.
     ///
@@ -1031,9 +1034,9 @@ pub struct Hani {
     texture_size: u32,
     /// How strong the tint is when it is shown at all, 0..1.
     ///
-    /// The shader has its own floor under this (`0.30 + 0.70 * m`), which is
-    /// what makes a first pass at brush strength visible; this scales the
-    /// result and reaches zero only through the toggle.
+    /// The shader lifts a light mask under this (`1 - (1 - m)^2`), with no
+    /// step at nought; this scales the result and reaches zero only through
+    /// the toggle.
     mask_tint: f32,
     /// Whether the held peek key is down.
     ///
@@ -2229,6 +2232,7 @@ impl Hani {
             shared,
             mesh_buffers: Vec::new(),
             brush_scratch: BrushScratch::new(),
+            mask_stroke: hani_core::mask_stroke::MaskStroke::new(),
             strengths: {
                 let mut seeded = [MAX_MASK_STRENGTH; MASK_STRENGTH_SLOT + 1];
                 seeded[..MASK_STRENGTH_SLOT]
@@ -5844,6 +5848,8 @@ impl Hani {
         self.stamp_centres.clear();
         if start {
             self.stroke.begin(point, &mut self.stamp_centres);
+            // A stroke's own record of what it gave: see `mask_stroke`.
+            self.mask_stroke.begin();
         } else {
             let spacing = self.brush.spacing(self.doc.voxel_size());
             self.stroke.advance(point, spacing, &mut self.stamp_centres);
@@ -5868,7 +5874,10 @@ impl Hani {
             let stamp = Stamp::new(centre, normal, BrushDirection::Add)
                 .with_pressure(pressure)
                 .with_tangent(tangent);
-            brush.apply_mask_symmetric(
+            // By the stroke, so it fades to nothing at the radius rather
+            // than settling solid nearly to it: `hani_core::mask_stroke`.
+            self.mask_stroke.stamp(
+                &brush,
                 self.doc.active_volume_mut(),
                 &stamp,
                 op,

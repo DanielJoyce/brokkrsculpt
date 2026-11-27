@@ -36,6 +36,7 @@ pub mod form;
 pub mod generate;
 pub mod import;
 pub mod mask;
+pub mod mask_stroke;
 pub mod merge;
 pub mod mesh;
 pub mod orientation;

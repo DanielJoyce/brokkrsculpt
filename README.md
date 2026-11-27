@@ -294,7 +294,10 @@ nothing about what a stroke does.
 
 Masking scales the brush's effect rather than switching it, so a softly painted
 edge gives a soft boundary rather than a cut line, and Move carries a mask along
-with the material it displaces instead of leaving it behind in the air.
+with the material it displaces instead of leaving it behind in the air. A mask
+stroke fades to nothing at the brush's radius by its falloff, and goes its
+strength of the way: at half strength, half protected, and a second stroke half
+of what is left.
 
 ## Status
 
