@@ -190,6 +190,11 @@ impl Hani {
                 (self.doc.node_count() - 1, id)
             }
         };
+        // The source's planes, or its own middle. See `app/symmetry_frame.rs`.
+        match beside {
+            Some(source) => self.frame_from(id, source),
+            None => self.frame_at_middle(id),
+        }
         let before = self.history.stats();
         changes.push(Change::NodeAdded { at, id });
         self.history.push(Entry::new(changes));

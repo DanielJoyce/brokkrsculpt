@@ -43,6 +43,9 @@ impl Hani {
             RadialMessage::ResetFrame => return self.reset_frame(),
         };
         self.status = format!("symmetry: {}", self.symmetry.label());
+        // Not round an axis that misses the body. See `app/symmetry_frame.rs`.
+        self.refuse_radial_off_axis("refused");
+        self.refresh_overlay();
     }
 
     /// SYMMETRY in the panel: the planes, as the context bar has them, the
