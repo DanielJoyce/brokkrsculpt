@@ -179,7 +179,7 @@ impl ClipPlane {
     /// result needs no renormalising and cannot fail the way [`ClipPlane::new`]
     /// can.
     pub fn mirrored(&self, flip: Flip) -> Self {
-        Self { point: flip.point(self.point), normal: self.normal * flip.sign }
+        Self { point: flip.point(self.point), normal: flip.direction(self.normal) }
     }
 
     /// The smallest and largest signed distance over an axis aligned box.

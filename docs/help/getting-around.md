@@ -55,6 +55,10 @@ Rest the pointer on a button to see what it does.
 - **[** and **]** change the brush size, and dragging with **S** or **U** held
   changes the size or the strength.
 - **X**, **Y** and **Z** mirror strokes across a plane.
+- **Radial copies**, under Symmetry in the Settings tab, lays a stroke
+  again at each even turn round the axis chosen beside it, X, Y or Z,
+  through the middle of the room. Two to sixteen copies, with the mirror
+  planes as well if they are on.
 - **M** picks the mask: masked parts are protected from brushes, and a softly
   painted mask protects softly.
 - **Right click** brings up the tool's own settings where the pointer is.

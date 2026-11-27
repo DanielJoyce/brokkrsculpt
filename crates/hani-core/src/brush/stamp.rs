@@ -391,9 +391,9 @@ impl Frame {
     fn flipped(self, flip: Flip) -> Self {
         Self {
             centre: flip.point(self.centre),
-            normal: self.normal * flip.sign,
-            right: self.right * flip.sign,
-            up: self.up * flip.sign,
+            normal: flip.direction(self.normal),
+            right: flip.direction(self.right),
+            up: flip.direction(self.up),
         }
     }
 }

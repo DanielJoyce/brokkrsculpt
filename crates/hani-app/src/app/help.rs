@@ -322,6 +322,7 @@ pub(super) fn section_tip(which: PanelSection) -> &'static str {
         PanelSection::Stroke => "How a stroke is laid down",
         PanelSection::Form => "Thicken, thin or hollow the whole body, or change its detail",
         PanelSection::Extract => "The masked area as a plate of its own",
+        PanelSection::Symmetry => "Every stroke mirrored across planes and copied round an axis",
         PanelSection::Deform => "Twist, bend or taper the active body",
         PanelSection::Revolve => "Draw a line beside an axis and spin it into a body",
         PanelSection::References => "Pictures to model against, and a floor, kept in the file",

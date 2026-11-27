@@ -464,57 +464,147 @@ impl MirrorAxis {
 /// only evidence on screen a translucent patch. The day the axis becomes
 /// per-body, the centre moves with it, and the parameter is what makes that a
 /// change to the callers rather than to every mirroring formula.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Symmetry {
     enabled: [bool; 3],
+    /// How many copies go round the radial axis, the stamp's own among
+    /// them: nought or one is no radial symmetry. Up to [`Symmetry::MAX_RADIAL`].
+    /// Asked for by the maintainer on 2026-11-28: "radial symmetry with a
+    /// configurable number".
+    radial: u8,
+    /// The axis the radial copies turn about, through the frame's origin.
+    radial_axis: MirrorAxis,
+    /// Where the planes and the axis are: the body's own frame, so that they
+    /// move and turn with it. See [`SymmetryFrame`].
+    frame: SymmetryFrame,
 }
 
-/// One mirrored copy: where a point lands, and which way a direction turns.
+impl Default for Symmetry {
+    fn default() -> Self {
+        Self::OFF
+    }
+}
+
+/// Where a body's symmetry is: an origin and a turn, the planes and the
+/// radial axis being the frame's own X, Y and Z through its origin.
 ///
-/// A reflection across a plane through `centre` is `centre + (at - centre) *
-/// sign`, which is `at * sign + offset` with `offset = centre * (1 - sign)`.
-/// Splitting it that way is the whole reason this is a type rather than a bare
-/// sign: a **position** needs the offset and a **direction** -- a surface
-/// normal, a stroke tangent, a Move drag vector -- must not have it. Reflecting
-/// a direction through [`Flip::point`] would be silently correct while the
-/// centre is the lattice origin and would send every mirrored stroke across the
-/// model the day it is not.
+/// The identity is the world's planes through the lattice origin, which is
+/// what every body has until the gizmo moves it; the gizmo then carries the
+/// frame with the body (`app/symmetry_frame.rs`), so that a body turned on
+/// its side is still mirrored across its own middle. Asked for by the
+/// maintainer on 2026-11-28: "when you transform a node with the gizmo the
+/// symmetry transforms with it (ie symmetry is local to the object not
+/// global)".
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SymmetryFrame {
+    pub origin: Vec3,
+    pub rotation: glam::Quat,
+}
+
+impl SymmetryFrame {
+    pub const IDENTITY: SymmetryFrame =
+        SymmetryFrame { origin: Vec3::ZERO, rotation: glam::Quat::IDENTITY };
+
+    /// A world point in the frame's own coordinates.
+    pub fn to_local(self, at: Vec3) -> Vec3 {
+        self.rotation.inverse() * (at - self.origin)
+    }
+
+    /// The frame after a similarity: the origin carried, the turn added.
+    /// Scale has no place in a frame and is left out.
+    pub fn moved(self, placement: crate::similarity::Similarity) -> Self {
+        Self {
+            origin: placement.transform_point(self.origin),
+            rotation: (placement.rotation * self.rotation).normalize(),
+        }
+    }
+}
+
+impl Default for SymmetryFrame {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
+}
+
+/// One copy of a stamp: an isometry, a reflection, a turn, or both, about the
+/// symmetry's frame.
+///
+/// A position takes the whole map, `linear * at + offset`, and a direction (a
+/// surface normal, a stroke tangent, a Move drag vector) takes the linear
+/// part alone. Splitting it that way is the whole reason this is a type: a
+/// direction mapped through [`Flip::point`] would be silently right while the
+/// frame is at the lattice origin and wrong the day it is not.
+///
+/// It was a sign per axis and an offset while the only copies were mirrors
+/// across the world's planes; a radial copy is a turn, and a body's frame can
+/// be turned, so it is a matrix now.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Flip {
-    /// Componentwise sign, `-1` on each mirrored axis. This alone reflects a
-    /// direction.
-    pub sign: Vec3,
-    /// What a reflected position picks up from the centre. `ZERO` while the
-    /// centre is the lattice origin, which it is at every call site today.
+    /// Orthonormal: a turn, a reflection, or one of each.
+    pub linear: glam::Mat3,
+    /// What a mapped position picks up from the frame's origin.
     pub offset: Vec3,
 }
 
 impl Flip {
     /// The copy that is not a copy: used to fill the caller's array before
     /// [`Symmetry::flips`] says how much of it is real.
-    pub const IDENTITY: Flip = Flip { sign: Vec3::ONE, offset: Vec3::ZERO };
+    pub const IDENTITY: Flip = Flip { linear: glam::Mat3::IDENTITY, offset: Vec3::ZERO };
 
-    /// Where a world position lands on the other side of the plane.
+    /// A reflection across the planes through `about` that `sign` turns
+    /// over: -1 on each mirrored axis, 1 on the rest.
+    pub fn mirror(sign: Vec3, about: Vec3) -> Self {
+        let linear = glam::Mat3::from_diagonal(sign);
+        Flip { linear, offset: about - linear * about }
+    }
+
+    /// Where a world position lands.
     #[inline]
     pub fn point(self, at: Vec3) -> Vec3 {
-        at * self.sign + self.offset
+        self.linear * at + self.offset
+    }
+
+    /// Where a direction turns. No offset: a direction has no position.
+    #[inline]
+    pub fn direction(self, along: Vec3) -> Vec3 {
+        self.linear * along
+    }
+
+    /// The world position this copy takes to `at`: the inverse, which for an
+    /// orthonormal map is the transpose.
+    #[inline]
+    pub fn source_of(self, at: Vec3) -> Vec3 {
+        self.linear.transpose() * (at - self.offset)
     }
 }
 
 impl Symmetry {
     /// No mirroring at all.
-    pub const OFF: Symmetry = Symmetry { enabled: [false; 3] };
+    pub const OFF: Symmetry = Symmetry {
+        enabled: [false; 3],
+        radial: 0,
+        radial_axis: MirrorAxis::Y,
+        frame: SymmetryFrame::IDENTITY,
+    };
 
     /// Mirroring across x = 0 only, which is the common case and the one the
     /// application starts every other feature's tests from.
-    pub const X: Symmetry = Symmetry { enabled: [true, false, false] };
+    pub const X: Symmetry = Symmetry { enabled: [true, false, false], ..Self::OFF };
 
-    /// Most twins a single stamp can have: one per non-empty combination of
-    /// three planes, so `2^3 - 1`.
-    pub const MAX_MIRRORS: usize = 7;
+    /// The most radial copies, the stamp's own among them.
+    pub const MAX_RADIAL: u8 = 16;
+
+    /// Most twins a single stamp can have: every radial copy of every
+    /// combination of three planes, but for the stamp itself.
+    pub const MAX_MIRRORS: usize = Self::MAX_RADIAL as usize * 8 - 1;
 
     pub fn is_off(self) -> bool {
-        self.enabled.iter().all(|on| !on)
+        self.enabled.iter().all(|on| !on) && self.radial <= 1
+    }
+
+    /// Whether any plane is on, whatever the radial copies.
+    pub fn mirrors_any(self) -> bool {
+        self.enabled.iter().any(|on| *on)
     }
 
     pub fn axis(self, axis: MirrorAxis) -> bool {
@@ -530,33 +620,81 @@ impl Symmetry {
         self.with_axis(axis, !self.axis(axis))
     }
 
-    /// Write every mirrored twin as a [`Flip`] about `centre`, returning how
-    /// many there are. Never includes the identity.
+    /// How many radial copies, the stamp's own among them: one when off.
+    pub fn radial(self) -> u8 {
+        self.radial.max(1)
+    }
+
+    /// The axis the radial copies turn about.
+    pub fn radial_axis(self) -> MirrorAxis {
+        self.radial_axis
+    }
+
+    /// With `copies` radial copies about `axis`, held to [`Self::MAX_RADIAL`].
+    pub fn with_radial(mut self, copies: u8, axis: MirrorAxis) -> Self {
+        self.radial = copies.clamp(1, Self::MAX_RADIAL);
+        self.radial_axis = axis;
+        self
+    }
+
+    /// The frame the planes and the axis are in.
+    pub fn frame(self) -> SymmetryFrame {
+        self.frame
+    }
+
+    /// The same symmetry in another frame: a body's own.
+    pub fn in_frame(mut self, frame: SymmetryFrame) -> Self {
+        self.frame = frame;
+        self
+    }
+
+    /// Write every twin as a [`Flip`], returning how many there are. Never
+    /// includes the identity.
     ///
-    /// A mirror is a reflection, so it acts on a position, a normal and a
-    /// direction of travel alike -- but only the sign is shared between those
-    /// three, which is why this hands back a [`Flip`] and not a bare vector.
+    /// The twins are every radial turn of every combination of the enabled
+    /// planes, in the frame, its origin moved by `centre`: `frame * turn_k *
+    /// mirror_c * frame^-1`.
     ///
     /// Public because the cut preview mirrors its outline with the same flips
     /// the cut itself uses, so what is drawn on the other side of the plane is
     /// what goes there.
     pub fn flips(self, centre: Vec3, out: &mut [Flip; Self::MAX_MIRRORS]) -> usize {
+        let origin = self.frame.origin + centre;
+        let turn = glam::Mat3::from_quat(self.frame.rotation);
+        let back = turn.transpose();
+        let axis = match self.radial_axis {
+            MirrorAxis::X => Vec3::X,
+            MirrorAxis::Y => Vec3::Y,
+            MirrorAxis::Z => Vec3::Z,
+        };
+        let copies = self.radial();
         let mut count = 0;
-        // Each combination is a bit per axis; 0 is the original, which is the
-        // caller's to apply and not a twin.
-        for combination in 1..=Self::MAX_MIRRORS {
-            let flips = |index: usize| combination & (1 << index) != 0;
-            if (0..3).any(|index| flips(index) && !self.enabled[index]) {
-                continue;
-            }
-            let mut sign = Vec3::ONE;
-            for index in 0..3 {
-                if flips(index) {
-                    sign[index] = -1.0;
+        for k in 0..copies {
+            let spin = glam::Mat3::from_axis_angle(
+                axis,
+                std::f32::consts::TAU * f32::from(k) / f32::from(copies),
+            );
+            // Each combination is a bit per axis; 0 with no turn is the
+            // original, which is the caller's to apply and not a twin.
+            for combination in 0..8usize {
+                if k == 0 && combination == 0 {
+                    continue;
                 }
+                let flips = |index: usize| combination & (1 << index) != 0;
+                if (0..3).any(|index| flips(index) && !self.enabled[index]) {
+                    continue;
+                }
+                let mut sign = Vec3::ONE;
+                for index in 0..3 {
+                    if flips(index) {
+                        sign[index] = -1.0;
+                    }
+                }
+                let local = spin * glam::Mat3::from_diagonal(sign);
+                let linear = turn * local * back;
+                out[count] = Flip { linear, offset: origin - linear * origin };
+                count += 1;
             }
-            out[count] = Flip { sign, offset: centre * (Vec3::ONE - sign) };
-            count += 1;
         }
         count
     }
@@ -564,9 +702,7 @@ impl Symmetry {
     /// Write every mirrored twin of a stamp into `out`, returning how many
     /// there are. Never includes the stamp itself.
     ///
-    /// `centre` is the point every enabled plane passes through; see the type's
-    /// documentation for why it is a parameter and why every caller passes the
-    /// lattice origin today.
+    /// `centre` moves the frame's origin; see [`Symmetry::flips`].
     ///
     /// Fills a caller owned array rather than returning a `Vec`, because this
     /// runs once per stamp and a stroke lays down thousands: allocating here
@@ -586,29 +722,30 @@ impl Symmetry {
         let count = self.flips(centre, &mut flips);
         for (twin, flip) in out.iter_mut().zip(&flips[..count]) {
             *twin = *stamp;
-            // Reflecting across a plane moves the position to the other side of
-            // it and negates the component of the surface normal and of the
-            // direction the stroke is travelling -- a twin that kept the
-            // original tangent would comb its pattern, and drag its material,
-            // the wrong way round. The normal and the tangent take the sign
-            // alone, because a direction has no position to reflect about.
+            // A twin moves to its copy's place and turns its surface normal
+            // and the direction the stroke is travelling with it: a twin that
+            // kept the original tangent would comb its pattern, and drag its
+            // material, the wrong way round.
             twin.centre = flip.point(stamp.centre);
-            twin.normal *= flip.sign;
-            twin.tangent *= flip.sign;
+            twin.normal = flip.direction(stamp.normal);
+            twin.tangent = flip.direction(stamp.tangent);
         }
         count
     }
 
-    /// The enabled planes as "Off", "X", or "XZ".
+    /// The enabled planes as "Off", "X", or "XZ", and the radial copies.
     pub fn label(self) -> String {
-        if self.is_off() {
-            return "Off".to_string();
-        }
-        MirrorAxis::ALL
+        let planes: String = MirrorAxis::ALL
             .into_iter()
             .filter(|axis| self.axis(*axis))
             .map(|axis| axis.label())
-            .collect()
+            .collect();
+        match (planes.is_empty(), self.radial()) {
+            (true, 1) => "Off".to_string(),
+            (false, 1) => planes,
+            (true, copies) => format!("{copies} round {}", self.radial_axis.label()),
+            (false, copies) => format!("{planes}, {copies} round {}", self.radial_axis.label()),
+        }
     }
 }
 
@@ -1662,9 +1799,9 @@ fn blend_toward_plane_clamps_back(
 struct MoveAnchor {
     /// Where the gesture was locked, in world space.
     origin: Vec3,
-    /// Componentwise sign this anchor's mirror applies to the drag. All ones
-    /// for the gesture itself.
-    flip: Vec3,
+    /// The turn or reflection this anchor's copy applies to the drag: the
+    /// identity for the gesture itself.
+    flip: glam::Mat3,
     /// Inclusive voxel box that gets written, which is the brush's own reach.
     lo: IVec3,
     hi: IVec3,
@@ -1964,9 +2101,9 @@ impl MoveStroke {
                 origin - Vec3::splat(brush.radius),
                 origin + Vec3::splat(brush.radius),
             );
-            // The SIGN and not the whole flip: this is applied to the drag
-            // vector, which is a direction and takes no offset.
-            self.anchors.push(MoveAnchor { origin, flip: flip.sign, lo, hi });
+            // The linear part and not the whole flip: this is applied to
+            // the drag vector, which is a direction and takes no offset.
+            self.anchors.push(MoveAnchor { origin, flip: flip.linear, lo, hi });
         }
 
         // A voxel can only be inside two brushes at once if two anchors are
@@ -2109,7 +2246,7 @@ impl MoveStroke {
                         continue;
                     }
                     reached = true;
-                    let far = drag * one.flip * weight;
+                    let far = one.flip * drag * weight;
                     back_min += far.min(Vec3::ZERO);
                     back_max += far.max(Vec3::ZERO);
                 }
@@ -2374,7 +2511,7 @@ fn move_displacement(
     for anchor in anchors {
         let weight = falloff.weight(position.distance(anchor.origin) * inverse_radius);
         if weight > 0.0 {
-            total += drag * anchor.flip * weight;
+            total += anchor.flip * drag * weight;
             reached = true;
         }
     }
@@ -2807,6 +2944,65 @@ mod tests {
     }
 
     /// The reason symmetry became a set: the combinations are the useful part.
+    /// Radial copies go round their axis evenly, each turned with its
+    /// normal and its tangent; with a plane as well, every turn of the
+    /// mirror too.
+    #[test]
+    fn radial_copies_go_round_their_axis() {
+        let stamp = Stamp {
+            tangent: Vec3::Z,
+            ..Stamp::new(Vec3::new(5.0, 2.0, 0.0), Vec3::X, BrushDirection::Add)
+        };
+        let mut twins = [stamp; Symmetry::MAX_MIRRORS];
+        let four = Symmetry::OFF.with_radial(4, MirrorAxis::Y);
+        assert!(!four.is_off());
+        assert_eq!(four.mirrors(&stamp, Vec3::ZERO, &mut twins), 3);
+        for twin in &twins[..3] {
+            // Round the Y axis: the same height and distance from it, and the
+            // normal still pointing straight out from the axis.
+            assert!((twin.centre.y - 2.0).abs() < 1e-5);
+            let flat = Vec3::new(twin.centre.x, 0.0, twin.centre.z);
+            assert!((flat.length() - 5.0).abs() < 1e-4);
+            assert!(twin.normal.dot(flat.normalize()) > 0.9999, "the normal did not turn");
+        }
+        let quarter = glam::Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * stamp.centre;
+        assert!(twins[..3].iter().any(|twin| twin.centre.distance(quarter) < 1e-4));
+
+        let with_x = Symmetry::X.with_radial(3, MirrorAxis::Y);
+        assert_eq!(with_x.mirrors(&stamp, Vec3::ZERO, &mut twins), 5, "3 turns of 2, less one");
+        let most = Symmetry { enabled: [true; 3], ..Symmetry::OFF }
+            .with_radial(Symmetry::MAX_RADIAL, MirrorAxis::Z);
+        assert_eq!(most.mirrors(&stamp, Vec3::ZERO, &mut twins), Symmetry::MAX_MIRRORS);
+    }
+
+    /// In a body's frame, the planes are the frame's: turned a quarter about
+    /// Z and moved to x = 10, X mirroring reflects across the frame's own X
+    /// plane there; and every copy undoes by `source_of`.
+    #[test]
+    fn a_frame_carries_the_planes() {
+        let frame = SymmetryFrame {
+            origin: Vec3::new(10.0, 0.0, 0.0),
+            rotation: glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+        };
+        let symmetry = Symmetry::X.in_frame(frame);
+        let mut flips = [Flip::IDENTITY; Symmetry::MAX_MIRRORS];
+        assert_eq!(symmetry.flips(Vec3::ZERO, &mut flips), 1);
+        // The frame's X is the world's Y, through (10, 0, 0): a point above
+        // it lands the same distance below.
+        let at = Vec3::new(10.0, 3.0, 1.0);
+        let twin = flips[0].point(at);
+        assert!(twin.distance(Vec3::new(10.0, -3.0, 1.0)) < 1e-5, "{twin}");
+        assert!(flips[0].direction(Vec3::Y).distance(-Vec3::Y) < 1e-5);
+        assert!(flips[0].source_of(twin).distance(at) < 1e-5);
+
+        // Radial copies in the frame turn about its own axis.
+        let round = Symmetry::OFF.with_radial(2, MirrorAxis::X).in_frame(frame);
+        assert_eq!(round.flips(Vec3::ZERO, &mut flips), 1);
+        // Half a turn about the frame's X, the world's Y through x = 10.
+        let turned = flips[0].point(Vec3::new(12.0, 5.0, 0.0));
+        assert!(turned.distance(Vec3::new(8.0, 5.0, 0.0)) < 1e-4, "{turned}");
+    }
+
     #[test]
     fn each_axis_mirrors_across_its_own_plane_and_combinations_reach_every_octant() {
         let stamp =
@@ -2829,9 +3025,9 @@ mod tests {
         let two = Symmetry::OFF.with_axis(MirrorAxis::X, true).with_axis(MirrorAxis::Y, true);
         assert_eq!(two.mirrors(&stamp, Vec3::ZERO, &mut twins), 3);
 
-        let all = Symmetry { enabled: [true; 3] };
+        let all = Symmetry { enabled: [true; 3], ..Symmetry::OFF };
         let count = all.mirrors(&stamp, Vec3::ZERO, &mut twins);
-        assert_eq!(count, Symmetry::MAX_MIRRORS);
+        assert_eq!(count, 7, "three planes, every octant but the stamp's own");
 
         let mut octants: Vec<[bool; 3]> = twins[..count]
             .iter()
@@ -2928,7 +3124,9 @@ mod tests {
             Symmetry::OFF.with_axis(MirrorAxis::X, true).with_axis(MirrorAxis::Z, true).label(),
             "XZ"
         );
-        assert_eq!(Symmetry { enabled: [true; 3] }.label(), "XYZ");
+        assert_eq!(Symmetry { enabled: [true; 3], ..Symmetry::OFF }.label(), "XYZ");
+        assert_eq!(Symmetry::OFF.with_radial(6, MirrorAxis::Y).label(), "6 round Y");
+        assert_eq!(Symmetry::X.with_radial(3, MirrorAxis::Z).label(), "X, 3 round Z");
     }
 
     #[test]
