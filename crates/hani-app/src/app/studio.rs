@@ -729,6 +729,9 @@ impl Hani {
                     Some(why) => format!("brush: {}, but {why}", preset.name),
                     None => format!("brush: {}", preset.name),
                 };
+                // What it is in hand as, for Save and Revert. See
+                // `app/keeping.rs`.
+                self.kept_as.from = Some(preset.name.clone());
                 // Choosing a brush is what the palette at the pointer was
                 // up for.
                 self.studio.popup = None;
@@ -753,6 +756,8 @@ impl Hani {
                 // It is on the palette: the block that added it has done
                 // what it was opened for.
                 self.studio.adding = false;
+                // And it is what is in hand. See `app/keeping.rs`.
+                self.kept_as.from = Some(name.clone());
                 self.status = match Presets::write(&preset) {
                     Ok(()) => format!("brush kept: {name}"),
                     Err(why) => format!("brush kept until the application closes: {why}"),
@@ -1053,6 +1058,10 @@ impl Hani {
         // classic brush it goes by either, which is on the palette: it
         // has amounts of its own, or a profile, a tip or a lead that one
         // does not.
+        // Named for the brush it was taken up as. See `app/keeping.rs`.
+        if let Some((_, from, _)) = self.changed_from() {
+            return format!("{}, CHANGED", from.name.to_uppercase());
+        }
         let family = self.brush.kind.label().to_uppercase();
         if Actions::of(self.brush.kind).is_some() { format!("{family}, CHANGED") } else { family }
     }

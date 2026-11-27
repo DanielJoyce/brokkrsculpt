@@ -50,6 +50,8 @@ mod fit_test;
 mod deform;
 // Reference pictures and the floor. See `app/references.rs`.
 mod references;
+// Save, Save as new and Revert for the brush in hand: `app/keeping.rs`.
+mod keeping;
 pub use references::Taken as ReferenceTaken;
 mod form;
 // A line drawn beside an axis, spun into a body. See `app/revolve.rs`.
@@ -1002,6 +1004,8 @@ pub struct Hani {
     references: hani_core::reference::References,
     /// Which plane the references panel places, and the pictures decoded.
     reference_view: references::ReferencesState,
+    /// Which palette brush is in hand as. See `app/keeping.rs`.
+    kept_as: keeping::KeepingState,
     /// Shell and extract settings. See `app/hollow.rs`.
     hollow: hollow::HollowState,
     /// The overhang view: whether it is on, and how steep a lean the
@@ -2330,6 +2334,7 @@ impl Hani {
             deform: deform::DeformState::default(),
             references: hani_core::reference::References::default(),
             reference_view: references::ReferencesState::default(),
+            kept_as: keeping::KeepingState::default(),
             hollow: hollow::HollowState::default(),
             overhang: overhang::OverhangState::default(),
             painting: painting::PaintingState::default(),
@@ -9998,6 +10003,8 @@ impl Hani {
                 self.swap_strength(|app| app.brush.kind = kind);
                 // A classic brush chosen is the classic brush wanted.
                 self.studio.put_away();
+                // And it is the one in hand as. See `app/keeping.rs`.
+                self.kept_as.from = None;
                 self.inserts.put_away();
             }
             Message::FalloffChanged(curve) => {
@@ -10794,6 +10801,7 @@ impl Hani {
             // See `app/deform.rs`.
             Message::Deform(message) => self.deform_changed(message),
             Message::Reference(message) => return self.reference_changed(message),
+            Message::Keep(message) => self.keep_changed(message),
             // See `app/revolve.rs`.
             Message::Revolve(message) => self.revolve_changed(message),
             Message::Measure(message) => self.measure_changed(message),

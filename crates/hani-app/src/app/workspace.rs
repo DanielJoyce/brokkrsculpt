@@ -446,7 +446,13 @@ impl Hani {
             && !matches!(self.brush.kind, BrushKind::Paint | BrushKind::Move);
         // The heading's hover line is in `app/help.rs`.
         self.section_with(PanelSection::Brush, Some(in_hand.into()), move || {
-            let mut block = column![self.radius_number(false)].spacing(theme::S3);
+            let mut block = column![].spacing(theme::S3);
+            // Save, Save as new and Revert, while it has changed. See
+            // `app/keeping.rs`.
+            if let Some(bar) = self.keeping_bar() {
+                block = block.push(bar);
+            }
+            block = block.push(self.radius_number(false));
             // A painter's brush sizes. See `app/airbrush.rs`.
             if self.desk.now == Workspace::Paint && self.brush.kind == BrushKind::Paint {
                 block = block.push(self.paint_sizes());

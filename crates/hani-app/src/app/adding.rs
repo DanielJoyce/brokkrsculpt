@@ -971,6 +971,11 @@ impl Hani {
         let Some(what) = state.what else {
             return panel.into();
         };
+        // Save, Save as new and Revert, while it has changed. See
+        // `app/keeping.rs`.
+        if let Some(bar) = self.keeping_bar() {
+            panel = panel.push(bar);
+        }
         let voxel_size = self.doc.voxel_size();
         // Baked in or a body of its own is the mode's to say, not a toggle:
         // a shape added in Sculpt is baked in, a part added in Transform is
