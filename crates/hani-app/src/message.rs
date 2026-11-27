@@ -1086,22 +1086,6 @@ pub enum SpaceMouseSetting {
 #[derive(Debug, Clone)]
 pub enum Message {
     Pointer(PointerEvent),
-    /// The pointer moved over the timeline strip, at this offset in pixels
-    /// from its left edge.
-    ///
-    /// Carried separately from `Pointer` because it is a different widget with
-    /// its own coordinate space, and because `mouse_area`'s press carries no
-    /// position at all -- this is what a press then acts on.
-    TimelineHover(f32),
-    TimelinePressed,
-    TimelineReleased,
-    TimelineLeft,
-    /// Remove the key under the pointer.
-    TimelineRemoveKey,
-    TimelinePlayToggled,
-    /// The strip was laid out this many pixels wide.
-    TimelineResized(f32),
-
     /// Export the sculpt to a staging file and open it in OrcaSlicer.
     OpenInSlicer,
     /// Ask the configured printer what it is doing.

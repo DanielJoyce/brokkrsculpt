@@ -202,28 +202,6 @@ const BUG: Glyph = Glyph {
     ],
 };
 
-// --- the timeline's transport ------------------------------------------------
-
-/// Play: a solid triangle.
-///
-/// Filled rather than outlined because an outlined triangle reads as "this way"
-/// — a direction — where a solid one reads as a button. SindriCAD's transport
-/// quartet is solid for the same reason.
-const PLAY: Glyph = Glyph {
-    subs: &[Sub {
-        segs: &[Seg::Move(8.5, 5.5), Seg::Line(18.0, 12.0), Seg::Line(8.5, 18.5), Seg::Close],
-        ink: Ink::Fill,
-    }],
-};
-
-/// Stop: a solid square.
-const STOP: Glyph = Glyph {
-    subs: &[Sub {
-        segs: &[Seg::Rect { x: 7.0, y: 7.0, w: 10.0, h: 10.0, r: 1.0 }],
-        ink: Ink::Fill,
-    }],
-};
-
 // --- section headings --------------------------------------------------------
 
 /// An open section: a caret pointing down at the contents it is showing.
@@ -847,8 +825,6 @@ pub enum IconName {
     Maximise,
     Info,
     Bug,
-    Play,
-    Stop,
     CaretDown,
     CaretRight,
     PatternNone,
@@ -889,14 +865,12 @@ impl IconName {
     /// set's index, and anything that needs the whole set rather than one icon
     /// starts here.
     #[allow(dead_code)]
-    pub const ALL: [IconName; 35] = [
+    pub const ALL: [IconName; 33] = [
         IconName::Close,
         IconName::Minimise,
         IconName::Maximise,
         IconName::Info,
         IconName::Bug,
-        IconName::Play,
-        IconName::Stop,
         IconName::CaretDown,
         IconName::CaretRight,
         IconName::PatternNone,
@@ -968,8 +942,6 @@ impl IconName {
             IconName::Maximise => &MAXIMISE,
             IconName::Info => &INFO,
             IconName::Bug => &BUG,
-            IconName::Play => &PLAY,
-            IconName::Stop => &STOP,
             IconName::CaretDown => &CARET_DOWN,
             IconName::CaretRight => &CARET_RIGHT,
             IconName::PatternNone => &PATTERN_NONE,

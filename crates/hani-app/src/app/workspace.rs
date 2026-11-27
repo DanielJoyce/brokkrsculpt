@@ -309,7 +309,7 @@ impl Hani {
                 which.key(),
             ))
         });
-        container(choices).padding(2).style(theme::timeline_track).into()
+        container(choices).padding(2).style(theme::groove).into()
     }
 
     /// The dock down the right: the workspace's library and its inspector,

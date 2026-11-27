@@ -640,8 +640,7 @@ pub struct Hani {
     /// `project::write` takes a `&Document` and a `&ProjectState`, so there is
     /// no expression that hands it solo. Do not move this onto `Document` or
     /// `View` to tidy a call site — the guarantee is the type signature, not
-    /// the discipline, and `View` is restored by both a reopen and a timeline
-    /// key.
+    /// the discipline, and `View` is restored by a reopen.
     ///
     /// It is also why leaving solo restores the hand-set eyes bit for bit:
     /// nothing was ever written, so there is nothing to restore. Every shipped
@@ -739,7 +738,6 @@ pub struct Hani {
     pub(crate) detail_advice: String,
     /// Stored views on the strip above the viewport, and the state of
     /// scrubbing through them.
-    timeline: crate::timeline::Timeline,
     /// What this session has done, for a bug report.
     breadcrumbs: crate::breadcrumbs::Breadcrumbs,
     /// The status line as it was when it was last recorded as a breadcrumb.
@@ -1933,9 +1931,9 @@ fn keeps_the_gizmo_armed(message: &Message) -> bool {
 /// message. This holds nothing, so the two failure directions are not
 /// symmetric: a screen that lingers one message too long is a click, and a
 /// screen that never appears is invisible. Written the other way round it was
-/// dismissed before it could be seen -- by `TimelineResized`, a LAYOUT message
-/// the window emits as it lays itself out, which no allow-list would have
-/// thought to name.
+/// dismissed before it could be seen -- by a layout message the window emits
+/// as it lays itself out (the timeline's resize, when there was one), which no
+/// allow-list would have thought to name.
 ///
 /// The list is knowable and complete by construction: the card is `opaque`, so
 /// while it is up nothing else on screen can produce a message at all, and
@@ -2247,7 +2245,6 @@ impl Hani {
             model_radius: MODEL_RADIUS_MM,
             working_size_field: String::new(),
             detail_advice: String::new(),
-            timeline: crate::timeline::Timeline::new(),
             breadcrumbs: crate::breadcrumbs::Breadcrumbs::new(),
             crumbed_status: String::new(),
             bug_report: None,
@@ -7047,33 +7044,15 @@ impl Hani {
     fn project_state(&self) -> hani_core::ProjectState {
         hani_core::ProjectState {
             view: self.current_view(),
-            keys: self.timeline.keys.clone(),
+            // The timeline was taken out on 2026-11-27; a file keeps its
+            // trailer, empty, so older builds still read what this writes.
+            keys: Vec::new(),
             paints: self.doc.paints().clone(),
         }
     }
 
-    /// Put the camera where a view says, and nothing else.
-    ///
-    /// The counterpart to `apply_view`, and the difference between them is the
-    /// whole policy of the timeline: **going to a key restores everything it
-    /// holds, and playing through the keys moves only the camera.** A
-    /// fly-through that reached over and changed the brush, or switched a
-    /// mirror plane on halfway, would be alarming rather than useful.
-    fn fly_camera_to(&mut self, view: &hani_core::View) {
-        self.camera.target = view.camera_target;
-        self.camera.distance = view.camera_distance;
-        self.camera.yaw = view.camera_yaw;
-        self.camera.pitch = view.camera_pitch;
-        self.camera.roll = view.camera_roll;
-        self.publish_camera();
-        self.refresh_overlay();
-    }
-
-    /// Where the camera is and what the brush is set to, right now.
-    ///
-    /// The same function serves saving a file and storing a timeline key, which
-    /// is the point of `View` being one type: a key cannot come to restore less
-    /// than a reopen does.
+    /// What a `.hani` file stores beside the sculpt, so a reopen comes back to
+    /// the same working setup.
     fn current_view(&self) -> hani_core::View {
         hani_core::View {
             camera_target: self.camera.target,
@@ -7342,7 +7321,9 @@ impl Hani {
         // `select_body`.
         self.status = format!("opened {}", path.display());
         self.apply_view(&state.view);
-        self.timeline.adopt(state.keys);
+        // A file from when there was a timeline opens with its keys
+        // dropped: they were views, not part of the sculpt.
+        drop(state.keys);
         self.doc.replace_paints(state.paints);
         // Painted by filament slot, from before slot painting was taken
         // out: its slots laid into its colour paint. See
@@ -9968,13 +9949,6 @@ impl Hani {
                 // Explode's parts on their way apart or back. See
                 // `app/explode.rs`.
                 self.explode_frame(elapsed_ms);
-                // Driven off the frame tick for the same reason the autosave
-                // is: `iced::time::every` does not exist under this feature
-                // set. It stalls on a hidden window, which for playback is
-                // exactly right -- nothing is watching it.
-                if let Some(pose) = self.timeline.advance(elapsed_ms) {
-                    self.fly_camera_to(&pose);
-                }
                 self.drive_from_spacemouse(elapsed_ms);
                 // The airbrush, held, sprays by the frame. See
                 // `app/airbrush.rs`.
@@ -10889,62 +10863,6 @@ impl Hani {
             // exists to prevent.
             Message::BodyRenameSubmitted => {}
 
-            Message::TimelineResized(width) => self.timeline.resized(width),
-            Message::TimelineHover(x) => {
-                self.timeline.hover(x);
-                // A drag re-times the key it is holding, which moves it under
-                // the playhead, so the view follows the pointer.
-                if self.timeline.dragged_key().is_some() {
-                    self.unsaved = true;
-                }
-            }
-            Message::TimelinePressed => {
-                let view = self.current_view();
-                match self.timeline.press(view) {
-                    Some(crate::timeline::Pressed::WentTo(index)) => {
-                        // Before the view is applied, so that a mirror plane
-                        // the body does not straddle wins the line: which key
-                        // was gone to is visible in the timeline, and a plane
-                        // going off is not visible anywhere else.
-                        self.status = format!("key {} of {}", index + 1, self.timeline.keys.len());
-                        // Everything a key holds, not only the camera: going
-                        // to a key is going back to a working setup.
-                        if let Some(key) = self.timeline.keys.get(index).copied() {
-                            self.apply_view(&key.view);
-                            self.publish_camera();
-                            self.refresh_overlay();
-                        }
-                    }
-                    Some(crate::timeline::Pressed::Added(index)) => {
-                        self.unsaved = true;
-                        self.status =
-                            format!("stored key {} of {}", index + 1, self.timeline.keys.len());
-                    }
-                    None => {}
-                }
-            }
-            Message::TimelineReleased => self.timeline.release(),
-            Message::TimelineLeft => self.timeline.leave(),
-            Message::TimelineRemoveKey => {
-                if self.timeline.remove_under_pointer().is_some() {
-                    self.unsaved = true;
-                    self.status = match self.timeline.keys.len() {
-                        0 => "removed the last key".to_string(),
-                        left => format!("removed a key, {left} left"),
-                    };
-                }
-            }
-            Message::TimelinePlayToggled => {
-                self.timeline.toggle_play();
-                if self.timeline.playing {
-                    // The playhead may be sitting anywhere; put the camera
-                    // where it is before the first frame advances it, or
-                    // playback starts with a jump.
-                    if let Some(pose) = self.timeline.pose_at(self.timeline.playhead) {
-                        self.fly_camera_to(&pose);
-                    }
-                }
-            }
             Message::BrushRadiusScaled(factor) => {
                 self.brush.radius =
                     (self.brush.radius * factor).clamp(MIN_RADIUS_MM, self.max_radius());
@@ -17311,259 +17229,37 @@ mod export_tests {
     }
 }
 
+/// The timeline was taken out on 2026-11-27. A file saved with keys still
+/// opens, its view is put back, and a save of it writes no keys.
 #[cfg(test)]
-mod timeline_tests {
+mod timeline_gone_tests {
     use super::*;
 
-    /// See the note in `tests::update`.
-    fn update(app: &mut Hani, message: Message) {
-        drop(app.update(message));
-    }
-
-    fn app() -> Hani {
-        Hani::with_tablet(crate::tablet::Tablet::inert())
-    }
-
-    /// Put the pointer somewhere along the strip and press.
-    ///
-    /// Through the real messages rather than by calling `Timeline` directly.
-    /// The Move brush shipped twice passing tests that built the objects by
-    /// hand and never went through the routing, and both times it did nothing
-    /// in the hand -- so what is exercised here is the path a click takes.
-    fn click_at(app: &mut Hani, fraction: f32) {
-        let x = fraction * app.timeline.width();
-        update(app, Message::TimelineHover(x));
-        update(app, Message::TimelinePressed);
-        update(app, Message::TimelineReleased);
-    }
-
     #[test]
-    fn clicking_empty_track_stores_the_view_that_was_showing() {
-        let mut app = app();
-        app.camera.yaw = 1.25;
-        app.camera.distance = 88.0;
-        update(&mut app, Message::BrushRadiusChanged(7.5));
-        update(&mut app, Message::SymmetryAxisToggled(MirrorAxis::Y));
-
-        click_at(&mut app, 0.4);
-
-        assert_eq!(app.timeline.keys.len(), 1, "a click on empty track stored nothing");
-        let key = app.timeline.keys[0];
-        assert!((key.at - 0.4).abs() < 0.01, "the key landed at {}", key.at);
-        assert_eq!(key.view.camera_yaw, 1.25);
-        assert_eq!(key.view.camera_distance, 88.0);
-        assert_eq!(key.view.brush_radius, 7.5, "a key has to hold the brush, not only the camera");
-        assert_eq!(key.view.mirror, [false, true, false], "the mirror planes were not stored");
-        assert!(app.unsaved, "storing a key changed the document and did not say so");
-    }
-
-    #[test]
-    fn clicking_a_key_puts_everything_it_holds_back() {
-        // The property that makes a key a stored working setup rather than a
-        // camera angle. Every field has to come back, so this moves all of
-        // them away between storing and returning.
-        let mut app = app();
-        app.camera.yaw = 0.2;
-        app.camera.distance = 40.0;
-        update(&mut app, Message::BrushRadiusChanged(3.0));
-        update(&mut app, Message::BrushStrengthChanged(0.2));
-        click_at(&mut app, 0.3);
-
-        app.camera.yaw = 2.9;
-        app.camera.distance = 150.0;
-        update(&mut app, Message::BrushRadiusChanged(9.0));
-        update(&mut app, Message::BrushStrengthChanged(0.6));
-        update(&mut app, Message::SymmetryAxisToggled(MirrorAxis::X));
-
-        click_at(&mut app, 0.3);
-
-        assert_eq!(app.timeline.keys.len(), 1, "clicking the key added a second one");
-        assert_eq!(app.camera.yaw, 0.2);
-        assert_eq!(app.camera.distance, 40.0);
-        assert_eq!(app.brush.radius, 3.0);
-        assert_eq!(app.brush.strength, 0.2);
-        assert!(!app.symmetry.axis(MirrorAxis::X), "the mirror plane was not restored");
-    }
-
-    #[test]
-    fn dragging_a_key_past_its_neighbour_keeps_hold_of_it() {
-        // The list stays sorted, so a dragged key's index moves under the
-        // drag. Losing track of it here drops the drag at exactly the moment
-        // a user is watching for it.
-        let mut app = app();
-        click_at(&mut app, 0.2);
-        click_at(&mut app, 0.5);
-        click_at(&mut app, 0.8);
-        // Distinguish them by something that travels with the key.
-        for (index, key) in app.timeline.keys.iter_mut().enumerate() {
-            key.view.camera_distance = 100.0 + index as f32;
-        }
-
-        // Pick up the leftmost and haul it past both the others.
-        let width = app.timeline.width();
-        update(&mut app, Message::TimelineHover(0.2 * width));
-        update(&mut app, Message::TimelinePressed);
-        assert_eq!(app.timeline.dragged_key(), Some(0));
-        update(&mut app, Message::TimelineHover(0.95 * width));
-        update(&mut app, Message::TimelineReleased);
-
-        let order: Vec<f32> =
-            app.timeline.keys.iter().map(|key| key.view.camera_distance).collect();
-        assert_eq!(order, vec![101.0, 102.0, 100.0], "the dragged key did not travel");
-        let at: Vec<f32> = app.timeline.keys.iter().map(|key| key.at).collect();
-        assert!(at.windows(2).all(|pair| pair[0] <= pair[1]), "the keys came out unsorted: {at:?}");
-    }
-
-    #[test]
-    fn a_right_click_removes_the_key_under_the_pointer_and_only_that_one() {
-        let mut app = app();
-        click_at(&mut app, 0.25);
-        click_at(&mut app, 0.75);
-        app.unsaved = false;
-
-        let width = app.timeline.width();
-        update(&mut app, Message::TimelineHover(0.25 * width));
-        update(&mut app, Message::TimelineRemoveKey);
-
-        assert_eq!(app.timeline.keys.len(), 1);
-        assert!((app.timeline.keys[0].at - 0.75).abs() < 0.01, "the wrong key went");
-        assert!(app.unsaved, "removing a key changed the document and did not say so");
-    }
-
-    #[test]
-    fn a_right_click_on_empty_track_removes_nothing() {
-        let mut app = app();
-        click_at(&mut app, 0.25);
-        app.unsaved = false;
-
-        let width = app.timeline.width();
-        update(&mut app, Message::TimelineHover(0.9 * width));
-        update(&mut app, Message::TimelineRemoveKey);
-
-        assert_eq!(app.timeline.keys.len(), 1, "a right click on nothing removed a key");
-        assert!(!app.unsaved, "nothing changed, so nothing should be marked unsaved");
-    }
-
-    #[test]
-    fn playing_moves_the_camera_and_leaves_the_brush_alone() {
-        // The policy the whole module is built around, and the one that would
-        // be maddening to discover by accident: a fly-through must not reach
-        // over and change the tool in the user's hand.
-        let mut app = app();
-        app.camera.yaw = 0.0;
-        update(&mut app, Message::BrushRadiusChanged(4.0));
-        click_at(&mut app, 0.0);
-
-        app.camera.yaw = 2.0;
-        update(&mut app, Message::BrushRadiusChanged(9.0));
-        update(&mut app, Message::SymmetryAxisToggled(MirrorAxis::Z));
-        click_at(&mut app, 1.0);
-
-        // Back to the start, then play.
-        click_at(&mut app, 0.0);
-        assert_eq!(app.brush.radius, 4.0, "going to a key should restore the brush");
-        update(&mut app, Message::BrushRadiusChanged(9.0));
-        update(&mut app, Message::TimelinePlayToggled);
-        assert!(app.timeline.playing);
-
-        let started_at = app.camera.yaw;
-        for _ in 0..40 {
-            update(&mut app, Message::Frame);
-        }
-        assert_ne!(app.camera.yaw, started_at, "playback did not move the camera");
-        assert_eq!(app.brush.radius, 9.0, "playback changed the brush out from under the hand");
-    }
-
-    #[test]
-    fn playback_stops_itself_at_the_last_key() {
-        let mut app = app();
-        click_at(&mut app, 0.0);
-        app.camera.yaw = 1.5;
-        click_at(&mut app, 0.5);
-        click_at(&mut app, 0.0);
-        update(&mut app, Message::TimelinePlayToggled);
-
-        // In controlled time, for the reason `finish_flight` documents:
-        // `Message::Frame` scales by the real clock and consecutive calls in a
-        // test are microseconds apart, so a run driven that way never arrives.
-        // That `Frame` drives playback at all is covered by the test above.
-        //
-        // Far more steps than the run needs, so a playhead that failed to stop
-        // would have run off the end of the strip.
-        for _ in 0..600 {
-            if let Some(pose) = app.timeline.advance(16.0) {
-                app.fly_camera_to(&pose);
-            }
-        }
-        assert!(!app.timeline.playing, "playback never stopped");
-        assert!(app.timeline.playhead <= 1.0, "the playhead ran off the strip");
-        assert!(
-            (app.timeline.playhead - 0.5).abs() < 0.01,
-            "it stopped at {} rather than at the last key",
-            app.timeline.playhead
-        );
-    }
-
-    #[test]
-    fn play_does_nothing_with_fewer_than_two_keys() {
-        // There is nothing to fly between, and a button that visibly does
-        // nothing is worse than one that is plainly unavailable.
-        let mut app = app();
-        update(&mut app, Message::TimelinePlayToggled);
-        assert!(!app.timeline.playing);
-        click_at(&mut app, 0.5);
-        update(&mut app, Message::TimelinePlayToggled);
-        assert!(!app.timeline.playing);
-    }
-
-    #[test]
-    fn keys_survive_a_save_and_a_reopen_through_the_application() {
-        // Through the application rather than the format, because the
-        // interesting failures are in the wiring: a state that is built
-        // without them, or a load that reads them and drops them on the floor.
-        let directory = std::env::temp_dir().join(format!("hani-timeline-{}", std::process::id()));
-        std::fs::create_dir_all(&directory).unwrap();
-        let path = directory.join("keys.hani");
-
-        let mut app = app();
-        app.camera.yaw = 0.4;
-        click_at(&mut app, 0.1);
-        app.camera.yaw = 2.4;
-        click_at(&mut app, 0.6);
-        app.save_project(&path);
-        assert!(app.status.starts_with("saved"), "save reported: {}", app.status);
-
-        let mut reopened = Hani::with_tablet(crate::tablet::Tablet::inert());
-        reopened.open_project(&path);
-        assert!(!reopened.status.contains("could not"), "open reported: {}", reopened.status);
-        assert_eq!(reopened.timeline.keys.len(), 2, "the keys did not survive the reopen");
-        assert!((reopened.timeline.keys[0].view.camera_yaw - 0.4).abs() < 1.0e-6);
-        assert!((reopened.timeline.keys[1].view.camera_yaw - 2.4).abs() < 1.0e-6);
-
-        let _ = std::fs::remove_dir_all(&directory);
-    }
-
-    #[test]
-    fn opening_a_second_file_does_not_leave_the_first_ones_keys_behind() {
-        // `adopt` replaces rather than extends. Getting this wrong leaves keys
-        // pointing at a model that is no longer on screen, which looks like
-        // the timeline remembering something it should not.
+    fn a_file_saved_with_timeline_keys_opens_and_saves_without_them() {
         let directory =
-            std::env::temp_dir().join(format!("hani-timeline-swap-{}", std::process::id()));
+            std::env::temp_dir().join(format!("hani-timeline-gone-{}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
-        let with_keys = directory.join("keys.hani");
-        let without = directory.join("bare.hani");
+        let with_keys = directory.join("with-keys.hani");
 
-        let mut app = app();
-        click_at(&mut app, 0.3);
-        app.save_project(&with_keys);
+        let mut app = Hani::with_tablet(crate::tablet::Tablet::inert());
+        let mut state = app.project_state();
+        state.view.camera_yaw = 1.25;
+        let key = hani_core::Keyframe { at: 0.5, view: state.view };
+        state.keys = vec![key, hani_core::Keyframe { at: 0.9, ..key }];
+        let mut bytes = Vec::new();
+        hani_core::project::write(&mut bytes, &app.doc, &state).unwrap();
+        std::fs::write(&with_keys, &bytes).unwrap();
 
-        let mut bare = Hani::with_tablet(crate::tablet::Tablet::inert());
-        bare.save_project(&without);
+        app.open_project(&with_keys);
+        assert!(app.status.starts_with("opened"), "it did not open: {}", app.status);
+        assert!((app.camera.yaw - 1.25).abs() < 1.0e-6, "the saved view was not put back");
 
-        app.open_project(&without);
-        assert!(app.timeline.keys.is_empty(), "the previous model's keys are still on the strip");
-        assert!(!app.timeline.playing);
+        let resaved = directory.join("resaved.hani");
+        app.save_project(&resaved);
+        let (_, reread) =
+            hani_core::project::read(&mut std::fs::File::open(&resaved).unwrap()).unwrap();
+        assert!(reread.keys.is_empty(), "a save still wrote timeline keys");
 
         let _ = std::fs::remove_dir_all(&directory);
     }

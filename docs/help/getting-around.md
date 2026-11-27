@@ -62,7 +62,7 @@ beside it shows only the active body.
 - **Ctrl+Z** undoes a whole stroke or action at a time, and **Ctrl+Shift+Z**
   redoes it.
 - A sculpt is saved as one `.hani` file holding everything: the bodies, the
-  mask, the paint and its layers, the timeline. Older `.brokkr` files open too.
+  mask, the paint and its layers. Older `.brokkr` files open too.
 - Your work is saved aside now and then while you sculpt, so a crash costs
   little.
 - In a browser, **Save** keeps the sculpt in the browser, and *Save to

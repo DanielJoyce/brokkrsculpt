@@ -163,7 +163,7 @@ pub const RADIUS_LG: f32 = 10.0;
 // size, so every control that used to hold a character needs its box named
 // somewhere. Naming them together is also what keeps the set looking like a
 // set.
-/// Window controls and the timeline's transport.
+/// Window controls.
 pub const ICON_CHROME: f32 = 14.0;
 /// The tool strip, above the tool's name.
 ///
@@ -514,39 +514,15 @@ pub fn tool_strip(_theme: &iced::Theme) -> iced::widget::container::Style {
     }
 }
 
-/// The timeline's empty track.
-///
-/// Darker than a panel so the strip reads as a groove cut into the layout
-/// rather than another surface floating on it.
-pub fn timeline_track(_theme: &iced::Theme) -> iced::widget::container::Style {
+/// A groove cut into the layout: darker than a panel, so what sits in it
+/// reads as set into the surface rather than floating on it. The workspace
+/// switcher's.
+pub fn groove(_theme: &iced::Theme) -> iced::widget::container::Style {
     iced::widget::container::Style {
         background: Some(BG_DEEP.into()),
         border: iced::Border { radius: RADIUS_SM.into(), width: 1.0, color: LINE },
         ..Default::default()
     }
-}
-
-/// One stored key.
-pub fn timeline_key(_theme: &iced::Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(TEXT_DIM.into()),
-        border: iced::Border { radius: 2.0.into(), ..Default::default() },
-        ..Default::default()
-    }
-}
-
-/// A key under the pointer, or being dragged.
-pub fn timeline_key_lit(_theme: &iced::Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(ACCENT.into()),
-        border: iced::Border { radius: 2.0.into(), ..Default::default() },
-        ..Default::default()
-    }
-}
-
-/// The playhead.
-pub fn timeline_playhead(_theme: &iced::Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style { background: Some(ACCENT_HOT.into()), ..Default::default() }
 }
 
 // --- the body panel ----------------------------------------------------------
