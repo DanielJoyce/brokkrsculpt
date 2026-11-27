@@ -41,9 +41,8 @@ pub struct Spread {
     entries: Vec<(NodeId, Vec4)>,
     /// The body the gizmo is dragging, and where the drag has it drawn.
     moving: Option<(NodeId, Mat4)>,
-    /// What is in the buffer: each body's whole map and its share screened
-    /// away. A body's entry is its index here plus one.
-    written: Vec<(NodeId, Affine3A, f32)>,
+    /// What is in the buffer. A body's entry is its index here plus one.
+    written: Vec<Entry>,
 }
 
 impl Spread {
@@ -100,8 +99,8 @@ impl Spread {
     pub fn of(&self, body: NodeId) -> (u32, Affine3A) {
         self.written
             .iter()
-            .position(|(id, _, _)| *id == body)
-            .map_or((0, Affine3A::IDENTITY), |index| (index as u32 + 1, self.written[index].1))
+            .position(|entry| entry.body == body)
+            .map_or((0, Affine3A::IDENTITY), |index| (index as u32 + 1, self.written[index].map))
     }
 
     pub fn buffer(&self) -> &wgpu::Buffer {
@@ -109,36 +108,55 @@ impl Spread {
     }
 }
 
+/// One body drawn anywhere but where it is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Entry {
+    body: NodeId,
+    /// Where it is drawn: the gizmo's map, then Explode's offset.
+    map: Affine3A,
+    /// Explode's offset alone. The shader takes it back off for the
+    /// body's world position, so that the overhang tint and the ring cut's
+    /// see-through read a part where the gizmo has it and not where
+    /// Explode draws it.
+    explode: Vec3,
+    /// The share screened away.
+    screened: f32,
+}
+
 /// Every body that is drawn anywhere but where it is: Explode's offset after
 /// the gizmo's map, and the share screened away.
-fn combined(
-    entries: &[(NodeId, Vec4)],
-    moving: Option<(NodeId, Mat4)>,
-) -> Vec<(NodeId, Affine3A, f32)> {
-    let mut out: Vec<(NodeId, Affine3A, f32)> = entries
+fn combined(entries: &[(NodeId, Vec4)], moving: Option<(NodeId, Mat4)>) -> Vec<Entry> {
+    let mut out: Vec<Entry> = entries
         .iter()
-        .map(|(body, entry)| (*body, Affine3A::from_translation(entry.truncate()), entry.w))
+        .map(|(body, entry)| Entry {
+            body: *body,
+            map: Affine3A::from_translation(entry.truncate()),
+            explode: entry.truncate(),
+            screened: entry.w,
+        })
         .collect();
     if let Some((body, map)) = moving {
         let map = Affine3A::from_mat4(map);
-        match out.iter_mut().find(|(id, _, _)| *id == body) {
-            Some((_, drawn, _)) => *drawn *= map,
-            None => out.push((body, map, 0.0)),
+        match out.iter_mut().find(|entry| entry.body == body) {
+            Some(entry) => entry.map *= map,
+            None => out.push(Entry { body, map, explode: Vec3::ZERO, screened: 0.0 }),
         }
     }
     out
 }
 
-/// The buffer's bytes for these entries, from entry 1.
-fn bytes_of(written: &[(NodeId, Affine3A, f32)]) -> Vec<u8> {
+/// The buffer's bytes for these entries, from entry 1: three columns of
+/// the linear part less the identity's, Explode's offset in their `w`, and
+/// the whole offset with the share screened away.
+fn bytes_of(written: &[Entry]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(written.len() * SPREAD_BYTES as usize);
-    for (_, map, screened) in written {
-        let linear = Mat3::from(map.matrix3) - Mat3::IDENTITY;
+    for entry in written {
+        let linear = Mat3::from(entry.map.matrix3) - Mat3::IDENTITY;
         let columns = [
-            linear.x_axis.extend(0.0),
-            linear.y_axis.extend(0.0),
-            linear.z_axis.extend(0.0),
-            Vec3::from(map.translation).extend(*screened),
+            linear.x_axis.extend(entry.explode.x),
+            linear.y_axis.extend(entry.explode.y),
+            linear.z_axis.extend(entry.explode.z),
+            Vec3::from(entry.map.translation).extend(entry.screened),
         ];
         for column in columns {
             for value in column.to_array() {
@@ -184,8 +202,9 @@ mod tests {
         let written =
             combined(&[(body(3), Vec4::new(0.0, 2.0, 0.0, 0.25))], Some((body(3), turned)));
         assert_eq!(written.len(), 1);
-        let (_, map, screened) = written[0];
+        let Entry { map, screened, explode, .. } = written[0];
         assert_eq!(screened, 0.25);
+        assert_eq!(explode, Vec3::new(0.0, 2.0, 0.0));
         let at = Vec3::new(1.0, 1.0, 1.0);
         let want = turned.transform_point3(at) + Vec3::new(0.0, 2.0, 0.0);
         assert!(map.transform_point3(at).distance(want) < 1.0e-5);
@@ -200,12 +219,14 @@ mod tests {
             floats[10],
         ]) + Mat3::IDENTITY;
         assert!(linear.abs_diff_eq(Mat3::from(map.matrix3), 1.0e-6));
+        assert_eq!([floats[3], floats[7], floats[11]], [0.0, 2.0, 0.0], "Explode's offset");
         assert_eq!(&floats[12..16], &[1.0, 2.0, 0.0, 0.25]);
 
         // A body only moving gets an entry of its own, screened not at all.
         let alone = combined(&[], Some((body(4), Mat4::from_scale(Vec3::splat(2.0)))));
         assert_eq!(alone.len(), 1);
-        assert_eq!(alone[0].2, 0.0);
+        assert_eq!(alone[0].screened, 0.0);
+        assert_eq!(alone[0].explode, Vec3::ZERO);
     }
 
     /// The box round a turned box holds every corner of it.
