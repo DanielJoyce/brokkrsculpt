@@ -561,9 +561,6 @@ pub struct Hani {
     /// the first drawn frame; still present on the next launch means the build
     /// installed here died before drawing anything.
     update_pending_marker: Option<std::path::PathBuf>,
-    /// One line for the Help panel saying how stale the last successful check
-    /// is. Computed at startup rather than per frame: it changes once a day.
-    update_freshness: String,
     /// A build to offer going back to, when a crash report and the update
     /// state agree that the build which crashed is the one we installed.
     crash_revert: Option<u64>,
@@ -2165,7 +2162,6 @@ impl Hani {
             app.crash_revert = crate::update::installed_build();
         }
 
-        app.update_freshness = crate::update::freshness_line();
         let settings = crate::update::settings();
         app.update_settings = settings.clone();
         let floor = crate::update::floor();
@@ -2233,7 +2229,6 @@ impl Hani {
             downloaded_update: None,
             exe: None,
             update_pending_marker: None,
-            update_freshness: String::new(),
             crash_revert: None,
             crashed_last_session: false,
             doc,

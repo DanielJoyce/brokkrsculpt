@@ -22,6 +22,14 @@ use crate::theme;
 /// What the Graphics line says while the adapter is being asked for.
 const ASKING: &str = "asking…";
 
+/// The Updates line: the build on offer, or that there is none.
+pub(super) fn updates_line(offer: Option<&crate::update::Offer>) -> String {
+    offer.map_or_else(
+        || "None available".to_string(),
+        |offer| format!("build {} available", offer.build),
+    )
+}
+
 /// Where this build runs: the operating system and the processor, or a
 /// browser.
 pub(super) fn platform() -> String {
@@ -86,9 +94,10 @@ impl Hani {
             line("Licence", "AGPL-3.0-only".to_string()),
         ]
         .spacing(theme::S2);
-        if !self.update_freshness.is_empty() {
-            facts = facts.push(line("Updates", self.update_freshness.clone()));
-        }
+        // Asked for by the maintainer on 2026-11-28: "Updates should just
+        // say None Available". How fresh the last check is stays in the
+        // diagnostics (`update::outcome_line`).
+        facts = facts.push(line("Updates", updates_line(self.offer.as_ref())));
         let card = container(
             column![
                 row![
@@ -142,6 +151,12 @@ mod tests {
         assert!(app.about_escaped(), "Escape did not find it open");
         assert!(!app.about_open);
         assert!(!app.about_escaped(), "Escape found it open twice");
+    }
+
+    /// With nothing on offer the Updates line says so and nothing more.
+    #[test]
+    fn with_no_update_the_line_says_none_available() {
+        assert_eq!(updates_line(None), "None available");
     }
 
     /// The first opening asks for the adapter and says so on the card until
