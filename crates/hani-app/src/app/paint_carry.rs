@@ -29,7 +29,7 @@ impl Hani {
             Symmetry::MAX_MIRRORS];
         for centre in &self.stamp_centres {
             let stamp = Stamp::new(*centre, Vec3::Z, hani_core::BrushDirection::Add);
-            let count = if self.symmetry.is_off() {
+            let count = if self.symmetry_settings().is_off() {
                 0
             } else {
                 self.framed_symmetry().mirrors(&stamp, MIRROR_CENTRE, &mut twins)

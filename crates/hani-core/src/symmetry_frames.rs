@@ -1,23 +1,28 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! Symmetry that belongs to a body: each body's own frame for the mirror
-//! planes and the radial axis, carried with it when the gizmo moves it.
+//! Symmetry that belongs to a body: which mirror planes are on, how many
+//! radial copies round which axis, and the frame the planes and the axis
+//! are in, carried with the body when the gizmo moves it.
 //!
 //! Asked for by the maintainer on 2026-11-28: "when you transform a node
 //! with the gizmo the symmetry transforms with it (ie symmetry is local to
-//! the object not global)". Which planes are on, and how many radial copies
-//! round which axis, stay one setting for the session, as they were; where
-//! the planes and the axis are is the body's. A body starts with the room's
-//! frame, through the middle of the room and unturned, so nothing changes
-//! for a body that has never been moved.
+//! the object not global)", and then, of the settings, which were still one
+//! for the session: "Each body should have its own settings. Yes. Just like
+//! zbrush". A body starts with its symmetry off and the room's frame; a
+//! body made from another takes that one's whole symmetry.
 //!
-//! Only frames that are not the room's are held, so a document whose bodies
-//! were never moved holds none and saves no byte for them.
+//! The settings are not undo steps, as a mirror toggled in ZBrush is not;
+//! the frame is, as it moves with the body's field (see
+//! [`Change::SymmetryFrame`]). Only bodies whose symmetry is not off in the
+//! room's frame are held, so a document that never used it holds none and
+//! saves no byte for it.
 //!
-//! The file keeps the frames and the radial copies in a section of its own,
-//! after the boolean groups. An older build stops reading before it, as it
-//! does before every section it does not know, and opens the file with every
-//! frame the room's and the radial copies off.
+//! The file keeps every body's symmetry in a section of its own after the
+//! boolean groups, `HANSYMM2`. The section this replaced, `HANSYMMS`, kept
+//! the frames and one radial setting for the session (the planes were in
+//! the file's view); it is still read, and the application lays a file's
+//! session settings on every body. An older build stops reading before
+//! either, as before every section it does not know.
 //!
 //! What `body.rs` holds for this: one field on [`Document`] and its value in
 //! the two constructors. `undo.rs` has one change,
@@ -30,8 +35,19 @@ use crate::body::{Document, NodeId};
 use crate::brush::{MirrorAxis, Symmetry, SymmetryFrame};
 use crate::undo::Change;
 
-/// The tag of the file's section that holds the frames.
+/// The tag of the section that held the frames and the session's radial
+/// copies, before each body had its own settings. Read, never written.
 pub const TAG: &[u8; 8] = b"HANSYMMS";
+
+/// The tag of the section that holds every body's symmetry.
+pub const TAG2: &[u8; 8] = b"HANSYMM2";
+
+/// A row of it: its place in the table (u32 LE), the planes (a bit each, X
+/// first), the radial copies, the radial axis, and the frame as seven f32 LE.
+const ROW2_BYTES: usize = 4 + 3 + 7 * 4;
+
+/// The most that section can hold: a count and a row for every node.
+pub const MOST_SECTION2_BYTES: u64 = 4 + ROW2_BYTES as u64 * crate::body::MAX_NODES as u64;
 
 /// A row: its place in the table (u32 LE), the origin and the turn as seven
 /// f32 LE.
@@ -41,14 +57,22 @@ const ROW_BYTES: usize = 4 + 7 * 4;
 /// and a row for every node.
 pub const MOST_SECTION_BYTES: u64 = 2 + 4 + ROW_BYTES as u64 * crate::body::MAX_NODES as u64;
 
-/// The frames that are not the room's, by body.
+/// Each body's symmetry, where it is not off in the room's frame.
 #[derive(Debug, Clone, Default)]
 pub struct Frames {
-    frames: FxHashMap<NodeId, SymmetryFrame>,
+    frames: FxHashMap<NodeId, Symmetry>,
 }
 
-/// The radial copies as a file keeps them: how many, the stroke's own among
-/// them (one is off), and round which axis.
+/// Whether a symmetry is the one a body starts with. The radial axis
+/// counts though the copies are off: it is the choice the next copies take.
+fn is_default(symmetry: &Symmetry) -> bool {
+    symmetry.is_off()
+        && symmetry.frame() == SymmetryFrame::IDENTITY
+        && symmetry.radial_axis() == Symmetry::OFF.radial_axis()
+}
+
+/// The radial copies as the replaced section kept them for the session: how
+/// many, the stroke's own among them (one is off), and round which axis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Radial {
     pub copies: u8,
@@ -69,9 +93,40 @@ impl Radial {
 }
 
 impl Document {
+    /// A body's symmetry: off, in the room's frame, until it is set.
+    pub fn symmetry(&self, id: NodeId) -> Symmetry {
+        self.frames.frames.get(&id).copied().unwrap_or(Symmetry::OFF)
+    }
+
     /// A body's frame: the room's until the gizmo has moved it.
     pub fn symmetry_frame(&self, id: NodeId) -> SymmetryFrame {
-        self.frames.frames.get(&id).copied().unwrap_or_default()
+        self.symmetry(id).frame()
+    }
+
+    /// Set a body's planes and radial copies from `settings`, keeping its
+    /// frame. Not an undo step. Answers whether anything changed; nothing
+    /// does for a row that is not a body here.
+    pub fn set_symmetry_settings(&mut self, id: NodeId, settings: Symmetry) -> bool {
+        if !self.node(id).is_some_and(|node| node.is_body()) {
+            return false;
+        }
+        let before = self.symmetry(id);
+        let after = settings.in_frame(before.frame());
+        if before == after {
+            return false;
+        }
+        self.put_symmetry(id, after);
+        true
+    }
+
+    /// A body's whole symmetry, frame and all, as it comes from a file or
+    /// from the body a new one was made from. Not an undo step.
+    pub fn put_symmetry(&mut self, id: NodeId, symmetry: Symmetry) {
+        if is_default(&symmetry) {
+            self.frames.frames.remove(&id);
+        } else {
+            self.frames.frames.insert(id, symmetry);
+        }
     }
 
     /// Set a body's frame, and the change that puts it back; `None` when
@@ -91,19 +146,18 @@ impl Document {
     /// Put a frame on a row and answer the one it had. The room's frame is
     /// held as no entry at all.
     pub(crate) fn put_symmetry_frame(&mut self, id: NodeId, frame: SymmetryFrame) -> SymmetryFrame {
-        let before = if frame == SymmetryFrame::IDENTITY {
-            self.frames.frames.remove(&id)
-        } else {
-            self.frames.frames.insert(id, frame)
-        };
-        before.unwrap_or_default()
+        let before = self.symmetry(id);
+        self.put_symmetry(id, before.in_frame(frame));
+        before.frame()
     }
 }
 
-/// The section for a document: the radial copies (a byte for the count and
-/// one for the axis), then for each body whose frame is not the room's, its
-/// place in the table and the frame. `None` where the radial copies are off
+/// The replaced section for a document, kept to test that it is still
+/// read: the radial copies (a byte for the count and one for the axis),
+/// then for each body whose frame is not the room's, its place in the table
+/// and the frame. `None` where the radial copies are off
 /// and every frame is the room's, so that such a document gains no byte.
+#[cfg(test)]
 pub(crate) fn encode(doc: &Document, radial: Radial) -> Option<Vec<u8>> {
     let rows: Vec<(u32, SymmetryFrame)> = doc
         .nodes()
@@ -175,6 +229,98 @@ pub(crate) fn decode(bytes: &[u8], rows: usize) -> (Radial, Vec<(usize, Symmetry
     (radial, out)
 }
 
+/// The section for a document: for each body whose symmetry is not off in
+/// the room's frame, its place in the table and its symmetry. `None` where
+/// there is none, so that such a document gains no byte.
+pub(crate) fn encode2(doc: &Document) -> Option<Vec<u8>> {
+    let rows: Vec<(u32, Symmetry)> = doc
+        .nodes()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| {
+            let symmetry = doc.symmetry(node.id);
+            (!is_default(&symmetry)).then_some((index as u32, symmetry))
+        })
+        .collect();
+    if rows.is_empty() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(4 + rows.len() * ROW2_BYTES);
+    out.extend_from_slice(&(rows.len() as u32).to_le_bytes());
+    for (index, symmetry) in rows {
+        out.extend_from_slice(&index.to_le_bytes());
+        let planes = MirrorAxis::ALL
+            .into_iter()
+            .enumerate()
+            .fold(0u8, |bits, (bit, axis)| bits | (u8::from(symmetry.axis(axis)) << bit));
+        out.push(planes);
+        out.push(symmetry.radial());
+        out.push(axis_code(symmetry.radial_axis()));
+        let frame = symmetry.frame();
+        let numbers = [
+            frame.origin.x,
+            frame.origin.y,
+            frame.origin.z,
+            frame.rotation.x,
+            frame.rotation.y,
+            frame.rotation.z,
+            frame.rotation.w,
+        ];
+        for number in numbers {
+            out.extend_from_slice(&number.to_le_bytes());
+        }
+    }
+    Some(out)
+}
+
+/// Every body's symmetry the section holds, by its place in the table. A
+/// frame that cannot be one is left the room's, as [`decode`] leaves it,
+/// and the settings beside it kept: they are only switches.
+pub(crate) fn decode2(bytes: &[u8], rows: usize) -> Vec<(usize, Symmetry)> {
+    let Some((count, mut rest)) = bytes.split_first_chunk::<4>() else {
+        return Vec::new();
+    };
+    let count = u32::from_le_bytes(*count) as usize;
+    let mut out = Vec::new();
+    for _ in 0..count.min(crate::body::MAX_NODES) {
+        let Some((row, after)) = rest.split_first_chunk::<ROW2_BYTES>() else {
+            break;
+        };
+        rest = after;
+        let index = u32::from_le_bytes([row[0], row[1], row[2], row[3]]) as usize;
+        if index >= rows {
+            continue;
+        }
+        let (planes, copies, axis) = (row[4], row[5], row[6]);
+        let number = |at: usize| {
+            let at = 7 + at * 4;
+            f32::from_le_bytes([row[at], row[at + 1], row[at + 2], row[at + 3]])
+        };
+        let origin = Vec3::new(number(0), number(1), number(2));
+        let rotation = Quat::from_xyzw(number(3), number(4), number(5), number(6));
+        let unit = (rotation.length() - 1.0).abs() < 1.0e-3;
+        let frame = if origin.is_finite() && rotation.is_finite() && unit {
+            SymmetryFrame { origin, rotation: rotation.normalize() }
+        } else {
+            SymmetryFrame::IDENTITY
+        };
+        let axis = MirrorAxis::ALL.get(usize::from(axis)).copied().unwrap_or(MirrorAxis::Y);
+        let symmetry = MirrorAxis::ALL
+            .into_iter()
+            .enumerate()
+            .fold(Symmetry::OFF, |set, (bit, plane)| set.with_axis(plane, planes & (1 << bit) != 0))
+            .with_radial(copies, axis)
+            .in_frame(frame);
+        out.push((index, symmetry));
+    }
+    out
+}
+
+/// An axis as the file keeps it: 0, 1 or 2 for X, Y or Z.
+fn axis_code(axis: MirrorAxis) -> u8 {
+    MirrorAxis::ALL.iter().position(|each| *each == axis).unwrap_or(1) as u8
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,31 +373,75 @@ mod tests {
         assert!(local.x.abs() < 1.0e-4, "the point left the X plane: {local}");
     }
 
-    /// A whole file keeps a moved body's frame and the radial copies, and a
-    /// file with neither reads back with the room's frame and no copies.
+    /// A whole file keeps each body's own symmetry, settings and frame, and
+    /// a file whose bodies have none has no section for it.
     #[test]
-    fn a_file_keeps_the_frames_and_the_copies() {
+    fn a_file_keeps_each_bodys_symmetry() {
         let mut doc = Document::new(0.5);
-        let body = doc.active();
-        let state = crate::project::ProjectState {
-            radial: Radial { copies: 5, axis: MirrorAxis::X },
-            ..Default::default()
-        };
-        doc.set_symmetry_frame(body, turned());
+        let first = doc.active();
+        let second = doc.add_body("Second", crate::Volume::new(0.5));
+        let mirrored = Symmetry::X.with_axis(MirrorAxis::Z, true).in_frame(turned());
+        let radial = Symmetry::OFF.with_radial(6, MirrorAxis::Z);
+        doc.put_symmetry(first, mirrored);
+        doc.put_symmetry(second, radial);
         let mut bytes = Vec::new();
-        crate::project::write(&mut bytes, &doc, &state).expect("written");
-        let (back, read) = crate::project::read(&mut bytes.as_slice()).expect("read");
-        assert_eq!(read.radial, state.radial);
-        let frame = back.symmetry_frame(back.active());
-        assert!(frame.origin.distance(turned().origin) < 1.0e-6, "{frame:?}");
+        crate::project::write(&mut bytes, &doc, &Default::default()).expect("written");
+        let (back, _) = crate::project::read(&mut bytes.as_slice()).expect("read");
+        let ids: Vec<NodeId> = back.nodes().iter().map(|node| node.id).collect();
+        let read = back.symmetry(ids[0]);
+        assert!(read.axis(MirrorAxis::X) && read.axis(MirrorAxis::Z) && !read.axis(MirrorAxis::Y));
+        assert_eq!(read.radial(), 1);
+        assert!(read.frame().origin.distance(turned().origin) < 1.0e-6, "{read:?}");
+        assert!(read.frame().rotation.angle_between(turned().rotation) < 1.0e-5);
+        let read = back.symmetry(ids[1]);
+        assert_eq!((read.radial(), read.radial_axis()), (6, MirrorAxis::Z));
+        assert!(!read.mirrors_any());
 
         let plain = Document::new(0.5);
         let mut bytes = Vec::new();
         crate::project::write(&mut bytes, &plain, &Default::default()).expect("written");
-        assert!(!bytes.windows(TAG.len()).any(|window| window == TAG), "a section for nothing");
-        let (back, read) = crate::project::read(&mut bytes.as_slice()).expect("read");
-        assert_eq!(read.radial, Radial::default());
-        assert_eq!(back.symmetry_frame(back.active()), SymmetryFrame::IDENTITY);
+        assert!(!bytes.windows(TAG2.len()).any(|window| window == TAG2), "a section for nothing");
+        let (back, _) = crate::project::read(&mut bytes.as_slice()).expect("read");
+        assert!(back.symmetry(back.active()).is_off());
+    }
+
+    /// A file from before each body had its own settings still reads: its
+    /// frames onto their bodies and its radial copies into the state, for
+    /// the application to lay on every body.
+    #[test]
+    fn the_replaced_section_is_still_read() {
+        let mut doc = Document::new(0.5);
+        let body = doc.active();
+        let mut bytes = Vec::new();
+        crate::project::write(&mut bytes, &doc, &Default::default()).expect("written");
+        doc.set_symmetry_frame(body, turned());
+        let section =
+            encode(&doc, Radial { copies: 5, axis: MirrorAxis::X }).expect("frames and copies");
+        bytes.extend_from_slice(TAG);
+        bytes.extend_from_slice(&(section.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(&section);
+        let (back, state) = crate::project::read(&mut bytes.as_slice()).expect("read");
+        assert_eq!(state.radial, Radial { copies: 5, axis: MirrorAxis::X });
+        let frame = back.symmetry_frame(back.active());
+        assert!(frame.origin.distance(turned().origin) < 1.0e-6, "{frame:?}");
+    }
+
+    /// Settings set on a body keep its frame, are refused on a folder, and
+    /// a body set back to off in the room's frame holds nothing.
+    #[test]
+    fn settings_keep_the_frame_and_off_holds_nothing() {
+        let mut doc = Document::new(0.5);
+        let body = doc.active();
+        doc.set_symmetry_frame(body, turned());
+        assert!(doc.set_symmetry_settings(body, Symmetry::X));
+        assert!(doc.symmetry(body).axis(MirrorAxis::X));
+        assert_eq!(doc.symmetry_frame(body), turned(), "the settings moved the frame");
+        assert!(!doc.set_symmetry_settings(body, Symmetry::X), "nothing changed");
+        let (folder, _) = doc.group(body, "Folder").expect("room for a folder");
+        assert!(!doc.set_symmetry_settings(folder, Symmetry::X), "a folder took settings");
+        doc.set_symmetry_settings(body, Symmetry::OFF);
+        doc.set_symmetry_frame(body, SymmetryFrame::IDENTITY);
+        assert!(doc.frames.frames.is_empty());
     }
 
     /// The section round trips the radial copies and every frame, says

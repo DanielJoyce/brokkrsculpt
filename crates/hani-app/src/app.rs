@@ -583,7 +583,6 @@ pub struct Hani {
     crashed_last_session: bool,
     camera: OrbitCamera,
     brush: Brush,
-    symmetry: Symmetry,
     tablet: Tablet,
     spacemouse: SpaceMouse,
     /// Whether stylus pressure scales the brush. Off means every stamp runs at
@@ -2319,7 +2318,6 @@ impl Hani {
             doc,
             camera: OrbitCamera::framing(Vec3::ZERO, MODEL_RADIUS_MM),
             brush: Brush::default(),
-            symmetry: Symmetry::OFF,
             tablet,
             spacemouse,
             pressure_enabled: true,
@@ -3143,7 +3141,7 @@ impl Hani {
         };
         self.shared.set_moving(drawn);
         // The planes go with the placement. See `app/symmetry_frame.rs`.
-        if !self.symmetry.is_off() {
+        if !self.symmetry_settings().is_off() {
             self.refresh_overlay();
         }
     }
@@ -5103,7 +5101,7 @@ impl Hani {
     /// full-model scan on every button release, which is the thing the cache in
     /// `hani-core` refuses to hold for exactly this reason.
     fn refuse_mirrors_the_body_does_not_straddle(&mut self, verb: &str) {
-        if self.symmetry.is_off() {
+        if self.symmetry_settings().is_off() {
             return;
         }
         let Some(bounds) = self.doc.active_volume().surface_bounds() else {
@@ -5112,11 +5110,12 @@ impl Hani {
             return;
         };
         for axis in MirrorAxis::ALL {
-            if !self.symmetry.axis(axis) || straddles(bounds, axis, self.framed_symmetry().frame())
+            if !self.symmetry_settings().axis(axis)
+                || straddles(bounds, axis, self.framed_symmetry().frame())
             {
                 continue;
             }
-            self.symmetry = self.symmetry.with_axis(axis, false);
+            self.set_symmetry(self.symmetry_settings().with_axis(axis, false));
             self.status = self.mirror_refusal(axis, verb);
         }
         // And the radial axis. See `app/symmetry_frame.rs`.
@@ -5163,10 +5162,12 @@ impl Hani {
     /// appearing where the user cannot see it, and nothing appears when a plane
     /// goes away.
     fn toggle_mirror(&mut self, axis: MirrorAxis) {
-        if self.symmetry.axis(axis) {
-            self.symmetry = self.symmetry.with_axis(axis, false);
+        // The active body's own. See `app/symmetry_frame.rs`.
+        let settings = self.symmetry_settings();
+        if settings.axis(axis) {
+            self.set_symmetry(settings.with_axis(axis, false));
         } else if self.mirror_straddles(axis) {
-            self.symmetry = self.symmetry.with_axis(axis, true);
+            self.set_symmetry(settings.with_axis(axis, true));
         } else {
             self.status = self.mirror_refusal(axis, "refused");
         }
@@ -6759,7 +6760,7 @@ impl Hani {
         let mirrored = if twins.is_empty() {
             String::new()
         } else {
-            format!(", mirrored {}", self.symmetry.label())
+            format!(", mirrored {}", self.symmetry_settings().label())
         };
 
         if self.control {
@@ -7197,7 +7198,7 @@ impl Hani {
             // See `app/references.rs`.
             references: self.references.clone(),
             // See `app/symmetry_frame.rs`.
-            radial: hani_core::Radial::of(self.symmetry),
+            radial: hani_core::Radial::default(),
         }
     }
 
@@ -7212,7 +7213,7 @@ impl Hani {
             camera_roll: self.camera.roll,
             brush_radius: self.brush.radius,
             brush_strength: self.brush.strength,
-            mirror: MirrorAxis::ALL.map(|axis| self.symmetry.axis(axis)),
+            mirror: MirrorAxis::ALL.map(|axis| self.symmetry_settings().axis(axis)),
         }
     }
 
@@ -7343,10 +7344,9 @@ impl Hani {
         self.refresh_camera_lattice();
         self.brush.radius = view.brush_radius.clamp(MIN_RADIUS_MM, self.max_radius());
         self.brush.strength = view.brush_strength.clamp(MIN_STRENGTH, MAX_STRENGTH);
-        self.symmetry = MirrorAxis::ALL
-            .into_iter()
-            .zip(view.mirror)
-            .fold(Symmetry::OFF, |set, (axis, on)| set.with_axis(axis, on));
+        // The planes are each body's own and kept with it; a file from
+        // before kept them here, for every body. See `app/symmetry_frame.rs`.
+        self.adopt_session_mirrors(view.mirror);
         self.refuse_mirrors_the_body_does_not_straddle("turned off");
     }
 
@@ -7471,8 +7471,9 @@ impl Hani {
         // `select_body`.
         self.status = format!("opened {}", path.display());
         self.apply_view(&state.view);
-        // The radial copies. See `app/symmetry_frame.rs`.
-        self.symmetry = self.symmetry.with_radial(state.radial.copies, state.radial.axis);
+        // A file from before each body had its own radial copies. See
+        // `app/symmetry_frame.rs`.
+        self.adopt_session_radial(state.radial);
         self.doc.replace_paints(state.paints);
         // The pictures and the floor. See `app/references.rs`.
         self.adopt_references(state.references);
@@ -11717,9 +11718,9 @@ mod tests {
     #[test]
     fn a_fresh_application_starts_with_every_mirror_plane_off() {
         let app = app();
-        assert!(app.symmetry.is_off(), "symmetry was {:?}", app.symmetry);
+        assert!(app.symmetry_settings().is_off(), "symmetry was {:?}", app.symmetry_settings());
         for axis in MirrorAxis::ALL {
-            assert!(!app.symmetry.axis(axis), "{} was on at startup", axis.label());
+            assert!(!app.symmetry_settings().axis(axis), "{} was on at startup", axis.label());
         }
     }
 
@@ -11732,7 +11733,7 @@ mod tests {
         ] {
             let mut app = app();
             update(&mut app, Message::SymmetryAxisToggled(axis));
-            assert!(app.symmetry.axis(axis), "{} did not turn on", axis.label());
+            assert!(app.symmetry_settings().axis(axis), "{} did not turn on", axis.label());
 
             // On the surface, and off all three planes, so only the axis
             // under test can carry the stroke to the probe point.
@@ -11741,10 +11742,11 @@ mod tests {
             let before = app.doc.active_volume().sample_world(at * probe);
 
             app.doc.active_volume_mut().begin_stroke();
+            let symmetry = app.symmetry_settings();
             app.brush.apply_symmetric(
                 app.doc.active_volume_mut(),
                 &Stamp::new(at, normal, BrushDirection::Add),
-                app.symmetry,
+                symmetry,
                 MIRROR_CENTRE,
                 &mut app.brush_scratch,
             );
@@ -11757,7 +11759,7 @@ mod tests {
 
             // ...and toggling it again turns it back off.
             update(&mut app, Message::SymmetryAxisToggled(axis));
-            assert!(!app.symmetry.axis(axis));
+            assert!(!app.symmetry_settings().axis(axis));
         }
     }
 
@@ -11986,7 +11988,10 @@ mod tests {
         assert_eq!(reopened.doc.active_volume().brick_coords().count(), expected_bricks);
         assert!((reopened.camera.yaw - 1.25).abs() < 1.0e-5, "the camera did not follow");
         assert!((reopened.brush.radius - 5.5).abs() < 1.0e-5, "the brush did not follow");
-        assert!(reopened.symmetry.axis(MirrorAxis::Y), "the mirror planes did not follow");
+        assert!(
+            reopened.symmetry_settings().axis(MirrorAxis::Y),
+            "the mirror planes did not follow"
+        );
 
         // And it was drawn and is printable, which is what "loaded" means.
         // Note `open_project` meshes immediately, so the dirty set is already
@@ -12788,7 +12793,10 @@ mod tests {
         key(&mut app, "x", bare());
 
         assert_eq!(app.brush.kind, before, "a brush number changed the tool behind the screen");
-        assert!(!app.symmetry.axis(MirrorAxis::X), "a mirror plane toggled behind the screen");
+        assert!(
+            !app.symmetry_settings().axis(MirrorAxis::X),
+            "a mirror plane toggled behind the screen"
+        );
         assert!(app.welcome, "a shortcut dismissed the screen instead of being swallowed");
     }
 
@@ -12846,7 +12854,10 @@ mod tests {
             key(&mut app, "x", bare());
             key(&mut app, "2", bare());
 
-            assert!(!app.symmetry.axis(MirrorAxis::X), "x flipped a mirror plane behind {what}");
+            assert!(
+                !app.symmetry_settings().axis(MirrorAxis::X),
+                "x flipped a mirror plane behind {what}"
+            );
             assert_eq!(app.brush.kind, brush, "a digit swapped the brush behind {what}");
         }
 
@@ -12868,7 +12879,7 @@ mod tests {
         assert!(!app.modal_open(), "the fixture is not a fair control");
 
         key(&mut app, "x", bare());
-        assert!(app.symmetry.axis(MirrorAxis::X), "x did not reach the mirror planes");
+        assert!(app.symmetry_settings().axis(MirrorAxis::X), "x did not reach the mirror planes");
 
         key(&mut app, "2", bare());
         assert_eq!(app.brush.kind, BrushKind::ALL[1], "the digit did not reach the brush");
@@ -13978,7 +13989,7 @@ mod tests {
         app.publish_camera();
         app.viewport_size = Vec2::new(SIZE.x, SIZE.y);
         update(&mut app, Message::SymmetryAxisToggled(MirrorAxis::X));
-        assert!(app.symmetry.axis(MirrorAxis::X), "X did not turn on");
+        assert!(app.symmetry_settings().axis(MirrorAxis::X), "X did not turn on");
 
         // A plane standing at x = 10 on the equator, dragged top to bottom: the
         // left of the arrow is screen-right, so everything past x = 10 goes.
@@ -14018,7 +14029,7 @@ mod tests {
         app.camera.pitch = 0.0;
         app.publish_camera();
         app.viewport_size = Vec2::new(SIZE.x, SIZE.y);
-        assert!(app.symmetry.is_off());
+        assert!(app.symmetry_settings().is_off());
 
         let column = column_at_world_x(&app, 10.0);
         update(&mut app, Message::ToolChanged(Tool::Cut));
@@ -14062,7 +14073,7 @@ mod tests {
         assert!(!alone.lines.is_empty(), "no preview at all");
 
         update(&mut app, Message::SymmetryAxisToggled(MirrorAxis::X));
-        assert!(app.symmetry.axis(MirrorAxis::X), "X did not turn on");
+        assert!(app.symmetry_settings().axis(MirrorAxis::X), "X did not turn on");
         let mut mirrored = hani_gpu::OverlayBatch::default();
         app.add_cut_preview(&mut mirrored);
         assert_eq!(mirrored.lines.len(), alone.lines.len() * 2, "the twin was not drawn");
@@ -15255,9 +15266,12 @@ mod tests {
         // and every axis is allowed. This half is what stops the refusal from
         // being "always refuse".
         update(&mut app, Message::SymmetryAxisToggled(MirrorAxis::X));
-        assert!(app.symmetry.axis(MirrorAxis::X), "a body on the origin was refused its mirror");
+        assert!(
+            app.symmetry_settings().axis(MirrorAxis::X),
+            "a body on the origin was refused its mirror"
+        );
         update(&mut app, Message::SymmetryAxisToggled(MirrorAxis::X));
-        assert!(!app.symmetry.axis(MirrorAxis::X));
+        assert!(!app.symmetry_settings().axis(MirrorAxis::X));
 
         let mut second = Volume::new(app.doc.voxel_size());
         second.seed_sphere(Vec3::new(80.0, 0.0, 0.0), 10.0);
@@ -15268,7 +15282,10 @@ mod tests {
         app.select_body(other);
 
         update(&mut app, Message::SymmetryAxisToggled(MirrorAxis::X));
-        assert!(!app.symmetry.axis(MirrorAxis::X), "a mirror was enabled that misses the body");
+        assert!(
+            !app.symmetry_settings().axis(MirrorAxis::X),
+            "a mirror was enabled that misses the body"
+        );
         assert!(
             app.status.contains('X') && app.status.contains("Body 2"),
             "the refusal said nothing useful: {:?}",
@@ -15278,7 +15295,10 @@ mod tests {
         // The other two planes DO cross it, and must not be refused along with
         // the one that does not.
         update(&mut app, Message::SymmetryAxisToggled(MirrorAxis::Y));
-        assert!(app.symmetry.axis(MirrorAxis::Y), "a plane the body straddles was refused");
+        assert!(
+            app.symmetry_settings().axis(MirrorAxis::Y),
+            "a plane the body straddles was refused"
+        );
     }
 
     /// **A refusal wired into one event site is not a refusal.**
@@ -15308,7 +15328,7 @@ mod tests {
         app.drive_from_spacemouse(16.0);
 
         assert!(
-            !app.symmetry.axis(MirrorAxis::X),
+            !app.symmetry_settings().axis(MirrorAxis::X),
             "the puck turned on a mirror plane the body sits entirely to one side of"
         );
         assert!(
@@ -15323,7 +15343,7 @@ mod tests {
         app.spacemouse.simulate_press(0);
         app.drive_from_spacemouse(16.0);
         assert!(
-            app.symmetry.axis(MirrorAxis::X),
+            app.symmetry_settings().axis(MirrorAxis::X),
             "the puck stopped turning on a mirror the body does straddle"
         );
     }
@@ -15346,22 +15366,27 @@ mod tests {
         view.mirror = [true, true, true];
         app.apply_view(&view);
 
-        assert!(!app.symmetry.axis(MirrorAxis::X), "a file turned on a mirror the body misses");
         assert!(
-            app.symmetry.axis(MirrorAxis::Y) && app.symmetry.axis(MirrorAxis::Z),
+            !app.symmetry_settings().axis(MirrorAxis::X),
+            "a file turned on a mirror the body misses"
+        );
+        assert!(
+            app.symmetry_settings().axis(MirrorAxis::Y)
+                && app.symmetry_settings().axis(MirrorAxis::Z),
             "the two planes the body does straddle were dropped as well"
         );
     }
 
-    /// The axis and the centre have the same scope, so choosing a body the
-    /// enabled plane misses has to resolve the pairing one way or the other.
-    /// It turns the plane off and says so, rather than leaving the strip
-    /// claiming a mirror the sculpt is not applying.
+    /// Each body has its own planes (`app/symmetry_frame.rs`): choosing a
+    /// body away from the first shows that body's, which are off, and the
+    /// first keeps its own. Until each body had its own settings the plane
+    /// was the session's, and choosing a body it missed turned it off and
+    /// said so.
     #[test]
-    fn selecting_a_body_clear_of_an_enabled_mirror_plane_turns_that_plane_off() {
+    fn selecting_another_body_shows_its_own_planes_and_the_first_keeps_its() {
         let mut app = app();
         update(&mut app, Message::SymmetryAxisToggled(MirrorAxis::X));
-        assert!(app.symmetry.axis(MirrorAxis::X));
+        assert!(app.symmetry_settings().axis(MirrorAxis::X));
 
         let mut second = Volume::new(app.doc.voxel_size());
         second.seed_sphere(Vec3::new(80.0, 0.0, 0.0), 10.0);
@@ -15370,12 +15395,18 @@ mod tests {
         app.publish_visibility();
         app.remesh_dirty();
 
+        let first = app.doc.active();
         app.select_body(other);
         assert!(
-            !app.symmetry.axis(MirrorAxis::X),
-            "the mirror stayed on over a body it does not cross"
+            !app.symmetry_settings().axis(MirrorAxis::X),
+            "the first body's mirror showed on the second"
         );
-        assert!(app.status.contains('X'), "nothing said the mirror went off: {:?}", app.status);
+        assert!(app.doc.symmetry(first).axis(MirrorAxis::X), "the first body lost its mirror");
+        app.select_body(first);
+        assert!(
+            app.symmetry_settings().axis(MirrorAxis::X),
+            "the first body's mirror is not shown"
+        );
     }
 
     /// **A quarter turn turns the whole document.**
@@ -18700,7 +18731,10 @@ mod body_panel_tests {
         // against rather than an empty one.
         update(&mut app, Message::SymmetryAxisToggled(MirrorAxis::X));
         let with_x = app.shared.overlay_snapshot();
-        assert!(app.symmetry.axis(MirrorAxis::X), "the fixture did not turn the mirror on");
+        assert!(
+            app.symmetry_settings().axis(MirrorAxis::X),
+            "the fixture did not turn the mirror on"
+        );
         assert!(
             !with_x.is_empty(),
             "the renderer holds no overlay at all after a mirror was turned on"
@@ -18708,7 +18742,10 @@ mod body_panel_tests {
 
         update(&mut app, Message::SymmetryAxisToggled(MirrorAxis::X));
         let without_x = app.shared.overlay_snapshot();
-        assert!(!app.symmetry.axis(MirrorAxis::X), "the fixture did not turn the mirror off");
+        assert!(
+            !app.symmetry_settings().axis(MirrorAxis::X),
+            "the fixture did not turn the mirror off"
+        );
         assert!(
             without_x.surfaces.len() < with_x.surfaces.len(),
             "the renderer still holds {} overlay surface vertices with the mirror off against {} with \
@@ -18863,25 +18900,30 @@ mod body_panel_tests {
         );
     }
 
-    /// **A primitive placed off the origin mirrors about its own middle.**
+    /// **A primitive placed off the origin has its own symmetry, off, about
+    /// its own middle.**
     ///
     /// While every plane went through [`MIRROR_CENTRE`], a dent carved into a
     /// body at x = +80 had its twin written at x = -80, free-floating geometry
     /// in empty space, and selecting the new cube turned the mirror off and
-    /// said why. Since symmetry became the body's own
-    /// (`app/symmetry_frame.rs`), a new primitive's planes go through its own
-    /// middle: the mirror stays on, and a stroke's twin lands on the cube.
+    /// said why. Since symmetry became the body's own (`app/symmetry_frame.rs`)
+    /// the cube starts with its planes off, through its own middle, so a mirror
+    /// turned on for it lands on it; and the ball keeps its X.
     #[test]
-    fn adding_a_primitive_clear_of_the_model_keeps_a_mirror_through_its_middle() {
+    fn adding_a_primitive_clear_of_the_model_gives_it_its_own_symmetry() {
         let mut app = app();
+        let ball = app.doc.active();
         update(&mut app, Message::SymmetryAxisToggled(hani_core::MirrorAxis::X));
-        assert!(app.symmetry.axis(hani_core::MirrorAxis::X), "the ball straddles X");
+        assert!(app.symmetry_settings().axis(hani_core::MirrorAxis::X), "the ball straddles X");
 
         update(&mut app, Message::PrimitiveAdded(PrimitiveKind::Cube));
 
+        assert!(app.symmetry_settings().is_off(), "the cube started with the ball's symmetry");
+        assert!(app.doc.symmetry(ball).axis(hani_core::MirrorAxis::X), "the ball lost its X");
+        update(&mut app, Message::SymmetryAxisToggled(hani_core::MirrorAxis::X));
         assert!(
-            app.symmetry.axis(hani_core::MirrorAxis::X),
-            "X mirroring went off for a cube whose own plane runs through it: {}",
+            app.symmetry_settings().axis(hani_core::MirrorAxis::X),
+            "X was refused on a cube whose own plane runs through it: {}",
             app.status
         );
         let (low, high) = app.doc.active_volume().surface_bounds().expect("the cube has a surface");

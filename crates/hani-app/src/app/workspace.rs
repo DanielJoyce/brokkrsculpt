@@ -533,7 +533,7 @@ mod tests {
             "{:?} {:?} {:?} {:?} {} {} {} {:?}",
             app.camera.target,
             (app.camera.distance, app.camera.yaw),
-            app.symmetry,
+            app.symmetry_settings(),
             app.doc.active(),
             app.doc.node_count(),
             app.history.can_undo(),

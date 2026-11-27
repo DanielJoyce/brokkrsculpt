@@ -1629,7 +1629,7 @@ impl Hani {
             format!(
                 "brush {}   mirror {}   radius {:.2} mm",
                 self.effective_brush().kind,
-                self.symmetry.label(),
+                self.symmetry_settings().label(),
                 self.brush.radius
             ),
             format!(

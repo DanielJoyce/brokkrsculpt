@@ -221,7 +221,7 @@ mod tests {
             assert!(app.top_menu.is_none(), "the menu stayed open under {open:?}");
             assert!(app.modal_open(), "{open:?} is not modal");
             // A key behind the card does nothing: here, X would mirror.
-            let mirrored = app.symmetry;
+            let mirrored = app.symmetry_settings();
             update(
                 &mut app,
                 Message::KeyPressed {
@@ -229,7 +229,7 @@ mod tests {
                     modifiers: iced::keyboard::Modifiers::default(),
                 },
             );
-            assert_eq!(app.symmetry, mirrored, "a key went past {open:?}");
+            assert_eq!(app.symmetry_settings(), mirrored, "a key went past {open:?}");
             escape(&mut app);
             assert!(!app.modal_open(), "Escape left {open:?} up");
             update(&mut app, open.clone());
