@@ -50,8 +50,10 @@ pub(crate) fn encode(doc: &Document) -> Option<Vec<u8>> {
         .enumerate()
         .filter_map(|(index, node)| {
             let state = doc.bool_state(node.id);
-            (state != BoolState::default())
-                .then(|| (index as u32, u8::from(state.combines) | (state.op.code() << 1)))
+            (state != BoolState::default()).then(|| {
+                let blend = state.blend.min(MOST_BLEND_HALVES) << 3;
+                (index as u32, u8::from(state.combines) | (state.op.code() << 1) | blend)
+            })
         })
         .collect();
     if rows.is_empty() {
@@ -88,8 +90,9 @@ pub(crate) fn decode(bytes: &[u8], rows: usize) -> Vec<(usize, BoolState)> {
         let Some(op) = BoolOp::from_code((flags >> 1) & 0b11) else {
             continue;
         };
-        if index < rows && flags >> 3 == 0 {
-            out.push((index, BoolState { combines: flags & 1 == 1, op }));
+        if index < rows {
+            let blend = (flags >> 3).min(MOST_BLEND_HALVES);
+            out.push((index, BoolState { combines: flags & 1 == 1, op, blend }));
         }
     }
     out
@@ -136,6 +139,28 @@ impl BoolOp {
         }
     }
 
+    /// [`BoolOp::apply`] with the join softened over `soft` voxels: the
+    /// polynomial smooth minimum (or maximum), which leaves the result as it
+    /// was where the two are further apart than `soft` and fills the crease,
+    /// or rounds the cut's edge, where they are nearer. `soft` of nought is
+    /// the hard join exactly.
+    #[inline]
+    pub fn apply_soft(self, so_far: f32, operand: f32, soft: f32) -> f32 {
+        if soft <= 0.0 {
+            return self.apply(so_far, operand);
+        }
+        let smooth_min = |a: f32, b: f32| {
+            let h = (soft - (a - b).abs()).max(0.0) / soft;
+            a.min(b) - h * h * soft * 0.25
+        };
+        let value = match self {
+            BoolOp::Add => smooth_min(so_far, operand),
+            BoolOp::Cut => -smooth_min(-so_far, operand),
+            BoolOp::Keep => -smooth_min(-so_far, -operand),
+        };
+        value.clamp(INSIDE, OUTSIDE)
+    }
+
     /// The result so far and an operand, to the new result, at one voxel.
     #[inline]
     pub fn apply(self, so_far: f32, operand: f32) -> f32 {
@@ -165,6 +190,20 @@ impl BoolOp {
 pub struct BoolState {
     pub combines: bool,
     pub op: BoolOp,
+    /// How soft the row's join is, in half voxels, up to
+    /// [`MOST_BLEND_HALVES`]: nought a hard join.
+    pub blend: u8,
+}
+
+/// The softest a row's join can be, in half voxels: the narrow band, past
+/// which a fillet worked out voxel by voxel is clipped by the band.
+pub const MOST_BLEND_HALVES: u8 = (crate::brick::NARROW_BAND * 2.0) as u8;
+
+impl BoolState {
+    /// The join's softness in voxels.
+    pub fn blend_voxels(self) -> f32 {
+        f32::from(self.blend.min(MOST_BLEND_HALVES)) * 0.5
+    }
 }
 
 /// The document's boolean arrangement and the results built from it.
@@ -201,25 +240,27 @@ impl Tile {
     }
 
     /// `self = op(self, operand)`, voxel by voxel.
-    fn apply(&mut self, op: BoolOp, operand: TileView<'_>) {
+    fn apply(&mut self, op: BoolOp, soft: f32, operand: TileView<'_>) {
         match (&mut *self, operand) {
-            (Tile::Uniform(held), TileView::Uniform(value)) => *held = op.apply(*held, value),
+            (Tile::Uniform(held), TileView::Uniform(value)) => {
+                *held = op.apply_soft(*held, value, soft);
+            }
             (Tile::Uniform(held), TileView::Dense(data)) => {
                 let held = *held;
                 let mut out = Box::new([0.0; BRICK_VOXELS]);
                 for (out, value) in out.iter_mut().zip(data.iter()) {
-                    *out = op.apply(held, *value);
+                    *out = op.apply_soft(held, *value, soft);
                 }
                 *self = Tile::Dense(out);
             }
             (Tile::Dense(held), TileView::Uniform(value)) => {
                 for held in held.iter_mut() {
-                    *held = op.apply(*held, value);
+                    *held = op.apply_soft(*held, value, soft);
                 }
             }
             (Tile::Dense(held), TileView::Dense(data)) => {
                 for (held, value) in held.iter_mut().zip(data.iter()) {
-                    *held = op.apply(*held, *value);
+                    *held = op.apply_soft(*held, *value, soft);
                 }
             }
         }
@@ -424,14 +465,15 @@ impl Document {
 
     /// One operand's shape at a brick, joined into `tile` by `op`.
     fn join_operand(&self, id: NodeId, coord: BrickCoord, op: BoolOp, tile: &mut Tile) {
+        let soft = self.bool_state(id).blend_voxels();
         let Some(node) = self.node(id) else {
             return;
         };
         if let Some(volume) = node.volume() {
-            tile.apply(op, Tile::of(volume.brick(coord)));
+            tile.apply(op, soft, Tile::of(volume.brick(coord)));
         } else if self.combines(id) {
             let brick = self.booleans.results.get(&id).and_then(|result| result.brick(coord));
-            tile.apply(op, Tile::of(brick));
+            tile.apply(op, soft, Tile::of(brick));
         } else {
             let mut plain = Tile::Uniform(OUTSIDE);
             for child in self.children_of(id) {
@@ -439,7 +481,7 @@ impl Document {
                     self.join_operand(child, coord, BoolOp::Add, &mut plain);
                 }
             }
-            tile.apply(op, plain.view());
+            tile.apply(op, soft, plain.view());
         }
     }
 
@@ -603,20 +645,31 @@ impl Document {
         }
         let children = self.children_of(folder);
         let (&base, rest) = children.split_first()?;
-        let ops: Vec<(NodeId, BoolOp)> = rest
+        let ops: Vec<(NodeId, BoolOp, f32)> = rest
             .iter()
-            .map(|id| (*id, if combines { self.bool_state(*id).op } else { BoolOp::Add }))
+            .map(|id| {
+                let state = self.bool_state(*id);
+                match combines {
+                    true => (*id, state.op, state.blend_voxels()),
+                    false => (*id, BoolOp::Add, 0.0),
+                }
+            })
             .collect();
 
         let mut removed = Vec::new();
         self.volume_mut(base)?.begin_stroke();
-        for (operand, op) in ops {
+        for (operand, op, soft) in ops {
             let at = self.index_of(operand)?;
             let node = self.remove(at);
             if let (Some(from), Some(into)) = (node.volume(), self.volume_mut(base)) {
                 match op {
-                    BoolOp::Add => drop(into.union_from(from)),
-                    BoolOp::Cut | BoolOp::Keep => into.combine_from(from, op),
+                    BoolOp::Add if soft <= 0.0 => drop(into.union_from(from)),
+                    BoolOp::Add => {
+                        into.combine_from(from, op, soft);
+                        into.union_colour_from(from);
+                        into.union_paint_from(from);
+                    }
+                    BoolOp::Cut | BoolOp::Keep => into.combine_from(from, op, soft),
                 }
             }
             removed.push(Change::NodeRemoved { at, node: Box::new(node) });
@@ -645,7 +698,7 @@ impl Volume {
     /// `self = op(self, other)` for a cut or a keep, brick by brick, on one
     /// lattice, recording for undo. The colour and the mask are left as
     /// they are: a cut face is bare.
-    pub(crate) fn combine_from(&mut self, other: &Volume, op: BoolOp) {
+    pub(crate) fn combine_from(&mut self, other: &Volume, op: BoolOp, soft: f32) {
         debug_assert!(self.is_recording(), "an unbracketed boolean records nothing");
         let coords: Vec<BrickCoord> = match op {
             // Where the cutter has no brick it is all outside, and cuts
@@ -654,7 +707,15 @@ impl Volume {
             // Where the keeper has no brick it is all outside, and keeps
             // nothing of this brick.
             BoolOp::Keep => self.brick_coords().collect(),
-            BoolOp::Add => return,
+            // Softened: every brick either holds, since a fillet reaches
+            // past the cutter's or the adder's own bricks by at most the band.
+            BoolOp::Add => {
+                let mut coords: Vec<BrickCoord> =
+                    self.brick_coords().chain(other.brick_coords()).collect();
+                coords.sort_unstable_by_key(|coord| (coord.0.x, coord.0.y, coord.0.z));
+                coords.dedup();
+                coords
+            }
         };
         for coord in coords {
             let mut tile = match self.brick(coord) {
@@ -663,7 +724,7 @@ impl Volume {
                 Some(Brick::Dense(data)) => Tile::Dense(data.clone()),
             };
             let before = tile.view_value();
-            tile.apply(op, Tile::of(other.brick(coord)));
+            tile.apply(op, soft, Tile::of(other.brick(coord)));
             if before.is_some() && before == tile.view_value() {
                 continue;
             }
@@ -727,7 +788,7 @@ mod tests {
         let (folder, _) = doc.group(a, "Group").expect("room for a folder");
         doc.move_to_folder(b, Some(folder)).expect("moved");
         doc.move_to_folder(c, Some(folder)).expect("moved");
-        doc.set_bool_state(folder, BoolState { combines: true, op: BoolOp::Add });
+        doc.set_bool_state(folder, BoolState { combines: true, op: BoolOp::Add, blend: 0 });
         let mut dirty = Vec::new();
         doc.take_dirty(&mut dirty);
         folder
@@ -744,7 +805,7 @@ mod tests {
     fn the_order_of_the_rows_is_the_order_applied() {
         let (mut doc, [a, b, c]) = three();
         let folder = combined(&mut doc, [a, b, c]);
-        doc.set_bool_state(c, BoolState { combines: false, op: BoolOp::Cut });
+        doc.set_bool_state(c, BoolState { combines: false, op: BoolOp::Cut, blend: 0 });
         refresh(&mut doc);
         let result = doc.boolean_result(folder).expect("a result");
         let middle = Vec3::new(2.5, 0.0, 0.0);
@@ -761,7 +822,7 @@ mod tests {
         let depth = doc.nodes()[at_b].depth();
         drop(c_node);
         let c2 = doc.insert_body(at_b, depth, "C", ball(Vec3::new(2.5, 0.0, 0.0), 2.0));
-        doc.set_bool_state(c2, BoolState { combines: false, op: BoolOp::Cut });
+        doc.set_bool_state(c2, BoolState { combines: false, op: BoolOp::Cut, blend: 0 });
         refresh(&mut doc);
         let result = doc.boolean_result(folder).expect("a result");
         assert!(inside(result, middle), "B did not fill back the cut it came after");
@@ -778,8 +839,8 @@ mod tests {
         // B and C into a folder of their own, inside, combining, C cutting.
         let (inner, _) = doc.group(b, "Inner").expect("room");
         doc.move_to_folder(c, Some(inner)).expect("moved");
-        doc.set_bool_state(inner, BoolState { combines: true, op: BoolOp::Add });
-        doc.set_bool_state(c, BoolState { combines: false, op: BoolOp::Cut });
+        doc.set_bool_state(inner, BoolState { combines: true, op: BoolOp::Add, blend: 0 });
+        doc.set_bool_state(c, BoolState { combines: false, op: BoolOp::Cut, blend: 0 });
         refresh(&mut doc);
         assert_eq!(doc.parent_of(inner), Some(folder));
         let result = doc.boolean_result(folder).expect("a result");
@@ -803,8 +864,8 @@ mod tests {
         ] {
             let (mut doc, ids) = three();
             let folder = combined(&mut doc, ids);
-            doc.set_bool_state(ids[1], BoolState { combines: false, op: op_b });
-            doc.set_bool_state(ids[2], BoolState { combines: false, op: op_c });
+            doc.set_bool_state(ids[1], BoolState { combines: false, op: op_b, blend: 0 });
+            doc.set_bool_state(ids[2], BoolState { combines: false, op: op_c, blend: 0 });
             refresh(&mut doc);
             // An operand edited after the result was built: a lump on B.
             doc.volume_mut(ids[1]).expect("B").edit_box(
@@ -832,12 +893,46 @@ mod tests {
         }
     }
 
+    /// A soft add fills the crease where two balls meet and leaves their far
+    /// sides as a hard add does; its softness is saved and read back.
+    #[test]
+    fn a_soft_join_fills_the_crease_and_is_saved() {
+        let (mut doc, ids) = three();
+        let folder = combined(&mut doc, ids);
+        // C out of it, so that the crease between A and B is bare.
+        let mut meta = doc.outline().into_iter().find(|meta| meta.id == ids[2]).expect("C");
+        meta.visible = false;
+        doc.set_meta(&meta);
+        refresh(&mut doc);
+        // Where A and B meet, above the line between their middles.
+        let crease = Vec3::new(2.5, 3.0, 0.0);
+        let far = Vec3::new(-3.9, 0.0, 0.0);
+        let hard = doc.boolean_result(folder).expect("result").sample_world(crease);
+        let hard_far = doc.boolean_result(folder).expect("result").sample_world(far);
+        doc.set_bool_state(ids[1], BoolState { combines: false, op: BoolOp::Add, blend: 6 });
+        refresh(&mut doc);
+        let soft = doc.boolean_result(folder).expect("result").sample_world(crease);
+        let soft_far = doc.boolean_result(folder).expect("result").sample_world(far);
+        assert!(soft < hard - 0.3, "the crease was not filled: {hard} then {soft}");
+        assert!(
+            (soft_far - hard_far).abs() < 1e-3,
+            "the far side moved: {hard_far} then {soft_far}"
+        );
+
+        let mut bytes = Vec::new();
+        crate::project::write(&mut bytes, &doc, &crate::project::ProjectState::default())
+            .expect("written");
+        let (read, _) = crate::project::read(&mut bytes.as_slice()).expect("read");
+        let b = read.nodes().iter().find(|node| node.name == "B").expect("B").id;
+        assert_eq!(read.bool_state(b).blend, 6);
+    }
+
     /// A hidden operand is left out, and shown again it is back.
     #[test]
     fn a_hidden_operand_is_left_out() {
         let (mut doc, ids) = three();
         let folder = combined(&mut doc, ids);
-        doc.set_bool_state(ids[2], BoolState { combines: false, op: BoolOp::Cut });
+        doc.set_bool_state(ids[2], BoolState { combines: false, op: BoolOp::Cut, blend: 0 });
         refresh(&mut doc);
         let middle = Vec3::new(2.5, 0.0, 0.0);
         assert!(!inside(doc.boolean_result(folder).expect("result"), middle));
@@ -855,7 +950,7 @@ mod tests {
         let folder = combined(&mut doc, ids);
         let mut history = History::new(crate::DEFAULT_HISTORY_BUDGET);
         let change = doc
-            .set_bool_state(ids[2], BoolState { combines: false, op: BoolOp::Cut })
+            .set_bool_state(ids[2], BoolState { combines: false, op: BoolOp::Cut, blend: 0 })
             .expect("a change");
         history.push(Entry::new(vec![change]));
         refresh(&mut doc);
@@ -872,7 +967,8 @@ mod tests {
         assert!(doc.boolean_result(folder).is_none());
         // And a body cannot be made to combine.
         assert!(
-            doc.set_bool_state(ids[0], BoolState { combines: true, op: BoolOp::Add }).is_none()
+            doc.set_bool_state(ids[0], BoolState { combines: true, op: BoolOp::Add, blend: 0 })
+                .is_none()
         );
     }
 
@@ -886,7 +982,7 @@ mod tests {
             .expect("written");
         assert!(!plain.windows(8).any(|window| window == TAG), "a section with nothing in it");
         let folder = combined(&mut doc, ids);
-        doc.set_bool_state(ids[2], BoolState { combines: false, op: BoolOp::Keep });
+        doc.set_bool_state(ids[2], BoolState { combines: false, op: BoolOp::Keep, blend: 0 });
         let mut bytes = Vec::new();
         crate::project::write(&mut bytes, &doc, &crate::project::ProjectState::default())
             .expect("written");
@@ -911,7 +1007,7 @@ mod tests {
     fn a_bake_is_the_result_and_is_undone_whole() {
         let (mut doc, ids) = three();
         let folder = combined(&mut doc, ids);
-        doc.set_bool_state(ids[2], BoolState { combines: false, op: BoolOp::Cut });
+        doc.set_bool_state(ids[2], BoolState { combines: false, op: BoolOp::Cut, blend: 0 });
         refresh(&mut doc);
         let rows_before = doc.node_count();
         let expected: Vec<f32> = (-14..=24)

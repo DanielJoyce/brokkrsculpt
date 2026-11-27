@@ -800,7 +800,8 @@ core, is laid when the button comes up (`app/decal.rs`,
 **And a crash.** A drag toward the horizon of the surface pressed on asked
 for a shape with no end, and a test that dragged 3,000 pixels past the model
 was killed by the kernel for memory. A shape is now held to 160 voxels from
-its middle, twice the largest brush (`MAX_INSERT_VOXELS`).
+its middle, twice the largest brush (`MAX_INSERT_VOXELS`). Since 2026-11-28
+the bound comes from the memory there is: see `app/placed.rs`.
 
 ## A pass over the cores and the graphics card (2026-11-26)
 

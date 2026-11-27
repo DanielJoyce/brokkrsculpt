@@ -39,8 +39,7 @@
 
 use glam::{Vec2, Vec3};
 use hani_core::solid::{
-    self, BuiltInMap, Draped, End, Form, Heights, How, Join, Lent, MOST_BLEND, Mirrored, Placed,
-    Solid, Step,
+    self, BuiltInMap, Draped, End, Form, Heights, How, Join, Lent, Mirrored, Placed, Solid, Step,
 };
 use hani_core::{BrushDirection, Change, Entry, MirrorAxis, NodeId, Volume};
 use iced::widget::{button, column, row, text};
@@ -67,13 +66,13 @@ pub(super) const DEFAULT_BLEND: f32 = 3.0;
 /// What a brush file's `add:` says for a vector displacement map.
 pub(super) const MAP: &str = "Map";
 
-/// How many straight runs a hung cable is made of.
-/// How far from its middle a shape set down by a drag may reach, in
-/// voxels: twice the largest brush ([`super::MAX_RADIUS_VOXELS`]). A shape
-/// that size is a few hundred bricks of surface; past it, a drag toward the
-/// surface's horizon asked for one with no end, and ran out of memory.
-pub(super) const MAX_INSERT_VOXELS: f32 = 160.0;
+/// The softest join the slider offers, in voxels: a boolean row's, which
+/// is the narrow band. A shape set down in Sculpt is placed and joined as a
+/// boolean row (`app/placed.rs`); the 8 voxels the solid's own join allows
+/// (`hani_core::solid::MOST_BLEND`) would be clipped by the band there.
+const MOST_BLEND: f32 = hani_core::combine::MOST_BLEND_HALVES as f32 * 0.5;
 
+/// How many straight runs a hung cable is made of.
 const HUNG_RUNS: usize = 24;
 
 /// How far apart the points of a laid cable are, in its own radii: near
@@ -264,6 +263,9 @@ pub(super) struct AddState {
     /// `app/insert_turn.rs`.
     pub turn: glam::Quat,
     pub(super) view: super::insert_turn::TurnView,
+    /// The folder the last shape set down in Sculpt was placed in, until it
+    /// is joined. See `app/placed.rs`.
+    pub(super) placed: Option<NodeId>,
 }
 
 impl Default for AddState {
@@ -287,6 +289,7 @@ impl Default for AddState {
             pieces: Vec::new(),
             cut: false,
             preview: Vec::new(),
+            placed: None,
             turn: glam::Quat::IDENTITY,
             view: super::insert_turn::TurnView::default(),
         }
@@ -521,6 +524,9 @@ impl Hani {
             return;
         };
         if start {
+            // The shape placed by the last drag is done: joined now. See
+            // `app/placed.rs`.
+            self.finish_placed();
             self.inserts.press = None;
             self.inserts.last = None;
             self.inserts.pieces.clear();
@@ -568,7 +574,7 @@ impl Hani {
                 // No bigger than the largest an insert may be: a drag toward
                 // the horizon of the surface goes on for ever, and so did the
                 // memory a shape that size took.
-                let size = drag.length().min(MAX_INSERT_VOXELS * self.doc.voxel_size());
+                let size = drag.length().min(self.largest_insert_mm());
                 // Turned in the frame the surface gives it, which way up the
                 // panel says. See `app/insert_turn.rs`.
                 let turn = self.inserts.turn;
@@ -710,21 +716,6 @@ impl Hani {
         }
     }
 
-    /// Put the body in hand back as it was at the press and set down what
-    /// the gesture now holds: every move of a shape still being dragged.
-    ///
-    /// All of them together and not one at a time, so that a join wider
-    /// than the field's own distances is worked out once for the lot
-    /// (`hani_core::solid::Join::set`): a hung cable is two dozen runs.
-    fn set_pieces(&mut self) {
-        let how = self.inserts.how();
-        let flips = flips(self.symmetry);
-        let AddState { join, lent, pieces, .. } = &mut self.inserts;
-        let volume = self.doc.active_volume_mut();
-        with_solids(pieces, lent.as_ref(), &flips, |solids| join.set(volume, solids, how));
-        self.remesh_dirty();
-    }
-
     /// Where the maps a gesture holds are set down, and in each mirror
     /// that symmetry asks for, each with the surface under it: the body
     /// in hand **as it was before the stroke**, which is what a stamp is
@@ -842,9 +833,6 @@ impl Hani {
             || matches!(what, Insert::Shape(_) | Insert::Body(_) | Insert::Hung)
         {
             self.inserts.preview.clear();
-            if !self.inserts.separate && !matches!(what, Insert::Laid | Insert::Map(_)) {
-                self.set_pieces();
-            }
             self.refresh_overlay();
         }
         if what == Insert::Laid
@@ -861,7 +849,12 @@ impl Hani {
             self.add_piece(Piece::Placed(end));
             self.remesh_dirty();
         }
-        if !self.inserts.separate {
+        // In Sculpt a shape, a body or a hung cable is placed: a body of its
+        // own in a folder that joins it to the body in hand, to be moved and
+        // then joined when done. See `app/placed.rs`.
+        let placed = !self.inserts.separate
+            && matches!(what, Insert::Shape(_) | Insert::Body(_) | Insert::Hung);
+        if !self.inserts.separate && !placed {
             return;
         }
         // A body of its own: nothing of it stays in the body in hand.
@@ -902,6 +895,11 @@ impl Hani {
             Insert::Map(map) => map.label().to_string(),
         };
         let name = hani_core::name_that_fits(&name).to_string();
+        if placed {
+            let cut = self.inserts.cut;
+            self.place(made, name, cut);
+            return;
+        }
         // Directly below the body it was set down on, at its depth.
         let active = self.doc.active();
         let (at, depth) = match (self.doc.index_of(active), self.doc.node(active)) {
@@ -1124,6 +1122,12 @@ impl Hani {
             return None;
         }
         let what = self.inserts.what?;
+        // A shape placed and not yet joined. See `app/placed.rs`.
+        if self.inserts.placed.is_some() && self.inserts.press.is_none() {
+            return Some(
+                "Placed: move it with the Transform tool; the next one, or another brush, joins it",
+            );
+        }
         Some(match (what, self.inserts.separate) {
             (Insert::Laid, _) => "Drag along the model; the brush's radius is its thickness",
             (Insert::Map(_), false) => {
@@ -1170,8 +1174,13 @@ mod tests {
         update(app, Message::Pointer(PointerEvent::Moved { position, size: SIZE }));
     }
 
+    /// The release, and the shape it placed taken as done, as the next press
+    /// or the insert put away would take it: what every test below written
+    /// before shapes were placed checks. The placing itself is tested in
+    /// `app/placed.rs`.
     fn release(app: &mut Hani) {
         update(app, Message::Pointer(PointerEvent::Released { button: PointerButton::Left }));
+        app.finish_placed();
     }
 
     /// A drag from one pixel to another, in a dozen moves.
@@ -1366,7 +1375,7 @@ mod tests {
                 _ => panic!("{form:?}: a shape is being dragged out"),
             };
             assert!(
-                half <= MAX_INSERT_VOXELS * app.doc.voxel_size() + 1e-3,
+                half <= app.largest_insert_mm() + 1e-3,
                 "{form:?} is {half} mm from its middle"
             );
             release(&mut app);
@@ -1461,8 +1470,12 @@ mod tests {
         assert!(!solid_at(&there_and_back, point + out * (half * 1.3)), "the bigger try was left");
         assert!(solid_at(&there_and_back, point + out * (half * 0.8)));
 
+        // Two undos: the join, which leaves the shape placed again, and the
+        // placing. See `app/placed.rs`.
         update(&mut app, Message::Undo);
-        assert!(same_field(&app, &self::app()), "a shape set down was not one undo");
+        update(&mut app, Message::Undo);
+        assert!(same_field(&app, &self::app()), "a shape set down was not undone");
+        assert_eq!(app.doc.node_count(), 1, "the placed shape's folder was left");
 
         // The invert key takes the shape out of the body.
         app.control = true;
@@ -1589,7 +1602,7 @@ mod tests {
         let (plain_count, narrow_count, wide_count) =
             (solid_voxels(&plain), solid_voxels(&narrow), solid_voxels(&wide));
         assert!(
-            narrow_count > plain_count && wide_count > narrow_count + (narrow_count - plain_count),
+            narrow_count > plain_count && wide_count > narrow_count,
             "inside: {plain_count} joined plainly, {narrow_count} over 2, {wide_count} over {MOST_BLEND}"
         );
         // The same drag that went straight there.
@@ -1602,6 +1615,8 @@ mod tests {
             "a wide join left a trace of where the shape had been"
         );
 
+        // One undo takes the join off the body in hand, leaving the shape
+        // placed beside it. See `app/placed.rs`.
         let mut undone = with(MOST_BLEND, false);
         update(&mut undone, Message::Undo);
         assert!(same_field(&undone, &app()), "a shape and its wide join were not one undo");
@@ -1611,6 +1626,67 @@ mod tests {
             solid_voxels(&cut_wide) < solid_voxels(&cut),
             "a socket with a wide join is no rounder at the rim"
         );
+    }
+
+    /// In Sculpt the release places the shape: the body in hand is as it
+    /// was, beside it in a new folder that combines them is the shape,
+    /// added, or cut where Ctrl was held, with the brush's soft join; the
+    /// next press joins it, and so does putting the insert away. See
+    /// `app/placed.rs`.
+    #[test]
+    fn a_shape_is_placed_and_joined_when_done() {
+        let mut app = self::app();
+        let body = app.doc.active();
+        choose(&mut app, Insert::Shape(Form::Ball));
+        set(&mut app, AddMessage::BlendChanged(2.0));
+        drag_placing(&mut app, MIDDLE, MIDDLE + Vec2::new(40.0, 0.0));
+        assert!(same_field(&app, &self::app()), "the body in hand changed before the join");
+        let folder = app.inserts.placed.expect("placed");
+        assert!(app.doc.combines(folder));
+        let rows = app.doc.children_of(folder);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], body, "the body in hand is not the base");
+        let shape = app.doc.bool_state(rows[1]);
+        assert_eq!((shape.op, shape.blend), (hani_core::combine::BoolOp::Add, 4));
+        assert_eq!(app.doc.active(), body, "the body in hand changed");
+
+        // The next press joins it, and places the next: a cut this time.
+        app.control = true;
+        drag_placing(&mut app, MIDDLE + Vec2::new(0.0, 60.0), MIDDLE + Vec2::new(30.0, 60.0));
+        app.control = false;
+        assert!(!same_field(&app, &self::app()), "the first shape was never joined");
+        let second = app.inserts.placed.expect("placed again");
+        assert_ne!(second, folder);
+        let cutter = app.doc.children_of(second)[1];
+        assert_eq!(app.doc.bool_state(cutter).op, hani_core::combine::BoolOp::Cut);
+
+        // Putting the insert away joins the second: one body again, named
+        // as it was.
+        let name = app.doc.node(body).expect("the body").name.clone();
+        update(&mut app, Message::Add(AddMessage::Chosen(None)));
+        assert!(app.inserts.placed.is_none());
+        assert_eq!(app.doc.node_count(), 1, "the shapes were not joined into the body");
+        assert_eq!(app.doc.active(), body);
+        assert_eq!(app.doc.node(body).expect("the body").name, name, "the body was renamed");
+    }
+
+    /// A drag that leaves the shape placed, not joined: the release alone.
+    fn drag_placing(app: &mut Hani, from: Vec2, to: Vec2) {
+        press(app, from);
+        for step in 1..=12 {
+            move_to(app, from.lerp(to, step as f32 / 12.0));
+        }
+        update(app, Message::Pointer(PointerEvent::Released { button: PointerButton::Left }));
+    }
+
+    /// The largest shape comes from the memory there is: on an empty
+    /// document at the default voxel, more than the 160 voxels it was held
+    /// to before.
+    #[test]
+    fn the_largest_shape_comes_from_the_memory_there_is() {
+        let app = self::app();
+        let voxels = app.largest_insert_mm() / app.doc.voxel_size();
+        assert!(voxels > 160.0, "{voxels} voxels");
     }
 
     /// As a body of its own: the body in hand is exactly as it was, the
@@ -1727,7 +1803,16 @@ mod tests {
             set(&mut app, AddMessage::LiftChanged(1.0));
             set(&mut app, AddMessage::SagChanged(sag));
             update(&mut app, Message::BrushRadiusChanged(1.5));
-            drag(&mut app, from, to);
+            // Counted before the release, which hands the pieces to the
+            // body the cable is placed as. See `app/placed.rs`.
+            press(&mut app, from);
+            for step in 1..=12 {
+                move_to(&mut app, from.lerp(to, step as f32 / 12.0));
+            }
+            let runs =
+                app.inserts.pieces.iter().filter(|piece| matches!(piece, Piece::Step(_))).count();
+            assert_eq!(runs, HUNG_RUNS);
+            release(&mut app);
             app
         };
         let (taut, slack) = (hung(0.0), hung(0.6));
@@ -1736,9 +1821,6 @@ mod tests {
         let (start, end) = (a + out_a * 1.5, b + out_b * 1.5);
         for app in [&taut, &slack] {
             assert!(solid_at(app, start) && solid_at(app, end), "the cable is not at its ends");
-            let runs =
-                app.inserts.pieces.iter().filter(|piece| matches!(piece, Piece::Step(_))).count();
-            assert_eq!(runs, HUNG_RUNS);
         }
         // Half way, and down by the sag of the span: under the ball, where
         // there is nothing but the slack cable.

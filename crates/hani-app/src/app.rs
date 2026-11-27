@@ -10,6 +10,9 @@ mod adding;
 mod autosave;
 // Boolean groups in the list and on the model. See `app/booleans.rs`.
 mod booleans;
+// A shape set down in Sculpt, placed and joined when done. See
+// `app/placed.rs`.
+mod placed;
 pub(crate) use booleans::BooleanMessage;
 mod cards;
 // The gizmo on a folder. See `app/group_gizmo.rs`.
@@ -816,6 +819,8 @@ pub struct Hani {
     /// The folder in hand for the gizmo, and its session. See
     /// `app/group_gizmo.rs`.
     group_gizmo: group_gizmo::GroupGizmo,
+    /// The soft join's slider mid-drag. See `app/booleans.rs`.
+    soft_drag: booleans::SoftDrag,
     /// Whether the welcome screen is up. See [`crate::welcome`].
     welcome: bool,
     /// The Preferences card is up: the pen, the SpaceMouse and how the
@@ -2362,6 +2367,7 @@ impl Hani {
             gizmo_base: None,
             gizmo_baked: None,
             group_gizmo: Default::default(),
+            soft_drag: Default::default(),
             welcome: false,
             preferences: false,
             rail_last_brush: None,
@@ -10016,6 +10022,9 @@ impl Hani {
             self.disarm_gizmo(true);
         }
         let task = self.dispatch(message);
+        // An insert put away is done with the shape it placed. See
+        // `app/placed.rs`.
+        self.finish_placed_when_put_away();
         // What the open mode does with a drag is the mode's: see
         // `app/workspace.rs`.
         let task = Task::batch([task, self.keep_to_the_mode()]);
@@ -23890,7 +23899,11 @@ mod gizmo_tests {
         // Combining, so that what is drawn is the folder's result.
         app.doc.set_bool_state(
             folder,
-            hani_core::combine::BoolState { combines: true, op: hani_core::combine::BoolOp::Add },
+            hani_core::combine::BoolState {
+                combines: true,
+                op: hani_core::combine::BoolOp::Add,
+                blend: 0,
+            },
         );
         update(&mut app, Message::ToolChanged(Tool::Sculpt));
         let result_middle = |app: &Hani| {

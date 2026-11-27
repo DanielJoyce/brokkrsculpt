@@ -22,7 +22,7 @@
 //! see-through, so that what does the cutting can be seen and sculpted.
 
 use hani_core::NodeId;
-use hani_core::combine::{BakeRefusal, BoolOp, BoolState};
+use hani_core::combine::{BakeRefusal, BoolOp, BoolState, MOST_BLEND_HALVES};
 use iced::Element;
 use iced::widget::{button, row, text};
 
@@ -31,8 +31,12 @@ use crate::message::Message;
 use crate::theme;
 
 /// What the boolean controls ask for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BooleanMessage {
+    /// The body in hand's soft join, in voxels, as its slider moves.
+    Soft(f32),
+    /// The slider let go: one undo entry for the whole drag.
+    SoftDone,
     /// A folder combines its children, or stops.
     Combine(NodeId),
     /// A row's operation, to the next one.
@@ -42,6 +46,13 @@ pub enum BooleanMessage {
     WithBelow(BoolOp),
     /// The combining folder the body in hand is in, collapsed into one body.
     Bake,
+}
+
+/// What the soft join's slider was before its drag, for the one entry the
+/// drag makes.
+#[derive(Debug, Default)]
+pub(super) struct SoftDrag {
+    before: Option<(NodeId, BoolState)>,
 }
 
 /// How see-through a row that cuts or keeps is drawn: as the Others button
@@ -72,6 +83,26 @@ impl Hani {
                 change.into_iter().collect()
             }
             BooleanMessage::WithBelow(op) => self.combine_with_below(op),
+            BooleanMessage::Soft(voxels) => {
+                let id = self.doc.active();
+                let state = self.doc.bool_state(id);
+                let blend = (voxels * 2.0).round().clamp(0.0, f32::from(MOST_BLEND_HALVES)) as u8;
+                if let Some(hani_core::Change::Boolean { state: before, .. }) =
+                    self.doc.set_bool_state(id, BoolState { blend, ..state })
+                    && self.soft_drag.before.is_none()
+                {
+                    self.soft_drag.before = Some((id, before));
+                }
+                self.unsaved = true;
+                self.remesh_dirty();
+                Vec::new()
+            }
+            BooleanMessage::SoftDone => match self.soft_drag.before.take() {
+                Some((id, before)) if self.doc.bool_state(id) != before => {
+                    vec![hani_core::Change::Boolean { id, state: before }]
+                }
+                _ => Vec::new(),
+            },
             BooleanMessage::Bake => self.bake_boolean(),
         };
         if changes.is_empty() {
@@ -112,9 +143,12 @@ impl Hani {
         if let Some(moved) = self.doc.move_to_folder(source, Some(folder)) {
             changes.extend(moved);
         }
+        changes.extend(
+            self.doc
+                .set_bool_state(folder, BoolState { combines: true, op: BoolOp::Add, blend: 0 }),
+        );
         changes
-            .extend(self.doc.set_bool_state(folder, BoolState { combines: true, op: BoolOp::Add }));
-        changes.extend(self.doc.set_bool_state(source, BoolState { combines: false, op }));
+            .extend(self.doc.set_bool_state(source, BoolState { combines: false, op, blend: 0 }));
         self.status =
             format!("{name}: {} {} {}", self.name_of(below), op.symbol(), self.name_of(source));
         changes
@@ -130,6 +164,12 @@ impl Hani {
             self.status = "nothing to bake: the body in hand is in no combining folder".to_string();
             return Vec::new();
         };
+        self.bake_folder(folder)
+    }
+
+    /// Bake a combining folder, telling the renderer of the rows it took
+    /// away; the changes, or none with the status saying why.
+    pub(super) fn bake_folder(&mut self, folder: NodeId) -> Vec<hani_core::Change> {
         let name = self.name_of(folder);
         // Every row under the folder but the one that becomes the result
         // leaves the document, and the renderer has to be told, as a merge
@@ -243,7 +283,33 @@ impl Hani {
                 BooleanMessage::Bake,
             ));
         }
-        verbs.into()
+        // The body in hand's soft join, where it joins a combining folder
+        // and is not its base.
+        let active = self.doc.active();
+        let joins = self.doc.combining_parent(active).is_some_and(|folder| {
+            self.doc.operands(folder).first().map(|(id, _)| *id) != Some(active)
+        });
+        if !joins {
+            return verbs.into();
+        }
+        let soft = self.doc.bool_state(active).blend_voxels();
+        iced::widget::column![
+            verbs,
+            crate::ui::number(
+                &self.drafts,
+                "boolean.soft",
+                "Soft join",
+                soft,
+                0.0..=f32::from(MOST_BLEND_HALVES) * 0.5,
+                |voxels| Message::Boolean(BooleanMessage::Soft(voxels)),
+            )
+            .step(0.5)
+            .shown(format!("{soft:.1} vx"))
+            .on_release(Message::Boolean(BooleanMessage::SoftDone))
+            .tip("How far the join to the rows above is rounded, in voxels"),
+        ]
+        .spacing(theme::S2)
+        .into()
     }
 
     /// The rows the renderer must not draw because a combining folder's
@@ -368,6 +434,23 @@ mod tests {
         app.doc.set_meta(&meta);
         app.publish_visibility();
         assert!(app.hidden_bodies.contains(&folder));
+    }
+
+    /// The soft join's slider sets the body in hand's join, and a drag of it
+    /// is one undo entry.
+    #[test]
+    fn the_soft_join_is_set_by_its_slider_in_one_entry() {
+        let (mut app, first, _) = two();
+        update(&mut app, Message::Boolean(BooleanMessage::WithBelow(BoolOp::Cut)));
+        let entries = app.history_stats.undo_entries;
+        update(&mut app, Message::Boolean(BooleanMessage::Soft(1.0)));
+        update(&mut app, Message::Boolean(BooleanMessage::Soft(2.5)));
+        update(&mut app, Message::Boolean(BooleanMessage::SoftDone));
+        assert_eq!(app.doc.bool_state(first).blend, 5);
+        assert_eq!(app.history_stats.undo_entries, entries + 1, "not one entry for the drag");
+        update(&mut app, Message::Undo);
+        assert_eq!(app.doc.bool_state(first).blend, 0);
+        assert_eq!(app.doc.bool_state(first).op, BoolOp::Cut, "the undo took the cut as well");
     }
 
     /// Baked: one body under the folder's name; one undo brings the folder
