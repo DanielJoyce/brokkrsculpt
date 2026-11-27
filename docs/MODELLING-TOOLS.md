@@ -76,9 +76,19 @@ surfaces.
 so *Inward* is the share of the thickness that goes into the body, nought
 to one, and *Offset* lifts the whole plate off the surface (or sinks it).
 The plate stops at the mask's edge: a point is in its footprint when the
-nearest surface to it is masked, and the side wall stands square to the
-surface there. A voxel counts as masked at half protection or more, so a
-feathered edge is cut at the middle of its feather.
+nearest surface to it is masked.
+
+*Feather by mask*, on by default (asked for by the maintainer on
+2026-11-28: "where the mask is zero extraction doesn't happen and where it
+is 100% the extraction is full thickness and where it is in between it is a
+scaled thickness"), counts any protection at all as masked, and scales
+`inner` and `outer` about `offset` by how full the mask is at the nearest
+masked point of the surface, read between voxels. So a feathered mask makes
+a plate that tapers to nothing through the feather. Where its share of the
+thickness is under a voxel the plate ends: thinner than that it frayed into
+hair on the screen. Off, a voxel counts as masked at half protection or
+more, the whole thickness stands wherever it does, and a feathered edge is
+cut square at the middle of its feather.
 
 The new body is named after the source with " plate", goes directly below
 it in the tree at its depth, and becomes the active body.
@@ -152,8 +162,9 @@ does not grow with the number of points drawn.
 - **The reach runs on one thread**; the write-back is parallel. Its time on
   a large body is not measured here (the build machine has no screen to
   time a real model on, and no figure is quoted).
-- **Extract carries no paint** onto the plate, and its side wall is square,
-  not bevelled.
+- **Extract carries no paint** onto the plate. Its side wall, with *Feather
+  by mask* off, is square, not bevelled; on, the bevel is the mask's own
+  feather, and a hard mask still makes a square wall.
 - **Deform is applied by a button**, not live: no preview while the amount
   is changed, and no modifier stack kept to change later. Undo is the way
   back. The mask is not carried by a deform.

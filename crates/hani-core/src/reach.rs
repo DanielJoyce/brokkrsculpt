@@ -209,6 +209,18 @@ impl Reach {
         }
     }
 
+    /// Which seed is nearest `voxel`, by its place in the seeds the reach
+    /// was spread from, and how far it is; `None` as [`Reach::distance`].
+    pub(crate) fn nearest(&self, voxel: IVec3) -> Option<(usize, f32)> {
+        match self.seed_at(voxel) {
+            UNSET => None,
+            seed => {
+                let seed = seed as usize;
+                Some((seed, voxel.as_vec3().distance(self.seeds[seed])))
+            }
+        }
+    }
+
     /// Every brick the reach touched.
     pub(crate) fn bricks(&self) -> impl Iterator<Item = BrickCoord> + '_ {
         self.slots.keys().copied()
