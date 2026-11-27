@@ -663,8 +663,8 @@ mod backend {
     use std::sync::atomic::Ordering;
     use std::time::Duration;
 
-    use evdev::{AbsInfo, AbsoluteAxisCode, Device, EventType, KeyCode};
     use glam::Vec2;
+    use hani_evdev::{AbsInfo, AbsoluteAxisCode, Device, EventType, KeyCode};
 
     pub const SUPPORTED: bool = true;
 
@@ -1496,11 +1496,11 @@ mod tests {
 #[cfg(all(test, target_os = "linux"))]
 mod uinput_tests {
     use super::*;
-    use evdev::uinput::VirtualDevice;
-    use evdev::{
+    use glam::Vec2;
+    use hani_evdev::uinput::VirtualDevice;
+    use hani_evdev::{
         AbsInfo, AbsoluteAxisCode, AttributeSet, EventType, InputEvent, KeyCode, UinputAbsSetup,
     };
-    use glam::Vec2;
     use std::time::Duration;
 
     /// What a Huion Kamvas 13 reports. Chosen so the test would catch a

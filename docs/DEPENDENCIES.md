@@ -260,6 +260,22 @@ certificates and the second `getrandom` that came through them:
 Measured after: Linux 269 to 257, Windows 226 to 213, macOS 222 to 209, the
 browser unchanged at 165; the lockfile 431 packages to 419.
 
+**Proposal 5, evdev**, 2026-11-27: `crates/hani-evdev`, our own, over
+`libc` (already in the graph). The readers, their tests and the `poke`
+example changed only their imports: the names are evdev's (`Device`,
+`KeyCode::BTN_TOOL_PEN`, `AttributeSet`, `VirtualDevice::builder()`). It
+covers what is used: opening a node and reading its name, keys, absolute
+and relative axes and axis ranges once; reading events; and, for the
+tests, a uinput device built, written to and found by its node. The ioctl
+numbers are checked by a test against the kernel headers' values, and the
+crate refuses to build for a target whose `_IOC` layout differs. `evdev`,
+`nix`, `bitvec`, `funty`, `radium`, `tap` and `wyz` left the lockfile.
+Measured after: Linux 257 to 251 (seven out, one of ours in). Not tried
+on real hardware: this container has no `/dev/uinput` and no input
+devices, so the end-to-end test (a virtual pen made, opened, read back and
+an event read) skips here, as the readers' own uinput tests do; it wants
+running on a Linux machine with `/dev/uinput` before a release.
+
 ## Not done
 
 Compile time and binary size per crate were not measured. The Windows and macOS numbers are counts from the

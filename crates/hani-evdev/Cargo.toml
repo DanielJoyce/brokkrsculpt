@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[package]
+name = "hani-evdev"
+description = "The little of Linux's evdev and uinput interfaces HaniSculpt uses, over libc."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# On Linux only; elsewhere the crate is empty. `libc` is already in the graph
+# through winit and wgpu, so this costs no new crate: it replaced `evdev`,
+# which brought `nix` and `bitvec` with four of its own
+# (`docs/DEPENDENCIES.md`, proposal 5).
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

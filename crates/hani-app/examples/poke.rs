@@ -35,8 +35,8 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use evdev::uinput::VirtualDevice;
-use evdev::{
+use hani_evdev::uinput::VirtualDevice;
+use hani_evdev::{
     AbsInfo, AbsoluteAxisCode, AttributeSet, EventType, InputEvent, KeyCode, UinputAbsSetup,
 };
 
