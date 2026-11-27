@@ -57,8 +57,12 @@ Rest the pointer on a button to see what it does.
 - **X**, **Y** and **Z** mirror strokes across a plane.
 - **Radial copies**, under Symmetry in the Settings tab, lays a stroke
   again at each even turn round the axis chosen beside it, X, Y or Z,
-  through the middle of the room. Two to sixteen copies, with the mirror
+  through the middle of the room, or wherever the body has since been
+  moved. Two to sixteen copies, with the mirror
   planes as well if they are on.
+- The planes and the axis belong to the body: moved or turned with the
+  Transform tool, they go with it. **Recentre**, under Symmetry, puts the
+  body's back through the middle of the room, unturned.
 - **M** picks the mask: masked parts are protected from brushes, and a softly
   painted mask protects softly.
 - **Right click** brings up the tool's own settings where the pointer is.

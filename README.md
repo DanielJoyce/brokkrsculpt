@@ -29,7 +29,7 @@ than on a hollow surface, so the things that usually go wrong between sculpting
 and printing mostly cannot happen here.
 
 - **Eight brushes** — draw, clay, smooth, inflate, pinch, flatten, move and paint, which lays colour
-- **Symmetry** across any combination of the three axes, and **radial** copies, two to sixteen, round any one of them
+- **Symmetry** across any combination of the three axes, and **radial** copies, two to sixteen, round any one of them; the planes are the body's own and move with it
 - **Surface patterns** — scales, weave, cracks, hair and noise
 - **A plane cut** that leaves a closed, printable face
 - **Graphics tablet support** — pressure, tilt, and the eraser end

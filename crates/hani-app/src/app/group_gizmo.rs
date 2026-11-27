@@ -193,16 +193,21 @@ impl Hani {
 
     /// Put the gizmo on a folder away: one entry holding every field it
     /// moved, or, abandoned, every field put back.
-    pub(super) fn disarm_group(&mut self, commit: bool) {
+    pub(super) fn disarm_group(&mut self, commit: bool, placement: Similarity) {
         if self.group_gizmo.bases.is_empty() {
             return;
         }
         if commit {
             self.group_gizmo.baked = None;
-            let changes: Vec<hani_core::Change> = std::mem::take(&mut self.group_gizmo.bases)
+            let bases = std::mem::take(&mut self.group_gizmo.bases);
+            // Every moved body's symmetry goes with it. See
+            // `app/symmetry_frame.rs`.
+            let bodies: Vec<NodeId> = bases.iter().map(|(body, _)| *body).collect();
+            let mut changes: Vec<hani_core::Change> = bases
                 .into_iter()
                 .map(|(body, volume)| hani_core::Change::WholeVolume { body, volume })
                 .collect();
+            changes.extend(self.move_frames(&bodies, placement));
             let before = self.history.stats();
             self.history.push(hani_core::Entry::new(changes));
             self.record_history(before);

@@ -31,6 +31,7 @@ pub mod clip;
 pub mod colour;
 // Boolean groups. See `combine.rs`.
 pub mod combine;
+// Symmetry local to the body. See `symmetry_frames.rs`.
 pub mod deform;
 pub mod export;
 pub mod extract;
@@ -52,6 +53,7 @@ pub mod pyramid;
 pub mod raycast;
 mod reach;
 pub mod redistance;
+pub mod symmetry_frames;
 // Reference pictures and the floor, kept in the project file.
 pub mod reference;
 pub mod region;
@@ -84,7 +86,7 @@ pub use brick::{
 };
 pub use brush::{
     Brush, BrushDirection, BrushKind, BrushScratch, FalloffCurve, Flip, MaskOp, MirrorAxis,
-    MoveStroke, Stamp, Symmetry, lean_normal,
+    MoveStroke, Stamp, Symmetry, SymmetryFrame, lean_normal,
 };
 pub use clip::{ClipCounts, ClipPlane, CutOutcome};
 pub use export::{ExportMesh, ExportedBody, MeshReport, document_verdict};
@@ -108,6 +110,7 @@ pub use split::{
     SplitPlan,
 };
 pub use stroke::{MAX_STAMPS_PER_EVENT, Stroke};
+pub use symmetry_frames::Radial;
 pub use transform::warps_made_on_this_thread;
 pub use undo::{
     Change, DEFAULT_HISTORY_BUDGET, DEFAULT_RECLAIM_BUDGET, Entry, History, HistoryStats,

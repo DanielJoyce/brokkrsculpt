@@ -647,7 +647,7 @@ impl Hani {
     /// Join one more piece, and its mirrors, to the body in hand.
     fn add_piece(&mut self, piece: Piece) {
         let how = self.inserts.how();
-        let flips = flips(self.symmetry);
+        let flips = flips(self.framed_symmetry());
         let state = &mut self.inserts;
         let volume = self.doc.active_volume_mut();
         let mut join = |solid: &dyn Solid| {
@@ -685,7 +685,7 @@ impl Hani {
     /// Draw what the gesture holds, coarse, without touching the body. See
     /// `app/insert_preview.rs`.
     fn preview_pieces(&mut self) {
-        let flips = flips(self.symmetry);
+        let flips = flips(self.framed_symmetry());
         let AddState { lent, pieces, preview, .. } = &mut self.inserts;
         *preview = with_solids(pieces, lent.as_ref(), &flips, |solids| {
             super::insert_preview::coarse_mesh(solids)
@@ -715,7 +715,7 @@ impl Hani {
     fn drapes(&self, relief: &solid::Relief) -> Vec<(Vec3, glam::Mat3, f32, Heights)> {
         let volume = self.doc.active_volume();
         let mut sides = vec![hani_core::Flip::IDENTITY];
-        sides.extend(flips(self.symmetry));
+        sides.extend(flips(self.framed_symmetry()));
         self.inserts
             .pieces
             .iter()
@@ -865,7 +865,7 @@ impl Hani {
             self.status = "could not add a body: the document holds as many as it can".to_string();
             return;
         }
-        let flips = flips(self.symmetry);
+        let flips = flips(self.framed_symmetry());
         let voxel_size = self.doc.voxel_size();
         let made = stamped.unwrap_or_else(|| {
             with_solids(&pieces, self.inserts.lent.as_ref(), &flips, |solids| {

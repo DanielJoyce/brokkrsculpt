@@ -32,7 +32,7 @@ impl Hani {
             let count = if self.symmetry.is_off() {
                 0
             } else {
-                self.symmetry.mirrors(&stamp, MIRROR_CENTRE, &mut twins)
+                self.framed_symmetry().mirrors(&stamp, MIRROR_CENTRE, &mut twins)
             };
             let places =
                 std::iter::once(*centre).chain(twins[..count].iter().map(|twin| twin.centre));
