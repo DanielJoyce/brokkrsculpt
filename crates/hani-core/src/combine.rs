@@ -408,8 +408,18 @@ impl Document {
 
     /// Whether the arrangement has changed since the results were built, so
     /// that the next [`Document::take_dirty`] builds them again.
+    ///
+    /// A document with no combining folder and no result left over is never
+    /// stale: adding or moving a row of one changes the hash, and must not
+    /// cost a remesh nobody asked for.
     pub fn booleans_stale(&self) -> bool {
-        self.booleans.built_for != Some(self.boolean_signature())
+        self.has_booleans() && self.booleans.built_for != Some(self.boolean_signature())
+    }
+
+    /// Whether any folder combines, or a result is still held.
+    fn has_booleans(&self) -> bool {
+        !self.booleans.results.is_empty()
+            || self.booleans.states.values().any(|state| state.combines)
     }
 
     /// One operand's shape at a brick, joined into `tile` by `op`.
@@ -462,6 +472,9 @@ impl Document {
     /// a result that changed to `dirty`, for the mesher. Called with the
     /// bricks of the bodies that changed, from [`Document::take_dirty`].
     pub(crate) fn refresh_booleans(&mut self, dirty: &mut Vec<(NodeId, BrickCoord)>) {
+        if !self.has_booleans() {
+            return;
+        }
         let signature = self.boolean_signature();
         if self.booleans.built_for != Some(signature) {
             self.rebuild_booleans(dirty);
