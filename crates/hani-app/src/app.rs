@@ -54,6 +54,8 @@ mod references;
 mod keeping;
 // How big the interface is drawn: `app/ui_scale.rs`.
 mod ui_scale;
+// Which way up an insert goes on, and how deep: `app/insert_turn.rs`.
+mod insert_turn;
 pub use references::Taken as ReferenceTaken;
 mod form;
 // A line drawn beside an axis, spun into a body. See `app/revolve.rs`.
@@ -10812,6 +10814,7 @@ impl Hani {
             Message::Reference(message) => return self.reference_changed(message),
             Message::Keep(message) => self.keep_changed(message),
             Message::Scale(message) => self.scale_changed(message),
+            Message::Turn(message) => self.turn_changed(message),
             // See `app/revolve.rs`.
             Message::Revolve(message) => self.revolve_changed(message),
             Message::Measure(message) => self.measure_changed(message),

@@ -270,7 +270,11 @@ fn stroked(preset: &Preset) -> Volume {
             Kind::Shape(form) => {
                 let middle = Vec3::new(WIDTH as f32 * 0.5, HEIGHT as f32 * 0.5, 0.0);
                 let half = HEIGHT as f32 * 0.36;
-                if let Some(placed) = Placed::on(form, middle, Vec3::Z, Vec3::X, half, setup.lift) {
+                if let Some(mut placed) =
+                    Placed::on(form, middle, Vec3::Z, Vec3::X, half, setup.lift)
+                {
+                    // Which way up it goes on. See `app/insert_turn.rs`.
+                    placed.frame = super::insert_turn::turned(placed.frame, setup.turn);
                     pieces.push(Box::new(placed));
                 }
             }

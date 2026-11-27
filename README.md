@@ -451,6 +451,12 @@ true of it too, and what it adds is this.
   on the clipboard, for one paste. GitHub's API makes no issue without a
   token and takes no pictures, so the page is GitHub's own. Not in the
   browser version.
+- **Which way up an insert goes on.** For a shape or a body set down as
+  a shape, ADD shows it standing on the surface, the surface a translucent
+  plane and up the picture out of it. Drag the picture to turn it, right
+  drag to look round it, *+X* to *-Z* to stand one of its axes out of the
+  surface, and *Held off* to sink it or raise it through the plane. It goes
+  on the model that way up, and a brush kept with it keeps the turn.
 - **Interface size.** Preferences, *Interface size*: *Auto* draws the
   interface larger on a screen with many lines at the system's own density
   (1 to 2 times, in eighths, from the monitor's height over 1080), or a

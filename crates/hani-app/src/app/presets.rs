@@ -376,6 +376,10 @@ impl Preset {
             if setup.lift != 0.0 {
                 fields.push(format!("lift:{}", setup.lift));
             }
+            if setup.turn != glam::Quat::IDENTITY {
+                let [x, y, z, w] = setup.turn.to_array();
+                fields.push(format!("turn:{x} {y} {z} {w}"));
+            }
             if setup.start != End::Round {
                 fields.push(format!("start:{}", setup.start.label()));
             }
@@ -513,6 +517,17 @@ impl Preset {
                 "join" => add.blend = number(0.0..=MOST_BLEND).unwrap_or(add.blend),
                 "lift" => add.lift = number(LIFT_RANGE).unwrap_or(add.lift),
                 "sag" => add.sag = number(SAG_RANGE).unwrap_or(add.sag),
+                // Which way up a shape goes on: four numbers, a rotation.
+                // See `app/insert_turn.rs`.
+                "turn" => {
+                    let numbers: Vec<f32> =
+                        value.split_whitespace().filter_map(|word| word.parse().ok()).collect();
+                    if let [x, y, z, w] = numbers[..]
+                        && [x, y, z, w].iter().all(|number| number.is_finite())
+                    {
+                        add.turn = Some(glam::Quat::from_xyzw(x, y, z, w));
+                    }
+                }
                 "start" | "end" => {
                     if let Some(end) = End::ALL.into_iter().find(|end| named(end.label())) {
                         if key == "start" { add.start = end } else { add.end = end }
@@ -565,6 +580,7 @@ impl Preset {
                     start: add.start,
                     end: add.end,
                     sag: add.sag,
+                    turn: add.turn.unwrap_or(glam::Quat::IDENTITY),
                     ..Setup::plain(what)
                 }
                 .settled(),
@@ -621,6 +637,7 @@ struct Adding {
     start: End,
     end: End,
     sag: f32,
+    turn: Option<glam::Quat>,
 }
 
 /// How a preset's line says a brush lays one layer: `buildup:off`.
@@ -1882,8 +1899,13 @@ mod tests {
                 start in prop::sample::select(End::ALL.to_vec()),
                 end in prop::sample::select(End::ALL.to_vec()),
                 sag in -0.5_f32..1.5,
+                turn in prop_oneof![
+                    Just(glam::Quat::IDENTITY),
+                    (-1.0_f32..1.0, -1.0_f32..1.0, -1.0_f32..1.0, -1.0_f32..1.0)
+                        .prop_map(|(x, y, z, w)| glam::Quat::from_xyzw(x, y, z, w)),
+                ],
             ) -> Setup {
-                Setup { what, separate, blend, lift, start, end, sag }
+                Setup { what, separate, blend, lift, start, end, sag, turn }
             }
         }
 
