@@ -143,6 +143,36 @@ pub fn warn_on_leaving(warn: bool) {
     let _ = warn;
 }
 
+/// Whether the window's own buttons (minimise, maximise, close) are drawn.
+///
+/// On the desktop, always. In a browser tab, never: the tab is the window,
+/// and closing the drawing surface from inside it left a page that drew
+/// nothing. A page hosted in a webview, which has no tab, asks for them:
+/// `?window-buttons=1` in its address, or `window.hanisculpt =
+/// { windowButtons: true }` set before the module loads. Pressed there,
+/// they tell the host ([`tell_host`]) and leave the page alone. Asked once.
+/// See `docs/WEB.md`.
+pub fn window_buttons() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        static ASKED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ASKED.get_or_init(glue::hani_window_buttons)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    true
+}
+
+/// Tell the page's host a window button was pressed: `close` (once any
+/// unsaved work has been saved or let go), `minimise` or `maximise`. Every
+/// way a webview listens is tried; see the glue below and `docs/WEB.md`.
+/// Natively nothing: the application has its own window.
+pub fn tell_host(action: &str) {
+    #[cfg(target_arch = "wasm32")]
+    glue::hani_tell_host(action);
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = action;
+}
+
 /// A name for a sculpt saved before it was given one: the date and time.
 pub fn fresh_name() -> String {
     #[cfg(target_arch = "wasm32")]
@@ -249,6 +279,24 @@ export function hani_download(name, bytes) {
 export function hani_open_tab(link) {
   window.open(link, "_blank", "noopener");
 }
+export function hani_window_buttons() {
+  const asked = new URLSearchParams(window.location.search).get("window-buttons");
+  if (asked !== null) { return asked === "" || asked === "1" || asked === "true"; }
+  const host = globalThis.hanisculpt;
+  return !!(host && host.windowButtons);
+}
+export function hani_tell_host(action) {
+  const message = { source: "hanisculpt", action };
+  const host = globalThis.hanisculpt;
+  try { if (host && typeof host.onWindow === "function") { host.onWindow(action); } } catch (_) {}
+  try { if (window.chrome && window.chrome.webview) { window.chrome.webview.postMessage(message); } } catch (_) {}
+  try {
+    const handlers = window.webkit && window.webkit.messageHandlers;
+    if (handlers && handlers.hanisculpt) { handlers.hanisculpt.postMessage(message); }
+  } catch (_) {}
+  try { if (window.parent && window.parent !== window) { window.parent.postMessage(message, "*"); } } catch (_) {}
+  window.dispatchEvent(new CustomEvent("hanisculpt-window", { detail: action }));
+}
 function leaving(event) { event.preventDefault(); event.returnValue = ""; }
 export function hani_warn_on_leaving(warn) {
   window.removeEventListener("beforeunload", leaving);
@@ -263,5 +311,7 @@ export function hani_warn_on_leaving(warn) {
         pub fn hani_download(name: &str, bytes: &[u8]);
         pub fn hani_warn_on_leaving(warn: bool);
         pub fn hani_open_tab(link: &str);
+        pub fn hani_window_buttons() -> bool;
+        pub fn hani_tell_host(action: &str);
     }
 }

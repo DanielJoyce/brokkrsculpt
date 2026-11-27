@@ -447,6 +447,37 @@ impl Hani {
             )
         };
 
+        // The window's own buttons: on the desktop, and in a browser only
+        // for a page a webview hosts, which asks for them. In a tab, the tab
+        // is the window: closing the drawing surface from inside it left a
+        // page that drew nothing and looked hung (seen by the maintainer,
+        // 2026-11-27). See `web::window_buttons`.
+        let window_buttons = if !crate::web::window_buttons() {
+            row![]
+        } else {
+            row![
+                control(
+                    icon::IconName::Minimise,
+                    "Minimise",
+                    theme::window_control,
+                    Message::WindowMinimise
+                ),
+                control(
+                    icon::IconName::Maximise,
+                    "Maximise",
+                    theme::window_control,
+                    Message::TitleBarDoubleClicked,
+                ),
+                control(
+                    icon::IconName::Close,
+                    "Close",
+                    theme::window_control_close,
+                    Message::WindowClose
+                ),
+            ]
+            .spacing(theme::S4)
+        };
+
         let bar = row![
             wordmark,
             menus,
@@ -459,24 +490,7 @@ impl Hani {
             space().width(Length::Fill),
             // Help, before the window's own buttons. See `app/help.rs`.
             self.help_button(),
-            control(
-                icon::IconName::Minimise,
-                "Minimise",
-                theme::window_control,
-                Message::WindowMinimise
-            ),
-            control(
-                icon::IconName::Maximise,
-                "Maximise",
-                theme::window_control,
-                Message::TitleBarDoubleClicked,
-            ),
-            control(
-                icon::IconName::Close,
-                "Close",
-                theme::window_control_close,
-                Message::WindowClose
-            ),
+            window_buttons,
         ]
         .spacing(theme::S4)
         .align_y(Alignment::Center);
