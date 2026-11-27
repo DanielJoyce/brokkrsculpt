@@ -5167,7 +5167,7 @@ impl Hani {
         // The decal being dragged. See `app/decal.rs`.
         self.add_decal_preview(&mut batch);
         // What a drybrush would catch. See `app/dry_preview.rs`.
-        self.add_drybrush_preview(&mut batch);
+        self.add_catch_preview(&mut batch);
         // The ring cut. See `app/ring_cut.rs`.
         self.add_ring_preview(&mut batch);
         // The floor. See `app/references.rs`.

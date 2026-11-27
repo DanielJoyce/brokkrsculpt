@@ -483,7 +483,8 @@ true of it too, and what it adds is this.
   which runs into the creases and off the edges; with a *Drybrush*, which
   catches only what stands up, and tints what it would catch under the
   brush before you press, with or without bristle marks; with a *Sponge*,
-  in specks or smooth; or as a *Fill*, which
+  in specks or smooth, which tints how much of the surface under the
+  brush it would cover; or as a *Fill*, which
   runs over a panel until a crease, an edge or a different paint stops it;
   or sprayed with the *Airbrush*, which builds up while it is held, by its
   flow and the pen's pressure, sprays wider on what is further away, and
