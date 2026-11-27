@@ -1120,11 +1120,10 @@ pub enum Message {
     BugReportEdited(iced::widget::text_editor::Action),
     /// Include the session trail and diagnostics, or do not.
     BugReportDetailToggled(bool),
-    /// Send it to TinkerAtlas.
+    /// Open it as a new issue on GitHub, the whole of it on the clipboard.
+    /// See `report.rs`.
     BugReportSubmitted,
-    /// The send finished, with what to show for it.
-    BugReportFinished(Result<String, String>),
-    /// Put the exact payload on the clipboard instead of sending it.
+    /// Put the whole body on the clipboard.
     BugReportCopied,
     BugReportDismissed,
     /// One presented frame, used to drive the frame rate readout and to keep

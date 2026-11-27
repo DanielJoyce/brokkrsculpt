@@ -1,34 +1,28 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-//! The bug report: what is collected, what is stripped out of it, and the exact
-//! bytes that go to TinkerAtlas.
+//! The bug report: what is collected, what is stripped out of it, and the
+//! issue it becomes on GitHub.
 //!
-//! Ported from SindriCAD's `src-tauri/src/tinkeratlas.rs`, which is the same
-//! report against the same endpoint. The pure parts came over nearly verbatim
-//! along with their tests -- there is no reason for two applications to disagree
-//! about what a home directory looks like -- and the parts that were Tauri's
-//! (the `AppHandle`, the webview version, the Python sidecar's log) are gone or
-//! replaced with this application's equivalents.
+//! It was sent to TinkerAtlas, as SindriCAD's is; that was retired on
+//! 2026-11-27 at the maintainer's word (*"Retire tinkeratlas bug report"*),
+//! with the TinkerAtlas account it could be signed with. A report is now an
+//! issue on this repository: the dialog opens GitHub's new-issue page with
+//! the title and the body in it, and puts the whole body on the clipboard,
+//! because a link can carry only so much (see [`Report::link`]). Nothing
+//! leaves the machine until the user presses GitHub's own button.
 //!
 //! # The privacy rule
 //!
 //! `Hani::diagnostics` was written as something the user reads and pastes
 //! themselves, and its doc says so: "the user can read exactly what they are
-//! sending before they send it". Uploading it changes that bargain, so the
-//! same text now goes through [`redact_user_paths`] first, and the dialog shows
-//! the finished payload before anything is sent.
-//!
-//! **The server re-scrubs everything.** TinkerAtlas's `/api/desktop/bug-report`
-//! strips ANSI, control, zero-width, bidi and Unicode-tag characters and redacts
-//! paths again, deliberately, because a client's privacy guarantee is not one.
-//! That is defence in depth and not a reason to send less carefully: it never
-//! sees what we chose not to collect.
+//! sending before they send it". The same text goes through
+//! [`redact_user_paths`] first, and the dialog shows the finished body before
+//! anything is opened. An issue is public, which is the more reason for it.
 
 /// Longest first line that becomes the report's title.
 ///
-/// Counted in `char`s and not bytes. The server caps the title at 200 bytes,
-/// so a shorter char limit here cannot overflow it, and cutting a multi-byte
-/// character in half would not survive the trip as valid UTF-8.
+/// Counted in `char`s and not bytes: cutting a multi-byte character in half
+/// would not survive the trip as valid UTF-8.
 const TITLE_CHARS: usize = 120;
 
 /// Ordinary breadcrumbs kept, most recent last.
@@ -76,20 +70,6 @@ pub(crate) fn redact_user_paths(text: &str) -> String {
     redact_after(&text, "/users/", &['/', '\\'])
 }
 
-/// FNV-1a 64 bit, as lowercase hex.
-///
-/// The server groups repeat reports by this. A grouping key and not a security
-/// hash, which is the whole reason it is not sha2: collisions merely merge two
-/// unrelated reports, and avoiding them is not worth a dependency.
-pub(crate) fn fnv1a64_hex(text: &str) -> String {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in text.as_bytes() {
-        hash ^= *byte as u64;
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    format!("{hash:016x}")
-}
-
 /// True when a crumb carries the `HH:MM:SS ` prefix an ordinary one gets.
 fn is_timestamped(crumb: &str) -> bool {
     let bytes = crumb.as_bytes();
@@ -131,30 +111,23 @@ pub(crate) fn trim_breadcrumbs(crumbs: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// Everything one report sends.
+/// One report: the issue's title and its body.
 ///
 /// Assembled and redacted before it is shown to the user, so what the dialog
-/// displays is what leaves the machine rather than a description of it.
+/// displays is what the issue says rather than a description of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Report {
     pub title: String,
+    /// What the user wrote, redacted.
     pub description: String,
-    pub app_version: String,
-    pub os: String,
-    pub os_build: String,
-    pub arch: String,
-    /// The graphics adapter, backend and driver.
-    ///
-    /// Sent under the key SindriCAD uses for the WebView version, because on
-    /// both applications it answers the same question — which platform
-    /// component is the story — and because a second key would need the server
-    /// to learn about it. That it is a lie about the field's name is the cost
-    /// of not changing a schema for one field; see the handoff.
-    pub renderer: String,
-    pub breadcrumbs: Vec<String>,
-    pub log_tail: Option<String>,
-    pub fingerprint: String,
+    /// The diagnostics and the session's trail, redacted, one line a fact;
+    /// empty when the user left them out.
+    pub detail: Vec<String>,
 }
+
+/// The longest new-issue link opened. GitHub turns away a link much past
+/// eight thousand characters, and some browsers cut one sooner.
+const MOST_LINK_CHARS: usize = 7000;
 
 impl Report {
     /// Build a report from what the user typed and what the application knows.
@@ -165,125 +138,94 @@ impl Report {
         description: &str,
         diagnostics: &str,
         breadcrumbs: &[String],
-        log_tail: Option<String>,
         version: &str,
         renderer: &str,
     ) -> Self {
         let description = redact_user_paths(description.trim());
-        // The first line becomes the title, and the fingerprint is taken over
-        // it, so a user who reports the same thing twice gets one row rather
-        // than two. Taken over the REDACTED text, so two people whose paths
-        // differ but whose problem does not still group together.
-        let first_line = description.lines().next().unwrap_or("bug report").to_string();
+        let first_line = description.lines().next().unwrap_or("Bug report").to_string();
         let title: String = first_line.chars().take(TITLE_CHARS).collect();
-
-        // The version is in the fingerprint so that a fixed bug reopening in a
-        // later build is a new row rather than a bump on a closed one.
-        let fingerprint = fnv1a64_hex(&format!("{version}|{first_line}"));
-
-        Self {
-            title,
-            // The diagnostics block rides along with the description, because
-            // the server has no field for it and it is the half of the report
-            // that is actually diagnosable.
-            description: format!("{description}\n\n---\n{}", redact_user_paths(diagnostics)),
-            app_version: version.to_string(),
-            os: std::env::consts::OS.to_string(),
-            os_build: os_build(),
-            arch: std::env::consts::ARCH.to_string(),
-            renderer: redact_user_paths(renderer),
-            breadcrumbs: trim_breadcrumbs(breadcrumbs)
-                .into_iter()
-                .map(|crumb| redact_user_paths(&crumb))
-                .collect(),
-            log_tail: log_tail.map(|tail| redact_user_paths(&tail)),
-            fingerprint,
-        }
-    }
-
-    /// The exact JSON body the endpoint receives.
-    ///
-    /// Hand written rather than through `serde_json`, which measured at three
-    /// new crates for one fixed twelve-key object. The escaping is the only
-    /// part that can be got wrong, so it is one function with its own tests and
-    /// there is a golden test over the whole body. If a second thing in this
-    /// workspace ever needs to write JSON, take the dependency instead of
-    /// growing this.
-    pub fn to_json(&self) -> String {
-        let mut out = String::with_capacity(1024);
-        out.push('{');
-        push_string(&mut out, "product", PRODUCT);
-        out.push(',');
-        push_string(&mut out, "title", &self.title);
-        out.push(',');
-        push_string(&mut out, "description", &self.description);
-        out.push(',');
-        push_string(&mut out, "app_version", &self.app_version);
-        out.push(',');
-        push_string(&mut out, "os", &self.os);
-        out.push(',');
-        push_string(&mut out, "os_version", &self.os_build);
-        out.push(',');
-        push_string(&mut out, "arch", &self.arch);
-        out.push(',');
-        push_string(&mut out, "webview_version", &self.renderer);
-        out.push(',');
-        // No sidecar in this application. Sent anyway, and always false, because
-        // the field is not optional on the other side.
-        out.push_str("\"sidecar_connected\":false,");
-        push_string(&mut out, "fingerprint", &self.fingerprint);
-        out.push_str(",\"breadcrumbs\":[");
-        for (index, crumb) in self.breadcrumbs.iter().enumerate() {
-            if index > 0 {
-                out.push(',');
+        let mut detail = Vec::new();
+        if !diagnostics.trim().is_empty() || !breadcrumbs.is_empty() {
+            detail.push(format!("HaniSculpt {version}"));
+            detail.push(format!(
+                "os: {} {} {}",
+                std::env::consts::OS,
+                os_build(),
+                std::env::consts::ARCH
+            ));
+            if !renderer.is_empty() {
+                detail.push(format!("graphics: {}", redact_user_paths(renderer)));
             }
-            push_escaped(&mut out, crumb);
-        }
-        out.push(']');
-        if let Some(tail) = &self.log_tail {
-            out.push(',');
-            push_string(&mut out, "log_tail", tail);
-        }
-        out.push('}');
-        out
-    }
-}
-
-/// Which application this report came from.
-///
-/// TinkerAtlas files desktop reports with a `source` column, and its
-/// `/api/desktop/bug-report` route sets it to the literal `"sindricad"`. Until
-/// the route reads this field a HaniSculpt report lands in the SindriCAD
-/// queue -- which is why it is sent from the first version, so that the day the
-/// server learns about it, every client already speaks it.
-const PRODUCT: &str = "hanisculpt";
-
-fn push_string(out: &mut String, key: &str, value: &str) {
-    push_escaped(out, key);
-    out.push(':');
-    push_escaped(out, value);
-}
-
-/// A JSON string literal, escaped per RFC 8259.
-///
-/// Control characters below 0x20 have to be escaped or the body is not JSON,
-/// and a log tail is exactly where one turns up.
-fn push_escaped(out: &mut String, value: &str) {
-    out.push('"');
-    for character in value.chars() {
-        match character {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => {
-                out.push_str(&format!("\\u{:04x}", c as u32));
+            detail.extend(redact_user_paths(diagnostics).lines().map(str::to_string));
+            if !breadcrumbs.is_empty() {
+                detail.push("session:".to_string());
+                detail.extend(
+                    trim_breadcrumbs(breadcrumbs)
+                        .into_iter()
+                        .map(|crumb| format!("  {}", redact_user_paths(&crumb))),
+                );
             }
-            c => out.push(c),
+        }
+        Self { title, description, detail }
+    }
+
+    /// The issue's body: the description, and the detail folded away under
+    /// it, the first `lines` of it.
+    fn body_with(&self, lines: usize) -> String {
+        if self.detail.is_empty() {
+            return self.description.clone();
+        }
+        let shown = lines.min(self.detail.len());
+        let mut detail = self.detail[..shown].join("\n");
+        if shown < self.detail.len() {
+            detail.push_str("\n(cut short here: the whole report is on the clipboard)");
+        }
+        format!(
+            "{}\n\n<details><summary>Diagnostics</summary>\n\n```text\n{detail}\n```\n\n</details>",
+            self.description
+        )
+    }
+
+    /// The whole body, for the clipboard and the dialog.
+    pub fn body(&self) -> String {
+        self.body_with(usize::MAX)
+    }
+
+    /// GitHub's new-issue page with the title and as much of the body as a
+    /// link can carry, and whether any was left out. Whole lines of the detail
+    /// go from the end first, so the block stays closed and readable; a
+    /// description too long by itself is cut last.
+    pub fn link(&self) -> (String, bool) {
+        let full = crate::links::new_issue(&self.title, &self.body());
+        if full.len() <= MOST_LINK_CHARS {
+            return (full, false);
+        }
+        let mut lines = self.detail.len();
+        while lines > 0 {
+            lines -= 1;
+            let link = crate::links::new_issue(&self.title, &self.body_with(lines));
+            if link.len() <= MOST_LINK_CHARS {
+                return (link, true);
+            }
+        }
+        let mut description: String = self.description.clone();
+        loop {
+            let cut =
+                Report { description: description.clone(), detail: Vec::new(), ..self.clone() };
+            let link = crate::links::new_issue(
+                &self.title,
+                &format!(
+                    "{}\n\n(cut short here: the whole report is on the clipboard)",
+                    cut.description
+                ),
+            );
+            if link.len() <= MOST_LINK_CHARS || description.is_empty() {
+                return (link, true);
+            }
+            let keep = description.chars().count() * 3 / 4;
+            description = description.chars().take(keep).collect();
         }
     }
-    out.push('"');
 }
 
 /// Which OS build this is, for the reports where the platform is the story.
@@ -399,17 +341,6 @@ mod tests {
     }
 
     #[test]
-    fn the_fingerprint_is_stable_hex_and_moves_with_the_build() {
-        let a = fnv1a64_hex("0.0.1+abc123|the window went black");
-        assert_eq!(a.len(), 16);
-        assert!(a.chars().all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()));
-        assert_eq!(a, fnv1a64_hex("0.0.1+abc123|the window went black"));
-        // A different build is a different group, so a bug that comes back
-        // after a fix opens a new row rather than bumping a closed one.
-        assert_ne!(a, fnv1a64_hex("0.0.1+def456|the window went black"));
-    }
-
-    #[test]
     fn sticky_facts_survive_a_busy_session_and_lead_the_trail() {
         // The regression this function exists for: a plain "keep the last
         // twenty" drops exactly the startup facts, and only once the session
@@ -445,340 +376,54 @@ mod tests {
 
     #[test]
     fn a_title_is_cut_by_characters_and_not_by_bytes() {
-        // Cutting by bytes would split a multi-byte character and the body
-        // would not be valid UTF-8. Every one of these is four bytes.
+        // Cutting by bytes would split a multi-byte character. Every one of
+        // these is four bytes.
         let description = "🔨".repeat(200);
-        let report = Report::new(&description, "", &[], None, "0.0.1", "");
+        let report = Report::new(&description, "", &[], "0.0.1", "");
         assert_eq!(report.title.chars().count(), TITLE_CHARS);
         assert!(report.title.chars().all(|c| c == '🔨'));
     }
 
     #[test]
-    fn json_escapes_everything_that_would_otherwise_break_the_body() {
-        let mut out = String::new();
-        push_escaped(&mut out, "a \"quote\" and a \\ and a \nnewline\tand \u{7} a bell");
-        assert_eq!(out, r#""a \"quote\" and a \\ and a \nnewline\tand \u0007 a bell""#);
-    }
-
-    /// The golden test that makes a hand written body safe to ship.
-    ///
-    /// It is deliberately an exact string. A field renamed, reordered, dropped
-    /// or left unescaped fails here rather than at the server, which answers a
-    /// 400 with no detail.
-    #[test]
-    fn the_wire_body_is_exactly_this() {
-        let report = Report {
-            title: "it went black".to_string(),
-            description: "it went black\n\n---\nHaniSculpt 0.0.1".to_string(),
-            app_version: "0.0.1+abc".to_string(),
-            os: "linux".to_string(),
-            os_build: "CachyOS".to_string(),
-            arch: "x86_64".to_string(),
-            renderer: "Radeon RX 6900 XT (Vulkan)".to_string(),
-            breadcrumbs: vec!["[wgpu] Vulkan".to_string(), "12:00:01 opened".to_string()],
-            log_tail: None,
-            fingerprint: "0123456789abcdef".to_string(),
-        };
-        assert_eq!(
-            report.to_json(),
-            concat!(
-                r#"{"product":"hanisculpt","title":"it went black","#,
-                r#""description":"it went black\n\n---\nHaniSculpt 0.0.1","#,
-                r#""app_version":"0.0.1+abc","os":"linux","os_version":"CachyOS","#,
-                r#""arch":"x86_64","webview_version":"Radeon RX 6900 XT (Vulkan)","#,
-                r#""sidecar_connected":false,"fingerprint":"0123456789abcdef","#,
-                r#""breadcrumbs":["[wgpu] Vulkan","12:00:01 opened"]}"#,
-            )
-        );
-    }
-
-    #[test]
-    fn a_log_tail_is_included_only_when_there_is_one() {
-        let with = Report { log_tail: Some("boom".into()), ..sample() };
-        assert!(with.to_json().contains(r#""log_tail":"boom""#));
-        assert!(!sample().to_json().contains("log_tail"));
-    }
-
-    fn sample() -> Report {
-        Report::new("x", "", &[], None, "0.0.1", "")
-    }
-
-    #[test]
-    fn the_description_carries_the_diagnostics_and_both_are_redacted() {
+    fn the_body_carries_the_diagnostics_folded_away_and_both_are_redacted() {
         let report = Report::new(
             "crashed after saving to /home/maker/x.hani",
             "last message: saved /home/maker/x.hani",
-            &[],
-            None,
+            &["12:00:01 saved".to_string()],
             "0.0.1",
-            "",
+            "Radeon (Vulkan)",
         );
-        assert!(!report.description.contains("thomash"), "a home directory reached the payload");
-        assert!(report.description.contains("last message:"), "the diagnostics were dropped");
+        let body = report.body();
+        assert!(!body.contains("/home/maker"), "a home directory reached the body");
+        assert!(body.starts_with("crashed after saving to"), "{body}");
+        assert!(body.contains("<details><summary>Diagnostics</summary>"));
+        assert!(body.contains("last message:") && body.contains("graphics: Radeon"), "{body}");
+        assert!(body.contains("session:\n  12:00:01 saved"), "{body}");
+        assert!(body.trim_end().ends_with("</details>"));
         assert!(report.title.contains("[REDACTED]"), "the title is taken from redacted text");
-    }
-}
-
-/// Where reports go.
-///
-/// A parameter rather than a constant, which is a deliberate departure from
-/// SindriCAD's compile-time `option_env!`: there, a shipped binary cannot be
-/// repointed and no test can reach the sender at all. It is passed rather than
-/// read from the environment because the tests below run in parallel and a
-/// process-global would have them pointing each other at the wrong server --
-/// which is exactly what happened when it was one.
-pub(crate) const TINKERATLAS: &str = "https://tinkeratlas.com";
-
-#[cfg(not(target_arch = "wasm32"))]
-fn endpoint(base: &str) -> String {
-    format!("{}/api/desktop/bug-report", base.trim_end_matches('/'))
-}
-
-/// How long to wait before giving up.
-///
-/// The send runs inside a `Task`, so a slow server stalls the report and not
-/// the window. Fifteen seconds is long enough for a cold serverless start and
-/// short enough that a user does not conclude the application has hung.
-#[cfg(not(target_arch = "wasm32"))]
-const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
-
-/// Post a report, blocking.
-///
-/// Called from inside `Task::perform`, which is where every other blocking
-/// filesystem call in this application already lives. An async client would
-/// mean an async runtime, and the whole request is one round trip.
-///
-/// **Anonymous unless the user is signed in, and they are told which.**
-/// `authorization` is `None` for a signed-out user and nothing about that path
-/// has changed: no account, no token, no identifier, and the only thing tying
-/// two reports together is the fingerprint, which is a hash of the build and
-/// the first line.
-///
-/// Signed in, the report carries a bearer token and TinkerAtlas files it under
-/// that account -- which is the entire point of the sign-in, because a report
-/// nobody can reply to is one that often cannot be acted on. That is a real
-/// change in what leaves the machine, so the dialog says whose name it goes
-/// out under BEFORE the send button, rather than leaving the user to infer it
-/// from having signed in on a different screen. See `panel.rs`'s
-/// `bug_report_card`.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn send(
-    report: Report,
-    base: &str,
-    authorization: Option<&str>,
-) -> Result<String, String> {
-    let body = report.to_json();
-    let mut request = ureq::post(&endpoint(base))
-        .config()
-        .timeout_global(Some(TIMEOUT))
-        .build()
-        .header("content-type", "application/json");
-    if let Some(value) = authorization {
-        request = request.header("authorization", value);
-    }
-    let response = request.send(&body);
-
-    match response {
-        Ok(_) => Ok("report sent — thank you".to_string()),
-        Err(ureq::Error::StatusCode(429)) => {
-            Err("too many reports from here; try again in an hour".to_string())
-        }
-        Err(ureq::Error::StatusCode(413)) => {
-            Err("the report is too large; untick the details".to_string())
-        }
-        Err(ureq::Error::StatusCode(code)) => Err(format!("the server answered {code}")),
-        // Everything else is the network: no route, DNS, TLS, timeout. Worth
-        // distinguishing from a rejection, because the answer is "try again"
-        // rather than "change the report".
-        Err(other) => Err(format!("could not reach tinkeratlas.com ({other})")),
-    }
-}
-
-/// In a browser a report is not sent: there is no socket here to send it
-/// from. See `docs/WEB.md`.
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn send(
-    _report: Report,
-    _base: &str,
-    _authorization: Option<&str>,
-) -> Result<String, String> {
-    Err("a bug report cannot be sent from the browser".to_string())
-}
-
-#[cfg(test)]
-mod wire_tests {
-    use super::*;
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-
-    /// Serve exactly one request and hand back what arrived.
-    ///
-    /// A real socket rather than a mocked client: it exercises the bytes this
-    /// actually puts on the wire, which is the half a unit test of `to_json`
-    /// cannot reach. No new dependency -- `std::net` is enough for one
-    /// request and one canned reply.
-    fn serve_once(
-        status: &'static str,
-        body: &'static str,
-    ) -> (String, std::thread::JoinHandle<String>) {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
-        let base = format!("http://{}", listener.local_addr().expect("an address"));
-        let handle = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("one connection");
-            // Read until the whole declared body has arrived, not once. A
-            // single `read` returns whatever one TCP segment held, which for
-            // this request is the headers and none of the body -- and a test
-            // that asserts over the headers alone silently stops checking the
-            // payload, which is the only interesting part.
-            let mut seen: Vec<u8> = Vec::new();
-            let mut chunk = [0u8; 4096];
-            loop {
-                let read = stream.read(&mut chunk).unwrap_or(0);
-                if read == 0 {
-                    break;
-                }
-                seen.extend_from_slice(&chunk[..read]);
-                let text = String::from_utf8_lossy(&seen);
-                let Some(head_end) = text.find("\r\n\r\n") else {
-                    continue;
-                };
-                let declared = text
-                    .to_lowercase()
-                    .split("content-length:")
-                    .nth(1)
-                    .and_then(|rest| rest.split("\r\n").next())
-                    .and_then(|value| value.trim().parse::<usize>().ok())
-                    .unwrap_or(0);
-                if seen.len() >= head_end + 4 + declared {
-                    break;
-                }
-            }
-            let request = String::from_utf8_lossy(&seen).to_string();
-            let reply = format!(
-                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            let _ = stream.write_all(reply.as_bytes());
-            let _ = stream.flush();
-            request
-        });
-        (base, handle)
+        let without = Report::new("it went black", "", &[], "0.0.1", "Radeon");
+        assert_eq!(without.body(), "it went black", "detail was attached when left out");
     }
 
-    fn sample_report() -> Report {
-        Report::new("the window went black", "wgpu: vulkan", &[], None, "0.0.1", "")
-    }
-
+    /// A report too long for a link keeps the description and the first
+    /// lines of the detail, says it was cut, and still closes the block; and
+    /// the link is one the application opens.
     #[test]
-    fn the_endpoint_is_built_without_a_double_slash() {
-        assert_eq!(endpoint("https://x.test"), "https://x.test/api/desktop/bug-report");
-        assert_eq!(endpoint("https://x.test/"), "https://x.test/api/desktop/bug-report");
-    }
-
-    #[test]
-    fn a_report_arrives_as_a_json_post_carrying_the_payload() {
-        let (base, server) = serve_once("200 OK", r#"{"success":true}"#);
-        let outcome = send(sample_report(), &base, None);
-        let request = server.join().expect("the stub server panicked");
-
-        assert!(outcome.is_ok(), "a 200 was not treated as success: {outcome:?}");
-        assert!(request.starts_with("POST /api/desktop/bug-report"), "wrong route: {request}");
-        assert!(
-            request.to_lowercase().contains("content-type: application/json"),
-            "the body was not declared as JSON"
-        );
-        assert!(request.contains(r#""product":"hanisculpt""#), "the product tag was not sent");
-        assert!(request.contains("the window went black"), "the description was not sent");
-        assert!(
-            !request.to_lowercase().contains("authorization"),
-            "an anonymous report must carry no credential"
-        );
-    }
-
-    /// **Signed out sends no `Authorization` header at all**, which is the
-    /// property the anonymity claim rests on. An empty or malformed header
-    /// would be a different thing from no header, and the server treats them
-    /// differently.
-    #[test]
-    fn a_signed_out_report_carries_no_authorization_header() {
-        let (base, server) = serve_once("200 OK", r#"{"ok":true}"#);
-        send(sample_report(), &base, None).expect("the server accepted it");
-        let request = server.join().expect("the server thread");
-        assert!(
-            !request.to_lowercase().contains("authorization:"),
-            "an anonymous report carried an Authorization header:\n{request}"
-        );
-    }
-
-    /// And signed in it goes out verbatim, because a header that is dropped
-    /// silently turns an attributed report back into an anonymous one -- with
-    /// the dialog still telling the user it went out under their name.
-    #[test]
-    fn a_signed_in_report_carries_the_bearer_token() {
-        let (base, server) = serve_once("200 OK", r#"{"ok":true}"#);
-        send(sample_report(), &base, Some("Bearer ta_bskt_testvalue")).expect("accepted");
-        let request = server.join().expect("the server thread");
-        let lower = request.to_lowercase();
-        assert!(lower.contains("authorization:"), "no Authorization header:\n{request}");
-        assert!(
-            request.contains("Bearer ta_bskt_testvalue"),
-            "the token was altered on the way out:\n{request}"
-        );
-    }
-
-    #[test]
-    fn a_rate_limit_says_so_rather_than_reporting_a_generic_failure() {
-        let (base, server) = serve_once("429 Too Many Requests", r#"{"error":"slow down"}"#);
-        let outcome = send(sample_report(), &base, None);
-        let _ = server.join();
-        let why = outcome.expect_err("a 429 is not a success");
-        assert!(why.contains("try again in an hour"), "unhelpful message: {why}");
-    }
-
-    #[test]
-    fn an_oversized_report_is_told_what_to_do_about_it() {
-        let (base, server) = serve_once("413 Payload Too Large", "{}");
-        let outcome = send(sample_report(), &base, None);
-        let _ = server.join();
-        let why = outcome.expect_err("a 413 is not a success");
-        assert!(why.contains("untick"), "the message does not say what to do: {why}");
-    }
-
-    #[test]
-    fn an_unreachable_server_reads_as_a_network_problem() {
-        // Port 1 on loopback: nothing listens, and the connection is refused
-        // immediately rather than hanging.
-        let why = send(sample_report(), "http://127.0.0.1:1", None)
-            .expect_err("nothing is listening there");
-        assert!(why.contains("could not reach"), "unhelpful message: {why}");
-    }
-
-    /// Against the real tinkeratlas.com, and it FILES A REAL REPORT, which is
-    /// why it is ignored by default.
-    ///
-    /// Run it deliberately:
-    /// `cargo test -p hani-app -- --ignored the_real_endpoint --nocapture`
-    ///
-    /// It is here because everything else in this file proves the bytes are
-    /// right against a socket we control, and none of it proves the server
-    /// accepts them. The two ways that can be wrong are both invisible from
-    /// this side: the endpoint could reject the `product` field, or accept it
-    /// and file the row under the wrong source.
-    #[test]
-    #[ignore = "posts a real bug report to tinkeratlas.com"]
-    fn the_real_endpoint_accepts_a_report_from_this_application() {
-        let report = Report::new(
-            "ignore me: end to end check of the HaniSculpt bug reporter",
-            "sent by the test suite, not by a user",
-            &["[wgpu] test harness".to_string()],
-            None,
-            concat!(env!("CARGO_PKG_VERSION"), " (test)"),
-            "test harness",
-        );
-        println!("fingerprint {}", report.fingerprint);
-        match send(report, TINKERATLAS, None) {
-            Ok(note) => println!("accepted: {note}"),
-            Err(why) => panic!("the real endpoint refused it: {why}"),
-        }
+    fn a_long_report_is_cut_to_fit_a_link_from_the_end_of_the_detail() {
+        let diagnostics: String =
+            (0..2000).map(|n| format!("fact {n}: {}\n", "x".repeat(20))).collect();
+        let report = Report::new("the brush stuck", &diagnostics, &[], "0.0.1", "");
+        let (link, cut) = report.link();
+        assert!(cut, "a report this long was not cut");
+        assert!(link.len() <= MOST_LINK_CHARS, "{}", link.len());
+        assert!(crate::links::may_be_opened(&link));
+        assert!(link.contains("the%20brush%20stuck"));
+        assert!(link.contains("fact%200%3A"), "the first facts went");
+        assert!(!link.contains("fact%201999"), "the last facts stayed");
+        assert!(link.contains("%3C%2Fdetails%3E"), "the block was left open");
+        let (short, cut) = Report::new("short", "one fact", &[], "0.0.1", "").link();
+        assert!(!cut && short.contains("one%20fact"));
+        let (huge, cut) = Report::new(&"word ".repeat(5000), "", &[], "0.0.1", "").link();
+        assert!(cut && huge.len() <= MOST_LINK_CHARS);
     }
 }

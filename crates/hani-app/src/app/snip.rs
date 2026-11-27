@@ -186,20 +186,6 @@ fn flattened(width: u32, height: u32, rgba: &[u8], strokes: &[Stroke]) -> Vec<u8
     out
 }
 
-/// Text made safe for a URL's query: everything but the unreserved
-/// characters percent-encoded, byte by byte.
-pub(crate) fn encoded(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() * 3);
-    for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
-            out.push(byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
-}
-
 /// The longest comment put in the link: GitHub turns away a new-issue link
 /// much past eight thousand characters, and a comment encodes to up to
 /// three times its length.
@@ -211,7 +197,7 @@ pub(crate) fn issue_link(title: &str, comment: &str, about: &str) -> String {
     let comment: String = comment.trim().chars().take(COMMENT_CHARS).collect();
     let body =
         format!("{comment}\n\n(The picture is on the clipboard: paste it here.)\n\n---\n{about}");
-    format!("{}?title={}&body={}", crate::links::NEW_ISSUE, encoded(title), encoded(&body))
+    crate::links::new_issue(title, &body)
 }
 
 /// The application and the machine, in one line, for the foot of an issue.

@@ -829,18 +829,18 @@ impl Hani {
     /// that goes out of date; this cannot.
     fn bug_report_card<'a>(&'a self, draft: &'a super::BugReport) -> Element<'a, Message> {
         let payload = self.assemble_report();
-        let ready = payload.is_some() && !draft.sending;
+        let ready = payload.is_some();
 
         let preview: Element<'_, Message> = match &payload {
             Some(report) => scrollable(
-                text(report.to_json())
+                text(report.body())
                     .size(theme::CAPTION_SIZE)
                     .font(theme::MONO)
                     .color(theme::TEXT_MUTE),
             )
             .height(Length::Fixed(150.0))
             .into(),
-            None => text("describe the problem and the exact payload appears here")
+            None => text("describe the problem and the issue appears here")
                 .size(theme::CAPTION_SIZE)
                 .color(theme::TEXT_MUTE)
                 .into(),
@@ -872,28 +872,10 @@ impl Hani {
                     .label("attach the diagnostics and what this session did")
                     .on_toggle(Message::BugReportDetailToggled)
                     .text_size(theme::CAPTION_SIZE),
-                // **Says which of the two it is, before the Send button.**
-                // Signing in changes what leaves the machine -- the report
-                // stops being anonymous and is filed under a name -- and a
-                // user who signed in on a different screen should not have to
-                // infer that here. Signed out, the old sentence stands
-                // unchanged because the old behaviour is unchanged.
-                text(match &self.account {
-                    Some(account) => format!(
-                        "Sent to tinkeratlas.com as {}, so we can reply. \
-                         Home directories are removed.",
-                        account.label()
-                    ),
-                    None => "Sent anonymously to tinkeratlas.com. \
-                             Home directories are removed."
-                        .to_string(),
-                })
-                .size(theme::CAPTION_SIZE)
-                .color(theme::TEXT_MUTE),
                 preview,
                 row![
                     action(
-                        if draft.sending { "Sending…" } else { "Send" },
+                        "Open an issue on GitHub",
                         ready.then_some(Message::BugReportSubmitted),
                         // Styled by whether it will actually do something. A
                         // button that looks pressable and is not is a worse

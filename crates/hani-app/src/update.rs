@@ -1003,10 +1003,6 @@ pub fn floor() -> Floor {
 /// How many redirects to follow. GitHub currently uses exactly one.
 const MAX_REDIRECTS: usize = 3;
 
-/// Named so a proxy log on someone's own network says who is calling. GitHub
-/// also refuses a request with no user agent.
-const USER_AGENT: &str = "HaniSculpt";
-
 /// Long enough for two small files on a bad line, short enough that nothing the
 /// user is doing waits on it. Only ever applied to the manifest and its
 /// signature, both capped in the tens of kilobytes -- the payload download in
@@ -1048,47 +1044,34 @@ fn host_of(url: &str) -> Option<&str> {
     (!host.is_empty()).then_some(host)
 }
 
-/// GET a small file, following redirects by hand.
+/// GET a file, following redirects by hand, and the reply with its body
+/// still to read.
 ///
-/// Nothing stores the redirect target. GitHub's 302 lands on a signed URL good
-/// for about an hour, so a cached one is a bug with a one-hour fuse: green in
-/// every test, failing the first time someone leaves a dialog open over lunch.
-/// Follow redirects by hand and hand back the response, ready to read.
-///
-/// **By hand, because the obvious mechanism silently does not work.** ureq's
-/// middleware hook wraps `run()` and the redirect loop lives *inside* `run()`,
-/// so a middleware allowlist would see the first request and no other while
-/// looking entirely correct. `max_redirects(0)` returns the 3xx as an ordinary
-/// response instead, so the host can be checked on every hop -- and each hop
-/// being its own call is also what makes `https_only` bite per hop rather than
-/// once.
+/// Through the system's `curl`, one hop a call (`net.rs`), so the host of
+/// every hop is checked here before it is asked: `curl --location` would
+/// follow them all itself and only the last could be checked. Each hop is
+/// also `https` only.
 ///
 /// Nothing stores the redirect target: it is a signed URL good for about an
 /// hour, so a cached one is a bug with a one-hour fuse.
 #[cfg(not(target_arch = "wasm32"))]
 fn follow_to_body(
-    agent: &ureq::Agent,
     url: &str,
     what: &'static str,
-) -> Result<ureq::http::Response<ureq::Body>, Refusal> {
+    patience: crate::net::Patience,
+) -> Result<crate::net::Curl, Refusal> {
     let mut current = url.to_string();
     for _ in 0..=MAX_REDIRECTS {
         match host_of(&current) {
             Some(host) if host_is_allowed(host) => {}
             _ => return Err(Refusal::Unreachable(format!("refused to follow {what} off GitHub"))),
         }
-        let response = agent
-            .get(&current)
-            .header("User-Agent", USER_AGENT)
-            .call()
-            .map_err(|why| Refusal::Unreachable(why.to_string()))?;
-
-        let status = response.status().as_u16();
+        let reply = crate::net::Curl::get(&current, patience).map_err(Refusal::Unreachable)?;
+        let status = reply.head.status;
         if (300..400).contains(&status) {
-            let location = response
-                .headers()
-                .get("location")
-                .and_then(|value| value.to_str().ok())
+            let location = reply.head.location.clone();
+            reply.abandon();
+            let location = location
                 .ok_or_else(|| Refusal::Unreachable("a redirect with no location".into()))?;
             // Absolute only. A relative redirect is legal HTTP and GitHub does
             // not send one; resolving it would mean writing a URL joiner, and a
@@ -1096,40 +1079,29 @@ fn follow_to_body(
             if !location.starts_with("https://") {
                 return Err(Refusal::Unreachable("a redirect that was not absolute https".into()));
             }
-            current = location.to_string();
+            current = location;
             continue;
         }
-        return Ok(response);
+        if status != 200 {
+            reply.abandon();
+            return Err(Refusal::Unreachable(format!("GitHub answered {status} for the {what}")));
+        }
+        return Ok(reply);
     }
     Err(Refusal::Unreachable(format!("{what} redirected more than {MAX_REDIRECTS} times")))
 }
 
 /// GET a small file whole, under an absolute cap.
 #[cfg(not(target_arch = "wasm32"))]
-fn get_capped(
-    agent: &ureq::Agent,
-    url: &str,
-    cap: u64,
-    what: &'static str,
-) -> Result<Vec<u8>, Refusal> {
-    use std::io::Read;
-
-    let mut response = follow_to_body(agent, url, what)?;
-    // `as_reader()` is NOT used: it carries a hidden 10 MiB cap that would
-    // surface as a network-looking error rather than as a size refusal.
-    let mut body = Vec::new();
-    response
-        .body_mut()
-        .with_config()
-        .limit(cap + 1)
-        .reader()
-        .take(cap + 1)
-        .read_to_end(&mut body)
-        .map_err(|why| Refusal::Unreachable(why.to_string()))?;
-    if body.len() as u64 > cap {
-        return Err(Refusal::TooLarge { what, cap });
-    }
-    Ok(body)
+fn get_capped(url: &str, cap: u64, what: &'static str) -> Result<Vec<u8>, Refusal> {
+    let reply = follow_to_body(url, what, crate::net::Patience::Total(META_TIMEOUT))?;
+    reply.read_all(cap).map_err(|why| {
+        if why.starts_with("the reply is longer") {
+            Refusal::TooLarge { what, cap }
+        } else {
+            Refusal::Unreachable(why)
+        }
+    })
 }
 
 /// The whole check, start to finish. Blocking: call it off the interface thread.
@@ -1159,18 +1131,8 @@ pub fn check(
         return Err(Refusal::UnsupportedPlatform);
     }
 
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(META_TIMEOUT))
-        // ureq's default is `false`, so without this a redirect to plain http
-        // is followed -- and these URLs do redirect.
-        .https_only(true)
-        // Followed by hand instead; see `get_capped`.
-        .max_redirects(0)
-        .build()
-        .into();
-
-    let body = get_capped(&agent, MANIFEST_URL, MAX_MANIFEST_BYTES, "update manifest")?;
-    let signature = get_capped(&agent, SIGNATURE_URL, MAX_SIGNATURE_BYTES, "update signature")?;
+    let body = get_capped(MANIFEST_URL, MAX_MANIFEST_BYTES, "update manifest")?;
+    let signature = get_capped(SIGNATURE_URL, MAX_SIGNATURE_BYTES, "update signature")?;
 
     let manifest = verify_manifest(&body, &signature)?;
     // Recorded on a successful FETCH AND VERIFY, before the floor is consulted:
@@ -1239,30 +1201,21 @@ pub fn download(offer: &Offer, into: &std::path::Path) -> Result<std::path::Path
     std::fs::create_dir_all(&directory)
         .map_err(|why| Refusal::Unreachable(format!("could not make {directory:?} ({why})")))?;
 
-    // **A separate agent from the manifest's, and it sets no wall-clock limit.**
-    // `timeout_global` covers the body, so 20 s over a 33 MB payload demands
-    // 13.4 Mbit/s sustained and fails every slower connection for ever, in
-    // silence. `timeout_recv_body` is a rolling stall timer rather than a
-    // deadline -- it is recomputed on every read poll -- so a slow line is
-    // allowed to finish while a dead socket is not. `timeout_recv_response` is
-    // deliberately unset: it is also checked while reading the body, so setting
-    // it would silently cap the download.
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_resolve(Some(std::time::Duration::from_secs(10)))
-        .timeout_connect(Some(std::time::Duration::from_secs(10)))
-        .timeout_send_request(Some(std::time::Duration::from_secs(20)))
-        .timeout_recv_body(Some(std::time::Duration::from_secs(30)))
-        .https_only(true)
-        .max_redirects(0)
-        .build()
-        .into();
-
+    // **No wall-clock limit on the payload, only a stall timer.** A deadline
+    // of 20 s over a 33 MB payload demands 13.4 Mbit/s sustained and fails
+    // every slower connection for ever, in silence. Given up only when
+    // nothing at all arrives for 30 s, so a slow line may finish and a dead
+    // one may not. See `net::Patience::Stall`.
     // Every attempt starts at byte zero and re-derives its URL. The 302 lands
     // on a signed URL good for about an hour, so a stored one is a bug with a
     // one-hour fuse: green in every test, failing the first time someone leaves
     // the dialog open over lunch.
     let url = payload_url(payload);
-    let mut response = follow_to_body(&agent, &url, "update payload")?;
+    let mut reply = follow_to_body(
+        &url,
+        "update payload",
+        crate::net::Patience::Stall(std::time::Duration::from_secs(30)),
+    )?;
 
     // Into a `.part` first, created `O_EXCL` at 0600 and `O_NOFOLLOW`, so a
     // failed or refused download never leaves something at the final path that
@@ -1271,11 +1224,21 @@ pub fn download(offer: &Offer, into: &std::path::Path) -> Result<std::path::Path
     let (partial, mut file) = apply::stage_in(&directory, &payload.name)?;
     let final_path = directory.join(&payload.name);
 
-    let outcome = check_payload(
-        response.body_mut().with_config().limit(MAX_UPDATE_BYTES).reader(),
-        payload,
-        &mut file,
-    );
+    // Bounded by `check_payload` against the signed size, itself bounded by
+    // `MAX_UPDATE_BYTES`, so an endless body costs one buffer and no more.
+    let outcome = check_payload(reply.body(), payload, &mut file);
+    // `curl`'s own verdict, once the body is read. A complete body whose
+    // digest matched is the answer whatever `curl` says after it.
+    let finished = reply.done();
+    // A body cut short because `curl` gave up is a network fault and says
+    // so, rather than reading as a size mismatch, which sounds like tampering.
+    let outcome = match (outcome, finished) {
+        (Err(Refusal::Unreachable(_)), Err(why)) => Err(Refusal::Unreachable(why)),
+        (Err(Refusal::PayloadSizeMismatch { declared, actual }), Err(why)) if actual < declared => {
+            Err(Refusal::Unreachable(why))
+        }
+        (outcome, _) => outcome,
+    };
     if let Err(why) = outcome {
         // Nothing verified is left lying about under a name suggesting it was.
         drop(file);
@@ -1303,6 +1266,48 @@ pub fn download(_offer: &Offer, _into: &std::path::Path) -> Result<std::path::Pa
 
 #[cfg(test)]
 mod tests {
+    /// The real channel, through the system's `curl` (`net.rs`): the manifest
+    /// and its signature fetched from GitHub and verified, and this
+    /// platform's payload streamed through the digest check. Run by hand
+    /// with `--ignored`, on a machine that can reach GitHub.
+    #[test]
+    #[ignore = "fetches the real update channel from GitHub"]
+    fn the_real_channel_comes_through_curl_and_verifies() {
+        use super::*;
+        let body =
+            get_capped(MANIFEST_URL, MAX_MANIFEST_BYTES, "update manifest").expect("manifest");
+        let signature =
+            get_capped(SIGNATURE_URL, MAX_SIGNATURE_BYTES, "update signature").expect("signature");
+        let manifest = verify_manifest(&body, &signature).expect("the manifest verifies");
+        let payload = manifest.payload.expect("a payload for this platform");
+        let mut reply = follow_to_body(
+            &payload_url(&payload),
+            "update payload",
+            crate::net::Patience::Stall(std::time::Duration::from_secs(30)),
+        )
+        .expect("the payload");
+        let mut sink = std::io::sink();
+        check_payload(reply.body(), &payload, &mut sink).expect("the payload's digest matches");
+        reply.done().expect("curl finished");
+        eprintln!("verified build {} ({} bytes)", manifest.build, payload.size);
+    }
+
+    /// A release asset on GitHub, which redirects to
+    /// `release-assets.githubusercontent.com` as ours do: every hop checked,
+    /// followed, and the body read whole. Any public release does; this one
+    /// is a few dozen bytes.
+    #[test]
+    #[ignore = "fetches a public release asset from GitHub"]
+    fn a_github_release_asset_is_followed_through_its_redirect() {
+        use super::*;
+        let url = "https://github.com/BurntSushi/ripgrep/releases/download/14.1.0/\
+                   ripgrep-14.1.0-x86_64-unknown-linux-musl.tar.gz.sha256";
+        let body = get_capped(url, 4096, "release asset").expect("the asset");
+        let text = String::from_utf8(body).expect("text");
+        assert!(text.contains("ripgrep-14.1.0"), "{text}");
+        eprintln!("{}", text.trim());
+    }
+
     use super::*;
 
     /// The real fixtures, generated 2026-08-30 with `minisign -G -W` (no

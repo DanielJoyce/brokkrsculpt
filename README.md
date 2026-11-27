@@ -268,23 +268,23 @@ validates perfectly and prints in one colour.
 
 </details>
 
-## The bug reporter shows you what it sends
+## The bug reporter shows you what it opens
 
-The bug button in the corner of the viewport — or *Help > Report a bug* — files
-a report against TinkerAtlas. Three things about it are worth stating plainly,
-because you can check every one of them in the source:
+The bug button in the corner of the viewport, or *Help > Report a bug*, opens
+a new issue on this repository in your browser, with what you wrote and the
+diagnostics in it. Three things about it are worth stating plainly, because you
+can check every one of them in the source (`report.rs`):
 
-- **The dialog shows you the exact payload before it goes**, assembled by the
-  same function that sends it — not a description of it.
-- **Your home directory is stripped out first.**
-- **Anonymous unless you have signed in, and the dialog says which.** Signed
-  out, the report carries no account and no credential and there is nothing on
-  disk to leak. Signed in, it goes under your name so the report can be replied
-  to — and the line above the Send button names you before you press it, rather
-  than leaving you to infer it from a sign-in you did on a different screen.
+- **The dialog shows you the exact issue before it opens**, assembled by the
+  same function that builds the link, not a description of it.
+- **Your home directory is stripped out first.** An issue is public.
+- **Nothing is sent by the application.** It opens GitHub's own new-issue
+  page; nothing leaves your machine until you press GitHub's button. A link can
+  carry only so much, so a long report is cut to fit, from the end of the
+  diagnostics, and the whole of it is put on the clipboard to paste.
 
-Signing in is optional and exists for one reason: an anonymous report cannot be
-answered. Nothing else in the application needs it.
+It used to post to TinkerAtlas, with an optional sign-in; that was retired on
+2026-11-27.
 
 ## Masking
 
