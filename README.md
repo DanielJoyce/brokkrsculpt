@@ -800,10 +800,13 @@ combine rather than override. The kernel reports tip and eraser as separate
 tools that are never in range together — anything checking only for the tip
 treats every eraser stroke as a mouse and quietly runs it at full pressure.
 
-**Tilt** rotates the direction the brush pushes, up to sixty degrees, and steers
-every brush at once because they all work from the same stroke normal. Leaning
+**Tilt** rotates the direction the brush pushes, up to sixty degrees. Leaning
 also reduces how far the brush pushes out, by the cosine of the angle, which is
-what makes a leaned stroke feel glancing.
+what makes a leaned stroke feel glancing. A brush that levels to a plane, Clay
+and Flatten and the brushes made of them, is not steered by it (since
+2026-11-27, `app/pen_strokes.rs`): its plane was tipped about every stamp's own
+centre, which under a pen held as a hand holds one made a layer five times as
+rough as a mouse's, and let a stroke that builds up climb its own tipped work.
 
 The **PEN** panel names the tablet it found, shows its pressure range where
 the kernel is what it was read from, and gives a live reading: enough to

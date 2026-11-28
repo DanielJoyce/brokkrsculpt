@@ -24,6 +24,10 @@ if ! pgrep -x hanisculpt >/dev/null; then
     exit 1
 fi
 
+# A locked session draws no window: the capture would be of the last frame
+# before the lock, and reads as an application that has stopped.
+"$(dirname "$0")/drive.py" --unlocked || exit 1
+
 SCRIPT=$(mktemp /tmp/kwin-activate-XXXXXX.js)
 trap 'rm -f "$SCRIPT"' EXIT
 cat >"$SCRIPT" <<EOF

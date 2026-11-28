@@ -95,6 +95,8 @@ mod tips;
 mod touch;
 // A pen's samples, beside the moves they belong to. See `app/pen.rs`.
 mod pen;
+// What a pen's stroke leaves, measured. See `app/pen_strokes.rs`.
+mod pen_strokes;
 // Where a frame's time goes. See `app/phases.rs`.
 mod phases;
 mod presets;
@@ -6148,7 +6150,8 @@ impl Hani {
             self.move_stroke.end();
             self.move_grab = None;
 
-            let lean = self.pen_lean();
+            // Not for a brush that levels to a plane: `app/pen_strokes.rs`.
+            let lean = self.stroke_lean(self.pen_lean());
             // Which way the drag is going, for the patterns that comb. Zero
             // until the stroke has moved far enough to have a direction, which
             // the pattern copes with by picking any direction across the

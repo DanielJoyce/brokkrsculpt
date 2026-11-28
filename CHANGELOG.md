@@ -23,6 +23,19 @@ before it, see the
 
 ## Unreleased
 
+### Fixed: clay under a leaning pen
+
+With a pen, Clay strips and the other brushes that level were grainy where a
+mouse left them smooth, and with *Builds up* on could climb their own work
+and shoot off the model. A pen is never held upright, and its lean was
+tipping the brush's plane at every step of the stroke. Those brushes now
+take no notice of the lean: a pen lays the layer a mouse does. Brushes that
+push, such as Draw, are still steered by it.
+
+*Builds up* is as quick as it was: every pass of Clay over the same ground
+adds about a third of the brush's radius, with a mouse too. *One layer* is
+the setting that does not.
+
 ### Fixed: the pen under Wayland
 
 On a Wayland desktop a pen had no pressure unless you had added yourself to

@@ -337,8 +337,13 @@ class Device:
             *absmax, *([0] * 64), *([0] * 64), *([0] * 64),
         ))
         fcntl.ioctl(self.fd, UI_DEV_CREATE)
-        # The compositor has to notice the device before it will route to it.
-        time.sleep(0.5)
+        # The compositor has to notice the device before it will route to it,
+        # and what is sent before it has is lost: the kernel has the pointer
+        # there already, so nothing moves it there again. Half a second was
+        # enough on the desktop this was written on and not on the next
+        # (2026-11-27: every click of a script missed, the first move having
+        # gone nowhere). KWin said where the pointer was before and after.
+        time.sleep(1.5)
 
     def _emit(self, typ, code, value):
         os.write(self.fd, struct.pack("llHHi", 0, 0, typ, code, value))
@@ -507,7 +512,32 @@ class Pen:
         os.close(self.fd)
 
 
+def refuse_if_locked():
+    """Stop, when the session is locked.
+
+    A locked compositor sends a window no frames: the application sits on
+    the frame it last drew and looks dead, whatever is sent to it, and a
+    capture is of that frame. And what a virtual device types and clicks
+    goes to the lock screen. On 2026-11-27 an hour went to a "startup hang"
+    that was the maintainer having locked the screen.
+    """
+    try:
+        locked = subprocess.run(
+            [QDBUS, "org.freedesktop.ScreenSaver", "/ScreenSaver",
+             "org.freedesktop.ScreenSaver.GetActive"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+    except Exception:
+        return
+    if locked == "true":
+        raise SystemExit(
+            "refusing: the session is locked. A locked compositor draws no window, "
+            "and every key and click would go to the lock screen."
+        )
+
+
 def run(path):
+    refuse_if_locked()
     activate()
     x, y, w, h = window_rect()
     print(f"window at {x},{y} size {w}x{h}", flush=True)
@@ -580,7 +610,11 @@ def run(path):
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         raise SystemExit(__doc__)
-    if sys.argv[1] == "--geometry":
+    if sys.argv[1] == "--unlocked":
+        # For `shot.sh`: nothing if the session is unlocked, and a refusal
+        # if it is not.
+        refuse_if_locked()
+    elif sys.argv[1] == "--geometry":
         print("%d %d %d %d" % window_rect())
     elif sys.argv[1] == "--ask":
         # A question for KWin, for `shot.sh`: the script's body, in which

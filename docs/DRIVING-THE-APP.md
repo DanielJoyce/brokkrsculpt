@@ -130,6 +130,15 @@ desktop union, read from `kscreen-doctor`: of the outputs that are on. One
 that is off is listed too, with a place, and counting it put every
 coordinate short of where it aimed.
 
+**A locked session draws nothing.** A locked compositor sends a window no
+frames, so the application sits on the frame it last drew, takes no click,
+and a capture is of that frame: an application that has hung, to look at.
+Both scripts ask the screen saver first and refuse.
+
+**The compositor needs a moment to take up a new device**, and what is sent
+before it has is lost: `drive.py` waits a second and a half after making the
+pointer, where half a second was enough on the desktop it was written on.
+
 **How KWin answers.** A KWin script cannot return anything. Its `print` goes
 to the journal on some desktops and nowhere on others, where every question
 came back empty and the application "was not running". `drive.py` has the
