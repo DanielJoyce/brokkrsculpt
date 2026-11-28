@@ -44,6 +44,8 @@ have to repair it before a print.
 - [Getting around](help:getting-around): the workspaces, the panels and the
   keys.
 - [How it works](help:how-it-works): what happens underneath, in broad terms.
+- [Lighting and materials](help:lighting): the lights on the model, and what
+  it looks made of where it is not painted.
 - [The source](https://github.com/DanielJoyce/hanisculpt), on GitHub: the code,
   the releases, and where to report a problem.
 

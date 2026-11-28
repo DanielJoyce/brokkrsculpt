@@ -392,7 +392,7 @@ impl Hani {
 
     /// The settings of what is in hand, in sections that fold.
     fn inspector(&self, now: Workspace) -> Element<'_, Message> {
-        let sections: Vec<Element<'_, Message>> = match now {
+        let mut sections: Vec<Element<'_, Message>> = match now {
             // A shape baked into the body is a Sculpt brush, and how it
             // meets the surface is its setting there.
             Workspace::Sculpt if self.inserting() => vec![
@@ -439,6 +439,8 @@ impl Hani {
                 self.section(PanelSection::Filament, || self.filament_panel()),
             ],
         };
+        // The lights, first in every workspace. See `app/lighting.rs`.
+        sections.insert(0, self.lighting_section());
         column(sections).spacing(theme::S4).into()
     }
 
