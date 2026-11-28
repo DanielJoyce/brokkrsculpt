@@ -456,6 +456,10 @@ pub enum Change {
     /// A body's symmetry frame was moved. Applying puts this one back. See
     /// `symmetry_frames.rs`.
     SymmetryFrame { id: NodeId, frame: crate::brush::SymmetryFrame },
+    /// A body's symmetry settings were changed: which planes, the radial
+    /// copies and their axis. Applying puts this whole symmetry back. See
+    /// `symmetry_frames.rs`.
+    Symmetry { id: NodeId, symmetry: crate::brush::Symmetry },
     /// The document's paint table was changed. Applying puts this one back.
     ///
     /// The whole table and not the one paint that changed, as
@@ -628,6 +632,11 @@ impl Change {
                 let before = doc.put_symmetry_frame(id, frame);
                 Change::SymmetryFrame { id, frame: before }
             }
+            Change::Symmetry { id, symmetry } => {
+                let before = doc.symmetry(id);
+                doc.put_symmetry(id, symmetry);
+                Change::Symmetry { id, symmetry: before }
+            }
         }
     }
 
@@ -649,7 +658,9 @@ impl Change {
             | Change::LayerSettings { body, .. }
             | Change::LayersAdded { body, .. }
             | Change::LayersTaken { body, .. } => *body,
-            Change::Boolean { id, .. } | Change::SymmetryFrame { id, .. } => *id,
+            Change::Boolean { id, .. }
+            | Change::SymmetryFrame { id, .. }
+            | Change::Symmetry { id, .. } => *id,
             Change::Outline { before, after } => {
                 before.iter().zip(after).find(|(was, now)| was != now).map_or_else(
                     || before.first().map_or(NodeId(0), |meta| meta.id),
@@ -666,9 +677,10 @@ impl Change {
             // Both hold a whole thing that was moved out of the document
             // rather than copied out of it. See `reclaim_bytes`.
             Change::NodeRemoved { .. } | Change::WholeMask { .. } | Change::WholeVolume { .. } => 0,
-            Change::NodeAdded { .. } | Change::Boolean { .. } | Change::SymmetryFrame { .. } => {
-                size_of::<Self>()
-            }
+            Change::NodeAdded { .. }
+            | Change::Boolean { .. }
+            | Change::SymmetryFrame { .. }
+            | Change::Symmetry { .. } => size_of::<Self>(),
             Change::Outline { before, after } => {
                 before.iter().chain(after).map(NodeMeta::bytes).sum()
             }
@@ -825,7 +837,8 @@ impl Entry {
                 | Change::Outline { .. }
                 | Change::Paints { .. }
                 | Change::Boolean { .. }
-                | Change::SymmetryFrame { .. } => {
+                | Change::SymmetryFrame { .. }
+                | Change::Symmetry { .. } => {
                     return None;
                 }
             };

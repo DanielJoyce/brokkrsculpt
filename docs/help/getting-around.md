@@ -57,6 +57,8 @@ Rest the pointer on a button to see what it does.
 - **X**, **Y** and **Z** mirror strokes across a plane. Symmetry is each
   body's own: the mirrors and the radial copies shown are the chosen
   body's, choosing another shows its own, and a new body starts with none.
+  Turning one on or off, or changing the radial copies, is undone with
+  **Ctrl+Z**; a drag of the copies is one step.
 - **Radial copies**, under Symmetry in the Settings tab, lays a stroke
   again at each even turn round the axis chosen beside it, X, Y or Z,
   through the middle of the room, or wherever the body has since been

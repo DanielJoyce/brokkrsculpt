@@ -45,13 +45,58 @@ impl Hani {
         self.doc.symmetry(self.doc.active())
     }
 
-    /// Set the active body's planes and radial copies, keeping its frame.
-    /// Not an undo step, as a mirror toggled in ZBrush is not.
+    /// Set the active body's planes and radial copies, keeping its frame,
+    /// as no undo step: for what the application does by itself, a plane
+    /// turned off because the body no longer reaches it.
     pub(super) fn set_symmetry(&mut self, settings: Symmetry) {
         let active = self.doc.active();
-        if self.doc.set_symmetry_settings(active, settings) {
+        if self.doc.set_symmetry_settings(active, settings).is_some() {
             self.unsaved = true;
         }
+    }
+
+    /// Set the active body's planes and radial copies as one undo step.
+    /// Asked for by the maintainer: "Make symmetry setting changes undoable
+    /// too".
+    pub(super) fn set_symmetry_recorded(&mut self, settings: Symmetry) {
+        self.finish_symmetry_drag();
+        let active = self.doc.active();
+        if let Some(change) = self.doc.set_symmetry_settings(active, settings) {
+            let before = self.history.stats();
+            self.history.push(Entry::new(vec![change]));
+            self.record_history(before);
+            self.unsaved = true;
+        }
+    }
+
+    /// Set them during a drag of Radial copies: the step is made once, from
+    /// where the drag started, by [`Hani::finish_symmetry_drag`].
+    pub(super) fn set_symmetry_dragged(&mut self, settings: Symmetry) {
+        let active = self.doc.active();
+        if self.symmetry_drag.is_some_and(|(body, _)| body != active) {
+            self.finish_symmetry_drag();
+        }
+        if let Some(Change::Symmetry { symmetry, .. }) =
+            self.doc.set_symmetry_settings(active, settings)
+        {
+            self.symmetry_drag.get_or_insert((active, symmetry));
+            self.unsaved = true;
+        }
+    }
+
+    /// The drag let go, or a value typed in (which has no release): one undo
+    /// step from where it started, if it ended anywhere else. Also run before
+    /// an undo or a redo, so a typed value is a step too.
+    pub(super) fn finish_symmetry_drag(&mut self) {
+        let Some((id, before)) = self.symmetry_drag.take() else {
+            return;
+        };
+        if self.doc.symmetry(id) == before {
+            return;
+        }
+        let stats = self.history.stats();
+        self.history.push(Entry::new(vec![Change::Symmetry { id, symmetry: before }]));
+        self.record_history(stats);
     }
 
     /// Whether any body has a plane on or radial copies.
@@ -73,7 +118,8 @@ impl Hani {
                 .into_iter()
                 .zip(mirror)
                 .fold(self.doc.symmetry(body), |set, (axis, on)| set.with_axis(axis, on));
-            self.doc.set_symmetry_settings(body, settings);
+            // What the file meant, and no step: the history starts here.
+            drop(self.doc.set_symmetry_settings(body, settings));
         }
     }
 
@@ -89,7 +135,7 @@ impl Hani {
             self.doc.nodes().iter().filter(|node| node.is_body()).map(|node| node.id).collect();
         for body in bodies {
             let settings = self.doc.symmetry(body).with_radial(radial.copies, radial.axis);
-            self.doc.set_symmetry_settings(body, settings);
+            drop(self.doc.set_symmetry_settings(body, settings));
         }
     }
 
@@ -176,6 +222,7 @@ impl Hani {
     /// Put the active body's planes back through the middle of the room,
     /// unturned: one undo step.
     pub(super) fn reset_frame(&mut self) {
+        self.finish_symmetry_drag();
         let body = self.doc.active();
         let Some(change) = self.doc.set_symmetry_frame(body, SymmetryFrame::IDENTITY) else {
             return;
@@ -260,6 +307,10 @@ mod tests {
         let expected = frame.origin + turn * Vec3::new(-5.0, 1.0, -2.0);
         assert!(flips[0].point(across).distance(expected) < 1.0e-3);
 
+        // The mirror is a step of its own, then the move.
+        update(&mut app, Message::Undo);
+        assert!(!app.symmetry_settings().axis(MirrorAxis::X), "the first undo left X on");
+        assert!(app.doc.symmetry_frame(body).origin.distance(frame.origin) < 1.0e-5);
         update(&mut app, Message::Undo);
         assert_eq!(app.doc.symmetry_frame(body), SymmetryFrame::IDENTITY);
         assert!(middle(&app, body).length() < app.doc.voxel_size() * 2.0, "the body stayed");
@@ -364,6 +415,49 @@ mod tests {
         assert_eq!(app.doc.symmetry(ball).radial_axis(), MirrorAxis::Y, "the ball's axis moved");
         update(&mut app, Message::BodySelected(ball));
         assert_eq!(app.symmetry_settings().radial(), 6);
+    }
+
+    /// A mirror turned on is one undo step, and the redo puts it back; the
+    /// axis of the radial copies is a step of its own.
+    #[test]
+    fn a_mirror_and_the_axis_are_each_one_step() {
+        let mut app = Hani::with_tablet(crate::tablet::Tablet::inert());
+        let entries = app.history_stats.undo_entries;
+        update(&mut app, Message::SymmetryAxisToggled(MirrorAxis::X));
+        assert!(app.symmetry_settings().axis(MirrorAxis::X));
+        assert_eq!(app.history_stats.undo_entries, entries + 1, "the toggle was not a step");
+        update(&mut app, Message::Radial(super::super::RadialMessage::Axis(MirrorAxis::Z)));
+        assert_eq!(app.history_stats.undo_entries, entries + 2, "the axis was not a step");
+        update(&mut app, Message::Undo);
+        assert_eq!(app.symmetry_settings().radial_axis(), MirrorAxis::Y);
+        assert!(app.symmetry_settings().axis(MirrorAxis::X));
+        update(&mut app, Message::Undo);
+        assert!(app.symmetry_settings().is_off(), "the undo left X on");
+        update(&mut app, Message::Redo);
+        assert!(app.symmetry_settings().axis(MirrorAxis::X), "the redo did not put X back");
+    }
+
+    /// A drag of Radial copies through several values is one step from
+    /// where it started; a value typed in, which has no release, is a step
+    /// once an undo asks for it.
+    #[test]
+    fn a_drag_of_the_copies_is_one_step_and_a_typed_value_is_undone() {
+        let mut app = Hani::with_tablet(crate::tablet::Tablet::inert());
+        let entries = app.history_stats.undo_entries;
+        for copies in [2.0, 3.0, 5.0, 6.0] {
+            update(&mut app, Message::Radial(super::super::RadialMessage::Copies(copies)));
+        }
+        assert_eq!(app.history_stats.undo_entries, entries, "a step before the release");
+        update(&mut app, Message::Radial(super::super::RadialMessage::CopiesDone));
+        assert_eq!(app.history_stats.undo_entries, entries + 1, "not one step for the drag");
+        assert_eq!(app.symmetry_settings().radial(), 6);
+        update(&mut app, Message::Undo);
+        assert_eq!(app.symmetry_settings().radial(), 1, "the undo did not take the drag back");
+
+        update(&mut app, Message::Radial(super::super::RadialMessage::Copies(4.0)));
+        assert_eq!(app.symmetry_settings().radial(), 4);
+        update(&mut app, Message::Undo);
+        assert_eq!(app.symmetry_settings().radial(), 1, "a typed value was not undone");
     }
 
     /// Recentred, a plane the body no longer straddles is turned off, as
