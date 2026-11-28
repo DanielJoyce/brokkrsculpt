@@ -316,3 +316,80 @@ mod swap_site_tests {
         let _ = std::fs::remove_dir_all(&directory);
     }
 }
+
+#[cfg(test)]
+mod rebuild_tests {
+    use super::*;
+    use crate::app::test_support::*;
+
+    /// **Rebuilding the view keeps solo, where rebuilding everything drops it.**
+    ///
+    /// That single difference is the whole reason these are two functions, so
+    /// it is the only assertion here that discriminates -- and saying so
+    /// matters, because the obvious companions do not. Asserting the pool reset
+    /// was requested passes under either function, and so does asserting that
+    /// the bricks were dirtied: both do those two things identically. A test
+    /// built out of those would be green with `Message::ViewRebuilt` wired
+    /// straight to `rebuild_everything`, which would silently throw away a
+    /// user's solo mode every time they pressed a button about the mesh pool.
+    #[test]
+    fn rebuilding_the_view_packs_the_pool_without_dropping_solo() {
+        let mut app = app();
+        update(&mut app, Message::PrimitiveAdded(hani_core::PrimitiveKind::Cube));
+        let cube = app.doc.active();
+        app.solo = Some(cube);
+        // Clear whatever is pending, so the assertions below are about THIS
+        // call and not about the primitive that was just added -- adding a body
+        // dirties bricks too, and a counter left carrying its value made the
+        // dirty assertion below pass with the remesh removed.
+        app.shared.take_pool_reset_for_tests();
+        app.perf.dirty_bricks = 0;
+
+        update(&mut app, Message::ViewRebuilt);
+
+        assert_eq!(
+            app.solo,
+            Some(cube),
+            "a rebuild of the VIEW dropped solo -- that is `rebuild_everything`'s behaviour, and \
+             it is right there only because a document swap renumbers the rows"
+        );
+        assert!(
+            app.shared.take_pool_reset_for_tests(),
+            "the pool was never asked to reset, so nothing was recovered"
+        );
+        // **The reset is only sound paired with marking everything dirty** --
+        // `request_pool_reset`'s own doc says the model otherwise leaves the
+        // GPU and does not come back. That is a different mutation from the
+        // solo one above and it needs its own assertion: dropping the two
+        // statements after the reset would leave the solo check green and the
+        // screen empty.
+        assert!(
+            app.perf.dirty_bricks > 0,
+            "the pool was emptied and nothing was re-offered, so the model has left the screen"
+        );
+        assert!(
+            app.status.contains("rebuilt the view"),
+            "the button reported nothing: {}",
+            app.status
+        );
+    }
+
+    /// The remedy must not claim to give memory back.
+    ///
+    /// `MeshPool::reset` empties the allocators over the buffers it already
+    /// holds and never drops a `BufferPair`, so nothing is returned to the
+    /// system. A sentence that read as freeing VRAM would be false in the one
+    /// place a user is deciding whether they have a memory problem.
+    #[test]
+    fn the_rebuild_does_not_claim_to_have_freed_memory() {
+        let mut app = app();
+        update(&mut app, Message::ViewRebuilt);
+        for lie in ["MB", "memory", "VRAM", "freed"] {
+            assert!(
+                !app.status.contains(lie),
+                "the status implies memory came back, and it did not: {}",
+                app.status
+            );
+        }
+    }
+}
