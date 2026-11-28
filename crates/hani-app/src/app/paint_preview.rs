@@ -19,10 +19,13 @@
 //! faces up and how far out of a recess it is. A paint's picture is then
 //! each pixel's undercoat with the paint laid over it by its kind's blend,
 //! by the stack's own arithmetic
-//! ([`hani_core::paint::layers::over_undercoat`]), lit; a metal is lit as
-//! the viewport lights one. That is a few thousand pixels of arithmetic, so
-//! every paint on a rack has its picture, made the first time it is drawn
-//! and kept.
+//! ([`hani_core::paint::layers::over_undercoat`]), lit; a metal, metallic or
+//! chrome, is lit as the viewport lights one, by the viewport's own model
+//! in Rust ([`hani_gpu::lights::shade`], which the offscreen tests hold to
+//! the shader) under its default rig. That is a few thousand pixels of
+//! arithmetic, so every paint on a rack has its picture, made the first
+//! time it is drawn and kept. A metallic's flakes are not drawn here: the
+//! picture is too small for them.
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -151,13 +154,28 @@ fn looked_at(size: usize) -> Looked {
 }
 
 /// The picture's pixels: red, green, blue and alpha, `size` by `size`, the
-/// paint pooled as strongly as `pooling` says.
-pub(super) fn pixels(colour: [u8; 3], kind: Kind, size: usize, pooling: f32) -> Vec<u8> {
+/// paint pooled as strongly as `pooling` says. `chrome` draws a metallic as
+/// chrome.
+pub(super) fn pixels(
+    colour: [u8; 3],
+    kind: Kind,
+    chrome: bool,
+    size: usize,
+    pooling: f32,
+) -> Vec<u8> {
     let seen = looked_at(size);
     let light = LIGHT_FROM.normalize();
     let toward_eye = Vec3::Z;
     let half_way = (light + toward_eye).normalize();
-    let metal = kind == Kind::Metallic;
+    let metal = (kind == Kind::Metallic).then(|| {
+        let finish = if chrome {
+            hani_core::paint::Finish::Chrome
+        } else {
+            hani_core::paint::Finish::Metallic
+        };
+        finish.roughness_and_metal().0
+    });
+    let block = hani_gpu::LightBlock::default();
     let mut out = Vec::with_capacity(size * size * 4);
     for pixel in seen.iter() {
         let Some(seen) = pixel else {
@@ -173,15 +191,26 @@ pub(super) fn pixels(colour: [u8; 3], kind: Kind, size: usize, pooling: f32) -> 
         let albedo = laid.map(|c| f32::from(c) / 255.0);
         let facing = seen.normal.dot(light).max(0.0);
         let shine = seen.normal.dot(half_way).max(0.0);
-        let rgb: [f32; 3] = if metal {
-            // As the viewport draws a metal: mostly what it reflects.
-            let up = seen.normal.y * 0.5 + 0.5;
-            let t = ((up - 0.3) / 0.65).clamp(0.0, 1.0);
-            let reflected =
-                (0.06 + 1.19 * t * t * (3.0 - 2.0 * t)) * (0.5 + 0.5 * seen.normal.z.max(0.0));
-            let caught = shine.powf(40.0) * 0.65 * 2.2;
-            std::array::from_fn(|c| albedo[c] * reflected * 1.35 + caught * (0.5 + 0.5 * albedo[c]))
-        } else {
+        if let Some(roughness) = metal {
+            // As the viewport draws a metal: its colour is what it
+            // reflects. The picture looks down the view's own axis with the
+            // world upright, so the view is the identity.
+            let surface =
+                hani_gpu::Surface::metal(Vec3::from(hani_core::paint::linear(laid)), roughness);
+            let lit = hani_gpu::lights::shade(
+                &block,
+                glam::Mat4::IDENTITY,
+                &surface,
+                seen.normal,
+                seen.normal,
+                seen.normal,
+                0.0,
+            );
+            out.extend(hani_core::paint::srgb(lit.to_array()));
+            out.push(255);
+            continue;
+        }
+        let rgb: [f32; 3] = {
             let lit = 0.35 + 0.75 * facing;
             let caught = shine.powf(12.0) * 0.06;
             std::array::from_fn(|c| albedo[c] * lit + caught)
@@ -192,21 +221,27 @@ pub(super) fn pixels(colour: [u8; 3], kind: Kind, size: usize, pooling: f32) -> 
     out
 }
 
-/// A picture made: its colour, its kind, its size and the pooling, by its
-/// bits.
-type Made = ([u8; 3], Kind, usize, u32);
+/// A picture made: its colour, its kind, whether chrome, its size and the
+/// pooling, by its bits.
+type Made = ([u8; 3], Kind, bool, usize, u32);
 
 /// The picture of a paint, `size` pixels across, as something to draw:
 /// made the first time it is asked for and kept.
-pub(super) fn handle(colour: [u8; 3], kind: Kind, size: usize, pooling: f32) -> Handle {
+pub(super) fn handle(
+    colour: [u8; 3],
+    kind: Kind,
+    chrome: bool,
+    size: usize,
+    pooling: f32,
+) -> Handle {
     static KEPT: LazyLock<Mutex<HashMap<Made, Handle>>> = LazyLock::new(Mutex::default);
     // To a tenth: a drag of the slider would otherwise make a picture of
     // every paint at every step of it, and keep them all.
     let pooling = (pooling * 10.0).round() / 10.0;
     let mut kept = KEPT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    kept.entry((colour, kind, size, pooling.to_bits()))
+    kept.entry((colour, kind, chrome, size, pooling.to_bits()))
         .or_insert_with(|| {
-            Handle::from_rgba(size as u32, size as u32, pixels(colour, kind, size, pooling))
+            Handle::from_rgba(size as u32, size as u32, pixels(colour, kind, chrome, size, pooling))
         })
         .clone()
 }
@@ -243,8 +278,11 @@ mod tests {
     }
 
     /// A paint covers; a wash leaves the highlights lighter than the
-    /// recesses by more than a paint does; a metal spans more light than
-    /// the same colour as paint.
+    /// recesses by more than a paint does; a metal, with nothing of it
+    /// diffuse, is darker than the same colour as paint wherever it is not
+    /// toward a light (until 2026-11-27 this said it spanned more light,
+    /// which the old formula's was and the viewport's model's is not, by 2
+    /// levels in 324); chrome is a different picture with harder light.
     #[test]
     fn each_kind_is_drawn_its_own_way() {
         let spread = |values: &[u32]| {
@@ -253,14 +291,37 @@ mod tests {
             sorted[sorted.len() * 98 / 100] - sorted[sorted.len() * 2 / 100]
         };
         let blue = [30, 60, 160];
-        let paint = lightness(&pixels(blue, Kind::Paint, 48, POOLING));
-        let wash = lightness(&pixels(blue, Kind::Wash, 48, POOLING));
+        let paint = lightness(&pixels(blue, Kind::Paint, false, 48, POOLING));
+        let wash = lightness(&pixels(blue, Kind::Wash, false, 48, POOLING));
         assert!(spread(&wash) > spread(&paint), "a wash did not keep the slapchop showing");
         let gold = [200, 160, 50];
-        let flat = lightness(&pixels(gold, Kind::Paint, 48, POOLING));
-        let metal = lightness(&pixels(gold, Kind::Metallic, 48, POOLING));
-        assert!(spread(&metal) > spread(&flat), "a metal is no livelier than paint");
-        assert_eq!(pixels(blue, Kind::Paint, 48, POOLING).len(), 48 * 48 * 4);
+        let flat = lightness(&pixels(gold, Kind::Paint, false, 48, POOLING));
+        let metal = lightness(&pixels(gold, Kind::Metallic, false, 48, POOLING));
+        let at = |values: &[u32], share: usize| {
+            let mut sorted = values.to_vec();
+            sorted.sort_unstable();
+            sorted[(sorted.len() - 1) * share / 100]
+        };
+        assert!(
+            at(&metal, 5) < at(&flat, 5) && at(&metal, 50) + 30 < at(&flat, 50),
+            "a metal is lit as paint is: {} and {} against {} and {}",
+            at(&metal, 5),
+            at(&metal, 50),
+            at(&flat, 5),
+            at(&flat, 50)
+        );
+        // Chrome is the metallic nearly a mirror: a different picture, and
+        // one with harder light in it, its brightest brighter.
+        let chrome = lightness(&pixels(gold, Kind::Metallic, true, 48, POOLING));
+        assert_ne!(chrome, metal, "chrome is drawn as the metallic is");
+        let top = |values: &[u32]| values.iter().copied().max().unwrap_or(0);
+        assert!(top(&chrome) > top(&metal), "chrome's brightest is no brighter");
+        // The box means nothing on any other kind.
+        assert_eq!(
+            pixels(blue, Kind::Paint, true, 48, POOLING),
+            pixels(blue, Kind::Paint, false, 48, POOLING)
+        );
+        assert_eq!(pixels(blue, Kind::Paint, false, 48, POOLING).len(), 48 * 48 * 4);
     }
 
     /// A strip of every kind, written where `HANI_DUMP_FRAMES` says: to
@@ -273,15 +334,17 @@ mod tests {
         };
         let size = 96;
         let kinds = [
-            ([180, 30, 30], Kind::Paint),
-            ([30, 25, 20], Kind::Wash),
-            ([150, 20, 25], Kind::Contrast),
-            ([60, 120, 40], Kind::Stain),
-            ([200, 160, 50], Kind::Metallic),
+            ([180, 30, 30], Kind::Paint, false),
+            ([30, 25, 20], Kind::Wash, false),
+            ([150, 20, 25], Kind::Contrast, false),
+            ([60, 120, 40], Kind::Stain, false),
+            ([200, 160, 50], Kind::Metallic, false),
+            ([200, 200, 205], Kind::Metallic, false),
+            ([200, 200, 205], Kind::Metallic, true),
         ];
         let mut strip = vec![0u8; size * size * 4 * kinds.len()];
-        for (at, (colour, kind)) in kinds.iter().enumerate() {
-            let one = pixels(*colour, *kind, size, POOLING);
+        for (at, (colour, kind, chrome)) in kinds.iter().enumerate() {
+            let one = pixels(*colour, *kind, *chrome, size, POOLING);
             for y in 0..size {
                 let from = &one[y * size * 4..(y + 1) * size * 4];
                 let to = (y * size * kinds.len() + at * size) * 4;
@@ -298,7 +361,7 @@ mod tests {
             .flat_map(|paint| poolings.iter().map(move |pooling| (paint, pooling)))
             .enumerate()
         {
-            let one = pixels(*colour, *kind, size, *pooling);
+            let one = pixels(*colour, *kind, false, size, *pooling);
             for y in 0..size {
                 let to = (y * size * across + at * size) * 4;
                 grid[to..to + size * 4].copy_from_slice(&one[y * size * 4..(y + 1) * size * 4]);

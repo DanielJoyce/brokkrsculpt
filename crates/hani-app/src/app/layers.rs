@@ -226,13 +226,16 @@ impl Hani {
     /// Give the active layer `blend`, and metal or not, for a paint or a
     /// touch just chosen that wants it: an empty layer takes them, and one
     /// with paint on it gets a new layer over it that has them, named
-    /// `name`. One undo entry.
-    pub(super) fn suit_the_layer(&mut self, name: &str, blend: Blend, metal: bool) {
+    /// `name`. One undo entry. `metal` is `None` for no metal, and for a
+    /// metal whether it is chrome.
+    pub(super) fn suit_the_layer(&mut self, name: &str, blend: Blend, metal: Option<bool>) {
         let body = self.doc.active();
         let volume = self.doc.active_volume();
         let layers = volume.layers();
         let meta = layers.metas()[layers.active()].clone();
-        if meta.blend == blend && meta.metal == metal {
+        let chrome = metal == Some(true);
+        let metal = metal.is_some();
+        if meta.blend == blend && meta.metal == metal && (!metal || meta.chrome == chrome) {
             return;
         }
         let active = layers.active();
@@ -245,12 +248,12 @@ impl Hani {
         };
         let volume = self.doc.active_volume_mut();
         let said = if empty && !meta.locked {
-            volume.set_layer_meta(active, LayerMeta { blend, metal, ..meta.clone() });
+            volume.set_layer_meta(active, LayerMeta { blend, metal, chrome, ..meta.clone() });
             format!("layer {} is now {}", meta.name, blend.label())
         } else if let Some(id) = volume.add_layer(name, blend) {
             if metal && let Some(at) = volume.layers().index_of(id) {
                 let meta = volume.layers().metas()[at].clone();
-                volume.set_layer_meta(at, LayerMeta { metal: true, ..meta });
+                volume.set_layer_meta(at, LayerMeta { metal: true, chrome, ..meta });
             }
             format!("new layer {name}, {}", blend.label())
         } else {

@@ -137,6 +137,10 @@ pub struct Uniforms {
     /// looks at `palette`. An empty block is all zeros, names no paint, and
     /// leaves every slot drawn as the filament it always was.
     pub paints: crate::PaintBlock,
+    /// The lights and the model's material. See [`crate::lights`], and
+    /// [`crate::LightBlock::new`] for how the application sets them. Its
+    /// default is the rig the clay's matcap was made from and the clay.
+    pub lights: crate::LightBlock,
 }
 
 /// Filament slots the shader can name, counting the unpainted zero.
@@ -151,7 +155,11 @@ pub const PALETTE_SLOTS: usize = 16;
 pub const UNKNOWN_FILAMENT: [f32; 4] = [1.0, 0.0, 1.0, 1.0];
 
 const _: () = assert!(
-    size_of::<Uniforms>() == 208 + 16 * PALETTE_SLOTS + size_of::<crate::PaintBlock>(),
+    size_of::<Uniforms>()
+        == 208
+            + 16 * PALETTE_SLOTS
+            + size_of::<crate::PaintBlock>()
+            + size_of::<crate::LightBlock>(),
     "Uniforms must stay in step with the WGSL struct in sculpt.wgsl"
 );
 
@@ -179,6 +187,7 @@ impl Default for Uniforms {
             ghost: [0.0; 4],
             palette: [UNKNOWN_FILAMENT; PALETTE_SLOTS],
             paints: crate::PaintBlock::default(),
+            lights: crate::LightBlock::default(),
         }
     }
 }
@@ -215,7 +224,7 @@ impl DepthBuffer {
     }
 }
 
-/// Draws the sculpted mesh with matcap shading.
+/// Draws the sculpted mesh, lit by the rig in [`Uniforms::lights`].
 #[derive(Debug)]
 pub struct SculptRenderer {
     pipeline: wgpu::RenderPipeline,
@@ -276,6 +285,8 @@ pub struct SculptRenderer {
     palette: [[f32; 4]; PALETTE_SLOTS],
     /// And the paints it was last given, for the same pass and reason.
     paints: crate::PaintBlock,
+    /// And the lights, so that a thumbnail is lit as the viewport is.
+    lights: crate::LightBlock,
     /// And how much signal the viewport calls a full crease, because a wash
     /// in a thumbnail has to pool where the wash in the viewport does.
     crease_gain: f32,
@@ -530,6 +541,7 @@ impl SculptRenderer {
             srgb_target: target_format.is_srgb(),
             palette: Uniforms::default().palette,
             paints: crate::PaintBlock::default(),
+            lights: crate::LightBlock::default(),
             crease_gain: Uniforms::default().cavity[1],
         }
     }
@@ -658,6 +670,7 @@ impl SculptRenderer {
     pub fn write_uniforms(&mut self, queue: &wgpu::Queue, uniforms: &Uniforms) {
         self.palette = uniforms.palette;
         self.paints = uniforms.paints;
+        self.lights = uniforms.lights;
         self.crease_gain = uniforms.cavity[1];
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(uniforms));
         let opposite =
@@ -750,6 +763,7 @@ impl SculptRenderer {
             self.srgb_target,
             &self.palette,
             &self.paints,
+            &self.lights,
             self.crease_gain,
         );
 

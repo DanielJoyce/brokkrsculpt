@@ -459,6 +459,7 @@ fn uniforms(distance: f32) -> Uniforms {
         ghost: [0.0; 4],
         palette: red_palette(),
         paints: hani_gpu::PaintBlock::default(),
+        lights: hani_gpu::LightBlock::default(),
     }
 }
 
@@ -3777,4 +3778,784 @@ fn a_reference_picture_is_drawn_behind_the_model_wherever_its_plane_stands() {
     renderer.write_references(&harness.queue, &[quad_at(Vec3::ZERO)], view_projection(distance));
     let emptied = harness.frame(&renderer);
     assert_eq!(emptied, bare, "an emptied slot still drew");
+}
+
+/// A ball of the model's radius with shallow bumps joined over it, so that
+/// it has creases where they meet and edges round them: the scene the
+/// lighting tests and the contact sheet look at. The bumps are laid on a
+/// spiral as `hani-app`'s paint picture lays its own.
+fn bumpy_ball() -> Volume {
+    use hani_core::solid::{Form, How, Join, Placed, Solid};
+    let mut volume = Volume::new(VOXEL_SIZE);
+    volume.seed_sphere(Vec3::ZERO, MODEL_RADIUS);
+    let mut join = Join::new();
+    volume.begin_stroke();
+    let count = 40;
+    for at in 0..count {
+        let height = 1.0 - 2.0 * (at as f32 + 0.5) / count as f32;
+        let round = (1.0 - height * height).max(0.0).sqrt();
+        let turn = at as f32 * std::f32::consts::PI * (3.0 - 5f32.sqrt());
+        let out = Vec3::new(round * turn.cos(), height, round * turn.sin());
+        let size = 4.0 + 2.5 * (at as f32 * 0.618).fract();
+        if let Some(bump) =
+            Placed::on(Form::Ball, out * MODEL_RADIUS * 0.97, out, Vec3::Y, size, 0.0)
+        {
+            join.add(&mut volume, &bump as &dyn Solid, How::ADD);
+        }
+    }
+    drop(volume.end_stroke());
+    volume
+}
+
+// The lighting model: issue 203, stage one. See `hani_gpu::lights`.
+
+/// How a ball is finished for the lighting tests: bare, painted, painted
+/// and varnished, or painted with a metal.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Coat {
+    Bare,
+    Paint([u8; 3]),
+    Varnished([u8; 3], hani_core::paint::Finish),
+    Metal([u8; 3], hani_core::paint::Finish),
+}
+
+/// `volume` with `coat` on every voxel of it.
+fn coated(mut volume: Volume, coat: Coat) -> Volume {
+    use hani_core::paint::layers::{Blend, LayerMeta};
+    let reach = (MODEL_RADIUS / VOXEL_SIZE) as i32 + 24;
+    let all = |volume: &mut Volume, rgba: [u8; 4]| {
+        volume.edit_paint(IVec3::splat(-reach), IVec3::splat(reach), |_, _, _, _| rgba);
+    };
+    match coat {
+        Coat::Bare => {}
+        Coat::Paint([r, g, b]) => all(&mut volume, [r, g, b, 255]),
+        Coat::Varnished([r, g, b], finish) => {
+            all(&mut volume, [r, g, b, 255]);
+            volume.add_layer("Varnish", Blend::Varnish).expect("room");
+            all(&mut volume, [finish.code(), 0, 0, 255]);
+        }
+        Coat::Metal([r, g, b], finish) => {
+            volume.add_layer("Metal", Blend::Normal).expect("room");
+            let meta = volume.layers().metas()[1].clone();
+            let chrome = finish == hani_core::paint::Finish::Chrome;
+            volume.set_layer_meta(1, LayerMeta { metal: true, chrome, ..meta });
+            all(&mut volume, [r, g, b, 255]);
+        }
+    }
+    volume
+}
+
+/// A camera at `distance` from `target`, looking at it from `toward`:
+/// the view and the view and projection.
+fn looking(toward: Vec3, target: Vec3, distance: f32) -> (glam::Mat4, glam::Mat4) {
+    let view = glam::camera::rh::view::look_at_mat4(
+        target + toward.normalize() * distance,
+        target,
+        Vec3::Y,
+    );
+    let projection = glam::camera::rh::proj::directx::perspective(
+        45f32.to_radians(),
+        WIDTH as f32 / HEIGHT as f32,
+        0.1,
+        distance * 4.0,
+    );
+    (view, projection * view)
+}
+
+/// The test cameras' own direction, turned about the vertical by `degrees`.
+fn turned(degrees: f32) -> Vec3 {
+    glam::Quat::from_rotation_y(degrees.to_radians()) * Vec3::new(0.45, 0.35, 1.0)
+}
+
+/// One frame of `volume` under `lights`, from a camera.
+fn lit_frame(
+    harness: &mut Harness,
+    volume: Volume,
+    camera: (glam::Mat4, glam::Mat4),
+    lights: hani_gpu::LightBlock,
+    creases: bool,
+) -> Vec<u8> {
+    let mut volume = volume;
+    let mut renderer = SculptRenderer::new(&harness.device, &harness.queue, TARGET_FORMAT);
+    renderer.resize(&harness.device, WIDTH, HEIGHT);
+    if creases {
+        upload_all_with_cavity(&mut renderer, &harness.device, &harness.queue, &mut volume);
+    } else {
+        upload_all(&mut renderer, &harness.device, &harness.queue, &mut volume);
+    }
+    harness.view_projection = camera.1;
+    renderer.write_uniforms(
+        &harness.queue,
+        &Uniforms {
+            view_projection: camera.1.to_cols_array_2d(),
+            view: camera.0.to_cols_array_2d(),
+            cavity: if creases { [0.6, 1.0, 0.0, 0.0] } else { [0.0; 4] },
+            lights,
+            ..uniforms(MODEL_RADIUS * 3.0)
+        },
+    );
+    harness.frame(&renderer)
+}
+
+fn smooth_ball() -> Volume {
+    let mut volume = Volume::new(VOXEL_SIZE);
+    volume.seed_sphere(Vec3::ZERO, MODEL_RADIUS);
+    volume
+}
+
+/// Every pixel that shows the smooth ball away from its silhouette, with
+/// the point of it it shows.
+fn on_the_smooth_ball(view_projection: glam::Mat4, eye: Vec3) -> Vec<(u32, u32, Vec3)> {
+    let mut out = Vec::new();
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let Some(point) = on_the_ball(view_projection, x, y) else {
+                continue;
+            };
+            if point.normalize().dot((eye - point).normalize()) < 0.3 {
+                continue;
+            }
+            out.push((x, y, point));
+        }
+    }
+    out
+}
+
+fn pixel(frame: &[u8], x: u32, y: u32) -> [u8; 3] {
+    let at = ((y * WIDTH + x) * 4) as usize;
+    [frame[at], frame[at + 1], frame[at + 2]]
+}
+
+fn pixel_luma(frame: &[u8], x: u32, y: u32) -> f32 {
+    let [r, g, b] = pixel(frame, x, y).map(f32::from);
+    0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+/// The default rig and the default clay draw the picture the matcap drew,
+/// on bare clay and on paint with no finish: the same bumpy ball, creases
+/// on, drawn by the matcap path kept for this and by the lights, compared
+/// a pixel at a time.
+#[test]
+fn the_default_rig_draws_todays_picture() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the default lighting test");
+        return;
+    };
+    let camera = looking(turned(0.0), Vec3::ZERO, MODEL_RADIUS * 3.0);
+    let mut worst_overall = 0;
+    for (name, coat) in [
+        ("clay", Coat::Bare),
+        ("white", Coat::Paint([235, 235, 235])),
+        ("red", Coat::Paint([180, 30, 30])),
+        ("blue", Coat::Paint([40, 70, 160])),
+        ("dark", Coat::Paint([40, 38, 36])),
+    ] {
+        let old = lit_frame(
+            &mut harness,
+            coated(bumpy_ball(), coat),
+            camera,
+            hani_gpu::LightBlock::matcap(),
+            true,
+        );
+        let new = lit_frame(
+            &mut harness,
+            coated(bumpy_ball(), coat),
+            camera,
+            hani_gpu::LightBlock::default(),
+            true,
+        );
+        dump(&format!("default-{name}-matcap"), &old);
+        dump(&format!("default-{name}-lights"), &new);
+        assert_eq!(mask(&old), mask(&new), "{name}: the lights changed the silhouette");
+        let (mut worst, mut at, mut over_two, mut drawn) = (0, (0, 0), 0, 0);
+        let mut counts = [0usize; 8];
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let (a, b) = (pixel(&old, x, y), pixel(&new, x, y));
+                if a == [0; 3] && b == [0; 3] {
+                    continue;
+                }
+                drawn += 1;
+                let most = (0..3).map(|c| a[c].abs_diff(b[c])).max().unwrap_or(0);
+                over_two += usize::from(most > 3);
+                counts[usize::from(most.min(7))] += 1;
+                if most > worst {
+                    (worst, at) = (most, (x, y));
+                }
+            }
+        }
+        eprintln!(
+            "{name}: {drawn} pixels, the largest difference {worst} levels at {at:?} ({:?} by \
+             the matcap, {:?} by the lights), {over_two} more than 3 levels off; by levels \
+             off, 0 to 7 and more: {counts:?}",
+            pixel(&old, at.0, at.1),
+            pixel(&new, at.0, at.1)
+        );
+        assert!(drawn > 40_000, "{name}: only {drawn} pixels drawn");
+        assert!(worst <= 6, "{name}: {worst} levels from today's picture at {at:?}");
+        assert!(over_two * 100 < drawn, "{name}: {over_two} of {drawn} pixels over 3 levels off");
+        worst_overall = worst_overall.max(worst);
+    }
+    eprintln!("the largest difference of all: {worst_overall} levels");
+}
+
+/// Flat colour is the paint as it is, with no light on it, and is the same
+/// to the byte as it was: a ball in a body paint and one in a slot's
+/// filament, drawn flat by the matcap path and by the lights.
+#[test]
+fn flat_colour_is_untouched_to_the_byte() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the flat colour test");
+        return;
+    };
+    let camera = looking(turned(0.0), Vec3::ZERO, MODEL_RADIUS * 3.0);
+    let flat = |harness: &mut Harness, volume: Volume, lights| {
+        let mut volume = volume;
+        let mut renderer = SculptRenderer::new(&harness.device, &harness.queue, TARGET_FORMAT);
+        renderer.resize(&harness.device, WIDTH, HEIGHT);
+        upload_all(&mut renderer, &harness.device, &harness.queue, &mut volume);
+        harness.view_projection = camera.1;
+        renderer.write_uniforms(
+            &harness.queue,
+            &Uniforms {
+                view_projection: camera.1.to_cols_array_2d(),
+                view: camera.0.to_cols_array_2d(),
+                paint_shown: 2,
+                lights,
+                ..uniforms(MODEL_RADIUS * 3.0)
+            },
+        );
+        harness.frame(&renderer)
+    };
+    let painted = || coated(smooth_ball(), Coat::Paint([150, 120, 90]));
+    let slotted = || {
+        let mut volume = smooth_ball();
+        volume.edit_colour(IVec3::splat(-80), IVec3::splat(80), |_, _, _, _| 1);
+        volume
+    };
+    for (name, volume) in [("body paint", painted as fn() -> Volume), ("slot", slotted)] {
+        let old = flat(&mut harness, volume(), hani_gpu::LightBlock::matcap());
+        let new = flat(&mut harness, volume(), hani_gpu::LightBlock::default());
+        assert!(mask(&new).iter().filter(|drawn| **drawn).count() > 40_000);
+        assert!(old == new, "{name}: flat colour changed");
+    }
+}
+
+/// The shader's model is `hani_gpu::lights::shade`: a smooth ball in each
+/// material, under the default rig and under one with a light fixed in the
+/// world, against the Rust model worked out at the normal of the ball's
+/// point each pixel shows.
+#[test]
+fn the_rust_model_is_the_shaders() {
+    use hani_gpu::lights::{Light, Material, Rig, shade};
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the twin test");
+        return;
+    };
+    let toward = turned(20.0);
+    let camera = looking(toward, Vec3::ZERO, MODEL_RADIUS * 3.0);
+    let eye = toward.normalize() * MODEL_RADIUS * 3.0;
+    let fixed = Rig {
+        lights: vec![Light::new(Vec3::new(-1.0, 1.0, 0.4), [1.0, 0.95, 0.9], 1.1, false)],
+        global: 0.2,
+        sky: [0.9, 0.95, 1.0],
+        ground: [0.5, 0.4, 0.3],
+    };
+    let points = on_the_smooth_ball(camera.1, eye);
+    let mut compared = 0;
+    for rig in [Rig::default(), fixed] {
+        for material in Material::ALL {
+            let block = hani_gpu::LightBlock::new(&rig, material);
+            let frame = lit_frame(&mut harness, smooth_ball(), camera, block, false);
+            let surface = material.surface();
+            let mut close = 0;
+            let mut worst = (0, [0u8; 3], [0u8; 3]);
+            for (x, y, point) in &points {
+                let world = point.normalize();
+                let normal = camera.0.transform_vector3(world).normalize();
+                let wanted = shade(&block, camera.0, &surface, normal, world, normal, 0.0);
+                let wanted = hani_core::paint::srgb(wanted.to_array());
+                let got = pixel(&frame, *x, *y);
+                let most = (0..3).map(|c| wanted[c].abs_diff(got[c])).max().unwrap_or(0);
+                close += usize::from(most <= 3);
+                if most > worst.0 {
+                    worst = (most, wanted, got);
+                }
+            }
+            eprintln!(
+                "{}: {close} of {} within 3 levels, the worst {} ({:?} wanted, {:?} drawn)",
+                material.label(),
+                points.len(),
+                worst.0,
+                worst.1,
+                worst.2
+            );
+            assert!(
+                close * 100 >= points.len() * 97,
+                "{}: only {close} of {} pixels are the Rust model's",
+                material.label(),
+                points.len()
+            );
+            compared += 1;
+        }
+    }
+    assert_eq!(compared, 10);
+    assert!(points.len() > 20_000);
+}
+
+/// A gloss varnish's highlight is tighter and brighter than a matte one's:
+/// its brightest pixel is brighter, and fewer pixels are more than half way
+/// from the ball's middling lightness to its brightest.
+#[test]
+fn a_gloss_highlight_is_tighter_and_brighter_than_a_matte_one() {
+    use hani_core::paint::Finish;
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the varnish highlight test");
+        return;
+    };
+    let camera = looking(turned(0.0), Vec3::ZERO, MODEL_RADIUS * 3.0);
+    let eye = turned(0.0).normalize() * MODEL_RADIUS * 3.0;
+    let points = on_the_smooth_ball(camera.1, eye);
+    let highlight = |frame: &[u8]| {
+        let mut lumas: Vec<f32> =
+            points.iter().map(|(x, y, _)| pixel_luma(frame, *x, *y)).collect();
+        lumas.sort_by(f32::total_cmp);
+        let (middle, peak) = (lumas[lumas.len() / 2], lumas[lumas.len() - 1]);
+        let half = (middle + peak) * 0.5;
+        (peak, lumas.iter().filter(|luma| **luma > half).count())
+    };
+    let grey = [110, 110, 115];
+    let mut seen = Vec::new();
+    for finish in [Finish::Matte, Finish::Satin, Finish::Gloss] {
+        let frame = lit_frame(
+            &mut harness,
+            coated(smooth_ball(), Coat::Varnished(grey, finish)),
+            camera,
+            hani_gpu::LightBlock::default(),
+            false,
+        );
+        dump(&format!("varnish-{}", finish.label()), &frame);
+        seen.push(highlight(&frame));
+    }
+    let [(matte_peak, matte_area), (satin_peak, satin_area), (gloss_peak, gloss_area)] =
+        [seen[0], seen[1], seen[2]];
+    eprintln!(
+        "matte peaks at {matte_peak} over {matte_area} pixels, satin {satin_peak} over \
+         {satin_area}, gloss {gloss_peak} over {gloss_area}"
+    );
+    assert!(gloss_peak > matte_peak + 30.0, "gloss {gloss_peak}, matte {matte_peak}");
+    assert!(gloss_area * 4 < matte_area, "gloss over {gloss_area} pixels, matte {matte_area}");
+    assert!(satin_peak > matte_peak && satin_peak < gloss_peak);
+}
+
+/// Where a light fixed in the world lands stays on the same part of the
+/// MODEL as the camera turns, and where one with the camera lands stays at
+/// the same place on the SCREEN. Measured by the middle of the lightest
+/// fiftieth of a matte ball under one light that casts no highlight, from
+/// above where both cameras see it: a
+/// highlight moves with the eye, as a real one does, so it is the lit side
+/// that is held, which is what turning a model under a lamp shows.
+#[test]
+fn a_fixed_light_stays_on_the_model_and_a_camera_light_on_the_screen() {
+    use hani_gpu::lights::{Light, Material, Rig};
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the fixed light test");
+        return;
+    };
+    let lit_middle = |harness: &mut Harness, with_camera: bool, degrees: f32| {
+        let toward = turned(degrees);
+        let camera = looking(toward, Vec3::ZERO, MODEL_RADIUS * 3.0);
+        let light = Light {
+            highlight: 0.0,
+            ..Light::new(Vec3::new(0.6, 0.9, 0.5), [1.0; 3], 1.0, with_camera)
+        };
+        let rig = Rig { lights: vec![light], ..Rig::sky_only(0.05, [1.0; 3], [1.0; 3]) };
+        let block = hani_gpu::LightBlock::new(&rig, Material::Polystyrene([150, 150, 150]));
+        let frame = lit_frame(harness, smooth_ball(), camera, block, false);
+        let points = on_the_smooth_ball(camera.1, toward.normalize() * MODEL_RADIUS * 3.0);
+        let mut lumas: Vec<f32> =
+            points.iter().map(|(x, y, _)| pixel_luma(&frame, *x, *y)).collect();
+        lumas.sort_by(f32::total_cmp);
+        let cut = lumas[lumas.len() * 49 / 50];
+        let (mut on_model, mut on_screen, mut count) = (Vec3::ZERO, glam::Vec2::ZERO, 0.0);
+        for (x, y, point) in &points {
+            if pixel_luma(&frame, *x, *y) >= cut {
+                on_model += point.normalize();
+                on_screen += glam::Vec2::new(*x as f32, *y as f32);
+                count += 1.0;
+            }
+        }
+        (on_model.normalize(), on_screen / count)
+    };
+    let angle = |a: Vec3, b: Vec3| a.dot(b).clamp(-1.0, 1.0).acos().to_degrees();
+    let (fixed_before, _) = lit_middle(&mut harness, false, 0.0);
+    let (fixed_after, _) = lit_middle(&mut harness, false, 60.0);
+    let (camera_before, screen_before) = lit_middle(&mut harness, true, 0.0);
+    let (camera_after, screen_after) = lit_middle(&mut harness, true, 60.0);
+    let on_model = angle(fixed_before, fixed_after);
+    let moved = angle(camera_before, camera_after);
+    let on_screen = screen_before.distance(screen_after);
+    eprintln!(
+        "fixed: {on_model:.1} degrees apart on the model; with the camera: {moved:.1} degrees \
+         apart on the model and {on_screen:.1} pixels on the screen"
+    );
+    assert!(on_model < 4.0, "a fixed light's lit side moved {on_model} degrees over the model");
+    assert!(moved > 25.0, "a camera light's lit side moved only {moved} degrees over the model");
+    assert!(on_screen < 4.0, "a camera light's lit side moved {on_screen} pixels on the screen");
+}
+
+/// Chrome shows the horizon and a metallic paint does not: under the global
+/// light alone, a chrome ball has a row where the picture steps sharply
+/// from sky to ground, and a metallic ball has none.
+#[test]
+fn chrome_shows_the_horizon_and_a_metallic_does_not() {
+    use hani_core::paint::Finish;
+    use hani_gpu::lights::{Material, Rig};
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the chrome test");
+        return;
+    };
+    let toward = turned(0.0);
+    let camera = looking(toward, Vec3::ZERO, MODEL_RADIUS * 3.0);
+    let points = on_the_smooth_ball(camera.1, toward.normalize() * MODEL_RADIUS * 3.0);
+    let block = hani_gpu::LightBlock::new(
+        &Rig::sky_only(0.6, [1.0, 1.0, 1.0], [1.0, 1.0, 1.0]),
+        Material::Clay,
+    );
+    let steepest = |frame: &[u8]| {
+        // The largest step in lightness from one row to the next, down
+        // every column of the ball.
+        let shown: std::collections::HashSet<(u32, u32)> =
+            points.iter().map(|(x, y, _)| (*x, *y)).collect();
+        let mut steepest = 0.0f32;
+        for (x, y, _) in &points {
+            if shown.contains(&(*x, y + 1)) {
+                let step = (pixel_luma(frame, *x, *y) - pixel_luma(frame, *x, y + 1)).abs();
+                steepest = steepest.max(step);
+            }
+        }
+        steepest
+    };
+    let silver = [200, 200, 205];
+    let chrome = lit_frame(
+        &mut harness,
+        coated(smooth_ball(), Coat::Metal(silver, Finish::Chrome)),
+        camera,
+        block,
+        false,
+    );
+    let metallic = lit_frame(
+        &mut harness,
+        coated(smooth_ball(), Coat::Metal(silver, Finish::Metallic)),
+        camera,
+        block,
+        false,
+    );
+    dump("horizon-chrome", &chrome);
+    dump("horizon-metallic", &metallic);
+    let (sharp, soft) = (steepest(&chrome), steepest(&metallic));
+    eprintln!("the steepest step down a column: chrome {sharp}, metallic {soft}");
+    assert!(sharp > 50.0, "chrome steps at most {sharp} levels from row to row");
+    assert!(soft < 20.0, "a metallic steps {soft} levels from row to row");
+}
+
+/// A metallic paint's sparkle is fixed to the surface: close in on a
+/// metallic ball, and move the camera sideways without turning it, and
+/// each point of the ball is the colour it was. And there is a sparkle to
+/// hold: neighbouring pixels differ far more than on the same ball in
+/// chrome.
+#[test]
+fn a_metallics_sparkle_does_not_swim() {
+    use hani_core::paint::Finish;
+    use hani_gpu::lights::{Light, Material, Rig};
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the sparkle test");
+        return;
+    };
+    let toward = Vec3::new(0.2, 0.3, 1.0);
+    let distance = MODEL_RADIUS + 6.0;
+    let rig = Rig {
+        lights: vec![Light::new(Vec3::new(-0.3, 0.5, 1.0), [1.0; 3], 1.2, false)],
+        ..Rig::sky_only(0.2, [1.0; 3], [0.4; 3])
+    };
+    let block = hani_gpu::LightBlock::new(&rig, Material::Clay);
+    let gold = [210, 170, 70];
+    let mut frames = Vec::new();
+    for shift in [Vec3::ZERO, Vec3::new(0.3, 0.2, 0.0)] {
+        // Moved and not turned: the target moves with the eye.
+        let eye = toward.normalize() * distance + shift;
+        let camera = looking(toward, shift, distance);
+        let frame = lit_frame(
+            &mut harness,
+            coated(smooth_ball(), Coat::Metal(gold, Finish::Metallic)),
+            camera,
+            block,
+            false,
+        );
+        frames.push((frame, camera, eye));
+    }
+    dump("sparkle-here", &frames[0].0);
+    dump("sparkle-moved", &frames[1].0);
+    let (here, camera, eye) = &frames[0];
+    let (there, moved, _) = &frames[1];
+    let (mut same, mut compared) = (0, 0);
+    for (x, y, point) in on_the_smooth_ball(camera.1, *eye) {
+        let seen = moved.1.project_point3(point);
+        let (u, v) = ((seen.x + 1.0) * 0.5 * WIDTH as f32, (1.0 - seen.y) * 0.5 * HEIGHT as f32);
+        if u < 1.0 || v < 1.0 || u >= WIDTH as f32 - 1.0 || v >= HEIGHT as f32 - 1.0 {
+            continue;
+        }
+        let (a, b) = (pixel(here, x, y), pixel(there, u as u32, v as u32));
+        compared += 1;
+        same += usize::from((0..3).all(|c| a[c].abs_diff(b[c]) <= 8));
+    }
+    let chrome = lit_frame(
+        &mut harness,
+        coated(smooth_ball(), Coat::Metal(gold, Finish::Chrome)),
+        *camera,
+        block,
+        false,
+    );
+    let grain = |frame: &[u8]| {
+        let (mut total, mut count) = (0.0, 0.0);
+        for (x, y, _) in on_the_smooth_ball(camera.1, *eye) {
+            if x + 1 < WIDTH {
+                total += (pixel_luma(frame, x, y) - pixel_luma(frame, x + 1, y)).abs();
+                count += 1.0;
+            }
+        }
+        total / count
+    };
+    let (sparkle, mirror) = (grain(here), grain(&chrome));
+    eprintln!(
+        "{same} of {compared} points the same colour after the move; neighbouring pixels \
+         differ by {sparkle:.2} levels on the metallic and {mirror:.2} on chrome"
+    );
+    assert!(compared > 20_000, "only {compared} points seen from both places");
+    assert!(same * 100 >= compared * 85, "only {same} of {compared} points kept their colour");
+    assert!(
+        sparkle > mirror * 5.0 && sparkle > 1.0,
+        "no sparkle to hold: {sparkle} against {mirror}"
+    );
+}
+
+/// Each material is plainly not the clay, and pewter reflects where
+/// polystyrene does not: under a sky and a ground fixed in the world, a
+/// point of the polystyrene ball is nearly the colour it was after the
+/// camera goes from above the ball to below it, and a point of the pewter
+/// ball is not, since what it reflects there has gone from sky to ground.
+#[test]
+fn each_material_differs_and_pewter_reflects() {
+    use hani_gpu::lights::{Material, Rig};
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("no usable wgpu adapter, skipping the materials test");
+        return;
+    };
+    let toward = turned(0.0);
+    let camera = looking(toward, Vec3::ZERO, MODEL_RADIUS * 3.0);
+    let eye = toward.normalize() * MODEL_RADIUS * 3.0;
+    let points = on_the_smooth_ball(camera.1, eye);
+    let frame_of = |harness: &mut Harness, material, rig: &Rig, camera| {
+        lit_frame(harness, smooth_ball(), camera, hani_gpu::LightBlock::new(rig, material), false)
+    };
+    let clay = frame_of(&mut harness, Material::Clay, &Rig::default(), camera);
+    for material in Material::ALL.into_iter().skip(1) {
+        let frame = frame_of(&mut harness, material, &Rig::default(), camera);
+        let mean: f32 = points
+            .iter()
+            .map(|(x, y, _)| {
+                let (a, b) = (pixel(&clay, *x, *y), pixel(&frame, *x, *y));
+                (0..3).map(|c| f32::from(a[c].abs_diff(b[c]))).sum::<f32>() / 3.0
+            })
+            .sum::<f32>()
+            / points.len() as f32;
+        eprintln!("{}: {mean:.1} levels from the clay on average", material.label());
+        assert!(mean > 8.0, "{} is {mean} levels from the clay", material.label());
+    }
+
+    let sky = Rig::sky_only(0.7, [1.0, 1.0, 1.0], [0.15, 0.12, 0.1]);
+    let below = Vec3::new(0.45, -0.5, 1.0);
+    let other = looking(below, Vec3::ZERO, MODEL_RADIUS * 3.0);
+    let change = |harness: &mut Harness, material| {
+        let before = frame_of(harness, material, &sky, camera);
+        let after = frame_of(harness, material, &sky, other);
+        let (mut total, mut count) = (0.0, 0.0);
+        for (x, y, point) in &points {
+            let seen = other.1.project_point3(*point);
+            let normal = point.normalize();
+            let other_eye = below.normalize() * MODEL_RADIUS * 3.0;
+            if normal.dot((other_eye - *point).normalize()) < 0.3 {
+                continue;
+            }
+            let (u, v) =
+                ((seen.x + 1.0) * 0.5 * WIDTH as f32, (1.0 - seen.y) * 0.5 * HEIGHT as f32);
+            total += (pixel_luma(&before, *x, *y) - pixel_luma(&after, u as u32, v as u32)).abs();
+            count += 1.0;
+        }
+        assert!(count > 5000.0, "only {count} points seen from both cameras");
+        total / count
+    };
+    let plastic = change(&mut harness, Material::Polystyrene([150, 150, 150]));
+    let pewter = change(&mut harness, Material::Pewter);
+    eprintln!(
+        "seen from below, a point changes by {plastic:.1} levels on polystyrene and {pewter:.1} \
+         on pewter"
+    );
+    assert!(pewter > plastic * 3.0 && pewter > 8.0, "pewter {pewter}, polystyrene {plastic}");
+}
+
+/// The contact sheet: the bumpy ball in every surface under every rig, one
+/// frame a cell, written where `HANI_DUMP_FRAMES` says as
+/// `sheet-<row>-<column>.ppm`. An instrument to look at, not a claim; the
+/// rows and columns are put together with ImageMagick's `montage`.
+#[test]
+#[ignore = "a picture to look at, run by hand with HANI_DUMP_FRAMES set"]
+fn the_contact_sheet_of_the_lights() {
+    use hani_core::paint::Finish;
+    use hani_gpu::lights::{Light, Material, RESIN_TAN, RESIN_WHITE, Rig};
+    let Some(mut harness) = Harness::new() else {
+        return;
+    };
+    let red = [170, 40, 35];
+    let silver = [200, 200, 205];
+    let rows: [(&str, Material, Coat); 11] = [
+        ("01-clay", Material::Clay, Coat::Bare),
+        ("02-polystyrene", Material::Polystyrene([150, 150, 150]), Coat::Bare),
+        ("03-green-stuff", Material::GreenStuff, Coat::Bare),
+        ("04-pewter", Material::Pewter, Coat::Bare),
+        ("05-resin-white", Material::Resin(RESIN_WHITE), Coat::Bare),
+        ("06-resin-tan", Material::Resin(RESIN_TAN), Coat::Bare),
+        ("07-paint-matte", Material::Clay, Coat::Varnished(red, Finish::Matte)),
+        ("08-paint-satin", Material::Clay, Coat::Varnished(red, Finish::Satin)),
+        ("09-paint-gloss", Material::Clay, Coat::Varnished(red, Finish::Gloss)),
+        ("10-metallic", Material::Clay, Coat::Metal(silver, Finish::Metallic)),
+        ("11-chrome", Material::Clay, Coat::Metal(silver, Finish::Chrome)),
+    ];
+    let fixed = Rig {
+        lights: vec![Light::new(Vec3::new(-1.0, 1.0, 0.6), [1.0, 0.97, 0.92], 1.1, false)],
+        global: 0.12,
+        sky: [0.9, 0.95, 1.0],
+        ground: [0.6, 0.5, 0.4],
+    };
+    let columns: [(&str, Rig, f32); 4] = [
+        ("a-default", Rig::default(), 0.0),
+        ("b-fixed", fixed.clone(), 0.0),
+        ("c-fixed-turned-60", fixed, 60.0),
+        ("d-sky-only", Rig::sky_only(0.55, [0.85, 0.92, 1.0], [0.35, 0.28, 0.22]), 0.0),
+    ];
+    for (row, material, coat) in rows {
+        for (column, rig, degrees) in &columns {
+            let camera = looking(turned(*degrees), Vec3::ZERO, MODEL_RADIUS * 3.0);
+            let frame = lit_frame(
+                &mut harness,
+                coated(bumpy_ball(), coat),
+                camera,
+                hani_gpu::LightBlock::new(rig, material),
+                true,
+            );
+            dump(&format!("sheet-{row}-{column}"), &frame);
+        }
+    }
+}
+
+/// What the lighting costs a frame: a smooth ball filling most of a 1920 by
+/// 1080 target, every pixel of it shaded, timed from submit to done over
+/// 120 frames after 10 to warm up, the median reported; for the matcap path
+/// (the old arithmetic, kept in the shader), the default rig on bare clay,
+/// and a metallic with its flakes. An instrument, run by hand:
+///
+///     cargo test -p hani-gpu --test offscreen what_the_lights_cost -- --ignored --nocapture
+#[test]
+#[ignore = "an instrument, run by hand"]
+fn what_the_lights_cost() {
+    use hani_core::paint::Finish;
+    let Some(harness) = Harness::new() else {
+        return;
+    };
+    let (width, height) = (1920u32, 1080u32);
+    let target = harness.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("cost target"),
+        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: TARGET_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+    let eye = turned(0.0).normalize() * MODEL_RADIUS * 1.9;
+    let camera_view = glam::camera::rh::view::look_at_mat4(eye, Vec3::ZERO, Vec3::Y);
+    let projection = glam::camera::rh::proj::directx::perspective(
+        45f32.to_radians(),
+        width as f32 / height as f32,
+        0.1,
+        MODEL_RADIUS * 8.0,
+    );
+    let view_projection = projection * camera_view;
+    for (name, coat, lights) in [
+        ("matcap path", Coat::Bare, hani_gpu::LightBlock::matcap()),
+        ("lights, bare clay", Coat::Bare, hani_gpu::LightBlock::default()),
+        (
+            "lights, metallic",
+            Coat::Metal([200, 160, 50], Finish::Metallic),
+            hani_gpu::LightBlock::default(),
+        ),
+    ] {
+        let mut volume = coated(smooth_ball(), coat);
+        let mut renderer = SculptRenderer::new(&harness.device, &harness.queue, TARGET_FORMAT);
+        renderer.resize(&harness.device, width, height);
+        upload_all(&mut renderer, &harness.device, &harness.queue, &mut volume);
+        renderer.write_uniforms(
+            &harness.queue,
+            &Uniforms {
+                view_projection: view_projection.to_cols_array_2d(),
+                view: camera_view.to_cols_array_2d(),
+                lights,
+                ..uniforms(MODEL_RADIUS * 3.0)
+            },
+        );
+        let mut times = Vec::new();
+        for frame in 0..130 {
+            let started = std::time::Instant::now();
+            let mut encoder = harness
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("cost") });
+            encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("cost clear"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                })
+                .forget_lifetime();
+            renderer.render(
+                &mut encoder,
+                &view,
+                PixelRect { x: 0, y: 0, width, height },
+                &Frustum::from_view_projection(view_projection),
+            );
+            harness.queue.submit([encoder.finish()]);
+            harness.device.poll(wgpu::PollType::wait_indefinitely()).expect("device poll failed");
+            if frame >= 10 {
+                times.push(started.elapsed().as_secs_f64() * 1000.0);
+            }
+        }
+        times.sort_by(f64::total_cmp);
+        eprintln!(
+            "{name}: median {:.3} ms, tenth {:.3} ms, ninetieth {:.3} ms a frame",
+            times[times.len() / 2],
+            times[times.len() / 10],
+            times[times.len() * 9 / 10]
+        );
+    }
 }

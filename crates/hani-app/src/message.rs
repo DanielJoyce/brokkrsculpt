@@ -698,6 +698,8 @@ pub enum DesignerMessage {
     Save,
     Name(String),
     Kind(crate::paint_index::Kind),
+    /// A metallic paint is chrome, nearly a mirror, or not.
+    Chrome(bool),
     /// Start from this colour, with nothing mixed in.
     Colour([u8; 3]),
     /// One channel of the colour, red 0, green 1, blue 2.

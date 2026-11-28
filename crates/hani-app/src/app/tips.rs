@@ -207,6 +207,7 @@ pub(super) fn finish(finish: hani_core::paint::Finish) -> &'static str {
         Finish::Satin => "A soft sheen",
         Finish::Gloss => "Wet-looking shine",
         Finish::Metallic => "Shines as metal does",
+        Finish::Chrome => "A mirror of metal",
     }
 }
 

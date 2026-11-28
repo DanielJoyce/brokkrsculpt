@@ -8,6 +8,8 @@
 //! the Iced specific glue stays in `hani-app`.
 
 pub mod frustum;
+// Lights that can be set, and the surfaces they light. See `lights.rs`.
+pub mod lights;
 pub mod matcap;
 pub mod mesh_pool;
 pub mod overlay;
@@ -21,6 +23,7 @@ pub mod thumbnail;
 pub mod tint;
 
 pub use frustum::Frustum;
+pub use lights::{Light, LightBlock, MAX_LIGHTS, Material, Rig, Surface};
 pub use mesh_pool::{
     INDEX_CAPACITY, MAX_BUFFERS, MaskPolarity, MeshPool, NodeId, PoolStats, SlotKey, THE_ONLY_BODY,
     TOTAL_INDEX_CAPACITY, TOTAL_VERTEX_CAPACITY, VERTEX_CAPACITY,

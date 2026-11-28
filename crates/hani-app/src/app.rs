@@ -3641,12 +3641,12 @@ impl Hani {
                 // `app/layers.rs`.
                 match touch {
                     crate::message::PaintTouch::Wash => {
-                        self.suit_the_layer("Wash", hani_core::paint::layers::Blend::Wash, false)
+                        self.suit_the_layer("Wash", hani_core::paint::layers::Blend::Wash, None)
                     }
                     crate::message::PaintTouch::Contrast => self.suit_the_layer(
                         "Contrast",
                         hani_core::paint::layers::Blend::Contrast,
-                        false,
+                        None,
                     ),
                     _ => {}
                 }

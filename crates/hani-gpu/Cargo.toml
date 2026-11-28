@@ -21,6 +21,9 @@ wgpu.workspace = true
 hani-core.workspace = true
 glam.workspace = true
 pollster.workspace = true
+# The version wgpu already brings, for one test: that the sculpt shader
+# translates to the GLSL ES 3.00 the browser build's WebGL2 runs.
+naga = { version = "27", features = ["wgsl-in", "glsl-out"] }
 
 [[bench]]
 name = "render"

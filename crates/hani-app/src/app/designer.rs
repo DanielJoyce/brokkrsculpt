@@ -16,9 +16,14 @@
 //! which is the paint's effect; the picture shows it on the slapchopped
 //! ball (`app/paint_preview.rs`). Save puts it on the rack in hand, or in
 //! place of the paint it was made from, and takes it up.
+//!
+//! A metallic has a Chrome box: ticked, it is laid on a chrome layer and
+//! drawn nearly a mirror, as the rare true chrome paints are, and not as a
+//! miniature paint's flake metal (issue 203). It is kept with the paint on
+//! the rack.
 
 use iced::widget::{
-    button, column, container, image, pick_list, row, scrollable, space, text, text_input,
+    button, checkbox, column, container, image, pick_list, row, scrollable, space, text, text_input,
 };
 use iced::{Alignment, Element, Length};
 
@@ -38,6 +43,9 @@ pub(super) struct Designer {
     pub editing: Option<usize>,
     pub name: String,
     pub kind: Kind,
+    /// A metallic is chrome. Kept whatever the kind, so that a kind tried
+    /// and changed back does not lose it; saved only on a metallic.
+    pub chrome: bool,
     /// The colour before anything is mixed into it.
     pub base: [u8; 3],
     /// What is mixed in, and how much of it, 0..=1.
@@ -49,7 +57,21 @@ pub(super) struct Designer {
 
 impl Designer {
     fn new(editing: Option<usize>, name: String, kind: Kind, base: [u8; 3]) -> Self {
-        Self { editing, name, kind, base, mix_with: None, mix: 0.5, hex: hex_of(base) }
+        Self {
+            editing,
+            name,
+            kind,
+            chrome: false,
+            base,
+            mix_with: None,
+            mix: 0.5,
+            hex: hex_of(base),
+        }
+    }
+
+    /// Whether it is drawn and laid as chrome.
+    fn is_chrome(&self) -> bool {
+        self.kind == Kind::Metallic && self.chrome
     }
 
     /// The colour as it is: the base with what is mixed in, mixed as
@@ -83,8 +105,9 @@ impl Hani {
                 let Some(paint) = self.painting.rack.rack().paints.get(at).cloned() else {
                     return;
                 };
-                self.painting.designer =
-                    Some(Designer::new(Some(at), paint.name, paint.kind, paint.rgb));
+                let mut designer = Designer::new(Some(at), paint.name, paint.kind, paint.rgb);
+                designer.chrome = paint.chrome;
+                self.painting.designer = Some(designer);
             }
             DesignerMessage::Close => self.painting.designer = None,
             DesignerMessage::Save => self.save_the_design(),
@@ -95,6 +118,7 @@ impl Hani {
                 match other {
                     DesignerMessage::Name(name) => designer.name = name,
                     DesignerMessage::Kind(kind) => designer.kind = kind,
+                    DesignerMessage::Chrome(chrome) => designer.chrome = chrome,
                     DesignerMessage::Colour(rgb) => {
                         designer.base = rgb;
                         designer.mix_with = None;
@@ -139,6 +163,7 @@ impl Hani {
             brand: String::new(),
             rgb: designer.colour(),
             kind: designer.kind,
+            chrome: designer.is_chrome(),
         };
         let (at, kept) = self.painting.rack.keep_paint(designer.editing, paint);
         self.painting.designer = None;
@@ -160,6 +185,7 @@ impl Hani {
         let picture = image(super::paint_preview::handle(
             colour,
             designer.kind,
+            designer.is_chrome(),
             PICTURE,
             self.painting.pooling,
         ))
@@ -178,6 +204,20 @@ impl Hani {
         ]
         .spacing(theme::S2)
         .align_x(Alignment::Center);
+
+        // Chrome, for a metallic only: the rare paint that is nearly a
+        // mirror.
+        let chrome: Element<'_, Message> = if designer.kind == Kind::Metallic {
+            crate::ui::tip(
+                checkbox(designer.chrome)
+                    .label("Chrome")
+                    .on_toggle(|on| Message::Designer(DesignerMessage::Chrome(on)))
+                    .text_size(theme::LABEL_SIZE),
+                "Nearly a mirror, not a metallic paint's fine flakes",
+            )
+        } else {
+            space().height(0).into()
+        };
 
         let channels =
             [("designer.red", "Red"), ("designer.green", "Green"), ("designer.blue", "Blue")]
@@ -277,6 +317,7 @@ impl Hani {
             ]
             .spacing(theme::S2)
             .align_y(Alignment::Center),
+            chrome,
             row![
                 container(text("")).width(36).height(22).style(theme::swatch(swatch(colour))),
                 text_input("RRGGBB", &designer.hex)
@@ -375,6 +416,36 @@ mod tests {
         );
         assert_eq!(app.painting.colour, [40, 0x50, 0xA0], "the paint was not taken up");
         assert_eq!(app.touch.kind, crate::message::PaintTouch::Contrast);
+    }
+
+    /// A metallic designed as chrome is kept as chrome on the rack, read
+    /// back from the rack's file as chrome, laid on a chrome layer, and
+    /// opened again with its box ticked; the box means nothing on a paint
+    /// of another kind.
+    #[test]
+    fn a_chrome_metallic_is_kept_and_laid_as_chrome() {
+        let mut app = app();
+        design(&mut app, DesignerMessage::New);
+        design(&mut app, DesignerMessage::Name("Mirror".to_string()));
+        design(&mut app, DesignerMessage::Kind(Kind::Metallic));
+        design(&mut app, DesignerMessage::Chrome(true));
+        drop(app.designer_card());
+        design(&mut app, DesignerMessage::Save);
+        let at = app.painting.rack.rack().paints.len() - 1;
+        let paint = app.painting.rack.rack().paints[at].clone();
+        assert!(paint.chrome && paint.kind == Kind::Metallic, "{paint:?}");
+        let back = super::super::rack::Rack::from_text(&app.painting.rack.rack().to_text())
+            .expect("the rack reads back");
+        assert!(back.paints[at].chrome, "chrome was lost in the rack's file");
+        let volume = app.doc.active_volume();
+        let meta = &volume.layers().metas()[volume.layers().active()];
+        assert!(meta.metal && meta.chrome, "a chrome paint is not on a chrome layer: {meta:?}");
+
+        design(&mut app, DesignerMessage::Edit(at));
+        assert!(app.painting.designer.as_ref().expect("open").chrome);
+        design(&mut app, DesignerMessage::Kind(Kind::Paint));
+        design(&mut app, DesignerMessage::Save);
+        assert!(!app.painting.rack.rack().paints[at].chrome, "a plain paint kept chrome");
     }
 
     /// A rack paint changed in the designer is changed in its place.

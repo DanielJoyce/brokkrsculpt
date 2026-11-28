@@ -448,3 +448,25 @@ fn a_metal_layer_is_metallic_where_it_is_on_top() {
     let back = super::layer_file::decode(&bytes, 1).expect("it reads");
     assert!(back[0].as_ref().expect("a stack").metas[1].metal, "the metal flag was lost");
 }
+
+/// A chrome layer is a metal layer whose finish is chrome: where its paint
+/// is on top the surface has the chrome finish, and the same layer without
+/// the flag is a metallic paint's again.
+#[test]
+fn a_chrome_layer_is_chrome_where_it_is_on_top() {
+    use crate::paint::Finish;
+    let mut volume = ball();
+    volume.add_layer("Mirror", Blend::Normal).expect("room");
+    let meta = volume.layers().metas()[1].clone();
+    volume.set_layer_meta(1, LayerMeta { metal: true, chrome: true, ..meta.clone() });
+    coat(&mut volume, [210, 210, 220, 255]);
+    drained(&mut volume);
+    assert_eq!(volume.finish_at(ON), Finish::Chrome.code());
+    volume.set_layer_meta(1, LayerMeta { metal: true, chrome: false, ..meta.clone() });
+    drained(&mut volume);
+    assert_eq!(volume.finish_at(ON), Finish::Metallic.code());
+    // Chrome means nothing without metal.
+    volume.set_layer_meta(1, LayerMeta { metal: false, chrome: true, ..meta });
+    drained(&mut volume);
+    assert_eq!(volume.finish_at(ON), 0);
+}

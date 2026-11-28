@@ -1038,6 +1038,80 @@ still a varnish layer's; mixing more than two; a paint made from an index
 paint ("like this one, but warmer") other than by trying it and pressing
 the swatch in hand; a hue and saturation picker.
 
+### As built: finishes as surfaces, metallics and chrome (2026-11-27)
+
+Issue 203, stage one. Asked for by the maintainer: "What about improving
+the rendering of metallics? True chrome looking paints are rare ( some
+kind of tick box ). Mini paint metallics look kinda matte because of the
+fine metal particles." The design, the rig and the clay's materials are in
+`crates/hani-gpu/src/lights.rs`; this is what it does to paint.
+
+**One model.** The viewport no longer draws a matcap, paint by the
+matcap's brightness, and a finish as one highlight from a fixed
+direction. Every pixel is a surface lit by a rig of lights and a global
+light: a diffuse term and a GGX highlight by a roughness and a metalness,
+and a reflection of the surrounding. With the default rig, bare clay and
+paint with no finish are the picture they were: rendered both ways on a
+GTX 1650 Ti, the largest difference on a bumpy ball is 4 levels of 255,
+on fewer than one pixel in a hundred (the offscreen test
+`the_default_rig_draws_todays_picture`). Paint keeps its colour under the
+default fill, as it always has; the clay's cool shadow is the clay's own,
+a second diffuse colour under every light but the first.
+
+**Varnish.** Each finish is its roughness under the model
+(`Finish::roughness_and_metal`): matte 0.9, a wide dim sheen; satin 0.5;
+gloss 0.15, a tight bright highlight and a reflection of the global light,
+strongest toward the edges. A varnish is a clear coat: it replaces the
+paint's own soft shine with its own, so a matte varnish over paint is
+flatter than the paint was, as it is on a model. Measured on a grey ball:
+the gloss's brightest pixel is 255 over 336 pixels above half way, the
+matte's 109 over 19,235.
+
+**Metallics.** A metallic is a metal (its colour is what it reflects,
+nothing of it diffuse) at roughness 0.5, judged on the contact sheet of
+the offscreen tests: 0.35, the number before, read as polished. Fine
+flakes, each a cell of the model 0.2 mm across leant its own way by a
+hash of where it is, catch the lights each at its own angle, so a
+metallic sparkles finely in its highlights. The flakes are fixed to the
+model: moved sideways, a close-up keeps 97% of its points within 8 levels
+of the colour they were (the rest are at flake edges, where a pixel
+samples the next flake). Where a flake is smaller than a pixel it fades
+out, rather than shimmer.
+
+**Chrome.** `Finish::Chrome`, code 5, roughness 0.05: nearly a mirror.
+What it reflects is worked out in the shader with no image: the sky above
+a sharp horizon, lighter toward the top, the ground below, and each light
+both as a soft bright patch and as the glow it casts on the room round
+the model. Under the global light alone, a chrome ball steps 73 levels
+from one row to the next at its horizon, and a metallic 2.
+
+Chrome is carried wherever metal was:
+
+- a layer: `LayerMeta::chrome`, beside `metal`, and meaning nothing
+  without it; the finish composite gives a chrome layer's paint code 5;
+- the layer file: bit 8 of a layer's flags, written only beside metal's
+  4, so a file from before reads as it always did, and a copy of
+  HaniSculpt from before reads a chrome layer as the metallic it
+  otherwise is;
+- the rack: a metallic that is chrome has `<TAB>chrome` after its name,
+  where an older copy does not look;
+- the designer: a **Chrome** box, shown for a paint of kind Metallic,
+  kept with the paint, and a chrome paint goes on a chrome layer;
+- the paint's picture: a metal is drawn by the viewport's model in Rust
+  (`hani_gpu::lights::shade`, held to the shader pixel by pixel by
+  `the_rust_model_is_the_shaders`), metallic or chrome;
+- the GLB export: chrome's roughness and metal, by the same
+  `Finish::roughness_and_metal`.
+
+Seen in offscreen renders on this machine, not in the window (the desktop
+session was locked).
+
+**Not done.** Lights that can be moved, the clay's material chosen, and
+their controls: stage two of issue 203. A slot paint's saved finish is
+still not drawn. The paint's picture draws no flakes. The paint index
+does not tell chrome paints from other metallics; a chrome paint is made
+in the designer.
+
 ## 9. Where it goes in the window
 
 - **Paint's library tab** is the rack: the rack's name and a list to swap

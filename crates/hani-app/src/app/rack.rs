@@ -13,7 +13,10 @@
 //!
 //! Each rack is a file, `racks/<name>.rack` in the data directory, one
 //! `paint = kind<TAB>hex<TAB>brand<TAB>name` a line, so that a rack can be
-//! handed to someone. Which rack is in hand is a setting, `rack.conf`.
+//! handed to someone; a metallic that is chrome has `<TAB>chrome` after its
+//! name (added on 2026-11-27, after the name so that a copy from before
+//! reads the line as the metallic it otherwise is). Which rack is in hand
+//! is a setting, `rack.conf`.
 
 use std::path::{Path, PathBuf};
 
@@ -45,6 +48,10 @@ pub(crate) struct RackPaint {
     pub brand: String,
     pub rgb: [u8; 3],
     pub kind: Kind,
+    /// A metallic that is chrome, nearly a mirror, and not a miniature
+    /// paint's flake metal. Means nothing for any other kind. Set in the
+    /// paint designer.
+    pub chrome: bool,
 }
 
 impl RackPaint {
@@ -55,7 +62,13 @@ impl RackPaint {
             brand: paint.brand.to_string(),
             rgb: paint.rgb,
             kind: paint.kind,
+            chrome: false,
         })
+    }
+
+    /// Whether it is laid as chrome: a metallic with its box ticked.
+    pub(super) fn is_chrome(&self) -> bool {
+        self.kind == Kind::Metallic && self.chrome
     }
 
     /// What it is called on a tooltip: its name, its brand and its kind.
@@ -82,13 +95,14 @@ impl Rack {
         text.push_str(&format!("name = {}\n", self.name));
         for paint in &self.paints {
             text.push_str(&format!(
-                "paint = {}\t{:02X}{:02X}{:02X}\t{}\t{}\n",
+                "paint = {}\t{:02X}{:02X}{:02X}\t{}\t{}{}\n",
                 paint.kind.code(),
                 paint.rgb[0],
                 paint.rgb[1],
                 paint.rgb[2],
                 paint.brand,
                 paint.name,
+                if paint.is_chrome() { "\tchrome" } else { "" },
             ));
         }
         text
@@ -116,11 +130,13 @@ impl Rack {
                     if name.is_empty() {
                         continue;
                     }
+                    let chrome = fields.any(|field| field.trim() == "chrome");
                     rack.paints.push(RackPaint {
                         name: name.to_string(),
                         brand: brand.trim().to_string(),
                         rgb,
                         kind,
+                        chrome: chrome && kind == Kind::Metallic,
                     });
                 }
                 _ => {}
@@ -501,7 +517,8 @@ impl Hani {
         } else if matches!(self.touch.kind, PaintTouch::Wash | PaintTouch::Contrast) {
             self.touch.kind = PaintTouch::Loaded;
         }
-        self.suit_the_layer(&paint.name, paint.kind.blend(), paint.kind == Kind::Metallic);
+        let metal = (paint.kind == Kind::Metallic).then_some(paint.is_chrome());
+        self.suit_the_layer(&paint.name, paint.kind.blend(), metal);
     }
 
     /// The key from 1 to 8 in Paint, painting in colour: the rack's paint
@@ -532,6 +549,7 @@ impl Hani {
                         image(super::paint_preview::handle(
                             paint.rgb,
                             paint.kind,
+                            paint.is_chrome(),
                             PICTURE,
                             self.painting.pooling,
                         ))
@@ -614,6 +632,7 @@ impl Hani {
                     image(super::paint_preview::handle(
                         paint.rgb,
                         paint.kind,
+                        paint.is_chrome(),
                         PICTURE,
                         self.painting.pooling
                     ))
@@ -806,7 +825,13 @@ mod tests {
         fn a_rack_reads_back_from_its_file(
             name in "[A-Za-z][A-Za-z0-9 ]{0,20}",
             paints in proptest::collection::vec(
-                ("[A-Za-z][A-Za-z0-9 '!]{0,20}", 0usize..11, any::<[u8; 3]>(), proptest::bool::ANY),
+                (
+                    "[A-Za-z][A-Za-z0-9 '!]{0,20}",
+                    0usize..11,
+                    any::<[u8; 3]>(),
+                    proptest::bool::ANY,
+                    proptest::bool::ANY,
+                ),
                 0..20,
             ),
         ) {
@@ -814,17 +839,36 @@ mod tests {
                 name: name.trim().to_string(),
                 paints: paints
                     .into_iter()
-                    .map(|(name, kind, rgb, custom)| RackPaint {
+                    .map(|(name, kind, rgb, custom, chrome)| RackPaint {
                         name: name.trim().to_string(),
                         brand: if custom { String::new() } else { "Vallejo".to_string() },
                         rgb,
                         kind: Kind::ALL[kind],
+                        // Kept only on a metallic, where it means something.
+                        chrome: chrome && Kind::ALL[kind] == Kind::Metallic,
                     })
                     .collect(),
             };
             prop_assume!(!rack.name.is_empty());
             prop_assert_eq!(Rack::from_text(&rack.to_text()), Some(rack));
         }
+    }
+
+    /// A rack line from before chrome reads as it always did, a metallic
+    /// that is chrome says so after its name, and the word means nothing
+    /// on another kind.
+    #[test]
+    fn chrome_is_kept_after_the_name() {
+        let text = "name = Metals\n\
+                    paint = metallic\tC0C0C8\tVallejo\tSilver\n\
+                    paint = metallic\tD0D0D8\t\tMirror\tchrome\n\
+                    paint = paint\t802020\t\tRed\tchrome\n";
+        let rack = Rack::from_text(text).expect("a rack");
+        let chrome: Vec<bool> = rack.paints.iter().map(|paint| paint.chrome).collect();
+        assert_eq!(chrome, [false, true, false]);
+        assert_eq!(rack.paints[1].name, "Mirror");
+        assert!(rack.to_text().contains("\tMirror\tchrome\n"));
+        assert!(!rack.to_text().contains("\tRed\tchrome"));
     }
 
     /// Racks kept in a directory come back, a renamed one is one file and
