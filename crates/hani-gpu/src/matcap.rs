@@ -3,8 +3,11 @@
 //! A procedurally generated clay matcap.
 //!
 //! Matcap shading looks up a colour by the view space normal, so all the
-//! lighting is baked into one small image. That is the whole shading model for
-//! M0: no lights, no shadows, no PBR.
+//! lighting is baked into one small image. That was the whole shading model
+//! until 2026-11-27, when `crate::lights` replaced it with lights that can be
+//! set. The image is still made, and drawn only when
+//! [`crate::LightBlock::matcap`] asks for it: the offscreen test that holds
+//! the default rig and the default clay to the picture this made.
 //!
 //! Generating the image in code rather than shipping one keeps the repository
 //! free of a binary asset whose licence would have to be tracked, and it makes
@@ -21,17 +24,28 @@ pub const MATCAP_SIZE: u32 = 256;
 /// Kept well below white on purpose. A bright surface flattens into glossy
 /// plastic and hides exactly the shallow form a sculptor needs to judge, so the
 /// lit side lands near 0.4 in linear light rather than near 1.
-const BASE: Vec3 = Vec3::new(0.40, 0.382, 0.362);
+pub(crate) const BASE: Vec3 = Vec3::new(0.40, 0.382, 0.362);
 /// Key light direction in view space, up and to the left, slightly toward the
 /// viewer.
-const KEY: Vec3 = Vec3::new(-0.35, 0.55, 0.76);
+pub(crate) const KEY: Vec3 = Vec3::new(-0.35, 0.55, 0.76);
 /// Fill light from below right, cool, so cavities do not read as flat black.
-const FILL: Vec3 = Vec3::new(0.58, -0.42, 0.45);
-const FILL_COLOUR: Vec3 = Vec3::new(0.09, 0.11, 0.15);
+pub(crate) const FILL: Vec3 = Vec3::new(0.58, -0.42, 0.45);
+pub(crate) const FILL_COLOUR: Vec3 = Vec3::new(0.09, 0.11, 0.15);
 /// Rim colour, warm to echo the amber accent without shouting.
-const RIM_COLOUR: Vec3 = Vec3::new(0.42, 0.28, 0.18);
+pub(crate) const RIM_COLOUR: Vec3 = Vec3::new(0.42, 0.28, 0.18);
 /// Ambient floor, so nothing is pure black.
-const AMBIENT: f32 = 0.16;
+pub(crate) const AMBIENT: f32 = 0.16;
+/// The numbers of [`clay`]'s formula, named so that `crate::lights` can
+/// build the default rig and the default clay out of the same ones: the
+/// key's strength and how far past side-on it wraps, the fill's falloff,
+/// the rim's power and share, and the highlight's power and strength.
+pub(crate) const KEY_STRENGTH: f32 = 0.90;
+pub(crate) const KEY_WRAP: f32 = 0.20;
+pub(crate) const FILL_FALLOFF: f32 = 1.5;
+pub(crate) const RIM_POWER: f32 = 3.5;
+pub(crate) const RIM_SHARE: f32 = 0.45;
+pub(crate) const SHINE_POWER: f32 = 48.0;
+pub(crate) const SHINE: f32 = 0.16;
 
 /// Generate the matcap as sRGB encoded RGBA bytes, row 0 being the top of the
 /// sphere.
@@ -69,15 +83,15 @@ pub fn clay() -> Vec<u8> {
             // hard line. Wrapping too far washes the form out, so this is a
             // gentle wrap rather than a full half Lambert.
             let lambert = normal.dot(key);
-            let diffuse = ((lambert + 0.20) / 1.20).clamp(0.0, 1.0);
-            let fill_amount = normal.dot(fill).max(0.0).powf(1.5);
-            let rim = (1.0 - normal.z.max(0.0)).powf(3.5);
-            let specular = normal.dot(halfway).max(0.0).powf(48.0);
+            let diffuse = ((lambert + KEY_WRAP) / (1.0 + KEY_WRAP)).clamp(0.0, 1.0);
+            let fill_amount = normal.dot(fill).max(0.0).powf(FILL_FALLOFF);
+            let rim = (1.0 - normal.z.max(0.0)).powf(RIM_POWER);
+            let specular = normal.dot(halfway).max(0.0).powf(SHINE_POWER);
 
-            let colour = BASE * (AMBIENT + 0.90 * diffuse)
+            let colour = BASE * (AMBIENT + KEY_STRENGTH * diffuse)
                 + FILL_COLOUR * fill_amount
-                + RIM_COLOUR * rim * 0.45
-                + Vec3::splat(specular * 0.16);
+                + RIM_COLOUR * rim * RIM_SHARE
+                + Vec3::splat(specular * SHINE);
 
             let index = (y * size + x) * 4;
             pixels[index] = encode_srgb(colour.x);

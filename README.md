@@ -511,9 +511,19 @@ true of it too, and what it adds is this.
   nearest the colour, wherever the paint covers at least half.
 - **Varnish.** Matte, satin or gloss, coated over the whole body from
   COATS or brushed on a layer set to *Varnish* (gloss on the eyes, matte
-  over the rest). It lays no colour; the viewport draws it as a
-  highlight as tight as the finish is glossy, and a GLB export carries
-  it as the model's roughness.
+  over the rest). It lays no colour; the viewport draws it as a clear
+  coat as rough as the finish (matte a wide dim sheen, gloss a tight
+  bright highlight and a faint reflection of the surroundings), and a
+  GLB export carries it as the model's roughness.
+- **Metallics and chrome.** A metallic paint is drawn as a miniature
+  paint's metal is: a fairly rough metal whose colour is what it
+  reflects, with a fine sparkle from its flakes that stays on the model
+  as it turns. A metallic with *Chrome* ticked in the paint designer is
+  nearly a mirror, showing a sky, a horizon and a ground. The viewport is
+  lit by a rig of lights and a global light; the default is the light
+  the viewport always had, so bare clay and unvarnished paint look as
+  they did. Lights that can be set, and other materials for the clay,
+  are the next step.
 - **Decals and stamps.** The *Decal* touch presses a picture onto the
   model along the view: drag to size it and turn it, seeing it drawn
   on the model as you go, and it is pressed on, wrapping the surface it
@@ -540,8 +550,8 @@ true of it too, and what it adds is this.
   kind: paint, air, metallic, contrast, wash, stain, primer, spray, dry
   or effect. Each paint is shown on a slapchopped ball, so a wash is
   seen pooling and a metal shining. *New paint* and *Edit* open the paint
-  designer: a name, a kind, the colour by hex or three channels or from
-  a filament, and a rack paint mixed in. The keys 1 to 8 pick the rack's
+  designer: a name, a kind (and for a metallic, *Chrome*), the colour by
+  hex or three channels or from a filament, and a rack paint mixed in. The keys 1 to 8 pick the rack's
   first eight. Choosing a paint chooses how it goes on (a wash as a
   wash, a contrast as a contrast) and gives a wash, a stain or a
   contrast a layer of its own blend.

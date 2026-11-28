@@ -18,7 +18,8 @@ Unless a row says otherwise: a shared virtual machine with 4 cores of a
 several times slower than the machine upstream's README figures come from, and
 it is noisy, so a figure here is for comparing with the figure beside it and
 not with anything else. **Nothing in this document was measured on a graphics
-card.** The replay below is how that is to be done.
+card**, but for the lights' cost (2026-11-27), which says what it was measured
+on. The replay below is how that is to be done.
 
 ## The instruments
 
@@ -936,6 +937,36 @@ brick map; the second passes over a brick that is saturated throughout,
 which has no voxel in the band and is most of the box, before asking after
 its paint, and reads a dense brick's voxels directly. A body with no paint
 costs the carry one look at each layer's field and nothing more.
+
+### The lights: a fragment shader that does more (2026-11-27)
+
+Issue 203, stage one, replaced the matcap lookup (`hani_gpu::lights`) with
+four lights' worth of a wrapped diffuse term and a GGX highlight at every
+pixel of the model, a reflection of the surrounding for what reflects, and
+a hash for a metallic's flakes. **Measured on a graphics card**, unlike the
+rest of this document: an NVIDIA GeForce GTX 1650 Ti (Max-Q) laptop, Vulkan,
+driver 620.70.06. The instrument is `what_the_lights_cost` in
+`crates/hani-gpu/tests/offscreen.rs` (run with `--ignored --nocapture`): a
+smooth ball filling most of a 1920 by 1080 target, the median of 120
+frames from submit to done. "Before" is `origin/main`'s `sculpt.wgsl` put
+in place of the new one for the run and taken out again; the clock of a
+laptop's card wanders, so each row is three runs' medians.
+
+| Surface | Before | After, first version | After |
+|---|---|---|---|
+| Bare clay, default rig | 0.61, 0.69, 0.74 ms | 2.28 ms | 1.41, 1.46, 1.51 ms |
+| A metallic, with flakes | (drawn as clay is) | 2.54 ms | 1.94, 1.96, 1.97 ms |
+
+So the model costs about 0.8 ms more a full-screen frame on this card, in
+a budget of 16. What took the first version's 2.28 down: a light that is
+off (the default rig has two) skips the rest of the loop; one that casts
+no highlight (the default fill) skips the GGX term; a camera light skips
+the turn by the view matrix; a power of 3 is a cube; and the surrounding
+is not worked out at all for a surface that reflects nothing, which bare
+clay and unvarnished paint are. The matcap path kept in the shader for the
+test runs at 0.88 to 1.14 ms, slower than the same arithmetic was in the
+old shader, which is the price of the larger shader around it and is paid
+only in that test.
 
 ## The renderer: looked at, and not built
 

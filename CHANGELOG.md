@@ -23,6 +23,28 @@ before it, see the
 
 ## Unreleased
 
+### Changed: varnish, metallics and chrome look like what they are
+
+The viewport is now lit by lights, and a finish is a surface rather than one
+highlight. Bare clay and paint with no varnish look as they did: the largest
+difference anywhere is 4 levels of 255, measured on a test ball.
+
+- **Varnish.** Matte is a wide, dim sheen, and flatter than the paint's own
+  shine, as a matte varnish is. Satin is softer. Gloss is a tight, bright
+  highlight with a faint reflection of the surroundings, strongest toward the
+  edges.
+- **Metallic paints** look like a miniature paint's metal: a fairly rough
+  metal, its colour all in what it reflects, with a fine sparkle from the
+  flakes in its highlights. The sparkle stays on the model as you turn it.
+- **Chrome.** A metallic paint has a *Chrome* box in the paint designer. Tick
+  it for the rare true chrome paints: nearly a mirror, showing a sky, a
+  horizon and a ground. It is kept with the paint on the rack, and a file
+  with a chrome layer opened in an older copy shows that layer as an
+  ordinary metallic.
+
+Lights you can move, and other materials for the clay (grey plastic, green
+stuff, pewter, resin), come next.
+
 ### Fixed: glazes and contrast paints now tint what is under them
 
 A glaze, a wash and a contrast paint now behave as thin coats of paint you

@@ -288,6 +288,7 @@ fn main() {
             ghost: [0.0; 4],
             palette: Uniforms::default().palette,
             paints: hani_gpu::PaintBlock::default(),
+            lights: hani_gpu::LightBlock::default(),
         };
         renderer.write_uniforms(&queue, &uniforms);
 

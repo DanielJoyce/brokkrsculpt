@@ -457,6 +457,9 @@ impl ThumbnailAtlas {
     /// the user did to the model on screen. The off-screen mask signal is the
     /// standing card's `+2 masked, hidden` count, and the badge the plan
     /// reserves for a cell, neither of which is this.
+    // The viewport's palette, paints, lights and gain, each its own
+    // argument as the first three were before the lights joined them.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn write_uniforms(
         &self,
         queue: &wgpu::Queue,
@@ -464,6 +467,7 @@ impl ThumbnailAtlas {
         srgb_target: bool,
         palette: &[[f32; 4]; PALETTE_SLOTS],
         paints: &crate::PaintBlock,
+        lights: &crate::LightBlock,
         crease_gain: f32,
     ) {
         let (view_projection, view) = framing(bounds);
@@ -489,6 +493,10 @@ impl ThumbnailAtlas {
             ghost: [0.0; 4],
             palette: *palette,
             paints: *paints,
+            // The viewport's lights and material, so that a body looks the
+            // same in the list as on screen; lights with the camera are
+            // with the thumbnail's.
+            lights: *lights,
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
     }

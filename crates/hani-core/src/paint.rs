@@ -93,6 +93,12 @@ pub const MAX_PAINTS: usize = 63;
 /// How glossy a paint is. A varnish layer's finish is drawn and exported
 /// (`paint/layers.rs`, stage 6 of `docs/PAINT-RACK.md`); a slot paint's is
 /// saved and not drawn yet.
+///
+/// Each is a surface in the viewport's one shading model
+/// (`hani_gpu::lights`): a roughness and a metalness, by
+/// [`Finish::roughness_and_metal`]. Metallic is a miniature paint's metal,
+/// fine flakes in a medium, so fairly rough and grainy; Chrome is the rare
+/// true chrome, nearly a mirror.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Finish {
     #[default]
@@ -100,10 +106,14 @@ pub enum Finish {
     Satin,
     Gloss,
     Metallic,
+    /// Added on 2026-11-27, after the others, so that every byte written
+    /// before it still means what it meant: its byte is 4 and its code 5.
+    Chrome,
 }
 
 impl Finish {
-    pub const ALL: [Finish; 4] = [Finish::Matte, Finish::Satin, Finish::Gloss, Finish::Metallic];
+    pub const ALL: [Finish; 5] =
+        [Finish::Matte, Finish::Satin, Finish::Gloss, Finish::Metallic, Finish::Chrome];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -111,7 +121,14 @@ impl Finish {
             Finish::Satin => "Satin",
             Finish::Gloss => "Gloss",
             Finish::Metallic => "Metallic",
+            Finish::Chrome => "Chrome",
         }
+    }
+
+    /// Whether it is a metal: its colour is what it reflects, and nothing
+    /// of it is diffuse.
+    pub fn is_metal(self) -> bool {
+        self.roughness_and_metal().1 >= 0.5
     }
 
     fn byte(self) -> u8 {
@@ -130,12 +147,20 @@ impl Finish {
 
     /// How rough and how metal it looks, each 0..=1: what the viewport
     /// shades by and what an export's roughness and metal picture holds.
+    /// The shader's `finish_of` is the other copy, and
+    /// `hani_gpu::lights::tests` reads it to hold the two together.
+    ///
+    /// Metallic's roughness was 0.35 until 2026-11-27, when the viewport
+    /// drew a metal by a formula of its own; under the microfacet model
+    /// 0.35 read as polished, and 0.5 as a miniature paint's flake metal,
+    /// judged on the contact sheet of `hani-gpu`'s offscreen tests.
     pub fn roughness_and_metal(self) -> (f32, f32) {
         match self {
             Finish::Matte => (0.9, 0.0),
             Finish::Satin => (0.5, 0.0),
             Finish::Gloss => (0.15, 0.0),
-            Finish::Metallic => (0.35, 1.0),
+            Finish::Metallic => (0.5, 1.0),
+            Finish::Chrome => (0.05, 1.0),
         }
     }
 

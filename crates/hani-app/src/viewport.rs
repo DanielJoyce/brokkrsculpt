@@ -1304,6 +1304,9 @@ impl shader::Primitive for SculptPrimitive {
             ghost: [ghost.amount, ghost.kept_amount, 0.0, 0.0],
             palette: paint.palette,
             paints: paint.paints,
+            // The default rig and the clay: nothing sets another until the
+            // Lighting block of issue 203's stage two. See `hani_gpu::lights`.
+            lights: hani_gpu::LightBlock::default(),
         };
         pipeline.renderer.write_uniforms(queue, &uniforms);
         {

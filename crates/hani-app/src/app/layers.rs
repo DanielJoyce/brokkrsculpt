@@ -50,6 +50,26 @@ pub(super) enum Before {
     Whole(Box<hani_core::paint::layers::LayerState>),
 }
 
+/// What a paint of the rack asks of its layer's metal: none, a metallic
+/// paint's flakes, or chrome (`LayerMeta::metal` and `LayerMeta::chrome`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Metal {
+    No,
+    Flakes,
+    Chrome,
+}
+
+impl Metal {
+    /// What a layer is.
+    fn of(meta: &LayerMeta) -> Self {
+        match (meta.metal, meta.chrome) {
+            (false, _) => Metal::No,
+            (true, false) => Metal::Flakes,
+            (true, true) => Metal::Chrome,
+        }
+    }
+}
+
 impl Hani {
     /// What `before` should be for a change of this kind, now.
     fn before(&self, whole: bool) -> Before {
@@ -233,9 +253,9 @@ impl Hani {
     /// Nothing is done when the layer has that blend already. `name` names
     /// a new layer, the blend's own name if none is given. `metal`, when
     /// given, is asked of the layer as well: a paint of the rack is
-    /// metallic or not; a touch or a way of painting leaves a metal layer
-    /// be.
-    pub(super) fn suit_the_layer_to_the_brush(&mut self, name: Option<&str>, metal: Option<bool>) {
+    /// metallic, chrome or neither; a touch or a way of painting leaves a
+    /// metal layer be.
+    pub(super) fn suit_the_layer_to_the_brush(&mut self, name: Option<&str>, metal: Option<Metal>) {
         let Some(blend) = self.blend_in_hand() else { return };
         // A stroke on a Varnish layer lays its finish and not a colour
         // (`app/coats.rs`): a brush that covers leaves it be.
@@ -250,16 +270,16 @@ impl Hani {
     /// Give the active layer `blend`, and `metal` where it is given: an
     /// empty unlocked layer takes them, and one with paint on it gets a new
     /// layer over it that has them, named `name`. One undo entry.
-    fn suit_the_layer(&mut self, name: &str, blend: Blend, metal: Option<bool>) {
+    fn suit_the_layer(&mut self, name: &str, blend: Blend, metal: Option<Metal>) {
         let body = self.doc.active();
         let volume = self.doc.active_volume();
         let layers = volume.layers();
         let meta = layers.metas()[layers.active()].clone();
-        if meta.blend == blend && metal.is_none_or(|metal| metal == meta.metal) {
+        if meta.blend == blend && metal.is_none_or(|metal| metal == Metal::of(&meta)) {
             return;
         }
-        let keep_metal = metal.unwrap_or(meta.metal);
-        let metal = metal.unwrap_or(false);
+        let keep_metal = metal.unwrap_or(Metal::of(&meta));
+        let metal = metal.unwrap_or(Metal::No);
         let active = layers.active();
         let empty = volume.paint().is_empty();
         let (metas, active_id) = (layers.metas(), layers.active_id());
@@ -270,12 +290,23 @@ impl Hani {
         };
         let volume = self.doc.active_volume_mut();
         let said = if empty && !meta.locked {
-            volume.set_layer_meta(active, LayerMeta { blend, metal: keep_metal, ..meta.clone() });
+            volume.set_layer_meta(
+                active,
+                LayerMeta {
+                    blend,
+                    metal: keep_metal != Metal::No,
+                    chrome: keep_metal == Metal::Chrome,
+                    ..meta.clone()
+                },
+            );
             format!("layer {} is now {}", meta.name, blend.label())
         } else if let Some(id) = volume.add_layer(name, blend) {
-            if metal && let Some(at) = volume.layers().index_of(id) {
+            if metal != Metal::No
+                && let Some(at) = volume.layers().index_of(id)
+            {
                 let meta = volume.layers().metas()[at].clone();
-                volume.set_layer_meta(at, LayerMeta { metal: true, ..meta });
+                let chrome = metal == Metal::Chrome;
+                volume.set_layer_meta(at, LayerMeta { metal: true, chrome, ..meta });
             }
             format!("new layer {name}, {}", blend.label())
         } else {

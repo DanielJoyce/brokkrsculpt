@@ -1,8 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// Matcap shading for the sculpt viewport. The whole lighting model is a lookup
-// into a small image by view space normal, which is why there are no lights,
-// no shadows and no material parameters here.
+// The sculpt viewport's shading: a rig of lights and a global light, and at
+// each pixel a surface (the model's material, a paint, a varnish or a metal)
+// lit by them with one model, a wrapped diffuse term and a GGX highlight.
+// `hani_gpu::lights` is where the design is, and its `shade` is this file's
+// `shade` in Rust. Until 2026-11-27 this was a matcap lookup, which is kept
+// behind `uniforms.lights.matcap` for the test that holds the default to it.
+
+// The rig and the model's material: `hani_gpu::LightBlock`, field for field.
+// `lights::tests::the_block_is_laid_out_as_the_shader_reads_it` reads these
+// lines.
+struct Lights {
+    direction: array<vec4<f32>, 4>,
+    colour: array<vec4<f32>, 4>,
+    wrap: vec4<f32>,
+    falloff: vec4<f32>,
+    sky: vec4<f32>,
+    ground: vec4<f32>,
+    key: vec4<f32>,
+    shade: vec4<f32>,
+    f0: vec4<f32>,
+    rim: vec4<f32>,
+    through: vec4<f32>,
+    paint: vec4<f32>,
+    matcap: vec4<u32>,
+}
 
 struct Uniforms {
     view_projection: mat4x4<f32>,
@@ -68,6 +90,21 @@ struct Uniforms {
     paint_film: array<vec4<f32>, 64>,
     // The highlight's colour.
     paint_light: array<vec4<f32>, 64>,
+    // The lights and the model's material. See `Lights` above.
+    lights: Lights,
+}
+
+// What a pixel is made of, for `shade`: `hani_gpu::lights::Surface`.
+struct Surface {
+    key: vec3<f32>,
+    shade: vec3<f32>,
+    wrap: f32,
+    f0: vec3<f32>,
+    roughness: f32,
+    metal: f32,
+    reflect: f32,
+    rim: vec3<f32>,
+    through: vec3<f32>,
 }
 
 // Luminance of the matcap's BASE clay colour in linear light, which is what a
@@ -79,8 +116,23 @@ const MATCAP_BASE_LUMA: f32 = 0.384;
 // Filament colours are drawn a little under their full value. The lit side of
 // the matcap runs to about 1.4x BASE's luminance, so a white filament still
 // clips at the specular peak -- as white plastic does -- while the rest of the
-// lit quarter keeps its gradient rather than flattening to one value.
+// lit quarter keeps its gradient rather than flattening to one value. Only
+// the matcap path reads this; the lit path has `lights.paint.x`, the same
+// number, from `hani_gpu::lights::PAINT_EXPOSURE`.
 const PAINT_EXPOSURE: f32 = 0.8;
+// The shading model's constants. `hani_gpu::lights` has the other copy of
+// each, and `lights::tests::the_shaders_constants_are_these` reads these lines.
+const LIGHT_SIZE: f32 = 0.05;
+const HORIZON: f32 = 0.75;
+const THIN_GLOW: f32 = 0.6;
+const ROOM: f32 = 0.7;
+const ROOM_POWER: f32 = 3.0;
+const RIM_POWER: f32 = 3.5;
+const PI: f32 = 3.14159265;
+// A metallic paint's flakes: how big each is, in millimetres of the model,
+// and how far one leans from the surface it lies in.
+const FLAKE_SIZE: f32 = 0.2;
+const FLAKE_TILT: f32 = 0.35;
 // The least light a wash's pigment is taken to pass, so that pure black on an
 // edge is `floor^0` and not `0^0`. `hani_core::paint::WASH_FLOOR` is the
 // other copy and `paints::tests` reads this line.
@@ -160,6 +212,10 @@ struct VertexOutput {
     // A boolean group's row drawn see-through, tinted by what it does: 1 a
     // cut, 2 a keep, nought none. `hani_gpu::tint`.
     @location(10) @interpolate(flat) tint: u32,
+    // The vertex where it is in the body, before the gizmo turns it: what a
+    // metallic paint's flakes are fixed to, so that they neither swim as the
+    // camera moves nor crawl as the model turns.
+    @location(11) surface: vec3<f32>,
 }
 
 // How rough and how metal a finish is, by its code.
@@ -169,7 +225,8 @@ fn finish_of(code: u32) -> vec2<f32> {
         case 1u: { return vec2<f32>(0.9, 0.0); }
         case 2u: { return vec2<f32>(0.5, 0.0); }
         case 3u: { return vec2<f32>(0.15, 0.0); }
-        case 4u: { return vec2<f32>(0.35, 1.0); }
+        case 4u: { return vec2<f32>(0.5, 1.0); }
+        case 5u: { return vec2<f32>(0.05, 1.0); }
         default: { return vec2<f32>(1.0, 0.0); }
     }
 }
@@ -179,6 +236,151 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     let low = c / 12.92;
     let high = pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
     return select(high, low, c <= vec3<f32>(0.04045));
+}
+
+// One light's GGX highlight with Smith's height-correlated visibility, times
+// the light's cosine. The eye is down the view's own axis, as the matcap had
+// it. `hani_gpu::lights::microfacet` is the other copy.
+fn microfacet(n: vec3<f32>, l: vec3<f32>, alpha: f32) -> f32 {
+    let h = normalize(l + vec3<f32>(0.0, 0.0, 1.0));
+    let nl = max(dot(n, l), 0.0);
+    let nv = max(n.z, 1.0e-3);
+    let nh = max(dot(n, h), 0.0);
+    let a2 = alpha * alpha;
+    let d = nh * nh * (a2 - 1.0) + 1.0;
+    let distribution = a2 / (PI * d * d);
+    let visibility = 0.5 / (nl * sqrt(nv * nv * (1.0 - a2) + a2) + nv * sqrt(nl * nl * (1.0 - a2) + a2) + 1.0e-5);
+    return distribution * visibility * nl;
+}
+
+// Schlick's Fresnel term, by the angle between the eye and the half way vector.
+fn fresnel(f0: vec3<f32>, l: vec3<f32>) -> vec3<f32> {
+    let vh = max(normalize(l + vec3<f32>(0.0, 0.0, 1.0)).z, 0.0);
+    return f0 + (vec3<f32>(1.0) - f0) * pow(max(1.0 - vh, 0.0), 5.0);
+}
+
+// How much of the surrounding a surface reflects: Karis's fit to the
+// split-sum term ("Physically Based Shading on Mobile", 2014).
+fn environment_brdf(f0: vec3<f32>, roughness: f32, nv: f32) -> vec3<f32> {
+    let r = roughness * vec4<f32>(-1.0, -0.0275, -0.572, 0.022) + vec4<f32>(1.0, 0.0425, 1.04, -0.04);
+    let a004 = min(r.x * r.x, exp2(-9.28 * nv)) * r.x + r.y;
+    return f0 * (-1.04 * a004 + r.z) + vec3<f32>(1.04 * a004 + r.w);
+}
+
+// The surrounding a mirror sees in a direction in the world: the sky above a
+// horizon, lighter toward the top, and the ground below it, the horizon
+// blurred and the difference faded as the surface roughens. No image.
+fn surrounding(r: vec3<f32>, roughness: f32) -> vec3<f32> {
+    let blur = 0.01 + 1.2 * roughness * roughness;
+    let t = smoothstep(-blur, blur, r.y);
+    let contrast = HORIZON * (1.0 - roughness);
+    let above = uniforms.lights.sky.rgb * (1.0 + contrast * (0.4 + 0.6 * max(r.y, 0.0)));
+    let below = uniforms.lights.ground.rgb * (1.0 - contrast);
+    return mix(below, above, t);
+}
+
+// A surface lit by the rig: `n` the normal in view space, `nw` in the world,
+// `glint` the normal the lights' highlights are taken from (a flake's, on a
+// metallic paint), `thin` how thin the surface is here, 0..1.
+// `hani_gpu::lights::shade` is this in Rust, and the offscreen test
+// `the_rust_model_is_the_shaders` holds the two together.
+fn shade(s: Surface, n: vec3<f32>, nw: vec3<f32>, glint: vec3<f32>, thin: f32) -> vec3<f32> {
+    let ground = uniforms.lights.ground.rgb;
+    let hemisphere = mix(ground, uniforms.lights.sky.rgb, clamp(nw.y * 0.5 + 0.5, 0.0, 1.0));
+    let alpha = max(s.roughness * s.roughness, LIGHT_SIZE);
+    // Reflected about the normal from the eye, and bent toward the normal as
+    // the surface roughens.
+    let r = normalize(mix(n * (2.0 * n.z) - vec3<f32>(0.0, 0.0, 1.0), n, s.roughness * s.roughness));
+    var diffuse = s.key * hemisphere;
+    var specular = vec3<f32>(0.0);
+    var behind = hemisphere;
+    var room = vec3<f32>(0.0);
+    for (var i = 0u; i < 4u; i = i + 1u) {
+        let colour = uniforms.lights.colour[i];
+        // A light that is off costs nothing past this: the same for every
+        // pixel, so the branch is free.
+        if (colour.r + colour.g + colour.b <= 0.0) {
+            continue;
+        }
+        let d = uniforms.lights.direction[i];
+        let wrap = uniforms.lights.wrap[i];
+        let falloff = uniforms.lights.falloff[i];
+        // A light fixed in the world is turned into view space here.
+        var l = d.xyz;
+        if (d.w > 0.5) {
+            l = (uniforms.view * vec4<f32>(l, 0.0)).xyz;
+        }
+        l = normalize(l);
+        let x = dot(n, l);
+        let plain = pow(clamp((x + wrap) / (1.0 + wrap), 0.0, 1.0), falloff);
+        var wrapped = plain;
+        if (s.wrap > 0.0) {
+            let w = wrap + s.wrap;
+            wrapped = pow(clamp((x + w) / (1.0 + w), 0.0, 1.0), falloff);
+        }
+        let albedo = select(s.shade, s.key, i == 0u);
+        diffuse = diffuse + colour.rgb * (albedo * plain + s.through * (wrapped - plain));
+        behind = behind + colour.rgb * max(-x, 0.0);
+        // A light that casts no highlight (the default fill) skips both.
+        if (colour.w > 0.0) {
+            specular = specular + colour.rgb * colour.w * microfacet(glint, l, alpha) * fresnel(s.f0, l);
+            // ROOM_POWER, 3, as a cube: a power is an exp2 and a log2.
+            let toward = max(dot(r, l) * 0.5 + 0.5, 0.0);
+            room = room + colour.rgb * colour.w * (toward * toward * toward);
+        }
+    }
+    let nv = max(n.z, 0.0);
+    let rim = s.rim * hemisphere * pow(max(1.0 - nv, 0.0), RIM_POWER);
+    // What it reflects: the sky and the ground, in the world, by the view's
+    // rotation turned back, and the room the lights light. Nothing, at no
+    // cost, for the clay and unvarnished paint, which reflect nothing.
+    var environment = vec3<f32>(0.0);
+    if (s.reflect > 0.0) {
+        let turn = mat3x3<f32>(uniforms.view[0].xyz, uniforms.view[1].xyz, uniforms.view[2].xyz);
+        let seen = surrounding(normalize(transpose(turn) * r), s.roughness) + room * ROOM;
+        environment = seen * environment_brdf(s.f0, s.roughness, nv) * s.reflect;
+    }
+    let glow = s.through * thin * behind * THIN_GLOW;
+    return diffuse * (1.0 - s.metal) + specular + rim + environment + glow;
+}
+
+// The model's material, as the block holds it.
+fn material() -> Surface {
+    let m = uniforms.lights;
+    return Surface(m.key.rgb, m.shade.rgb, m.key.w, m.f0.rgb, m.f0.w, m.rim.w, m.shade.w, m.rim.rgb, m.through.rgb);
+}
+
+// Unvarnished paint of a colour, linear, already multiplied by its coverage:
+// lit as the clay is, with its own colour in place of every one of the
+// clay's. `hani_gpu::lights::Surface::paint`.
+fn paint_surface(colour: vec3<f32>) -> Surface {
+    let p = uniforms.lights.paint;
+    let albedo = colour * p.x;
+    return Surface(albedo, albedo, 0.0, albedo * p.y, p.w, 0.0, 0.0, albedo * p.z, vec3<f32>(0.0));
+}
+
+// `b` laid over `a` by `share`, field by field: linear, so that a pixel half
+// painted is lit half as the paint and half as what is under it.
+fn over(a: Surface, b: Surface, share: f32) -> Surface {
+    return Surface(
+        mix(a.key, b.key, share), mix(a.shade, b.shade, share), mix(a.wrap, b.wrap, share),
+        mix(a.f0, b.f0, share), mix(a.roughness, b.roughness, share), mix(a.metal, b.metal, share),
+        mix(a.reflect, b.reflect, share), mix(a.rim, b.rim, share), mix(a.through, b.through, share),
+    );
+}
+
+// Three numbers 0..1 from a cell of the model: Jarzynski and Olano's pcg3d
+// ("Hash Functions for GPU Rendering", 2020). A hash and not a texture.
+fn flake_hash(cell: vec3<i32>) -> vec3<f32> {
+    var v = bitcast<vec3<u32>>(cell) * 1664525u + vec3<u32>(1013904223u);
+    v.x = v.x + v.y * v.z;
+    v.y = v.y + v.z * v.x;
+    v.z = v.z + v.x * v.y;
+    v = v ^ (v >> vec3<u32>(16u));
+    v.x = v.x + v.y * v.z;
+    v.y = v.y + v.z * v.x;
+    v.z = v.z + v.x * v.y;
+    return vec3<f32>(v >> vec3<u32>(8u)) / 16777216.0;
 }
 
 @vertex
@@ -239,6 +441,7 @@ fn vertex_main(
     out.cavity = select(CAVITY_RANGE * t * abs(t), 0.0, cavity_byte < 0.5);
     out.paint = vec4<f32>(srgb_to_linear(paint.rgb) * paint.a, paint.a);
     out.finish = u32(round(attributes.a * 255.0));
+    out.surface = position;
     return out;
 }
 
@@ -249,6 +452,11 @@ fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) ->
     // shows through with no sorting and the depth buffer still right.
     // A body the hierarchy draws see-through is screened the same way, by
     // its own share.
+    // How much of the model one pixel spans, in millimetres: taken first,
+    // where every pixel of a quad is still running, since a derivative
+    // needs its neighbours. A metallic paint's flakes fade out as they
+    // shrink below a pixel, where they would only shimmer.
+    let footprint = length(fwidth(in.surface));
     var amount = in.screened;
     if (uniforms.ghost.x > 0.0) {
         let kept = dot(uniforms.ghost_plane.xyz, in.world) >= uniforms.ghost_plane.w
@@ -276,22 +484,18 @@ fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) ->
         normal = -normal;
     }
 
-    // Matcap lookup: the view space normal's xy maps onto the unit disc. The v
-    // axis is flipped because texture row 0 is the top of the sphere.
-    let uv = vec2<f32>(normal.x * 0.5 + 0.5, 0.5 - normal.y * 0.5);
-    var colour = textureSample(matcap_texture, matcap_sampler, uv).rgb;
-    // How brightly the clay is lit here, as a multiple of its own colour:
-    // the light a slot's colour or a coat of paint over it is under. Taken
-    // here, from the clay, and not further down from whatever has been laid
-    // over it by then.
-    let brightness = dot(colour, vec3<f32>(0.2126, 0.7152, 0.0722)) / MATCAP_BASE_LUMA;
+    // The same normal in the world, turned on a back face as the view's is:
+    // what the global light lights by.
+    let world_normal = select(-1.0, 1.0, front_facing) * normalize(in.world_normal);
 
-    // The paint, BEFORE the mask so protection still reads on a painted
-    // surface: the clay's albedo is swapped for the filament's and the matcap's
-    // lighting kept. A slot past the palette clamps to the last entry, which
-    // the application fills with a colour no filament is.
-    if (uniforms.paint_shown != 0u && in.slot != 0u) {
-        var albedo = uniforms.palette[min(in.slot, 15u)].rgb;
+    // The slot's colour, BEFORE the mask so protection still reads on a
+    // painted surface: a filament's, or a paint's recipe. A slot past the
+    // palette clamps to the last entry, which the application fills with a
+    // colour no filament is.
+    let slotted = uniforms.paint_shown != 0u && in.slot != 0u;
+    var albedo = vec3<f32>(0.0);
+    if (slotted) {
+        albedo = uniforms.palette[min(in.slot, 15u)].rgb;
         let base = uniforms.paint_base[min(in.slot, 63u)];
         if (base.w > 0.5) {
             // A paint, and not a filament: a recipe shaded from how concave
@@ -317,54 +521,82 @@ fn fragment_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) ->
             let caught = clamp(smoothstep(film.w, 1.0, edge) * film.z, 0.0, 1.0);
             albedo = mix(albedo, light.rgb, caught);
         }
-        // Not clamped at 1: the lighting term is allowed to exceed the clay's
-        // own, or every painted pixel on the key-lit side collapses to one
-        // flat value and the form under the paint is gone.
-        colour = albedo * brightness * PAINT_EXPOSURE;
+    }
+    // The body's own paint, over the clay or over the slot's recipe, by its
+    // coverage: a colour in linear light already multiplied by it.
+    let coated = uniforms.paint_shown != 0u && in.paint.a > 0.0;
+
+    var colour = vec3<f32>(0.0);
+    if (uniforms.lights.matcap.x != 0u) {
+        // The matcap, exactly as before 2026-11-27, and no finish: kept for
+        // the offscreen test that holds the default rig and clay to it.
+        // The view space normal's xy maps onto the unit disc, the v axis
+        // flipped because texture row 0 is the top of the sphere. Paint is
+        // its colour times how brightly the clay is lit here.
+        let uv = vec2<f32>(normal.x * 0.5 + 0.5, 0.5 - normal.y * 0.5);
+        colour = textureSample(matcap_texture, matcap_sampler, uv).rgb;
+        let brightness = dot(colour, vec3<f32>(0.2126, 0.7152, 0.0722)) / MATCAP_BASE_LUMA;
+        if (slotted) {
+            colour = select(albedo * brightness * PAINT_EXPOSURE, albedo, uniforms.paint_shown == 2u);
+        }
+        if (coated) {
+            let coat = select(in.paint.rgb * brightness * PAINT_EXPOSURE, in.paint.rgb, uniforms.paint_shown == 2u);
+            colour = colour * (1.0 - in.paint.a) + coat;
+        }
+    } else if (uniforms.paint_shown == 2u) {
         // Flat: the paint as it is, with no light on it. A wash is shading,
         // and it cannot be judged with the viewport's own shading on top.
-        if (uniforms.paint_shown == 2u) {
+        // What is not painted is the model, lit.
+        colour = shade(material(), normal, world_normal, normal, 0.0);
+        if (slotted) {
             colour = albedo;
         }
-    }
-
-    // The body's own paint, over the clay or over the slot's recipe, by its
-    // coverage. Lit as a slot's colour is, and by the same switch drawn flat.
-    if (uniforms.paint_shown != 0u && in.paint.a > 0.0) {
-        var coat = in.paint.rgb * brightness * PAINT_EXPOSURE;
-        if (uniforms.paint_shown == 2u) {
-            coat = in.paint.rgb;
+        if (coated) {
+            colour = colour * (1.0 - in.paint.a) + in.paint.rgb;
         }
-        colour = colour * (1.0 - in.paint.a) + coat;
-    }
-
-    // The finish a varnish laid, over the paint: a highlight from a light
-    // above and to the left of the camera, as tight and as bright as the
-    // finish is smooth, and a metal's own colour in its highlight and less
-    // of it lit flat. Not drawn flat, where there is no light to catch.
-    if (uniforms.paint_shown == 1u && in.finish != 0u) {
-        let finish = finish_of(in.finish);
-        let polish = 1.0 - finish.x;
-        let light = normalize(vec3<f32>(-0.35, 0.55, 0.75));
-        let half_way = normalize(light + vec3<f32>(0.0, 0.0, 1.0));
-        let shine = mix(6.0, 160.0, polish * polish);
-        let caught = pow(max(dot(normal, half_way), 0.0), shine) * polish * 0.7;
-        if (finish.y > 0.5 && in.paint.a > 0.0) {
-            // A metal is mostly what it reflects: dark where it faces away
-            // from the light above, bright where it catches it, a hard
-            // highlight in its own colour, and a thin rim where it turns
-            // away from the eye. The lit paint alone read as a shiny paint
-            // and not as metal: seen by the maintainer.
-            let albedo = in.paint.rgb / max(in.paint.a, 1.0e-3);
-            let up = normal.y * 0.5 + 0.5;
-            let facing = max(normal.z, 0.0);
-            let reflected = mix(0.06, 1.25, smoothstep(0.3, 0.95, up)) * (0.5 + 0.5 * facing);
-            let rim = pow(1.0 - facing, 3.0) * 0.3;
-            let metal = albedo * (reflected * 1.35 + rim) + caught * 2.2 * mix(vec3<f32>(1.0), albedo, 0.5);
-            colour = mix(colour, metal, in.paint.a);
-        } else {
-            colour = colour + caught * vec3<f32>(1.0);
+    } else {
+        // Lit: the model's material, the slot's colour as paint in its
+        // place, the body's paint over either by its coverage, and over all
+        // of it the finish a varnish or a metal laid.
+        var surface = material();
+        if (slotted) {
+            surface = paint_surface(albedo);
         }
+        if (coated) {
+            surface = over(surface, paint_surface(in.paint.rgb / in.paint.a), in.paint.a);
+        }
+        var glint = normal;
+        if (uniforms.paint_shown == 1u && in.finish != 0u) {
+            let finish = finish_of(in.finish);
+            if (finish.y > 0.5) {
+                // A metal: its colour is what it reflects, nothing of it
+                // diffuse. A metallic paint's flakes, each a cell of the
+                // model a fraction of a millimetre across and leant its own
+                // way, catch the lights each at its own angle.
+                let paint = in.paint.rgb / max(in.paint.a, 1.0e-3);
+                let metal_colour = select(surface.key / uniforms.lights.paint.x, paint, coated);
+                let share = select(1.0, in.paint.a, coated);
+                let metal = Surface(vec3<f32>(0.0), vec3<f32>(0.0), 0.0, metal_colour, finish.x, 1.0, 1.0, vec3<f32>(0.0), vec3<f32>(0.0));
+                surface = over(surface, metal, share);
+                if (in.finish == 4u) {
+                    let lean = flake_hash(vec3<i32>(floor(in.surface / FLAKE_SIZE))) - vec3<f32>(0.5);
+                    let flake = normalize(world_normal + lean * FLAKE_TILT);
+                    let seen = normalize((uniforms.view * vec4<f32>(flake, 0.0)).xyz);
+                    let shown = clamp(FLAKE_SIZE * 1.5 / max(footprint, 1.0e-6) - 0.5, 0.0, 1.0);
+                    glint = normalize(mix(normal, seen, share * shown));
+                }
+            } else {
+                // A varnish: its own clear coat over what is under it, as
+                // rough as its finish, reflecting the surrounding.
+                surface.f0 = vec3<f32>(0.04);
+                surface.roughness = finish.x;
+                surface.reflect = 1.0;
+            }
+        }
+        // How thin the surface is here, from the edge signal: where light
+        // let into a resin comes through.
+        let thin = clamp(-in.cavity * uniforms.cavity.y, 0.0, 1.0);
+        colour = shade(surface, normal, world_normal, glint, thin);
     }
 
     // The creases and edges, AFTER the paint so they model a painted surface

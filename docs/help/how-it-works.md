@@ -66,6 +66,19 @@ colour. Each reads how shut in each place is and pools in the recesses; a
 drybrush reads how much each place stands out and catches only the edges. Because paint belongs to the material, it moves when the surface is
 moved and is cut when the model is cut.
 
+## How the viewport is lit
+
+The model is lit by a few lights, which follow the camera, and by a dim light
+from all round. Every surface is lit the same way, by how rough it is and
+whether it is a metal. A varnish is a clear coat as rough as its finish: matte
+spreads the light into a wide, dim sheen, gloss gathers it into a small,
+bright highlight and shows a little of the surroundings. A metallic paint is a
+fairly rough metal, its colour all in what it reflects, with a fine sparkle
+from its flakes that stays on the model as it turns. A metallic marked
+*Chrome* in the paint designer is nearly a mirror, and shows a sky, a horizon
+and a ground. The bare clay is a warm grey that is a little cool where the
+main light does not reach, as it has always been drawn.
+
 ## Getting it out
 
 - **Exporting** meshes the whole field at full detail, then can thin the mesh

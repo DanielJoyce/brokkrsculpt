@@ -23,13 +23,20 @@
 //!     u16 name length, then that many bytes of UTF-8
 //!     u8  blend           see `Blend::code`
 //!     f32 opacity
-//!     u8  1: shown; 2: locked; 4: metal
+//!     u8  1: shown; 2: locked; 4: metal; 8: chrome, with 4 only
 //!   u64 length of the layers' paint, then a paint section of that many
 //!       bytes holding one field a layer (0 when every layer is empty)
 //! ```
 //!
 //! All little endian. Strict as the paint section is: a refusal costs the
 //! stack, and each body keeps the paint as it was seen, as one layer.
+//!
+//! Chrome (8) came on 2026-11-27, in a bit nothing before it wrote, so a
+//! file from before reads as it always did: no layer of it is chrome. It
+//! is written only beside metal (4), so a copy of HaniSculpt from before
+//! it reads a chrome layer as the metal it is, a metallic paint's, and
+//! loses only the mirror; and a reader of this one reads 8 without 4 as
+//! no metal at all, as that older copy would.
 
 use super::layers::{Blend, LayerMeta, LayerState, MAX_LAYERS};
 
@@ -39,6 +46,7 @@ pub(crate) const TAG: &[u8; 8] = b"BRKLAYR1";
 const SHOWN: u8 = 1;
 const LOCKED: u8 = 2;
 const METAL: u8 = 4;
+const CHROME: u8 = 8;
 
 /// The section for these bodies' stacks, `None` for a plain one, or `None`
 /// when every body is plain.
@@ -67,7 +75,8 @@ pub(crate) fn encode(bodies: &[Option<LayerState>]) -> Option<Vec<u8>> {
             out.push(
                 if meta.visible { SHOWN } else { 0 }
                     | if meta.locked { LOCKED } else { 0 }
-                    | if meta.metal { METAL } else { 0 },
+                    | if meta.metal { METAL } else { 0 }
+                    | if meta.metal && meta.chrome { CHROME } else { 0 },
             );
         }
         let paint = super::file::encode(state.fields.iter()).unwrap_or_default();
@@ -132,6 +141,7 @@ pub(crate) fn decode(bytes: &[u8], bodies: usize) -> Result<Vec<Option<LayerStat
                 visible: flags & SHOWN != 0,
                 locked: flags & LOCKED != 0,
                 metal: flags & METAL != 0,
+                chrome: flags & METAL != 0 && flags & CHROME != 0,
             });
         }
         let mut ids: Vec<u32> = metas.iter().map(|meta| meta.id).collect();
@@ -208,6 +218,38 @@ mod tests {
             assert!(same(one, other), "a layer's paint changed");
         }
         assert!(encode(&[None, None]).is_none(), "plain bodies gained bytes");
+    }
+
+    /// A chrome layer reads back as chrome; its flags byte carries metal
+    /// too, which is what a reader from before chrome reads; and a flags
+    /// byte from before chrome (no 8) reads as no chrome, metal or not.
+    #[test]
+    fn a_chrome_layer_reads_back_and_an_old_one_is_not_chrome() {
+        let mut volume = painted_ball();
+        volume.add_layer("Mirror", Blend::Normal).expect("room");
+        coat(&mut volume, [200, 200, 210, 255]);
+        let meta = volume.layers().metas()[1].clone();
+        volume.set_layer_meta(1, LayerMeta { metal: true, chrome: true, ..meta });
+        let bytes = encode(&[Some(volume.layer_state())]).expect("a section");
+        let back = decode(&bytes, 1).expect("it reads");
+        let back = &back[0].as_ref().expect("a stack").metas[1];
+        assert!(back.metal && back.chrome, "{back:?}");
+
+        // The layer's flags byte is the last byte of its entry: just
+        // before the paint's length. Found by its value rather than by
+        // counting, so a change to the entry's other fields cannot move
+        // the test onto the wrong byte without failing it.
+        let flags = SHOWN | METAL | CHROME;
+        let at = bytes.iter().rposition(|byte| *byte == flags).expect("the chrome layer's flags");
+        let mut old = bytes.clone();
+        old[at] = SHOWN | METAL;
+        let read = decode(&old, 1).expect("it reads");
+        let read = &read[0].as_ref().expect("a stack").metas[1];
+        assert!(read.metal && !read.chrome, "a metal layer from before chrome read as {read:?}");
+        old[at] = SHOWN | CHROME;
+        let read = decode(&old, 1).expect("it reads");
+        let read = &read[0].as_ref().expect("a stack").metas[1];
+        assert!(!read.metal && !read.chrome, "chrome without metal read as {read:?}");
     }
 
     /// Anything cut short or out of its bounds is refused, never a panic.

@@ -305,6 +305,11 @@ pub struct LayerMeta {
     /// finish ([`crate::paint::Finish::Metallic`]). What a metallic paint
     /// from the rack is laid on.
     pub metal: bool,
+    /// With `metal`, its metal is chrome, nearly a mirror
+    /// ([`crate::paint::Finish::Chrome`]), and not a metallic paint's
+    /// flakes. Means nothing without `metal`. What a rack paint with its
+    /// Chrome box ticked is laid on.
+    pub chrome: bool,
 }
 
 impl LayerMeta {
@@ -318,7 +323,14 @@ impl LayerMeta {
             visible: true,
             locked: false,
             metal: false,
+            chrome: false,
         }
+    }
+
+    /// The finish its paint gives the surface where it is on top, being
+    /// metal: chrome or a metallic paint's.
+    pub fn metal_finish(&self) -> crate::paint::Finish {
+        if self.chrome { crate::paint::Finish::Chrome } else { crate::paint::Finish::Metallic }
     }
 
     /// Whether a layer lying like this over nothing is its paint as it is.
@@ -845,7 +857,7 @@ impl Layers {
                         .find(|(_, rgba)| rgba[3] >= 128);
                     let code = match top {
                         Some((meta, rgba)) if meta.blend == Blend::Varnish => rgba[0],
-                        Some((meta, _)) if meta.metal => crate::paint::Finish::Metallic.code(),
+                        Some((meta, _)) if meta.metal => meta.metal_finish().code(),
                         _ => 0,
                     };
                     if code != 0 {
