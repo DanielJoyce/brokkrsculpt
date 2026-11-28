@@ -968,6 +968,15 @@ impl Hani {
             && (self.studio.custom.is_some() || Actions::of(brush.kind).is_some())
     }
 
+    /// The pen's lean, as far as the stroke in hand is steered by it: not
+    /// at all for a brush that levels to a plane. See `app/pen_strokes.rs`.
+    pub(super) fn stroke_lean(&self, lean: Vec3) -> Vec3 {
+        let brush = self.effective_brush();
+        let in_hand = brush.kind == self.brush.kind;
+        let actions = self.studio.custom.filter(|_| in_hand).or_else(|| Actions::of(brush.kind));
+        if actions.is_some_and(|actions| actions.level != 0.0) { Vec3::ZERO } else { lean }
+    }
+
     /// Where a stamp under `pixel` is aimed, given where the pointer's ray
     /// meets the surface as it is now.
     ///

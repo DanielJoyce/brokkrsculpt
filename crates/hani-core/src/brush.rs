@@ -154,6 +154,11 @@ const MOVE_SETTLE_VOXELS: f32 = 0.25;
 /// once. Draw pushes clay sideways, the clay and flatten planes tip over so a
 /// surface can be flattened at an angle, and pinch's axis leans with the pen.
 ///
+/// The application no longer hands a brush that levels a leaned normal
+/// (`hani-app/src/app/pen_strokes.rs`): a plane tipped about every stamp's
+/// own centre is a row of wedges, and in a stroke that builds up each is set
+/// down on the last one's face and tipped again.
+///
 /// An upright pen returns the normal unchanged, so nothing about the existing
 /// behaviour depends on a tablet being present.
 pub fn lean_normal(normal: Vec3, lean: Vec3) -> Vec3 {

@@ -45,8 +45,9 @@ Rest the pointer on a button to see what it does.
 - **With a pen**, the tip is the left button, the lower button on the barrel
   the right and the upper the middle: hold either and move to turn the view.
   Pressing harder presses the brush harder, and the other end of the pen
-  turns the brush round, as **Ctrl** does. To move the window or change its
-  size, use the mouse.
+  turns the brush round, as **Ctrl** does. Leaning the pen leans the way a
+  brush pushes; a brush that levels, such as Clay or Flatten, takes no notice
+  of the lean. To move the window or change its size, use the mouse.
 - The **cube** in the corner shows which way you are looking. Click a face to
   look straight at it.
 - **F** frames the active body.
