@@ -249,6 +249,8 @@ pub struct SharedFrame {
     cavity: Mutex<CavityView>,
     /// The ring cut's see-through view. See [`GhostView`].
     ghost: Mutex<GhostView>,
+    /// The lights and the unpainted material. See `app/lighting.rs`.
+    lights: Mutex<hani_gpu::LightBlock>,
     /// How far each body is drawn from where it is: the hierarchy's
     /// Explode, `app/explode.rs`. See [`SharedFrame::set_spread`].
     spread: Mutex<Vec<(NodeId, glam::Vec4)>>,
@@ -517,6 +519,17 @@ impl SharedFrame {
     /// Replace the ring cut's see-through view. See [`GhostView`].
     pub fn set_ghost_view(&self, view: GhostView) {
         *self.ghost.lock().expect("shared frame poisoned") = view;
+    }
+
+    /// Replace the lights and the material. See `app/lighting.rs`.
+    pub fn set_lights(&self, lights: hani_gpu::LightBlock) {
+        *self.lights.lock().expect("shared frame poisoned") = lights;
+    }
+
+    /// What the renderer will be told of the lights.
+    #[cfg(test)]
+    pub fn lights(&self) -> hani_gpu::LightBlock {
+        *self.lights.lock().expect("shared frame poisoned")
     }
 
     /// What the renderer will be told of the see-through view.
@@ -1282,6 +1295,7 @@ impl shader::Primitive for SculptPrimitive {
         let paint = *shared.paint.lock().expect("shared frame poisoned");
         let cavity = *shared.cavity.lock().expect("shared frame poisoned");
         let ghost = *shared.ghost.lock().expect("shared frame poisoned");
+        let lights = *shared.lights.lock().expect("shared frame poisoned");
         let aspect = bounds.width / bounds.height.max(1.0);
         let view = camera.view();
         let view_projection = camera.projection(aspect) * view;
@@ -1304,9 +1318,8 @@ impl shader::Primitive for SculptPrimitive {
             ghost: [ghost.amount, ghost.kept_amount, 0.0, 0.0],
             palette: paint.palette,
             paints: paint.paints,
-            // The default rig and the clay: nothing sets another until the
-            // Lighting block of issue 203's stage two. See `hani_gpu::lights`.
-            lights: hani_gpu::LightBlock::default(),
+            // The Lighting block's rig and material: `app/lighting.rs`.
+            lights,
         };
         pipeline.renderer.write_uniforms(queue, &uniforms);
         {

@@ -1092,11 +1092,13 @@ pub enum PanelSection {
     Detail,
     Filament,
     Export,
+    /// The lights and the unpainted material. See `app/lighting.rs`.
+    Lighting,
 }
 
 impl PanelSection {
     /// In the order the panel draws them.
-    pub const ALL: [PanelSection; 17] = [
+    pub const ALL: [PanelSection; 18] = [
         PanelSection::Bodies,
         PanelSection::Brushes,
         PanelSection::Workbench,
@@ -1114,6 +1116,9 @@ impl PanelSection {
         PanelSection::Detail,
         PanelSection::Filament,
         PanelSection::Export,
+        // Drawn first in the second tab, but last here so that no other
+        // section's place moves. See `app/lighting.rs`.
+        PanelSection::Lighting,
     ];
 
     pub fn title(self) -> &'static str {
@@ -1135,6 +1140,7 @@ impl PanelSection {
             PanelSection::Detail => "DETAIL",
             PanelSection::Filament => "FILAMENT",
             PanelSection::Export => "EXPORT",
+            PanelSection::Lighting => "LIGHTING",
         }
     }
 
@@ -1162,6 +1168,7 @@ impl PanelSection {
                 | PanelSection::Form
                 | PanelSection::Extract
                 | PanelSection::References
+                | PanelSection::Lighting
         )
     }
 }
@@ -1354,6 +1361,8 @@ pub enum Message {
     /// A setting kept in a file that had no control. See
     /// `app/kept_settings.rs`.
     Kept(crate::app::KeptMessage),
+    /// The Lighting block. See `app/lighting.rs`.
+    Lighting(crate::app::LightingMessage),
     /// Saving in a browser. See `app/shelf.rs`.
     Shelf(ShelfMessage),
     /// Snip and report. See `app/snip.rs`.

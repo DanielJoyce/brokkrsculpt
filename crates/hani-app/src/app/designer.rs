@@ -28,6 +28,8 @@ use iced::widget::{
 use iced::{Alignment, Element, Length};
 
 use super::Hani;
+// The colour control is shared with the Lighting block: `app/colour_field.rs`.
+use super::colour_field::{hex_of, swatch};
 use super::rack::RackPaint;
 use crate::message::{DesignerMessage, Message};
 use crate::paint_index::{Kind, hex};
@@ -83,14 +85,6 @@ impl Designer {
         let (a, b) = (hani_core::paint::linear(self.base), hani_core::paint::linear(with));
         hani_core::paint::srgb(std::array::from_fn(|c| a[c] + (b[c] - a[c]) * self.mix))
     }
-}
-
-fn hex_of(rgb: [u8; 3]) -> String {
-    format!("{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2])
-}
-
-fn swatch(rgb: [u8; 3]) -> iced::Color {
-    iced::Color::from_rgb8(rgb[0], rgb[1], rgb[2])
 }
 
 impl Hani {
@@ -219,29 +213,12 @@ impl Hani {
             space().height(0).into()
         };
 
-        let channels =
-            [("designer.red", "Red"), ("designer.green", "Green"), ("designer.blue", "Blue")]
-                .into_iter()
-                .enumerate()
-                .fold(column![].spacing(theme::S2), |assembled, (channel, (key, name))| {
-                    assembled.push(
-                        crate::ui::number(
-                            &self.drafts,
-                            key,
-                            name,
-                            f32::from(designer.base[channel]),
-                            0.0..=255.0,
-                            move |level| {
-                                Message::Designer(DesignerMessage::Channel(
-                                    channel,
-                                    level.round() as u8,
-                                ))
-                            },
-                        )
-                        .step(1.0)
-                        .shown(designer.base[channel].to_string()),
-                    )
-                });
+        let channels = super::colour_field::channels(
+            &self.drafts,
+            ["designer.red", "designer.green", "designer.blue"],
+            designer.base,
+            |channel, level| Message::Designer(DesignerMessage::Channel(channel, level)),
+        );
 
         // Quick colours: the machine's filaments.
         let mut quick = row![].spacing(theme::S1);
@@ -318,16 +295,12 @@ impl Hani {
             .spacing(theme::S2)
             .align_y(Alignment::Center),
             chrome,
-            row![
-                container(text("")).width(36).height(22).style(theme::swatch(swatch(colour))),
-                text_input("RRGGBB", &designer.hex)
-                    .on_input(|typed| Message::Designer(DesignerMessage::Hex(typed)))
-                    .size(theme::LABEL_SIZE)
-                    .padding(theme::PAD_FIELD)
-                    .width(Length::Fixed(90.0)),
-            ]
-            .spacing(theme::S2)
-            .align_y(Alignment::Center),
+            super::colour_field::hex_row(
+                colour,
+                designer.hex.clone(),
+                |typed| Message::Designer(DesignerMessage::Hex(typed)),
+                None,
+            ),
             channels,
             column![label("Filaments"), quick].spacing(theme::S1),
             mixer,

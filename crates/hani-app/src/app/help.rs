@@ -34,7 +34,7 @@ use crate::theme;
 
 /// The pages, in the order of their tabs: the name a link uses, the tab's
 /// title, the line its tab shows on hover, and the Markdown.
-const PAGES: [(&str, &str, &str, &str); 3] = [
+const PAGES: [(&str, &str, &str, &str); 4] = [
     (
         "what-it-is",
         "What it is",
@@ -52,6 +52,12 @@ const PAGES: [(&str, &str, &str, &str); 3] = [
         "How it works",
         "The field, the brushes, the mesh, the paint and the files, in broad terms",
         include_str!("../../../../docs/help/how-it-works.md"),
+    ),
+    (
+        "lighting",
+        "Lighting",
+        "The presets, a light with the camera or fixed, and the unpainted materials",
+        include_str!("../../../../docs/help/lighting.md"),
     ),
 ];
 
@@ -331,6 +337,7 @@ pub(super) fn section_tip(which: PanelSection) -> &'static str {
         PanelSection::Detail => "How fine the voxels are, and what that costs",
         PanelSection::Filament => "The filaments loaded in the printer, for a 3MF in colour",
         PanelSection::Export => "Formats, detail and the checks before a print",
+        PanelSection::Lighting => "The lights on the model, and what it is made of unpainted",
     }
 }
 

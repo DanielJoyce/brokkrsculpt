@@ -42,8 +42,28 @@ difference anywhere is 4 levels of 255, measured on a test ball.
   with a chrome layer opened in an older copy shows that layer as an
   ordinary metallic.
 
-Lights you can move, and other materials for the clay (grey plastic, green
-stuff, pewter, resin), come next.
+### Added: lights you can set, and what the bare model is made of
+
+*View > Lighting* opens a LIGHTING section at the top of the dock's second
+tab, in every workspace, so you can set the light while looking at the
+model.
+
+- **Presets**, one press each. *Studio* is the light you have always had.
+  *Lightbox* puts a key, a fill and a rim round the model, fixed, so that
+  turning the view slides the highlights over it: the way to see a gloss
+  varnish from a matte one, or a smooth surface from a lumpy one.
+  *Overhead* is one strong light from above, bright on top and dark
+  underneath, as a miniature is usually painted. *Sky* is soft light from
+  all round and nothing else.
+- **Your own lights**, up to four: each on or off, moving with the camera
+  or staying put round the model, its direction in degrees round and up,
+  its strength and colour. And the light from all round: a sky colour, a
+  ground colour and how strong.
+- **The bare model's material**: clay (as before), grey polystyrene or
+  resin in a colour you choose (milky white, grey and light tan are a press
+  away), green stuff or pewter. Paint goes over it as before.
+- **Reset** puts back Studio and the clay. All of it is remembered between
+  sessions. A new help page, *Lighting*, says what each one is for.
 
 ### Fixed: glazes and contrast paints now tint what is under them
 

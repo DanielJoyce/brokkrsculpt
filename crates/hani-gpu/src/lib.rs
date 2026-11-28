@@ -17,6 +17,8 @@ mod paints;
 // Reference pictures behind the sculpt.
 pub mod reference;
 pub mod renderer;
+// The Lighting block's presets, and a light's two angles. See `rigs.rs`.
+pub mod rigs;
 pub mod spread;
 // A boolean row tinted by what it does. See `tint.rs`.
 pub mod thumbnail;

@@ -4471,6 +4471,36 @@ fn the_contact_sheet_of_the_lights() {
             dump(&format!("sheet-{row}-{column}"), &frame);
         }
     }
+
+    // The Lighting block's presets (stage two, `hani_gpu::rigs`), on the
+    // clay and on a gloss red, with Lightbox and Overhead also seen from
+    // 60 degrees round, where their highlights should have moved over the
+    // ball and Studio's not.
+    let presets: [(&str, Rig, f32); 6] = [
+        ("a-studio", hani_gpu::rigs::studio(), 0.0),
+        ("b-lightbox", hani_gpu::rigs::lightbox(), 0.0),
+        ("c-lightbox-turned-60", hani_gpu::rigs::lightbox(), 60.0),
+        ("d-overhead", hani_gpu::rigs::overhead(), 0.0),
+        ("e-overhead-turned-60", hani_gpu::rigs::overhead(), 60.0),
+        ("f-sky", hani_gpu::rigs::sky(), 0.0),
+    ];
+    let rows: [(&str, Material, Coat); 2] = [
+        ("12-presets-clay", Material::Clay, Coat::Bare),
+        ("13-presets-gloss", Material::Clay, Coat::Varnished(red, Finish::Gloss)),
+    ];
+    for (row, material, coat) in rows {
+        for (column, rig, degrees) in &presets {
+            let camera = looking(turned(*degrees), Vec3::ZERO, MODEL_RADIUS * 3.0);
+            let frame = lit_frame(
+                &mut harness,
+                coated(bumpy_ball(), coat),
+                camera,
+                hani_gpu::LightBlock::new(rig, material),
+                true,
+            );
+            dump(&format!("sheet-{row}-{column}"), &frame);
+        }
+    }
 }
 
 /// What the lighting costs a frame: a smooth ball filling most of a 1920 by

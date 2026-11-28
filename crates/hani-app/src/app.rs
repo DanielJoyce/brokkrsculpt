@@ -26,6 +26,11 @@ mod group_gizmo;
 mod kept_settings;
 mod keys;
 pub(crate) use kept_settings::KeptMessage;
+// The Lighting block, and the colour control it shares with the paint
+// designer. See `app/lighting.rs`.
+mod colour_field;
+mod lighting;
+pub(crate) use lighting::LightingMessage;
 // The active body's layers of paint. See `app/layers.rs`.
 mod layers;
 // Racks of paints, and the index they are filled from. See `app/rack.rs`.
@@ -814,6 +819,8 @@ pub struct Hani {
     /// What is typed in the printer's and the slicer's fields. See
     /// `app/kept_settings.rs`.
     kept: kept_settings::KeptSettings,
+    /// The lights and the unpainted material. See `app/lighting.rs`.
+    lighting: lighting::LightingState,
     /// Saving in a browser. See `app/shelf.rs`.
     shelf: shelf::ShelfState,
     /// Snip and report. See `app/snip.rs`.
@@ -2048,6 +2055,9 @@ impl Hani {
         app.studio.presets = presets::Presets::load();
         // And the interface's size: `app/ui_scale.rs`.
         app.ui_scale = ui_scale::UiScale::kept();
+        // And the lights: `app/lighting.rs`.
+        app.lighting = lighting::LightingState::kept();
+        app.publish_lighting();
         // The maps that have been taken in: `app/maps.rs`.
         app.inserts.maps = maps::kept(maps::directory().as_deref());
         // And the brush pictures: `app/brush_pictures.rs`.
@@ -2306,6 +2316,7 @@ impl Hani {
             graphics: None,
             touches: touch::Touches::default(),
             kept: kept_settings::KeptSettings::read(),
+            lighting: lighting::LightingState::default(),
             shelf: shelf::ShelfState::default(),
             snip: snip::SnipState::default(),
             welcome_on_startup: true,
@@ -2741,6 +2752,8 @@ impl Hani {
                 self.touch_held();
                 // A body made since is given the pooling. See `app/pooling.rs`.
                 self.keep_pooling();
+                // The lights, kept once still. See `app/lighting.rs`.
+                self.keep_lighting_when_still();
                 // **The update took.** Cleared on the first drawn frame, which
                 // is the earliest honest evidence that this build starts. A
                 // build that dies before here leaves the marker behind, and the
@@ -2850,6 +2863,7 @@ impl Hani {
             Message::Boolean(message) => self.boolean_changed(message),
             Message::GraphicsNamed(name) => self.graphics = Some(name),
             Message::Kept(message) => self.kept_changed(message),
+            Message::Lighting(message) => self.lighting_changed(message),
             Message::Shelf(message) => return self.shelf_changed(message),
             Message::Snip(message) => return self.snip_changed(message),
             Message::WelcomeOpened => {

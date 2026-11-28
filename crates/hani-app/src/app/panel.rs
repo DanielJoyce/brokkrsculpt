@@ -1208,6 +1208,12 @@ impl Hani {
                     Message::Overhang(crate::message::OverhangMessage::Shown(!self.overhang.shown))
                 ),
                 switch("Mask", self.show_mask, Message::ShowMaskToggled),
+                // See `app/lighting.rs`.
+                switch(
+                    "Lighting",
+                    self.lighting_shown(),
+                    Message::Lighting(super::LightingMessage::Shown(!self.lighting_shown()))
+                ),
                 separator(),
                 switch("Pictures in the bodies list", self.thumbnails, Message::ThumbnailsToggled),
                 switch("Frame stats", self.stats_open, Message::StatsToggled),

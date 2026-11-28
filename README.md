@@ -475,8 +475,9 @@ true of it too, and what it adds is this.
   (1 to 2 times, in eighths, from the monitor's height over 1080), or a
   size from 75% to 200% is chosen on a slider, shown first in a preview of
   a few controls and applied with *Apply*. Kept in `interface.conf`.
-- **Help in the application.** The **?** in the title bar opens three
-  pages, what HaniSculpt is, getting around and how it works, in tabs with
+- **Help in the application.** The **?** in the title bar opens four
+  pages, what HaniSculpt is, getting around, how it works, and lighting
+  and materials, in tabs with
   a search across them. They are Markdown files in
   [`docs/help/`](docs/help/), so they read the same here. Each heading of
   the panel says what it is for when the pointer rests on it.
@@ -519,11 +520,20 @@ true of it too, and what it adds is this.
   paint's metal is: a fairly rough metal whose colour is what it
   reflects, with a fine sparkle from its flakes that stays on the model
   as it turns. A metallic with *Chrome* ticked in the paint designer is
-  nearly a mirror, showing a sky, a horizon and a ground. The viewport is
-  lit by a rig of lights and a global light; the default is the light
-  the viewport always had, so bare clay and unvarnished paint look as
-  they did. Lights that can be set, and other materials for the clay,
-  are the next step.
+  nearly a mirror, showing a sky, a horizon and a ground.
+- **Lighting and materials.** *View > Lighting* opens the LIGHTING
+  section at the top of the dock's second tab, in every workspace.
+  Presets, one press each: *Studio* (the light the viewport always had,
+  with the camera), *Lightbox* (a key, a fill and a rim fixed round the
+  model, so turning the view moves the highlights over it), *Overhead*
+  (one strong light from above and a sky) and *Sky* (the global light
+  alone). Up to four lights, each on or off, with the camera or fixed,
+  its direction as degrees round and up, its strength, colour and shape;
+  the global light's sky, ground and strength. The unpainted surface of
+  every body is *Clay* (the default), *Polystyrene* or *Resin* in a colour
+  you set, *Green stuff* or *Pewter*. *Reset* puts back Studio and the
+  clay. Kept in `lighting.conf`; the help page *Lighting* says what each
+  is for.
 - **Decals and stamps.** The *Decal* touch presses a picture onto the
   model along the view: drag to size it and turn it, seeing it drawn
   on the model as you go, and it is pressed on, wrapping the surface it
