@@ -2,6 +2,12 @@
 
 //! Stylus pressure.
 //!
+//! **Under Wayland the pen is the compositor's to report, and `pen.rs` asks
+//! it** (2026-11-27): no device is opened and no group is needed, and the
+//! reader below stands down once the compositor has answered. What follows
+//! is the way for X11, and what this module still is everywhere: where the
+//! pen's state is kept, whoever reports it.
+//!
 //! # Why this reads the kernel directly
 //!
 //! Nothing in the windowing stack can supply pen pressure. iced 0.14's
@@ -165,6 +171,14 @@ struct Shared {
     /// window and registration -- so the panel can say so instead of showing a
     /// device name over a pipe that will never deliver.
     pipe_failure: Mutex<Option<String>>,
+    /// The compositor has been asked for the pen. See `pen.rs`.
+    seat_attached: AtomicBool,
+    /// And has answered, with a tablet or with the pen itself: from then on
+    /// the pen is the compositor's to report and the kernel reader's samples
+    /// are let go by, so the two do not both write here.
+    seat_live: AtomicBool,
+    /// The tablets the compositor lists.
+    seat_devices: Mutex<Vec<TabletDevice>>,
 }
 
 impl Shared {
@@ -183,6 +197,9 @@ impl Shared {
             devices: Mutex::new(Vec::new()),
             permission_denied: AtomicBool::new(false),
             pipe_failure: Mutex::new(None),
+            seat_attached: AtomicBool::new(false),
+            seat_live: AtomicBool::new(false),
+            seat_devices: Mutex::new(Vec::new()),
         }
     }
 
@@ -265,7 +282,10 @@ impl Shared {
     /// happened to have been running.
     fn state_at(&self, now_ms: u64) -> PenState {
         let last = self.last_event_ms.load(Ordering::Relaxed);
-        if now_ms.saturating_sub(last) > PEN_TIMEOUT_MS {
+        // A compositor says when the pen has gone, and says nothing of one
+        // held still: the wait is for the kernel reader alone. See `pen.rs`.
+        let told_when_gone = self.seat_live.load(Ordering::Relaxed);
+        if !told_when_gone && now_ms.saturating_sub(last) > PEN_TIMEOUT_MS {
             return PenState::NONE;
         }
         PenState {
@@ -309,10 +329,36 @@ impl Tablet {
         self.shared.state()
     }
 
+    /// The pen as the compositor has just said it is. See `pen.rs`.
+    pub fn feed(&self, state: PenState) {
+        self.shared.seat_live.store(true, Ordering::Relaxed);
+        self.set(state);
+    }
+
+    /// The compositor has been asked for the pen.
+    // Only Linux has a compositor that is asked.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn seat_attached(&self) {
+        self.shared.seat_attached.store(true, Ordering::Relaxed);
+    }
+
+    /// The tablets the compositor lists, whenever that changes.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn seat_lists(&self, devices: Vec<TabletDevice>) {
+        if !devices.is_empty() {
+            self.shared.seat_live.store(true, Ordering::Relaxed);
+        }
+        *self.shared.seat_devices.lock().expect("tablet state poisoned") = devices;
+    }
+
     /// Feed a pen state in directly, so code that consumes the pen can be
     /// tested without a device.
     #[cfg(test)]
     pub fn simulate(&self, state: PenState) {
+        self.set(state);
+    }
+
+    fn set(&self, state: PenState) {
         // Which end is in range only means anything while the pen is in range
         // at all, or an "eraser away" state would report as present.
         self.shared.set_tool(
@@ -326,6 +372,12 @@ impl Tablet {
     }
 
     pub fn devices(&self) -> Vec<TabletDevice> {
+        // The compositor's, once it lists any: the kernel reader may have
+        // found the same tablet, and it is one tablet.
+        let listed = self.shared.seat_devices.lock().expect("tablet state poisoned").clone();
+        if !listed.is_empty() {
+            return listed;
+        }
         self.shared.devices.lock().expect("tablet state poisoned").clone()
     }
 
@@ -354,7 +406,10 @@ impl Tablet {
                 Diagnosis::Found
             };
         }
-        if self.shared.permission_denied.load(Ordering::Relaxed) {
+        // Asked of the compositor, the pen needs no device opened: that the
+        // kernel's are shut is then no fault to report. See `pen.rs`.
+        let asked_of_the_compositor = self.shared.seat_attached.load(Ordering::Relaxed);
+        if !asked_of_the_compositor && self.shared.permission_denied.load(Ordering::Relaxed) {
             return Diagnosis::PermissionDenied;
         }
         Diagnosis::NoTabletFound
@@ -912,6 +967,11 @@ mod backend {
                     return;
                 }
             };
+            // The compositor is reporting the pen: it is not reported twice.
+            // See `pen.rs`.
+            if shared.seat_live.load(Ordering::Relaxed) {
+                continue;
+            }
             for event in events {
                 match event.event_type() {
                     EventType::ABSOLUTE if event.code() == AbsoluteAxisCode::ABS_PRESSURE.0 => {
@@ -1480,6 +1540,74 @@ mod tests {
             assert_eq!(diagnosis, Diagnosis::Unsupported);
         }
         assert!(!diagnosis.explain().is_empty());
+    }
+
+    fn held(pressure: f32) -> PenState {
+        PenState { in_proximity: true, pressure, eraser: false, tilt: Vec2::ZERO }
+    }
+
+    /// The wait is for a kernel reader that may never hear the pen has gone.
+    /// A compositor says so, and says nothing at all of a pen held still: a
+    /// pen pressed and not moving must not come back as a mouse at full
+    /// strength a second and a half later.
+    #[test]
+    fn a_pen_the_compositor_reports_is_not_forgotten_for_being_still() {
+        let tablet = Tablet::inert();
+        tablet.feed(held(0.3));
+        let long_after = tablet.shared.now_ms() + PEN_TIMEOUT_MS * 10;
+        assert_eq!(tablet.shared.state_at(long_after), held(0.3));
+
+        tablet.feed(PenState::NONE);
+        assert_eq!(tablet.shared.state_at(long_after), PenState::NONE, "until it is said to go");
+    }
+
+    #[test]
+    fn the_tablets_the_compositor_lists_are_the_ones_shown() {
+        let tablet = Tablet::inert();
+        let found_by_the_kernel = TabletDevice {
+            name: "Wacom Intuos3 6x8 Pen".into(),
+            path: "/dev/input/event9".into(),
+            pressure_max: 1023,
+            has_tilt: true,
+            has_eraser: true,
+        };
+        tablet.shared.devices.lock().unwrap().push(found_by_the_kernel.clone());
+        assert_eq!(tablet.devices(), std::slice::from_ref(&found_by_the_kernel));
+
+        let listed = TabletDevice { path: String::new(), pressure_max: 0, ..found_by_the_kernel };
+        tablet.seat_attached();
+        tablet.seat_lists(vec![listed.clone()]);
+        assert_eq!(tablet.devices(), [listed], "one tablet, and not the same one twice");
+
+        // Unplugged, as the compositor tells it.
+        tablet.seat_lists(Vec::new());
+        assert_eq!(tablet.devices().len(), 1, "what the kernel reader still holds");
+    }
+
+    /// The fault this was asked to be fixed for: a pen that works told to
+    /// join a group it does not need.
+    #[test]
+    fn shut_devices_are_no_fault_once_the_compositor_is_asked() {
+        if !backend::SUPPORTED {
+            return;
+        }
+        let tablet = Tablet::inert();
+        tablet.shared.permission_denied.store(true, Ordering::Relaxed);
+        assert_eq!(tablet.diagnosis(), Diagnosis::PermissionDenied);
+
+        tablet.seat_attached();
+        assert_eq!(tablet.diagnosis(), Diagnosis::NoTabletFound);
+
+        tablet.seat_lists(vec![TabletDevice {
+            name: "a tablet".into(),
+            path: String::new(),
+            pressure_max: 0,
+            has_tilt: false,
+            has_eraser: false,
+        }]);
+        assert_eq!(tablet.diagnosis(), Diagnosis::Found, "listed, and the pen not yet seen");
+        tablet.feed(held(0.5));
+        assert_eq!(tablet.diagnosis(), Diagnosis::Listening);
     }
 }
 

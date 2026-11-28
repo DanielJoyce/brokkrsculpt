@@ -193,9 +193,11 @@ Two things worth knowing on the way in:
 - **Launch it natively on Wayland** if that is your session. On XWayland the
   window can land outside the X screen's bounds, and the compositor then stops
   asking for frames — which looks exactly like a 1 fps bug and is not one.
-- **A tablet or SpaceMouse needs the `input` group** on most distributions,
-  because both are read from `/dev/input`. Without it neither device is seen and
-  nothing else breaks. Log out and back in afterwards:
+- **A SpaceMouse needs the `input` group** on most distributions, and so does
+  a tablet under X11, because both are read from `/dev/input` there. Without
+  it neither device is seen and nothing else breaks. Under Wayland the pen
+  comes from the compositor and needs no group. Log out and back in
+  afterwards:
 
 ```fish
 sudo usermod -aG input $USER
@@ -319,7 +321,7 @@ should have to discover for themselves.
 |---|---|---|---|
 | Sculpting, import, export, printing | yes | yes | yes |
 | Masking **display** | yes | yes | yes, on the CI runner |
-| Stylus pressure and tilt | yes | untested | untested |
+| Stylus pressure and tilt | yes: from the compositor under Wayland, from the kernel under X11 | untested | untested |
 | SpaceMouse | yes | untested | untested |
 | Update check, download and verify | yes | yes | yes |
 | Replacing itself with the update | yes | untested | untested |
@@ -766,16 +768,32 @@ so resampling a solid ball does not allocate its whole interior.
 
 ### Stylus
 
-Pressure works with any tablet the Linux kernel has a driver for. There is no
-vendor list and no per-device configuration: a stylus is any input device
-reporting both `ABS_PRESSURE` and `BTN_TOOL_PEN`. Each device's own range is read
-from the device, so a Huion reporting 8191 levels and a Wacom reporting 2047
-both normalise correctly.
+Neither iced 0.14 nor winit 0.30 carries a pen: iced's touch events hold only
+a position, and winit never had force for pens at all. So the pen is read
+round them, by one of two ways.
 
-It is read straight from evdev rather than from the window system. That is not a
-shortcut: iced 0.14's touch events carry only a position and drop winit's `force`
-field, and winit 0.30 never had force for pens at all. Reading evdev also means
-one code path covers X11, XWayland and Wayland.
+**Under Wayland, from the compositor** (`src/pen.rs`, since 2026-11-27). The
+compositor has the pen and tells a window that asks, over the tablet protocol,
+where it is, how hard it presses, how it leans, which end is down and which
+button is held. [`octotablet`](https://github.com/Fuzzyzilla/octotablet) asks,
+on the connection the window already has. Nothing is opened under `/dev/input`
+and no group is needed. A window that asks is no longer sent a mouse for the
+pen, on any compositor, so the pen is made a pointer for the whole interface
+by a widget around it: buttons, sliders and menus take a pen as they take a
+mouse, the lower button on the barrel is the right button and the upper the
+middle. Every sample keeps its own pressure through to the stamp it lays,
+several to a frame. This also makes the pen work at all under GNOME, which
+turns a pen into a mouse for no window.
+
+**Under X11, from the kernel** (`src/tablet.rs`). The X server makes the pen a
+mouse itself, and the pressure is read straight from evdev: a stylus is any
+input device reporting both `ABS_PRESSURE` and `BTN_TOOL_PEN`, and each
+device's own range is read from the device, so a Huion reporting 8191 levels
+and a Wacom reporting 2047 both normalise correctly. This is the way that
+wants the `input` group. Under Wayland it stands down once the compositor has
+answered.
+
+There is no vendor list and no per-device configuration either way.
 
 **The eraser end** inverts the brush, the same as the modifier key. The two
 combine rather than override. The kernel reports tip and eraser as separate
@@ -787,9 +805,9 @@ every brush at once because they all work from the same stroke normal. Leaning
 also reduces how far the brush pushes out, by the cosine of the angle, which is
 what makes a leaned stroke feel glancing.
 
-The **PEN** panel names the tablet it found, shows its pressure range, and gives
-a live reading — enough to confirm a tablet works in seconds. If it says no
-tablet was found:
+The **PEN** panel names the tablet it found, shows its pressure range where
+the kernel is what it was read from, and gives a live reading: enough to
+confirm a tablet works in seconds. If it says no tablet was found:
 
 ```fish
 cargo run --release -p hani-app -- --tablets

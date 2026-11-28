@@ -1355,6 +1355,9 @@ pub enum Message {
     Shelf(ShelfMessage),
     /// Snip and report. See `app/snip.rs`.
     Snip(SnipMessage),
+    /// How the pen was held at the step whose pointer event comes next,
+    /// from the compositor. See `pen.rs` and `app/pen.rs`.
+    PenSample(crate::tablet::PenState),
     PressureToggled(bool),
     PressureCurveChanged(f32),
     TiltToggled(bool),

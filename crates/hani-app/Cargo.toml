@@ -120,6 +120,26 @@ windows-sys.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 # Our own, over libc, in place of the `evdev` crate. See `crates/hani-evdev`.
 hani-evdev.workspace = true
+# The pen from the compositor, on Wayland: position, pressure, tilt and which
+# end, over the connection the window already has, so no group membership is
+# asked of the user. Asked for by name by the maintainer. Without its
+# defaults, which add Windows Ink and the `windows` crate with it; Windows
+# keeps Raw Input. See `src/pen.rs` and `docs/DEPENDENCIES.md`.
+#
+# **From its repository at one commit, and not from crates.io.** The 0.1.0
+# published there is built on tablet protocol definitions a version behind
+# what KWin speaks, binds at whatever version the compositor offers, and so
+# is sent events it has no name for: libwayland ends the process on the
+# first one ("interface 'zwp_tablet_v2' has no event 5", seen on KWin on
+# 2026-11-27). The fix is upstream, one line of its manifest, and is not
+# published. Go back to a version number when one is.
+octotablet = { git = "https://github.com/Fuzzyzilla/octotablet", rev = "1b0a14e17f23e501cfa3be9a7f8872f8357cc9e0", default-features = false, features = ["wayland-tablet-unstable-v2"] }
+# What the compositor offers, asked before octotablet is let near it: the
+# same fault, kept from coming back with the protocol's next version
+# (`src/pen/seat.rs`). Both are what winit and octotablet are built on, at
+# their versions, so they add no crate; they are named to be used.
+wayland-client = { version = "0.31", features = ["system"] }
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 
 # Blocks on wgpu's adapter and device futures, and nothing else. Needed because
 # `SharedFrame::apply` orders a pool reset, a set of body deletions and a batch
@@ -135,6 +155,12 @@ pollster.workspace = true
 # not only to its own idea of the format. Tests only: none of it is in the
 # application.
 exr = { version = "1.74.3", default-features = false }
+# iced's own loop over a tree of widgets, to put the pen's layer through it
+# with no window: where an overlay comes ahead of what is under it is that
+# loop's doing, and a test that called the widget by hand would agree with
+# whatever order it was written to expect (`src/pen/layer.rs`). Tests only,
+# and zero new crates: it is the runtime iced is built on, at its version.
+iced_runtime = "0.14"
 # Property tests, as in `hani-core`: what a brush kept in a file comes back
 # as, whatever the brush. Zero new crates, for the same reason as above.
 proptest.workspace = true

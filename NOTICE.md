@@ -25,15 +25,15 @@ From `cargo metadata`, filtered to `x86_64-unknown-linux-gnu`, walking the
 `dev-dependencies`**, which are used to test the software and are not
 distributed in a build of it. Re-run it whenever `Cargo.lock` changes.
 
-Counts by declared license expression, over those 240 crates (counted on
+Counts by declared license expression, over those 246 crates (counted on
 2026-11-27 with `cargo tree -e normal,build --target x86_64-unknown-linux-gnu
 -f '{p}|{l}'` from each workspace crate, `hani-evdev` included, workspace
 crates left out):
 
 | Crates | Expression |
 | ---: | --- |
-| 107 | `MIT OR Apache-2.0` |
-| 63 | `MIT` |
+| 110 | `MIT OR Apache-2.0` |
+| 66 | `MIT` |
 | 12 | `Apache-2.0 OR MIT` |
 | 9 | `Apache-2.0` |
 | 8 | `MIT/Apache-2.0` |
@@ -141,6 +141,11 @@ to be worth naming:
   and tilt, and the SpaceMouse, read below the display server. It replaced
   the `evdev` crate (Apache-2.0 OR MIT, <https://github.com/cmr/evdev>) on
   2026-11-27, and keeps its names for what it covers.
+- **octotablet** (MIT, <https://github.com/Fuzzyzilla/octotablet>), at
+  commit `1b0a14e`. The pen from the compositor under Wayland: position,
+  pressure, tilt, which end and which button, over the tablet protocol. With
+  it **enum_dispatch** (MIT OR Apache-2.0), **strum** and **strum_macros**
+  (MIT), **heck** and **rustversion** (MIT OR Apache-2.0).
 
 ### Network
 

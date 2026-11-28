@@ -374,6 +374,13 @@ mod tests {
         while app.autosave.in_flight() {
             frame(&mut app);
             frames += 1;
+            // A frame is some milliseconds apart from the next where this
+            // runs for a user, and the disk takes a piece in that time. Run
+            // with nothing between them, ten thousand frames went by before
+            // the Windows runner's disk had taken one (main at #175, and
+            // #177): a frame that finds the writer still busy waits for it
+            // here as a frame's interval would have.
+            std::thread::sleep(Duration::from_millis(1));
             assert!(frames < 10_000, "the autosave never ended");
         }
         app.autosave.settle();

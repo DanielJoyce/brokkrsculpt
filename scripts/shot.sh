@@ -14,6 +14,9 @@
 set -euo pipefail
 
 OUT="${1:-/tmp/hani-shot.png}"
+# Qt's D-Bus tool, by whichever name the distribution gives it: `qdbus6` on
+# most, `qdbus-qt6` on Fedora.
+QDBUS=$(command -v qdbus6 || command -v qdbus-qt6 || echo qdbus6)
 CLASS="${HANI_WINDOW_CLASS:-hanisculpt}"
 
 if ! pgrep -x hanisculpt >/dev/null; then
@@ -38,9 +41,9 @@ EOF
 # The script name has to be unique per load: KWin refuses to load a second
 # script under a name it already knows, and silently keeps the old one.
 NAME="hani-activate-$$-$RANDOM"
-ID=$(qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "$SCRIPT" "$NAME")
-qdbus6 org.kde.KWin "/Scripting/Script${ID}" org.kde.kwin.Script.run
-qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript "$NAME" >/dev/null
+ID=$("$QDBUS" org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "$SCRIPT" "$NAME")
+"$QDBUS" org.kde.KWin "/Scripting/Script${ID}" org.kde.kwin.Script.run
+"$QDBUS" org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript "$NAME" >/dev/null
 
 # The compositor needs a moment to raise and refocus before the grab.
 sleep 1.5
@@ -52,17 +55,9 @@ sleep 1.5
 # marker would read a previous run's reply, which is the same class of mistake
 # as reading a stale window position out of `journalctl`.
 kwin_ask() {
-    local body="$1" marker script name id
-    marker="hani-ask-$$-$RANDOM"
-    script=$(mktemp /tmp/kwin-ask-XXXXXX.js)
-    printf 'const MARKER = "%s";\n%s\n' "$marker" "$body" >"$script"
-    name="hani-ask-$$-$RANDOM"
-    id=$(qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "$script" "$name")
-    qdbus6 org.kde.KWin "/Scripting/Script${id}" org.kde.kwin.Script.run
-    qdbus6 org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript "$name" >/dev/null
-    rm -f "$script"
-    journalctl --user -b --since "-20s" 2>/dev/null |
-        grep -o "${marker} .*" | tail -1 | cut -d' ' -f2- | tr -d '\r'
+    # Through `drive.py`, which has the answer called back to it over the
+    # session bus where the journal does not carry a script's `print`.
+    "$(dirname "$0")/drive.py" --ask "$1" | tr -d '\r'
 }
 
 active_class() {

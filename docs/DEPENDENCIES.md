@@ -295,6 +295,24 @@ displacement map. No such file is in the repository and none was made
 here; if one comes in PIZ, the refusal says what to do, and PIZ is the
 compression to add next.
 
+**octotablet, added**, 2026-11-27, at the maintainer's word ("fix tablet
+handling using the octotablet crate"): the pen from the compositor under
+Wayland, `hani-app/src/pen.rs`. This one adds. On Linux only, without its
+default features (Windows Ink, and the `windows` crate with it), and from
+its repository at commit `1b0a14e`, not from crates.io: the 0.1.0 published
+there is built on `wayland-protocols` 0.31, a version of the tablet protocol
+behind what KWin speaks, and ends the process at startup there (see the
+manifest). Upstream's fix is the one line that moves it to 0.32, which is
+the version winit already brings, so the commit costs one package fewer
+than the release would. It brings `enum_dispatch`, `strum`, `strum_macros`,
+`heck` and `rustversion`; `wayland-client` and `wayland-protocols` are named
+in the manifest to be used and were in the graph. Measured after: Linux 244
+to 250, Windows, macOS and the browser unchanged at 206, 205 and 161; the
+lockfile 413 to 418. A proposal for later, not made: octotablet's Wayland
+half is about 1,200 lines over `wayland-client`, and kept in a crate of our
+own as `hani-evdev` is, without the two macro crates, it would give back
+five of the six.
+
 ## Not done
 
 Compile time and binary size per crate were not measured. The Windows and macOS numbers are counts from the

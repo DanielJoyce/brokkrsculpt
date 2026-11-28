@@ -407,6 +407,11 @@ mod tests {
         let mut untipped = Vec::new();
         for path in files.iter().filter(|path| !path.ends_with("ui.rs")) {
             let source = std::fs::read_to_string(path).expect("a source file reads");
+            // As it is on Linux: a checkout on Windows ends its lines with a
+            // carriage return too, the cut below then found no test module
+            // to stop at, and a button in a test was read as one of the
+            // interface's (`pen/layer.rs`, on the Windows runner alone).
+            let source = source.replace("\r\n", "\n");
             // The code, not its tests, and not its comments. Cut at the first
             // test module and not the first `cfg(test)`, which can mark one
             // helper above the views.

@@ -42,6 +42,11 @@ Rest the pointer on a button to see what it does.
 - **On a touch screen**, one finger on the model is the tool and one finger
   off it turns the view; two fingers slide the view as they move and zoom it
   as they spread or pinch. A tap is a click.
+- **With a pen**, the tip is the left button, the lower button on the barrel
+  the right and the upper the middle: hold either and move to turn the view.
+  Pressing harder presses the brush harder, and the other end of the pen
+  turns the brush round, as **Ctrl** does. To move the window or change its
+  size, use the mouse.
 - The **cube** in the corner shows which way you are looking. Click a face to
   look straight at it.
 - **F** frames the active body.
