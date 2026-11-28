@@ -23,7 +23,7 @@
 //! axis, are reached: the surface the spray meets, and not a surface
 //! further back along the same line that a real spray could not reach
 //! through it. Paint is laid as the colour brush lays it,
-//! [`crate::paint::stroke::laid`], so a Glaze or an Erase sprays too.
+//! [`crate::paint::stroke::laid`], so an Erase sprays too.
 
 use glam::{IVec3, Vec3};
 use rayon::prelude::*;
@@ -194,12 +194,7 @@ mod tests {
     use crate::paint::stroke::Mode;
     use proptest::prelude::*;
 
-    const RED: Pigment = Pigment {
-        colour: [220, 20, 20],
-        opacity: 1.0,
-        mode: Mode::Paint,
-        glaze: crate::paint::stroke::GLAZE_KEEPS,
-    };
+    const RED: Pigment = Pigment { colour: [220, 20, 20], opacity: 1.0, mode: Mode::Paint };
 
     fn ball() -> Volume {
         let mut volume = Volume::new(0.5);

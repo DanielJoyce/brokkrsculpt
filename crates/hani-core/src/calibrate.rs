@@ -115,12 +115,7 @@ impl Workload {
         drop(self.volume.end_stroke());
 
         let paint = Brush { kind: BrushKind::Paint, radius: 5.0, ..brush };
-        let pigment = Pigment {
-            colour: [180, 40, 30],
-            opacity: 0.8,
-            mode: Mode::Paint,
-            ..Pigment::default()
-        };
+        let pigment = Pigment { colour: [180, 40, 30], opacity: 0.8, mode: Mode::Paint };
         self.volume.begin_stroke();
         self.stroke.begin();
         for step in 0..stamps {

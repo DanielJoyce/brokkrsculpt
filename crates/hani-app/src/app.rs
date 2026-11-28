@@ -3635,22 +3635,8 @@ impl Hani {
                 }
             }
             Message::FlatPaintToggled => self.flat_paint = !self.flat_paint,
-            Message::PaintTouchChosen(touch) => {
-                self.touch.kind = touch;
-                // A wash or a contrast goes on a layer of its own blend. See
-                // `app/layers.rs`.
-                match touch {
-                    crate::message::PaintTouch::Wash => {
-                        self.suit_the_layer("Wash", hani_core::paint::layers::Blend::Wash, false)
-                    }
-                    crate::message::PaintTouch::Contrast => self.suit_the_layer(
-                        "Contrast",
-                        hani_core::paint::layers::Blend::Contrast,
-                        false,
-                    ),
-                    _ => {}
-                }
-            }
+            // The layer follows the touch: see `app/painting.rs`.
+            Message::PaintTouchChosen(touch) => self.touch_chosen(touch),
             Message::PaintTouchChanged(setting) => {
                 self.touch.set(setting);
                 // What a drybrush catches follows its Catch. See

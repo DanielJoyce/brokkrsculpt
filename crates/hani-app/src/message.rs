@@ -480,13 +480,16 @@ pub enum MeasureMessage {
     Cleared,
 }
 
-/// How a colour combines with what is under it. See
-/// [`hani_core::paint::stroke::Mode`].
+/// How a colour combines with what is under it: by the layer it goes on,
+/// which follows it (`app/layers.rs`, `suit_the_layer_to_the_brush`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PaintMode {
+    /// Covers: on a Normal layer.
     #[default]
     Paint,
+    /// Tints what is under it: on a Glaze layer.
     Glaze,
+    /// Takes paint off the active layer, whatever it is.
     Erase,
 }
 
@@ -512,8 +515,6 @@ pub enum PaintingMessage {
     /// How much of itself a full touch of the brush lays.
     Opacity(f32),
     Mode(PaintMode),
-    /// How much of the lightness under it a glaze keeps, 0..=1.
-    GlazeKeeps(f32),
     /// How unlike the paint it began on a fill of colour will still run
     /// over, in levels of 255.
     FillLike(u8),

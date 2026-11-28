@@ -35,10 +35,11 @@
 //! ([`crate::volume::Volume::drain_dirty`]).
 //!
 //! **The blends that depend on what is under a layer are worked out here,
-//! and not baked into the layer.** A wash darkens what is under it, more in
-//! a crease; a contrast paint tints by how light what is under it is. Put
-//! together at the moment of drawing, a change to a lower layer changes
-//! the look of every layer over it, as it does on a real model.
+//! and not baked into the layer.** A glaze, a wash and a contrast paint are
+//! films that what is under them is seen through, thicker in a crease and
+//! thinner on an edge. Put together at the moment of drawing, a change to a
+//! lower layer changes the look of every layer over it, as it does on a
+//! real model.
 //!
 //! # The arithmetic
 //!
@@ -46,9 +47,11 @@
 //! `p` the colour already multiplied by its coverage `a` (`sculpt.wgsl`).
 //! The stack is put together in the same terms, bottom to top, starting
 //! from nothing (`p = 0`, `a = 0`). For each shown layer with paint at a
-//! voxel, its strength there is `k = coverage * opacity * pooling`, and
-//! what is visible under it is `under = CLAY * (1 - a) + p`. The blend
-//! gives a target colour from the layer's colour and `under`, and:
+//! voxel, its strength there is `k = coverage * opacity`, and what is
+//! visible under it is `under = CLAY * (1 - a) + p`. The blend gives a
+//! target colour from the layer's colour and `under`: for a film (Glaze,
+//! Wash, Contrast) a full coat of it over `under`, as thick as the crease
+//! there makes it (`Film`, below); for the others a colour of their own. Then:
 //!
 //! ```text
 //! p' = (1 - k) p + k target
@@ -56,10 +59,17 @@
 //! ```
 //!
 //! which is exactly "the visible colour moves toward the target by `k`"
-//! with the clay showing through by `1 - a'`, whatever the blend. The clay
-//! here is the export's ([`crate::export::texture`]), and the arithmetic is
-//! done on sRGB values as the paint field stores them: the shader lights
-//! the result as it lights any paint.
+//! with the clay showing through by `1 - a'`, whatever the blend: less than
+//! a full coat of a film is that share of the way from what is under it to
+//! a full coat. The clay here is the export's ([`crate::export::texture`]).
+//! The mixing by `k` is done on sRGB values as the paint field stores them,
+//! and a film's own arithmetic in linear light; the shader lights the
+//! result as it lights any paint.
+//!
+//! Until 2026-11-27 the strength was `k = coverage * opacity * pooling`,
+//! the pooling a share by the crease, and each seen-through blend had a
+//! rule of its own on sRGB values. What was wrong with that, and what was
+//! tried: `Film`, below, and `docs/PAINT-RACK.md` section 1.
 
 use contracts::debug_ensures;
 use rustc_hash::FxHashMap;
@@ -88,13 +98,15 @@ pub enum Blend {
     Multiply,
     /// Lightens what is under it.
     Screen,
-    /// A tint over everything that keeps what is under it showing: a film
-    /// of the colour's hue that gives back half the lightness it takes.
+    /// A thin film of the colour that what is under it is seen through:
+    /// a third of a contrast coat on a flat, more in a crease. See `Film`.
     Glaze,
-    /// Multiply, thicker in a crease and thinner on an edge.
+    /// A film that is hardly there on a flat, runs off an edge and pools
+    /// in a crease. See `Film`.
     Wash,
-    /// Tints by how light what is under it is: full over light, nearly gone
-    /// over dark; pools in creases and thins on edges.
+    /// A full coat of film on a flat, which over white is the paint's
+    /// colour and over another colour tints it; nearly two in a crease,
+    /// under half on an edge. See `Film`.
     Contrast,
     /// No colour at all: a finish, matte, satin or gloss, over what is
     /// under it. Its paint's red is the finish's code
@@ -143,61 +155,139 @@ impl Blend {
     /// Whether how this blend lies depends on the shape of the surface,
     /// so that a change to the field changes the composite.
     fn reads_the_shape(self) -> bool {
-        matches!(self, Blend::Wash | Blend::Contrast)
+        self.film().is_some_and(|film| film.into != 0.0 || film.off != 0.0)
     }
 
-    /// How much of the layer lands at a point, as a share, by how concave
-    /// the surface is there (`crease` in -1..=1: positive in a crease,
-    /// negative on an edge).
-    #[debug_ensures((0.0..=1.0).contains(&ret))]
-    fn pooling(self, crease: f32) -> f32 {
-        let into = crease.max(0.0);
-        let off = (-crease).max(0.0);
+    /// The film this blend's paint is, if it is one: a paint that is seen
+    /// through. See `Film`.
+    fn film(self) -> Option<Film> {
         match self {
-            Blend::Wash => (0.35 + 0.9 * into - 0.3 * off).clamp(0.0, 1.0),
-            // Near a full coat on a flat: a contrast paint over a light
-            // undercoat is a strong colour. At three quarters, over near
-            // white, it read as a pastel: seen on the paint's picture.
-            Blend::Contrast => (0.9 + 0.3 * into - 0.45 * off).clamp(0.0, 1.0),
-            _ => 1.0,
+            Blend::Glaze => Some(Film::GLAZE),
+            Blend::Wash => Some(Film::WASH),
+            Blend::Contrast => Some(Film::CONTRAST),
+            _ => None,
         }
     }
 
     /// The colour this blend moves toward, from the layer's colour and what
-    /// is visible under it, both 0..=1.
+    /// is visible under it, both 0..=1, for a blend that is not a film.
     fn target(self, colour: [f32; 3], under: [f32; 3]) -> [f32; 3] {
         let each = |f: &dyn Fn(f32, f32) -> f32| {
             [f(colour[0], under[0]), f(colour[1], under[1]), f(colour[2], under[2])]
         };
         match self {
-            // A varnish lays no colour and never comes here: see
-            // `composite_voxel`.
-            Blend::Normal | Blend::Varnish => colour,
-            Blend::Multiply | Blend::Wash => each(&|c, u| c * u),
+            Blend::Multiply => each(&|c, u| c * u),
             Blend::Screen => each(&|c, u| 1.0 - (1.0 - c) * (1.0 - u)),
-            // The same film a glaze stroke lays. Giving the colour the
-            // lightness under it channel by channel, as this did before
-            // 2026-11-27, turned a dark blue over white to cyan.
-            Blend::Glaze => crate::paint::stroke::tinted(under, colour),
-            Blend::Contrast => {
-                // Dark under it keeps a little of the colour, light under it
-                // all of it: what a translucent paint over a grey value
-                // sketch does.
-                let value = 0.12 + 0.88 * luma(under);
-                each(&|c, _| c * value)
-            }
+            // A varnish lays no colour and a film is put on by `Film::over`:
+            // neither comes here. See `composite_voxel`.
+            Blend::Normal | Blend::Varnish | Blend::Glaze | Blend::Wash | Blend::Contrast => colour,
         }
     }
 }
 
-/// How much deeper a wash or a contrast is in a full crease: the share of
-/// a second coat of itself it is multiplied by there. Asked for by the
-/// maintainer on 2026-11-25: speed paints "pull in and around details".
-const DEEPER: f32 = 0.7;
+/// A paint that is seen through: a glaze, a wash, a contrast paint.
+///
+/// # What it is
+///
+/// A film of pigment over what is under it does two things, and a paint is
+/// more of one or the other by its kind:
+///
+/// * **It tints.** Light goes down through the film, off what is under it,
+///   and back up, and the film takes its share of each colour on the way:
+///   `under * colour ^ thickness`, by Beer and Lambert, in linear light.
+///   The film's colour is what one coat of it looks like over white, which
+///   is what a pot of contrast paint is sold by. Over white a coat is its
+///   colour; over a dark undercoat nearly nothing comes back; over a
+///   yellow, a blue film leaves what both let through. Where the film is
+///   thicker (pooled in a crease) it is deeper AND more saturated, and
+///   where it is thinner (run off an edge) what is under it shows.
+/// * **It covers.** A film has some body of its own: pigment that sends
+///   light back before it reaches what is under. By that share the film's
+///   own colour is seen whatever is under it, which is why a contrast paint
+///   over black is not nothing, and a glaze thinned from a paint still
+///   lightens a dark base.
+///
+/// So, a film of thickness `t` and body `b`, over `under`:
+///
+/// ```text
+/// hidden = 1 - (1 - b) ^ t
+/// seen   = (1 - hidden) * under * colour ^ t  +  hidden * colour
+/// ```
+///
+/// # What it replaced, and why
+///
+/// Until 2026-11-27 each of the three had arithmetic of its own, on sRGB
+/// values, none of it a film. A wash multiplied. A contrast laid its colour
+/// scaled by how LIGHT what was under it was, so a blue contrast over a
+/// yellow undercoat was blue: the undercoat's hue was never read. A glaze
+/// took the hue of its colour only (the colour over its brightest
+/// channel), so a black glaze over white was a pale peach, and then gave
+/// back half the lightness it had taken. The maintainer: "It's been a mess
+/// for a while... Mostly I want contrast paints and glazes to work
+/// properly tinting / covering paint underneath." Seen in pictures of the
+/// arithmetic (`charts_of_the_paints` in the application's
+/// `app/paint_preview.rs`) before a line of this was written.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Film {
+    /// How thick one full coat lies on a flat, where 1 is the thickness at
+    /// which the film over white is its own colour.
+    flat: f32,
+    /// How much thicker it lies in a full crease, and thinner on a full
+    /// edge.
+    into: f32,
+    off: f32,
+    /// How much of what is under it a coat of thickness 1 hides, 0..=1.
+    body: f32,
+}
 
-/// The lightness of an sRGB colour, 0..=1, by the Rec. 709 weights.
-fn luma(colour: [f32; 3]) -> f32 {
-    0.2126 * colour[0] + 0.7152 * colour[1] + 0.0722 * colour[2]
+impl Film {
+    /// A thin tint: a third of a contrast coat on a flat, with the body of
+    /// a paint thinned with medium. It pools as well, less than a contrast
+    /// does: asked for by the maintainer on 2026-11-27, "the contrast
+    /// paints and glazes need to pool more around details".
+    const GLAZE: Film = Film { flat: 0.35, into: 0.7, off: 0.15, body: 0.15 };
+    /// Hardly there on a flat, most of two coats in a crease, and off an
+    /// edge altogether. Nearly no body: a wash is ink and medium.
+    const WASH: Film = Film { flat: 0.2, into: 1.5, off: 0.15, body: 0.05 };
+    /// One coat on a flat, which over white is the pot's colour; nearly
+    /// two in a crease; under half on an edge, where the undercoat shows as
+    /// the highlight. Asked for by the maintainer on 2026-11-25: speed
+    /// paints "pull in and around details".
+    const CONTRAST: Film = Film { flat: 1.0, into: 0.9, off: 0.55, body: 0.12 };
+
+    /// The least a film is taken to pass of a colour, so that a paint with
+    /// nothing in a channel still has a thickness to be thinner at.
+    const LEAST: f32 = 0.002;
+
+    /// How thick a full coat lies where the surface is `crease` (-1 an
+    /// edge to 1 shut in).
+    #[debug_ensures(ret >= 0.0)]
+    fn thickness(self, crease: f32) -> f32 {
+        (self.flat + self.into * crease.max(0.0) - self.off * (-crease).max(0.0)).max(0.0)
+    }
+
+    /// What is seen where a full coat of `colour` lies over `under`, both
+    /// sRGB 0..=1, and so is the answer.
+    fn over(self, colour: [f32; 3], under: [f32; 3], crease: f32) -> [f32; 3] {
+        let thickness = self.thickness(crease);
+        let hidden = 1.0 - (1.0 - self.body).powf(thickness);
+        std::array::from_fn(|channel| {
+            let paint = to_light(colour[channel]).max(Film::LEAST);
+            let through = to_light(under[channel]) * paint.powf(thickness);
+            from_light((1.0 - hidden) * through + hidden * paint)
+        })
+    }
+}
+
+/// An sRGB value, 0..=1, as linear light, and back. The film's arithmetic
+/// is in light; the rest of the stack's is on the values as stored.
+fn to_light(c: f32) -> f32 {
+    if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+}
+
+fn from_light(c: f32) -> f32 {
+    let c = c.clamp(0.0, 1.0);
+    if c <= 0.003_130_8 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 }
 }
 
 /// What a layer is, apart from its paint.
@@ -1021,8 +1111,7 @@ pub(crate) fn composite_voxel<'a>(
         if rgba[3] == 0 || meta.blend == Blend::Varnish {
             continue;
         }
-        let k =
-            f32::from(rgba[3]) / 255.0 * meta.opacity.clamp(0.0, 1.0) * meta.blend.pooling(crease);
+        let k = f32::from(rgba[3]) / 255.0 * meta.opacity.clamp(0.0, 1.0);
         if k <= 0.0 {
             continue;
         }
@@ -1030,15 +1119,13 @@ pub(crate) fn composite_voxel<'a>(
             [f32::from(rgba[0]) / 255.0, f32::from(rgba[1]) / 255.0, f32::from(rgba[2]) / 255.0];
         let under =
             [clay[0] * (1.0 - a) + p[0], clay[1] * (1.0 - a) + p[1], clay[2] * (1.0 - a) + p[2]];
-        let mut target = meta.blend.target(colour, under);
-        if meta.blend.reads_the_shape() {
-            // Pooled paint is more paint: in a recess a wash or a contrast
-            // is deeper, as if laid over itself, by how shut in it is.
-            let deeper = crease.max(0.0) * DEEPER;
-            for channel in 0..3 {
-                target[channel] *= 1.0 - deeper * (1.0 - colour[channel]);
-            }
-        }
+        // A film's target is a full coat of it over what is under, as thick
+        // as the crease makes it; less than a full coat is that much of the
+        // way there.
+        let target = match meta.blend.film() {
+            Some(film) => film.over(colour, under, crease),
+            None => meta.blend.target(colour, under),
+        };
         for channel in 0..3 {
             p[channel] = (1.0 - k) * p[channel] + k * target[channel];
         }
@@ -1104,25 +1191,51 @@ mod tests {
         (any::<u8>(), any::<u8>(), any::<u8>(), any::<u8>()).prop_map(|(r, g, b, a)| [r, g, b, a])
     }
 
+    /// The lightness of what is seen, the clay showing through by what the
+    /// paint leaves uncovered, by the Rec. 709 weights on the stored values.
     fn lightness(rgba: Rgba) -> f32 {
         let clay = CLAY.map(f32::from);
         let a = f32::from(rgba[3]) / 255.0;
         let visible = |c: usize| f32::from(rgba[c]) * a + clay[c] * (1.0 - a);
-        luma([visible(0), visible(1), visible(2)])
+        0.2126 * visible(0) + 0.7152 * visible(1) + 0.0722 * visible(2)
     }
 
-    /// A wash or a contrast pooled in a crease is deeper than the same
-    /// paint on a flat, and a plain paint is the same in both.
+    const FILMS: [Blend; 3] = [Blend::Glaze, Blend::Wash, Blend::Contrast];
+
+    /// `paint` as a layer of `blend`, `coverage` of it, over an opaque
+    /// `under`, where the surface is `crease`.
+    fn filmed(under: [u8; 3], paint: [u8; 3], blend: Blend, coverage: u8, crease: f32) -> [u8; 3] {
+        let (base, top) = (meta(Blend::Normal, 1.0), meta(blend, 1.0));
+        let [r, g, b, _] = composite_voxel(
+            [
+                (&base, [under[0], under[1], under[2], 255]),
+                (&top, [paint[0], paint[1], paint[2], coverage]),
+            ]
+            .into_iter(),
+            crease,
+        );
+        [r, g, b]
+    }
+
+    fn sum(colour: [u8; 3]) -> i32 {
+        colour.iter().map(|c| i32::from(*c)).sum()
+    }
+
+    /// A glaze, a wash or a contrast pooled in a crease is deeper than the
+    /// same paint on a flat, and a plain paint is the same in both.
     #[test]
     fn pooled_paint_is_deeper_in_a_crease() {
         let lightness = |rgba: Rgba| u32::from(rgba[0]) + u32::from(rgba[1]) + u32::from(rgba[2]);
         let under = [200, 200, 200];
-        for blend in [Blend::Wash, Blend::Contrast] {
+        for blend in FILMS {
             let flat = over_undercoat(under, [150, 40, 30], blend, 0.0);
             let shut = over_undercoat(under, [150, 40, 30], blend, 1.0);
             let flat = lightness([flat[0], flat[1], flat[2], 255]);
             let shut = lightness([shut[0], shut[1], shut[2], 255]);
-            assert!(shut + 60 < flat, "{blend:?}: {shut} in a crease and {flat} on a flat");
+            // Forty levels in the three together. A contrast, already a full
+            // coat on a flat, is 53 deeper in a crease; the 60 asked before
+            // 2026-11-27 was the old arithmetic's.
+            assert!(shut + 40 < flat, "{blend:?}: {shut} in a crease and {flat} on a flat");
         }
         assert_eq!(
             over_undercoat(under, [150, 40, 30], Blend::Normal, 1.0),
@@ -1140,6 +1253,70 @@ mod tests {
         assert_eq!(composite_voxel([(&plain, BARE)].into_iter(), 0.0), BARE);
     }
 
+    /// Over white, a full coat of a contrast paint on a flat is the colour
+    /// of the pot, to a level or two: what a contrast paint is sold by.
+    /// Of a channel below about 16 levels the film is taken to pass a
+    /// little (`Film::LEAST`), and over white such a channel comes out up
+    /// to 7 levels light; the paints here keep clear of that.
+    #[test]
+    fn a_contrast_over_white_is_its_own_colour() {
+        for paint in [[200, 30, 20], [30, 60, 160], [90, 140, 40], [40, 35, 30], [230, 200, 60]] {
+            let seen = filmed([255; 3], paint, Blend::Contrast, 255, 0.0);
+            for channel in 0..3 {
+                let off = (i32::from(seen[channel]) - i32::from(paint[channel])).abs();
+                assert!(off <= 2, "{paint:?} over white is {seen:?}");
+            }
+        }
+    }
+
+    /// A contrast over a yellow and over a blue as light as it are not the
+    /// same: the undercoat's hue is read, and not only how light it is.
+    /// The rule before 2026-11-27 took only the lightness, and a blue
+    /// contrast over yellow stayed blue.
+    #[test]
+    fn a_contrast_reads_the_hue_under_it() {
+        let yellow = [230, 200, 40];
+        let blue = [150, 205, 255];
+        let light = |c: [u8; 3]| lightness([c[0], c[1], c[2], 255]);
+        assert!((light(yellow) - light(blue)).abs() < 4.0, "the two undercoats differ in light");
+        let paint = [40, 80, 190];
+        let over_yellow = filmed(yellow, paint, Blend::Contrast, 255, 0.0);
+        let over_blue = filmed(blue, paint, Blend::Contrast, 255, 0.0);
+        let apart = (0..3)
+            .map(|c| (i32::from(over_yellow[c]) - i32::from(over_blue[c])).abs())
+            .max()
+            .unwrap_or(0);
+        assert!(apart > 30, "over yellow {over_yellow:?} and over blue {over_blue:?}");
+        // Over the yellow the blue film lets through what both pass: less
+        // blue than over the blue undercoat.
+        assert!(over_yellow[2] + 30 < over_blue[2], "{over_yellow:?} against {over_blue:?}");
+    }
+
+    /// A black glaze over white darkens it, past a mid grey. The rule
+    /// before 2026-11-27, a film of the hue that gave back half the
+    /// lightness, left it lighter than a mid grey and pale peach.
+    #[test]
+    fn a_black_glaze_darkens_white() {
+        let seen = filmed([255; 3], [0; 3], Blend::Glaze, 255, 0.0);
+        assert!(seen.iter().all(|c| *c < 128), "a black glaze over white is {seen:?}");
+        assert!(seen[0] == seen[1] && seen[1] == seen[2], "a black glaze over white has a hue");
+    }
+
+    /// A contrast over black is not black, the body of the paint showing,
+    /// and is far darker than the same paint over white.
+    #[test]
+    fn a_contrast_over_black_shows_a_little_of_itself() {
+        for paint in [[200, 30, 20], [30, 60, 160], [230, 200, 60]] {
+            let over_black = filmed([0; 3], paint, Blend::Contrast, 255, 0.0);
+            let over_white = filmed([255; 3], paint, Blend::Contrast, 255, 0.0);
+            assert!(sum(over_black) > 30, "{paint:?} over black is {over_black:?}");
+            assert!(
+                sum(over_black) * 2 < sum(over_white),
+                "{paint:?}: {over_black:?} over black and {over_white:?} over white"
+            );
+        }
+    }
+
     proptest! {
         /// A normal layer at full coverage and opacity hides what is under
         /// it, whatever that is.
@@ -1151,15 +1328,15 @@ mod tests {
             prop_assert_eq!(out, over);
         }
 
-        /// A multiply or a wash never makes what is under it lighter, and a
-        /// screen never darker.
+        /// A multiply never makes what is under it lighter, and a screen
+        /// never darker.
         #[test]
         fn multiply_darkens_and_screen_lightens(
             under in rgba(), over in rgba(), opacity in 0.0_f32..=1.0, crease in -1.0_f32..=1.0,
         ) {
             let base = meta(Blend::Normal, 1.0);
             let alone = lightness(composite_voxel([(&base, under)].into_iter(), crease));
-            for (blend, darker) in [(Blend::Multiply, true), (Blend::Wash, true), (Blend::Screen, false)] {
+            for (blend, darker) in [(Blend::Multiply, true), (Blend::Screen, false)] {
                 let top = meta(blend, opacity);
                 let both = lightness(composite_voxel([(&base, under), (&top, over)].into_iter(), crease));
                 if darker {
@@ -1167,6 +1344,76 @@ mod tests {
                 } else {
                     prop_assert!(both + 1.0 >= alone, "{:?} darkened {} to {}", blend, alone, both);
                 }
+            }
+        }
+
+        /// A film never makes a channel of what is under it lighter than
+        /// both the undercoat and the paint are in it, to a level or two:
+        /// it tints and covers, and never shines.
+        #[test]
+        fn a_film_is_never_lighter_than_both(
+            under in any::<[u8; 3]>(),
+            paint in any::<[u8; 3]>(),
+            blend in 0usize..3,
+            coverage in any::<u8>(),
+            crease in -1.0_f32..=1.0,
+        ) {
+            let seen = filmed(under, paint, FILMS[blend], coverage, crease);
+            for channel in 0..3 {
+                let most = under[channel].max(paint[channel]);
+                prop_assert!(
+                    seen[channel] <= most.saturating_add(2),
+                    "{:?} of {:?} over {:?} is {:?}", FILMS[blend], paint, under, seen
+                );
+            }
+        }
+
+        /// Over an undercoat lighter than the paint, every film is darker
+        /// in a crease than on a flat, where it lies thicker, and lighter
+        /// on an edge, where it runs thin, to a level or two.
+        #[test]
+        fn a_film_is_darker_in_a_crease_and_lighter_on_an_edge(
+            paint in any::<[u8; 3]>(),
+            lift in any::<[u8; 3]>(),
+            blend in 0usize..3,
+        ) {
+            let under: [u8; 3] = std::array::from_fn(|c| {
+                paint[c].saturating_add(40).saturating_add(lift[c] / 2)
+            });
+            let blend = FILMS[blend];
+            let at = |crease: f32| sum(filmed(under, paint, blend, 255, crease));
+            let (edge, flat, shut) = (at(-1.0), at(0.0), at(1.0));
+            prop_assert!(shut <= flat + 3, "{:?} of {:?} over {:?}: {} in a crease, {} on a flat",
+                blend, paint, under, shut, flat);
+            prop_assert!(edge + 3 >= flat, "{:?} of {:?} over {:?}: {} on an edge, {} on a flat",
+                blend, paint, under, edge, flat);
+        }
+
+        /// Less of a film is less of it: as the coverage falls, each
+        /// channel of what is seen goes back toward the undercoat, never
+        /// past it and never the other way.
+        #[test]
+        fn less_coverage_is_less_of_the_film(
+            under in any::<[u8; 3]>(),
+            paint in any::<[u8; 3]>(),
+            blend in 0usize..3,
+            one in any::<u8>(),
+            other in any::<u8>(),
+            crease in -1.0_f32..=1.0,
+        ) {
+            let blend = FILMS[blend];
+            let (less, more) = (one.min(other), one.max(other));
+            let thin = filmed(under, paint, blend, less, crease);
+            let thick = filmed(under, paint, blend, more, crease);
+            for channel in 0..3 {
+                let u = i32::from(under[channel]);
+                let (t, k) = (i32::from(thin[channel]), i32::from(thick[channel]));
+                // `thin` lies between the undercoat and `thick`, to a level.
+                prop_assert!(
+                    t >= u.min(k) - 1 && t <= u.max(k) + 1,
+                    "{:?}: {} of it is {:?} and {} is {:?} over {:?}",
+                    blend, less, thin, more, thick, under
+                );
             }
         }
 

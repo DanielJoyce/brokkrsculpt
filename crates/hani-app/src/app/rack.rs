@@ -22,7 +22,7 @@ use iced::{Alignment, Element, Length};
 
 use super::Hani;
 use crate::icon;
-use crate::message::{DesignerMessage, Message, PaintTouch, RackMessage, SearchBy};
+use crate::message::{DesignerMessage, Message, PaintMode, PaintTouch, RackMessage, SearchBy};
 use crate::paint_index::{self, Filter, Kind};
 use crate::theme;
 
@@ -485,23 +485,31 @@ impl Hani {
         }
     }
 
-    /// Take a paint into the brush: its colour, and its kind's blend on
-    /// the active layer. Puts the palette at the pointer away.
+    /// Take a paint into the brush: its colour, the way its kind is put
+    /// on, and its kind's blend on the active layer. Puts the palette at
+    /// the pointer away.
     fn take_up_paint(&mut self, paint: &RackPaint) {
         self.painting.colour = paint.rgb;
         self.studio.popup = None;
         self.status = format!("paint: {}", paint.name);
         // The way this kind of paint is put on, already chosen: a wash as a
         // wash, a contrast as a contrast, an air paint by the airbrush. Any
-        // other touch is the user's to choose after, a contrast drybrushed
-        // included. A plain paint keeps the touch in hand, unless that touch
-        // was a wash's or a contrast's.
+        // other touch is the user's to choose after, and its layer follows
+        // it (`app/layers.rs`): a contrast drybrushed is a contrast layer
+        // set by hand in the layers block. A plain paint keeps the touch in
+        // hand, unless that touch was a wash's or a contrast's.
         if let Some(touch) = paint.kind.touch() {
             self.touch.kind = touch;
         } else if matches!(self.touch.kind, PaintTouch::Wash | PaintTouch::Contrast) {
             self.touch.kind = PaintTouch::Loaded;
         }
-        self.suit_the_layer(&paint.name, paint.kind.blend(), paint.kind == Kind::Metallic);
+        // A stain glazes; any other paint, taken up while glazing, covers.
+        self.painting.mode = match (paint.kind.blend(), self.painting.mode) {
+            (hani_core::paint::layers::Blend::Glaze, _) => PaintMode::Glaze,
+            (_, PaintMode::Erase) => PaintMode::Erase,
+            _ => PaintMode::Paint,
+        };
+        self.suit_the_layer_to_the_brush(Some(&paint.name), Some(paint.kind == Kind::Metallic));
     }
 
     /// The key from 1 to 8 in Paint, painting in colour: the rack's paint
@@ -887,8 +895,9 @@ mod tests {
     }
 
     /// A paint of a kind with its own way of going on has that touch chosen
-    /// for it, and the user may change it after: a contrast drybrushed
-    /// stays on its contrast layer. A metallic goes on a metal layer.
+    /// for it, and the user may change it after, the layer following the
+    /// touch: a drybrush after a contrast goes on a Normal layer, which
+    /// until 2026-11-27 it did not. A metallic goes on a metal layer.
     #[test]
     fn a_paint_kind_chooses_its_touch_and_the_user_may_change_it() {
         use hani_core::paint::layers::Blend;
@@ -906,11 +915,7 @@ mod tests {
         assert_eq!(active(&app).blend, Blend::Contrast);
         update(&mut app, Message::PaintTouchChosen(PaintTouch::Drybrush));
         assert_eq!(app.touch.kind, PaintTouch::Drybrush);
-        assert_eq!(
-            active(&app).blend,
-            Blend::Contrast,
-            "a drybrush took the contrast off its layer"
-        );
+        assert_eq!(active(&app).blend, Blend::Normal, "a drybrush stayed on the contrast's layer");
         rack(&mut app, RackMessage::Picked(at(Kind::Wash)));
         assert_eq!(app.touch.kind, PaintTouch::Wash);
         rack(&mut app, RackMessage::Picked(at(Kind::Paint)));
@@ -918,6 +923,28 @@ mod tests {
         rack(&mut app, RackMessage::Picked(at(Kind::Metallic)));
         assert!(active(&app).metal, "a metallic is not on a metal layer");
         assert_eq!(active(&app).blend, Blend::Normal);
+    }
+
+    /// A stain taken up from the rack glazes: the mode goes to Glaze and
+    /// the layer to a Glaze layer. A plain paint after it puts the mode
+    /// back to Paint and the layer to Normal.
+    #[test]
+    fn a_stain_from_the_rack_glazes() {
+        use hani_core::paint::layers::Blend;
+        let mut app = app();
+        let blend = |app: &Hani| {
+            let layers = app.doc.active_volume().layers();
+            layers.metas()[layers.active()].blend
+        };
+        rack(&mut app, RackMessage::Added(at_in_index("AK", "Ink (3rd Gen)", "Burnt Umber")));
+        let stain = app.painting.rack.rack().paints.len() - 1;
+        assert_eq!(app.painting.rack.rack().paints[stain].kind, Kind::Stain);
+        rack(&mut app, RackMessage::Picked(stain));
+        assert_eq!(app.painting.mode, PaintMode::Glaze);
+        assert_eq!(blend(&app), Blend::Glaze);
+        rack(&mut app, RackMessage::Picked(0));
+        assert_eq!(app.painting.mode, PaintMode::Paint);
+        assert_eq!(blend(&app), Blend::Normal);
     }
 
     /// Racks are made, filled from the index, ordered, emptied, swapped

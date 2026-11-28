@@ -440,6 +440,12 @@ mod tests {
         coats(&mut app, CoatsMessage::Varnish(Finish::Gloss));
         coats(&mut app, CoatsMessage::VarnishCoat);
         assert_eq!(names(&app), ["Paint", "Varnish: Gloss"]);
+        // An ordinary touch or Paint chosen leaves the Varnish layer be, its
+        // strokes laying the finish (`suit_the_layer_to_the_brush`).
+        update(&mut app, Message::PaintTouchChosen(crate::message::PaintTouch::Loaded));
+        let paint = crate::message::PaintingMessage::Mode(crate::message::PaintMode::Paint);
+        update(&mut app, Message::Painting(paint));
+        assert_eq!(names(&app), ["Paint", "Varnish: Gloss"]);
         let pigment = app.pigment(hani_core::BrushDirection::Add);
         assert_eq!(pigment.colour, [Finish::Gloss.code(), 0, 0]);
         update(&mut app, Message::Layers(crate::message::LayersMessage::Chosen(0)));
