@@ -34,7 +34,9 @@ changes the numbers in the voxels under it:
   swells or shrinks along its own normals.
 - **Smooth** blends each value toward its neighbours.
 - **Clay**, **Flatten** and **Scrape** pull the surface toward a plane under
-  the brush.
+  the brush. With *Builds up* on, the strength and the pen's pressure set how
+  far off the surface Clay's and Scrape's plane is held, and so how fast they
+  build or cut: at full strength a pass is about as tall as one of Draw.
 - **Pinch** and **Widen** read values from further from, or nearer to, the
   line of the stroke, so whatever is under it gets narrower or wider and keeps
   its height.

@@ -70,16 +70,25 @@ use crate::region::FieldRegion;
 use crate::volume::{BrickPreview, BrickVerdict, Volume};
 
 pub mod alpha;
+// Where a stroke that builds up holds its plane. See `brush/build_up.rs`.
+mod build_up;
 pub mod compound;
 pub mod engine;
 // A brush's arithmetic, a run of voxels at a time. See `brush/runs.rs`.
 mod runs;
 pub mod stamp;
 
-/// How far outside the surface the clay plane sits, as a fraction of radius.
+/// How far outside the surface the clay plane sits, as a fraction of radius,
+/// at full strength and full pressure.
 ///
 /// Zero would make clay identical to flatten. Too large and it stops following
 /// the form and just deposits a slab.
+///
+/// A stroke that builds up holds the plane this times the strength and the
+/// pressure off the surface, and never more than [`MAX_STAMP_VOXELS`] off it,
+/// so that the strength sets how fast clay builds and no strength runs away.
+/// A stroke that lays one layer holds it here whatever the strength. See
+/// `brush/build_up.rs`.
 const CLAY_OFFSET: f32 = 0.35;
 
 /// Most a single stamp may move the surface, in voxels.
@@ -93,6 +102,11 @@ const CLAY_OFFSET: f32 = 0.35;
 ///
 /// Strokes get their reach from laying down many small stamps, not from one
 /// big one, which is also what makes stroke interpolation worth having.
+///
+/// Clay, and every brush that levels to a plane held off the surface, keeps
+/// to it too: its plane is held no further off than this, so a stamp lifts
+/// the middle no further. Until issue 179 nothing held it, and a stroke of
+/// clay that built up ran away. See `brush/build_up.rs`.
 const MAX_STAMP_VOXELS: f32 = 1.0;
 
 /// Displacement per stamp as a fraction of the brush radius, before the cap.
@@ -1426,11 +1440,13 @@ impl Brush {
         let region = &scratch.region;
 
         // Reference plane for clay and flatten, in world space. Clay holds it
-        // just outside the surface so material builds up to it.
+        // just outside the surface so material builds up to it, as far as
+        // the strength says and no further than a stamp may move the surface:
+        // see `brush/build_up.rs`.
         let plane_point = match self.kind {
             BrushKind::Clay => {
-                stamp.centre
-                    + stamp.normal * (self.radius * CLAY_OFFSET * stamp.direction.outward_sign())
+                let held = build_up::plane_height(self.radius, CLAY_OFFSET, gain, voxel_size);
+                stamp.centre + stamp.normal * (held * stamp.direction.outward_sign())
             }
             _ => stamp.centre,
         };

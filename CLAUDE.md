@@ -79,15 +79,12 @@ README current in the same pull request as the code.
 - `RUSTFLAGS="-D warnings" cargo clippy --workspace --target wasm32-unknown-unknown`
   (the browser build; `rustup target add wasm32-unknown-unknown` once)
 - `cargo test -p hani-core` (the dev profile, where contracts and debug
-  assertions are live), and `cargo test --release -p hani-core --lib`
+  assertions are live)
 - `cargo test -p hani-gpu`
-- `cargo test -p hani-app` (about four and a half minutes)
+- `cargo test -p hani-app`
 
 Two `update::apply` tests in the application fail when the tests are run
 as root, which a cloud container does. They are not this work's.
-
-The release build of the core's tests has now and then spent ten minutes
-or more in one LLVM pass. Give release runs a time limit.
 
 ## How it is tested
 
