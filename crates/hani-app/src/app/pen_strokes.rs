@@ -58,19 +58,58 @@
 //! (walked to through the air when the pointer's ray jumps in depth). It
 //! changed no number of any stroke measured, so it is not what shot off.
 //!
-//! **Left as it is: how fast clay builds up.** Clay holds its plane 0.35 of
-//! the radius off the surface as the surface is now, so every pass over the
-//! same ground adds about that again, with a mouse as with a pen: 1.3 mm a
-//! pass for Clay strips at 3 mm with build-up on, 23.6 mm after fifteen. It
-//! is what building up means, and a stroke that should not is what One
-//! layer is for, which is now as smooth under a pen as under a mouse.
-//! Making the plane's height follow the strength would slow it, and would
-//! change what Clay does at every strength it has ever had: the
-//! maintainer's to ask for.
-//!
 //! Pressure changes in steps too, one a stamp, and was measured not to
 //! matter: a stamp is a quarter of a radius on and a pen reports a dozen
 //! times in that.
+//!
+//! # How fast clay builds up: the strength sets it
+//!
+//! Left as it was by the change above, and decided by the maintainer on
+//! 2026-11-27 (issue 179): "strength should affect build up". Clay held its
+//! plane 0.35 of the radius off the surface as the surface is now, whatever
+//! the strength, and nothing capped what one stamp lifted, where Draw is
+//! held to a voxel a stamp. With a 3 mm brush at 0.25 mm voxels the plane
+//! was 4.2 voxels up, a pass was 4.4 times as tall as Draw's at the same
+//! strength, and from about a half up it ran away: that, and not only the
+//! lean, was the "shooting off into space", and the mouse had it too.
+//!
+//! Now a stroke that builds up holds its plane the strength times the
+//! pressure of that height off the surface, and never more than a voxel
+//! off it (`hani_core`'s `brush/build_up.rs`). A stroke that lays one layer
+//! is as it was. Measured with `measure_what_strength_does_to_a_pass`,
+//! below, on the build machine: a mouse, Clay strips (Clay is the same to
+//! the bit), 3 mm, the tallest the surface stands off the 30 mm ball, in
+//! millimetres.
+//!
+//! | Strength | one pass, before | after | fifteen passes, before | after | Draw, one pass |
+//! |---:|---:|---:|---:|---:|---:|
+//! | 0.05 | 0.21 | 0.01 | 3.99 | 0.23 | 0.05 |
+//! | 0.10 | 0.42 | 0.05 | 8.02 | 0.87 | 0.10 |
+//! | 0.15 | 0.62 | 0.10 | 11.84 | 2.00 | 0.15 |
+//! | 0.30 | 1.32 | 0.32 | 23.60 | 6.80 | 0.30 |
+//! | 0.50 | 2.56 | 0.54 | 43.25 | 12.26 | 0.49 |
+//! | 0.75 | 27.92 | 0.82 | 57.76 | 21.57 | 0.73 |
+//! | 1.00 | 59.25 | 1.13 | 59.25 | 25.67 | 0.96 |
+//!
+//! One layer, before and after alike: 0.21, 0.42, 0.64, 1.06, 1.09, 1.10,
+//! 1.12. A pass now rises with the strength all the way up, and from 0.3
+//! up is within a fifth of Draw's. By arithmetic, with this brush the plane
+//! reaches its cap of a voxel at a strength of 0.24 (4.2 voxels times 0.24
+//! is one), and from there the blend's weight alone sets the lift, as
+//! Draw's weight sets its push. Below that the plane's height and the
+//! blend both follow the strength, so a pass goes as its square and is
+//! thinner than Draw's: Clay at its own strength of 0.15 lays a tenth of a
+//! millimetre a pass where it laid six tenths. Fifteen passes still stand
+//! taller than Draw's (6.80 mm at 0.3, where Draw's stand 4.04). Why was
+//! not looked into; the likeliest reading, not tested, is that clay fills
+//! toward its plane at a ridge's flanks too, where a push only moves what
+//! is there.
+//!
+//! Tried and dropped: capping the lift (the blend's weight times the
+//! plane's height) at a voxel, and not the plane's height. One pass was
+//! then 0.01, 0.05, 0.10, 0.40, 1.04, 1.08 and 1.13 mm at the strengths
+//! above, fifteen at 0.3 stood 8.01: from a half up the slider did nothing
+//! to how tall a pass is.
 
 #[cfg(test)]
 mod tests {
@@ -122,10 +161,25 @@ mod tests {
         path: &[Vec2],
         pen: &dyn Fn(usize) -> Option<PenState>,
     ) -> Hani {
+        drawn_at(brush, build_up, None, path, pen)
+    }
+
+    /// The same, at `strength` where it says one and at the brush's own
+    /// where it does not.
+    fn drawn_at(
+        brush: &str,
+        build_up: bool,
+        strength: Option<f32>,
+        path: &[Vec2],
+        pen: &dyn Fn(usize) -> Option<PenState>,
+    ) -> Hani {
         let mut app = Hani::with_tablet(Tablet::inert());
         app.viewport_size = Vec2::new(SIZE.x, SIZE.y);
         choose(&mut app, brush);
         drop(app.update(Message::Studio(StudioMessage::BuildUpToggled(build_up))));
+        if let Some(strength) = strength {
+            drop(app.update(Message::BrushStrengthChanged(strength)));
+        }
         let at = |index: usize| Vector::new(path[index].x, path[index].y);
         if let Some(state) = pen(0) {
             app.tablet.simulate(state);
@@ -291,6 +345,85 @@ mod tests {
         drop(app.update(Message::BrushKindChanged(BrushKind::Clay)));
         app.shift = true;
         assert_eq!(app.stroke_lean(lean), lean, "Smooth under shift");
+    }
+
+    /// How tall a pass stands for each strength, building up and laying one
+    /// layer. `cargo test -p hani-app measure_what_strength -- --ignored
+    /// --nocapture`.
+    /// Half as long as `straight`, which is all a pass needs to stand as
+    /// tall as it will: the tallest is in the middle of it, and these tests
+    /// run at every merge.
+    fn short() -> Vec<Vec2> {
+        (0..100).map(|i| Vec2::new(350.0 + i as f32, 300.0)).collect()
+    }
+
+    /// The tallest one short pass of `brush` leaves at `strength`, a mouse
+    /// or a pen held upright and pressed `pressed`.
+    fn pass(brush: &str, build_up: bool, strength: f32, pressed: Option<f32>) -> f32 {
+        let pen = move |_: usize| pressed.map(|pressure| held(pressure, Vec2::ZERO));
+        tallest(&drawn_at(brush, build_up, Some(strength), &short(), &pen))
+    }
+
+    /// Issue 179, as the maintainer decided it on 2026-11-27: "strength
+    /// should affect build up". A pass of clay that builds up is taller
+    /// the stronger it is, all the way up, and no strength runs away. It
+    /// did: one pass at 0.75 stood 28 mm off the 30 mm ball, and 0.5 and
+    /// 1.0 were 2.6 and 59 mm.
+    #[test]
+    fn building_up_the_strength_sets_how_tall_a_pass_of_clay_is() {
+        let radius = {
+            let mut app = Hani::with_tablet(Tablet::inert());
+            choose(&mut app, "Clay strips");
+            app.brush.radius
+        };
+        let mut last = 0.0;
+        for strength in [0.1, 0.3, 0.5, 0.8, 1.0] {
+            let tall = pass("Clay strips", true, strength, None);
+            assert!(tall > last, "a pass at {strength} stood {tall} mm, one weaker {last}");
+            assert!(tall < radius, "a pass at {strength} stood {tall} mm off a {radius} mm brush");
+            last = tall;
+        }
+    }
+
+    /// And the pen's pressure is a share of the strength, as it always
+    /// was: a light pen lays a thinner pass.
+    #[test]
+    fn half_the_pressure_lays_less_clay_than_full() {
+        let (light, full) =
+            (pass("Clay strips", true, 0.5, Some(0.5)), pass("Clay strips", true, 0.5, Some(1.0)));
+        assert!(0.0 < light && light < full, "half the pressure {light} mm, full {full}");
+    }
+
+    /// One layer is not changed by any of it: Clay strips at its own 0.3
+    /// lays the 1.06 mm it did before (`measure_what_strength_does_to_a_pass`,
+    /// before the change, along the same line).
+    #[test]
+    fn one_layer_of_clay_is_as_tall_as_it_was() {
+        let tall = tallest(&drawn_at("Clay strips", false, Some(0.3), &straight(), &|_| None));
+        assert!((tall - 1.06).abs() < 0.01, "one layer of Clay strips stood {tall} mm");
+    }
+
+    #[test]
+    #[ignore = "a measurement, printed"]
+    fn measure_what_strength_does_to_a_pass() {
+        let at = |brush: &str, build_up: bool, strength: f32, path: &[Vec2]| {
+            tallest(&drawn_at(brush, build_up, Some(strength), path, &|_| None))
+        };
+        for brush in ["Clay strips", "Clay", "Draw"] {
+            for build_up in [true, false] {
+                println!(
+                    "--- {brush}, build up {build_up}: strength, one pass (mm), five passes, fifteen"
+                );
+                for strength in [0.05, 0.1, 0.15, 0.3, 0.5, 0.75, 1.0] {
+                    println!(
+                        "{strength:5.2}  {:6.2}  {:6.2}  {:6.2}",
+                        at(brush, build_up, strength, &straight()),
+                        at(brush, build_up, strength, &scribble(5)),
+                        at(brush, build_up, strength, &scribble(15)),
+                    );
+                }
+            }
+        }
     }
 
     /// The instrument the module's table is from. `cargo test -p hani-app

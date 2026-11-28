@@ -690,7 +690,7 @@ does the same from a terminal.
 | brush | what it does to the field |
 | --- | --- |
 | Draw | translates the patch along the stroke normal |
-| Clay | blends toward a plane held just outside the surface, adding only |
+| Clay | blends toward a plane held just outside the surface, adding only; building up, the plane is as far out as the strength and the pen's pressure say, and never more than a voxel, so the strength sets how fast clay builds |
 | Smooth | blends toward the average of the neighbouring values |
 | Inflate | offsets the level set, moving every point along its own normal |
 | Pinch | squeezes the surface toward the stroke's line by a share of its distance from it: a ridge comes out narrower and as tall |
@@ -699,6 +699,16 @@ does the same from a terminal.
 
 Smooth and flatten have no opposite, so inverting them does nothing and the
 interface says so.
+
+**How fast clay builds up is the strength's to say** (issue 179, since
+2026-11-27, `brush/build_up.rs`). Clay's plane used to sit 0.35 of the radius
+out whatever the strength, and nothing held what one stamp lifted: a pass of
+Clay was 4.4 times as tall as one of Draw, and from a strength of about a half
+it ran away, 28 mm off a 30 mm ball from one pass at 0.75 with a mouse. In a
+stroke that builds up the plane is now held the strength and the pressure of
+that far out, and never more than the voxel a stamp of Draw may move the
+surface. A pass of a 3 mm brush, measured, is 0.10 mm at 0.15, 0.32 at 0.3 and
+1.13 at full strength, where Draw's is 0.96. *One layer* is as it was.
 
 Draw and pinch were both first written the obvious way — as a value the brush
 adds or amplifies — and both had to be rewritten. Anything with gain above one

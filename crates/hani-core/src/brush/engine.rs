@@ -266,7 +266,7 @@ trait Kernel {
     }
 
     /// A point on the reference plane, for the kernels that blend toward one.
-    fn plane_point(stamp: &Stamp, _radius: f32) -> Vec3 {
+    fn plane_point(stamp: &Stamp, _radius: f32, _gain: f32, _voxel_size: f32) -> Vec3 {
         stamp.centre
     }
 
@@ -334,7 +334,7 @@ fn run<K: Kernel>(def: &BrushDef, volume: &mut Volume, stamp: &Stamp, scratch: &
         normal: stamp.normal,
         direction: stamp.direction,
         displacement,
-        plane_point: K::plane_point(stamp, radius),
+        plane_point: K::plane_point(stamp, radius, gain, voxel_size),
     };
 
     let pattern = if def.tip.pattern.is_off() {
@@ -585,9 +585,12 @@ impl Kernel for ClayKernel {
     const READS_THE_FIELD: bool = false;
     const BLENDS_TOWARD_A_PLANE: bool = true;
 
-    /// Held just outside the surface, so material builds up to it.
-    fn plane_point(stamp: &Stamp, radius: f32) -> Vec3 {
-        stamp.centre + stamp.normal * (radius * CLAY_OFFSET * stamp.direction.outward_sign())
+    /// Held just outside the surface, so material builds up to it: as far
+    /// as the strength says and no further than a stamp may move the
+    /// surface. See `brush/build_up.rs`.
+    fn plane_point(stamp: &Stamp, radius: f32, gain: f32, voxel_size: f32) -> Vec3 {
+        let held = super::build_up::plane_height(radius, CLAY_OFFSET, gain, voxel_size);
+        stamp.centre + stamp.normal * (held * stamp.direction.outward_sign())
     }
 
     fn leaves_saturated_alone(_value: f32, _direction: BrushDirection) -> bool {
