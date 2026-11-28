@@ -139,13 +139,14 @@ when the build machine could not measure it (it has no graphics card).
 - No em-dashes in prose, comments, documents or commit messages.
 - An `SPDX-License-Identifier: AGPL-3.0-only` header on every new source
   file.
-- Add, do not modify (decision D6 of the plan): new behaviour goes in a
-  module of its own, with the fewest lines that will do in upstream's
-  files, and a comment at each of those lines saying where to look.
-  Set aside for performance work by the maintainer on 2026-11-24 (*"The
-  code is ours, so do what needs to be done"*): a change that makes
-  upstream's code faster is made in upstream's file. New features still
-  go in modules of their own.
+- New features go in modules of their own. Decision D6 of the plan
+  ("add, do not modify") also kept upstream's files from being
+  restructured, for the sake of merging from upstream. The fork was
+  severed on 2026-11-26, and the maintainer retired that half on
+  2026-11-27: *"retire d6 and break up app."* The code is ours:
+  restructure it where that makes it better, in a pull request that
+  moves and does not change, and make a change for speed in whichever
+  file it belongs.
 - A number is either measured, and says with what, or is arithmetic, and
   says so. Do not write "measured" for something worked out.
 - Commit messages are long and say what was tried and dropped, what a
