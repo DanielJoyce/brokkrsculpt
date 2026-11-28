@@ -194,9 +194,9 @@ mod tests {
         (0..200).map(|i| Vec2::new(300.0 + i as f32, 300.0)).collect()
     }
 
-    /// Over the same ground fifteen times, as a hand filling in does.
-    fn scribble() -> Vec<Vec2> {
-        (0..900)
+    /// Over the same ground `passes` times, as a hand filling in does.
+    fn scribble(passes: usize) -> Vec<Vec2> {
+        (0..passes * 60)
             .map(|i| {
                 let t = (i as f32 / 60.0 * std::f32::consts::PI).sin();
                 let shake = Vec2::new(noise(i as u32 + 100), noise(i as u32 + 200));
@@ -233,20 +233,29 @@ mod tests {
 
     /// And the one that shot off: each stamp set down on the face the last
     /// one tipped, and tipped again.
+    ///
+    /// Four passes and two brushes, where the measurement below takes
+    /// fifteen and four: this is run at every merge, and at fifteen passes
+    /// and three brushes it was the sixth slowest test of the eleven hundred
+    /// (73 s of the suite's time, measured). What it holds does not need
+    /// them: the two fields are the same to the bit or they are not, from
+    /// the first stamp on.
     #[test]
     fn a_leaning_pen_does_not_raise_what_it_flattens() {
         let across = Vec2::new(0.0, 0.67);
-        for brush in ["Flatten", "Clay", "Clay strips"] {
-            let upright = drawn(brush, true, &scribble(), &|_| Some(held(0.6, Vec2::ZERO)));
-            let leaning = drawn(brush, true, &scribble(), &|_| Some(held(0.6, across)));
+        let path = scribble(4);
+        for brush in ["Flatten", "Clay strips"] {
+            let upright = drawn(brush, true, &path, &|_| Some(held(0.6, Vec2::ZERO)));
+            let leaning = drawn(brush, true, &path, &|_| Some(held(0.6, across)));
             assert!(same_field(&upright, &leaning), "{brush}: the lean reached its plane");
+            if brush == "Flatten" {
+                assert!(
+                    tallest(&leaning) < 0.5,
+                    "Flatten stood {} mm off a ball it was flattening",
+                    tallest(&leaning)
+                );
+            }
         }
-        let flattened = drawn("Flatten", true, &scribble(), &|_| Some(held(0.6, across)));
-        assert!(
-            tallest(&flattened) < 0.5,
-            "Flatten stood {} mm off a ball it was flattening: it was 5.5",
-            tallest(&flattened)
-        );
     }
 
     /// What tilt is for is kept: a brush that pushes is steered by it.
@@ -325,7 +334,7 @@ mod tests {
                 for (name, pen) in &pens {
                     let a = patch(&drawn(brush, build_up, &straight(), pen));
                     let b = patch(&drawn(brush, build_up, &hand, pen));
-                    let c = tallest(&drawn(brush, build_up, &scribble(), pen));
+                    let c = tallest(&drawn(brush, build_up, &scribble(15), pen));
                     println!(
                         "{name:34} straight {:5.1}/{:5.2}  hand {:5.1}/{:5.2}  scribbled {c:6.2}",
                         a.0, a.1, b.0, b.1
