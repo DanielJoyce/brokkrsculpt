@@ -355,12 +355,7 @@ mod tests {
         // Along y on the +x face, from y = -4 to y = 4.
         let stroked = |slot: u8, opacity: f32| {
             let (mut volume, _) = painted(|_| slot);
-            let lay = Lay::loaded(Pigment {
-                colour: RED,
-                opacity,
-                mode: Mode::Paint,
-                ..Pigment::default()
-            });
+            let lay = Lay::loaded(Pigment { colour: RED, opacity, mode: Mode::Paint });
             let mut stroke = PaintStroke::new();
             volume.begin_stroke();
             for step in 0..=8 {

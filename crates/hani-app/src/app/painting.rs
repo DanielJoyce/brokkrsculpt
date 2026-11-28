@@ -47,11 +47,9 @@ pub(super) struct PaintingState {
     /// sRGB.
     pub colour: [u8; 3],
     pub opacity: f32,
+    /// The way of painting last chosen. What the panel shows lit, and what
+    /// the brush is, is [`Hani::mode_in_hand`], which follows the layer.
     pub mode: PaintMode,
-    /// How much of the lightness a glaze's film takes it gives back,
-    /// 0..=1: [`hani_core::paint::stroke::Pigment::glaze`]. Asked for, as
-    /// a setting, on 2026-11-27.
-    pub glaze: f32,
     /// Whether the eyedropper is armed: the next press on the model takes
     /// the colour there.
     pub picking: bool,
@@ -85,7 +83,6 @@ impl Default for PaintingState {
         Self {
             colour: FIRST_COLOUR,
             opacity: 1.0,
-            glaze: hani_core::paint::stroke::GLAZE_KEEPS,
             mode: PaintMode::default(),
             picking: false,
             held_off: false,
@@ -109,10 +106,11 @@ impl PaintingState {
     pub(super) fn pigment(&self, direction: BrushDirection) -> Pigment {
         let mode = match (direction, self.mode) {
             (BrushDirection::Subtract, _) | (_, PaintMode::Erase) => Mode::Erase,
-            (_, PaintMode::Paint) => Mode::Paint,
-            (_, PaintMode::Glaze) => Mode::Glaze,
+            // A glaze is laid as paint is, on a layer whose blend is Glaze,
+            // which tints whatever is under it: `Hani::suit_the_layer_to_the_brush`.
+            (_, PaintMode::Paint | PaintMode::Glaze) => Mode::Paint,
         };
-        Pigment { colour: self.colour, opacity: self.opacity, mode, glaze: self.glaze }
+        Pigment { colour: self.colour, opacity: self.opacity, mode }
     }
 }
 
@@ -142,9 +140,19 @@ impl Hani {
             PaintingMessage::Opacity(opacity) => {
                 self.painting.opacity = opacity.clamp(*OPACITY_RANGE.start(), *OPACITY_RANGE.end());
             }
-            PaintingMessage::Mode(mode) => self.painting.mode = mode,
-            PaintingMessage::GlazeKeeps(keeps) => {
-                self.painting.glaze = if keeps.is_nan() { 0.0 } else { keeps.clamp(0.0, 1.0) };
+            PaintingMessage::Mode(mode) => {
+                // Paint or Glaze chosen with a wash's or a contrast's touch
+                // in hand is a brush again, as a plain paint from the rack
+                // is (`app/rack.rs`): the touch would otherwise want its
+                // own layer, and the button chosen would not light.
+                if mode != PaintMode::Erase
+                    && matches!(self.touch.kind, PaintTouch::Wash | PaintTouch::Contrast)
+                {
+                    self.touch.kind = PaintTouch::Loaded;
+                }
+                // The layer follows the brush: see `app/layers.rs`.
+                self.painting.mode = mode;
+                self.suit_the_layer_to_the_brush(None, None);
             }
             PaintingMessage::FillLike(levels) => self.painting.fill_like = levels,
             PaintingMessage::PickArmed => self.painting.picking = !self.painting.picking,
@@ -172,6 +180,48 @@ impl Hani {
             self.pick_colour(point);
         }
         self.painting.held_off
+    }
+
+    /// The way of painting the brush in hand is, and the panel shows lit:
+    /// Erase while erasing, and otherwise Glaze on a layer whose blend is
+    /// Glaze and Paint on any other, so that it follows a layer chosen by
+    /// hand in the layers block.
+    pub(super) fn mode_in_hand(&self) -> PaintMode {
+        if self.painting.mode == PaintMode::Erase {
+            return PaintMode::Erase;
+        }
+        let layers = self.doc.active_volume().layers();
+        match layers.metas().get(layers.active()).map(|meta| meta.blend) {
+            Some(hani_core::paint::layers::Blend::Glaze) => PaintMode::Glaze,
+            _ => PaintMode::Paint,
+        }
+    }
+
+    /// The blend the brush in hand wants its layer to have, or nothing
+    /// while erasing, which takes paint off whatever layer is active. A
+    /// wash's and a contrast's touch want their own; otherwise a glaze
+    /// tints and wants a Glaze layer, and a paint covers and wants a
+    /// Normal one.
+    pub(super) fn blend_in_hand(&self) -> Option<hani_core::paint::layers::Blend> {
+        use hani_core::paint::layers::Blend;
+        match (self.painting.mode, self.touch.kind) {
+            (PaintMode::Erase, _) => None,
+            (_, PaintTouch::Wash) => Some(Blend::Wash),
+            (_, PaintTouch::Contrast) => Some(Blend::Contrast),
+            (PaintMode::Glaze, _) => Some(Blend::Glaze),
+            (PaintMode::Paint, _) => Some(Blend::Normal),
+        }
+    }
+
+    /// A touch chosen in the panel, and the layer suited to it: a wash or
+    /// a contrast to a layer of its own blend, and any other touch back to
+    /// the layer the way of painting in hand wants. Asked for by the
+    /// maintainer on 2026-11-27; before, an ordinary touch after a contrast
+    /// went on painting on the contrast's layer, as a film.
+    pub(super) fn touch_chosen(&mut self, touch: PaintTouch) {
+        self.touch.kind = touch;
+        self.painting.mode = self.mode_in_hand();
+        self.suit_the_layer_to_the_brush(None, None);
     }
 
     /// Take the colour of the paint at `point`.
@@ -322,7 +372,7 @@ impl Hani {
                 assembled.push(crate::ui::tip(
                     button(text(mode.label()).size(theme::LABEL_SIZE))
                         .width(Length::Fill)
-                        .style(if mode == painting.mode {
+                        .style(if mode == self.mode_in_hand() {
                             theme::tool_button_active
                         } else {
                             theme::tool_button
@@ -379,22 +429,6 @@ impl Hani {
             .shown(format!("{:.2}", painting.opacity)),
         ]
         .spacing(theme::S2);
-        // A glaze's own setting, while it is a glaze in hand.
-        if painting.mode == PaintMode::Glaze {
-            picker = picker.push(
-                crate::ui::number(
-                    &self.drafts,
-                    "paint.glaze_keeps",
-                    "Keeps light",
-                    painting.glaze,
-                    0.0..=1.0,
-                    |keeps| Message::Painting(PaintingMessage::GlazeKeeps(keeps)),
-                )
-                .step(0.01)
-                .shown(format!("{:.0}%", painting.glaze * 100.0))
-                .tip("How much of the lightness under it the glaze keeps: none is a full film"),
-            );
-        }
         if !editing {
             return picker.into();
         }
@@ -431,36 +465,6 @@ mod tests {
 
     const SIZE: Vector = Vector { x: 800.0, y: 600.0 };
     const CENTRE: Vector = Vector { x: 400.0, y: 300.0 };
-
-    /// The glaze setting reaches the pigment, held to 0..=1, and is the
-    /// glaze's alone: a paint or an eraser lays the same whatever it says.
-    #[test]
-    fn the_glaze_setting_reaches_the_glaze_and_nothing_else() {
-        let mut app = Hani::with_tablet(crate::tablet::Tablet::inert());
-        update(&mut app, Message::Painting(PaintingMessage::Mode(PaintMode::Glaze)));
-        update(&mut app, Message::Painting(PaintingMessage::GlazeKeeps(0.2)));
-        assert_eq!(app.painting.pigment(hani_core::BrushDirection::Add).glaze, 0.2);
-        update(&mut app, Message::Painting(PaintingMessage::GlazeKeeps(4.0)));
-        assert_eq!(app.painting.glaze, 1.0);
-        update(&mut app, Message::Painting(PaintingMessage::GlazeKeeps(f32::NAN)));
-        assert_eq!(app.painting.glaze, 0.0);
-
-        let under = [180, 170, 150, 255];
-        let lays = |app: &Hani| {
-            hani_core::paint::stroke::laid(
-                under,
-                app.painting.pigment(hani_core::BrushDirection::Add),
-                1.0,
-            )
-        };
-        let film = lays(&app);
-        update(&mut app, Message::Painting(PaintingMessage::GlazeKeeps(1.0)));
-        assert_ne!(lays(&app), film, "the setting changed nothing of a glaze");
-        update(&mut app, Message::Painting(PaintingMessage::Mode(PaintMode::Paint)));
-        let painted = lays(&app);
-        update(&mut app, Message::Painting(PaintingMessage::GlazeKeeps(0.0)));
-        assert_eq!(lays(&app), painted, "the glaze setting changed a paint");
-    }
 
     fn update(app: &mut Hani, message: Message) {
         drop(app.update(message));
@@ -971,5 +975,190 @@ mod tests {
             out.iter().any(|(cell, was)| back.get(cell) != Some(was)),
             "going back laid nothing"
         );
+    }
+
+    /// What a layer holds at every voxel of the body, bottom layer first:
+    /// `held(app, 0)` is the bottom layer's paint, to the byte.
+    fn held(app: &Hani, index: usize) -> Vec<(IVec3, Rgba)> {
+        let volume = app.doc.active_volume();
+        let field = volume.layer_fields()[index];
+        every(app, field)
+    }
+
+    /// What is seen at `cells`: the stack put together.
+    fn seen_at(app: &Hani, cells: &[IVec3]) -> Vec<Rgba> {
+        let shown = app.doc.active_volume().display_paint();
+        cells.iter().map(|cell| shown.at(*cell)).collect()
+    }
+
+    fn every(app: &Hani, field: &PaintField) -> Vec<(IVec3, Rgba)> {
+        let volume = app.doc.active_volume();
+        let mut out = Vec::new();
+        for coord in volume.brick_coords() {
+            for index in 0..32 * 32 * 32 {
+                let cell = coord.origin() + IVec3::new(index % 32, (index / 32) % 32, index / 1024);
+                let rgba = field.at(cell);
+                if rgba != BARE {
+                    out.push((cell, rgba));
+                }
+            }
+        }
+        out
+    }
+
+    /// The active layer's blend, and how many layers there are.
+    fn active(app: &Hani) -> (hani_core::paint::layers::Blend, usize) {
+        let layers = app.doc.active_volume().layers();
+        (layers.metas()[layers.active()].blend, layers.len())
+    }
+
+    /// A stroke, and a frame for the stack to be put together.
+    fn stroke_seen(app: &mut Hani) {
+        stroke(app);
+        update(app, Message::Frame);
+    }
+
+    /// The cells the active layer covers fully.
+    fn covered(app: &Hani) -> Vec<IVec3> {
+        let index = app.doc.active_volume().layers().active();
+        held(app, index).into_iter().filter(|(_, rgba)| rgba[3] == 255).map(|(c, _)| c).collect()
+    }
+
+    /// Glaze, chosen over a body that is painted, makes a Glaze layer over
+    /// the paint, and a stroke there tints what is seen of the paint under
+    /// it without touching that paint, to the byte. Paint, chosen again,
+    /// makes a Normal layer over the glaze, and a stroke there covers.
+    /// Each layer change is one step of the undo history. Before
+    /// 2026-11-27 a glaze tinted only its own layer's paint and, over a
+    /// voxel that layer had none on, laid a coat that covered the paint
+    /// under it.
+    #[test]
+    fn a_glaze_tints_the_layers_under_it_and_paint_covers_it() {
+        use hani_core::paint::layers::Blend;
+        let mut app = app();
+        // Over an empty layer, the layer itself takes the blend and gives
+        // it back. Glaze chosen with a contrast's touch in hand is a brush
+        // again.
+        update(&mut app, Message::PaintTouchChosen(PaintTouch::Contrast));
+        assert_eq!(active(&app), (Blend::Contrast, 1));
+        set(&mut app, PaintingMessage::Mode(PaintMode::Glaze));
+        assert_eq!(app.touch.kind, PaintTouch::Loaded);
+        assert_eq!(active(&app), (Blend::Glaze, 1));
+        assert_eq!(app.mode_in_hand(), PaintMode::Glaze);
+        set(&mut app, PaintingMessage::Mode(PaintMode::Paint));
+        assert_eq!(active(&app), (Blend::Normal, 1));
+
+        set(&mut app, PaintingMessage::Colour([220, 220, 220]));
+        set(&mut app, PaintingMessage::Coated);
+        let below = held(&app, 0);
+        let steps = app.history.stats().undo_entries;
+
+        set(&mut app, PaintingMessage::Mode(PaintMode::Glaze));
+        assert_eq!(active(&app), (Blend::Glaze, 2), "no glaze layer over the paint");
+        assert_eq!(app.mode_in_hand(), PaintMode::Glaze);
+        assert_eq!(app.history.stats().undo_entries, steps + 1, "a new layer is one step");
+        set(&mut app, PaintingMessage::Colour([30, 60, 160]));
+        stroke_seen(&mut app);
+        assert_eq!(held(&app, 0), below, "the glaze changed the paint under it");
+        let glazed = covered(&app);
+        assert!(glazed.len() > 100, "the glaze covered {} voxels fully", glazed.len());
+        for [r, g, b, a] in seen_at(&app, &glazed) {
+            assert_eq!(a, 255, "the paint under the glaze is not seen");
+            // Bluer than the grey, and the grey still showing: not the
+            // glaze's own colour laid over it.
+            assert!(b > r + 20 && r > 30 + 40, "a blue glaze over grey is {:?}", [r, g, b]);
+        }
+
+        set(&mut app, PaintingMessage::Mode(PaintMode::Paint));
+        assert_eq!(active(&app), (Blend::Normal, 3), "no normal layer over the glaze");
+        set(&mut app, PaintingMessage::Colour([200, 30, 20]));
+        stroke_seen(&mut app);
+        let painted = covered(&app);
+        assert!(painted.len() > 100);
+        let shown = seen_at(&app, &painted);
+        assert!(shown.iter().all(|rgba| *rgba == [200, 30, 20, 255]), "paint did not cover");
+
+        // Undo takes back the stroke, the layer, the glaze's stroke and
+        // its layer, one step each.
+        for layers in [3, 2, 2, 1] {
+            update(&mut app, Message::Undo);
+            assert_eq!(active(&app).1, layers);
+        }
+        assert_eq!(active(&app), (Blend::Normal, 1));
+    }
+
+    /// After a wash or a contrast, an ordinary touch goes on a Normal layer
+    /// and covers. Before 2026-11-27 it went on painting on the wash's or
+    /// the contrast's layer, as a film.
+    #[test]
+    fn an_ordinary_touch_after_a_wash_or_a_contrast_covers() {
+        use hani_core::paint::layers::Blend;
+        for (touch, blend) in
+            [(PaintTouch::Wash, Blend::Wash), (PaintTouch::Contrast, Blend::Contrast)]
+        {
+            let mut app = app();
+            set(&mut app, PaintingMessage::Colour([220, 220, 220]));
+            set(&mut app, PaintingMessage::Coated);
+            update(&mut app, Message::PaintTouchChosen(touch));
+            assert_eq!(active(&app), (blend, 2), "{touch:?}");
+            set(&mut app, PaintingMessage::Colour([30, 60, 160]));
+            stroke_seen(&mut app);
+            update(&mut app, Message::PaintTouchChosen(PaintTouch::Loaded));
+            assert_eq!(active(&app), (Blend::Normal, 3), "after {touch:?}");
+            assert_eq!(app.mode_in_hand(), PaintMode::Paint);
+            set(&mut app, PaintingMessage::Colour([200, 30, 20]));
+            stroke_seen(&mut app);
+            let painted = covered(&app);
+            assert!(painted.len() > 100);
+            let shown = seen_at(&app, &painted);
+            assert!(
+                shown.iter().all(|rgba| *rgba == [200, 30, 20, 255]),
+                "paint after {touch:?} did not cover"
+            );
+        }
+    }
+
+    /// Erase changes no layer, whatever touch is chosen while it is in
+    /// hand, and takes paint off the layer that is active. The way of
+    /// painting shown follows a layer chosen by hand.
+    #[test]
+    fn erase_changes_no_layer_and_the_mode_shown_follows_the_layer() {
+        use crate::message::LayersMessage;
+        use hani_core::paint::layers::Blend;
+        let mut app = app();
+        set(&mut app, PaintingMessage::Coated);
+        set(&mut app, PaintingMessage::Mode(PaintMode::Glaze));
+        stroke_seen(&mut app);
+        assert_eq!(active(&app), (Blend::Glaze, 2));
+
+        update(&mut app, Message::Layers(LayersMessage::Chosen(0)));
+        assert_eq!(
+            app.mode_in_hand(),
+            PaintMode::Paint,
+            "a Normal layer chosen by hand is not shown as Paint"
+        );
+        update(&mut app, Message::Layers(LayersMessage::Chosen(1)));
+        assert_eq!(
+            app.mode_in_hand(),
+            PaintMode::Glaze,
+            "a Glaze layer chosen by hand is not shown as Glaze"
+        );
+        update(&mut app, Message::Layers(LayersMessage::Chosen(0)));
+
+        let steps = app.history.stats().undo_entries;
+        let under = held(&app, 0);
+        set(&mut app, PaintingMessage::Mode(PaintMode::Erase));
+        for touch in [PaintTouch::Wash, PaintTouch::Contrast, PaintTouch::Loaded] {
+            update(&mut app, Message::PaintTouchChosen(touch));
+            assert_eq!(active(&app), (Blend::Normal, 2), "Erase with {touch:?} changed the layer");
+        }
+        assert_eq!(app.mode_in_hand(), PaintMode::Erase);
+        assert_eq!(app.history.stats().undo_entries, steps, "Erase put a layer change on");
+        let glaze = held(&app, 1);
+        stroke_seen(&mut app);
+        assert_eq!(held(&app, 1), glaze, "the eraser took paint off a layer not active");
+        let thinned = held(&app, 0).len() < under.len()
+            || held(&app, 0).iter().zip(&under).any(|((_, now), (_, was))| now[3] < was[3]);
+        assert!(thinned, "the eraser took nothing off the active layer");
     }
 }

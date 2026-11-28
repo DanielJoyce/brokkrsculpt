@@ -298,11 +298,7 @@ impl Volume {
                 return before;
             }
             let free = 1.0 - f32::from(protection) / f32::from(PROTECTED);
-            laid(
-                before,
-                Pigment { colour, opacity, mode, ..Pigment::default() },
-                (take * free).clamp(0.0, 1.0),
-            )
+            laid(before, Pigment { colour, opacity, mode }, (take * free).clamp(0.0, 1.0))
         });
         // What the last dab of the gesture reached and this one does not is
         // given its paint back, as is the rest of a brick this one is in.
@@ -493,12 +489,7 @@ mod tests {
                     if u < 0.5 { [0, 0, 0, 255] } else { [255, 255, 255, 255] }
                 },
             );
-        let blue = Pigment {
-            colour: [20, 40, 220],
-            opacity: 1.0,
-            mode: Mode::Paint,
-            ..Pigment::default()
-        };
+        let blue = Pigment { colour: [20, 40, 220], opacity: 1.0, mode: Mode::Paint };
         let mut volume = ball();
         volume.begin_stroke();
         volume.dab(&half, &front(8.0, Some(blue)), None);

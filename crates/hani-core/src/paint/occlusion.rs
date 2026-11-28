@@ -26,13 +26,16 @@ use glam::{IVec3, Vec3};
 
 use crate::volume::Volume;
 
-/// How strongly a wash or a contrast pools, unless it is told otherwise:
+/// How strongly a glaze, a wash or a contrast pools, unless it is told otherwise:
 /// what the occlusion is multiplied by before it is a crease. At 1, the
 /// first value, the maintainer found the pooling too faint for a contrast
-/// paint to work ("The effect of AO needs to be higher").
-pub const POOLING: f32 = 1.5;
+/// paint to work ("The effect of AO needs to be higher"), and at 1.5, the
+/// second, still too little on 2026-11-27 ("The default AO level I think
+/// needs to be higher").
+pub const POOLING: f32 = 2.25;
 
-/// How strongly it may be set to pool, from none to twice the usual.
+/// How strongly it may be set to pool, from none to a third more than the
+/// usual (twice the usual of before 2026-11-27).
 pub const POOLING_RANGE: std::ops::RangeInclusive<f32> = 0.0..=3.0;
 
 /// How far a wash or a contrast reaches round a recess to pool: what the
