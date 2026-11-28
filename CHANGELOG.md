@@ -23,6 +23,18 @@ before it, see the
 
 ## Unreleased
 
+### Changed: the strength sets how fast clay builds up
+
+With *Builds up* on, Clay, Clay strips and the brushes made like them
+(Scrape among them) built far faster than their strength said, and from a
+strength of about a half could shoot off the model in one pass, with a mouse
+as with a pen. The strength, and the pen's pressure, now set how fast they
+build: a pass rises smoothly with the strength, and at full strength is about
+as tall as a pass of Draw (a millimetre with a 3 mm brush). A low strength
+builds slowly: at Clay's own 0.15 a pass is a tenth of a millimetre, where it
+was six tenths, so turn the strength up for the old speed. *One layer* is
+unchanged.
+
 ### Fixed: clay under a leaning pen
 
 With a pen, Clay strips and the other brushes that level were grainy where a
@@ -32,9 +44,7 @@ tipping the brush's plane at every step of the stroke. Those brushes now
 take no notice of the lean: a pen lays the layer a mouse does. Brushes that
 push, such as Draw, are still steered by it.
 
-*Builds up* is as quick as it was: every pass of Clay over the same ground
-adds about a third of the brush's radius, with a mouse too. *One layer* is
-the setting that does not.
+How fast *Builds up* builds is the entry above.
 
 ### Fixed: the pen under Wayland
 

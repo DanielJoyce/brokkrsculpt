@@ -543,9 +543,12 @@ impl Compound {
             _ => 1.0,
         };
         // The plane: under the brush, or held off it along the normal, on
-        // the side the brush is building toward.
+        // the side the brush is building toward, as far as the strength
+        // says and no further than a stamp may move the surface. See
+        // `brush/build_up.rs`.
         let plane_point = if actions.plane != 0.0 {
-            centre + normal * (radius * actions.plane * direction.outward_sign())
+            let held = super::build_up::plane_height(radius, actions.plane, gain, voxel_size);
+            centre + normal * (held * direction.outward_sign())
         } else {
             centre
         };
