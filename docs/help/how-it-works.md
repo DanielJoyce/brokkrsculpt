@@ -57,9 +57,11 @@ and shading. That is why a stroke on a large model still draws at once.
 ## Paint lives in the voxels too
 
 Paint is stored on the voxels at the surface, layer by layer, each layer with
-its own blend and opacity. A wash reads how shut in each place is and pools in
-the recesses; a drybrush reads how much each place stands out and catches only
-the edges. Because paint belongs to the material, it moves when the surface is
+its own blend and opacity. A glaze, a wash and a contrast paint are films:
+what is under them is seen through them, as light through paint, so a glaze
+tints every layer under it and a contrast over a light undercoat is its own
+colour. Each reads how shut in each place is and pools in the recesses; a
+drybrush reads how much each place stands out and catches only the edges. Because paint belongs to the material, it moves when the surface is
 moved and is cut when the model is cut.
 
 ## Getting it out
