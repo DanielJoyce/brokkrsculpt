@@ -103,7 +103,29 @@ wgpu = "27"
 [profile.dev]
 opt-level = 1
 
+# Every dependency, the tests' own (proptest and the rest) among them. It
+# does not match the workspace's crates.
 [profile.dev.package."*"]
+opt-level = 3
+
+# The engine is where the tests' time goes: the redistance, the pyramid, the
+# mesher and the brushes are all here, under the application's tests as much
+# as under its own. Fully optimised, with debug assertions, overflow checks
+# and the contracts still live, since those are the profile's and not the
+# level's. Asked for by the maintainer on 2026-11-27. Measured that day on
+# the build machine, twelve cores, each suite run whole:
+#
+#   level   the core's unit tests   the application's tests   an edit, rebuilt
+#     1           78.3 s                  255.6 s                 55 s
+#     2           65.2 s                  231.2 s                 62 s
+#     3           57.2 s                  205.6 s                 71 s
+#
+# "An edit, rebuilt" is one line changed in `Volume::redistance` and then
+# the core's tests and the application's built again, the second of two
+# rounds. So sixteen seconds more to build after an edit to the core, and
+# seventy-one fewer to run the two suites. A backtrace through the core
+# still names its inlined frames, from the debug information.
+[profile.dev.package.hani-core]
 opt-level = 3
 
 [profile.bench]
