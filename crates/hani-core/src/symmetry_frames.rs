@@ -11,9 +11,10 @@
 //! zbrush". A body starts with its symmetry off and the room's frame; a
 //! body made from another takes that one's whole symmetry.
 //!
-//! The settings are not undo steps, as a mirror toggled in ZBrush is not;
-//! the frame is, as it moves with the body's field (see
-//! [`Change::SymmetryFrame`]). Only bodies whose symmetry is not off in the
+//! A change to the settings is an undo step, [`Change::Symmetry`], asked
+//! for by the maintainer: "Make symmetry setting changes undoable too"; so
+//! is a move of the frame, [`Change::SymmetryFrame`], which goes with the
+//! body's field. Only bodies whose symmetry is not off in the
 //! room's frame are held, so a document that never used it holds none and
 //! saves no byte for it.
 //!
@@ -25,8 +26,8 @@
 //! either, as before every section it does not know.
 //!
 //! What `body.rs` holds for this: one field on [`Document`] and its value in
-//! the two constructors. `undo.rs` has one change,
-//! [`Change::SymmetryFrame`], and `project.rs` writes and reads the section.
+//! the two constructors. `undo.rs` has two changes, [`Change::SymmetryFrame`]
+//! and [`Change::Symmetry`], and `project.rs` writes and reads the section.
 
 use glam::{Quat, Vec3};
 use rustc_hash::FxHashMap;
@@ -104,19 +105,21 @@ impl Document {
     }
 
     /// Set a body's planes and radial copies from `settings`, keeping its
-    /// frame. Not an undo step. Answers whether anything changed; nothing
-    /// does for a row that is not a body here.
-    pub fn set_symmetry_settings(&mut self, id: NodeId, settings: Symmetry) -> bool {
+    /// frame, and answer the change that puts them back: `None` when nothing
+    /// changes or the row is not a body here. A caller that keeps the change
+    /// makes it an undo step; one that drops it (a plane turned off because
+    /// the body no longer reaches it) does not.
+    pub fn set_symmetry_settings(&mut self, id: NodeId, settings: Symmetry) -> Option<Change> {
         if !self.node(id).is_some_and(|node| node.is_body()) {
-            return false;
+            return None;
         }
         let before = self.symmetry(id);
         let after = settings.in_frame(before.frame());
         if before == after {
-            return false;
+            return None;
         }
         self.put_symmetry(id, after);
-        true
+        Some(Change::Symmetry { id, symmetry: before })
     }
 
     /// A body's whole symmetry, frame and all, as it comes from a file or
@@ -426,19 +429,28 @@ mod tests {
         assert!(frame.origin.distance(turned().origin) < 1.0e-6, "{frame:?}");
     }
 
-    /// Settings set on a body keep its frame, are refused on a folder, and
-    /// a body set back to off in the room's frame holds nothing.
+    /// Settings set on a body keep its frame, are undone and redone without
+    /// moving it, are refused on a folder, and a body set back to off in the
+    /// room's frame holds nothing.
     #[test]
     fn settings_keep_the_frame_and_off_holds_nothing() {
         let mut doc = Document::new(0.5);
         let body = doc.active();
         doc.set_symmetry_frame(body, turned());
-        assert!(doc.set_symmetry_settings(body, Symmetry::X));
+        let mut history = crate::undo::History::new(crate::DEFAULT_HISTORY_BUDGET);
+        let change = doc.set_symmetry_settings(body, Symmetry::X).expect("a change");
+        history.push(crate::undo::Entry::new(vec![change]));
         assert!(doc.symmetry(body).axis(MirrorAxis::X));
         assert_eq!(doc.symmetry_frame(body), turned(), "the settings moved the frame");
-        assert!(!doc.set_symmetry_settings(body, Symmetry::X), "nothing changed");
+        assert!(doc.set_symmetry_settings(body, Symmetry::X).is_none(), "nothing changed");
+        let visible = vec![true; doc.node_count()];
+        let _ = history.undo(&mut doc, &visible);
+        assert!(doc.symmetry(body).is_off(), "the undo left the plane on");
+        assert_eq!(doc.symmetry_frame(body), turned(), "the undo moved the frame");
+        let _ = history.redo(&mut doc, &visible);
+        assert!(doc.symmetry(body).axis(MirrorAxis::X), "the redo did not put it back");
         let (folder, _) = doc.group(body, "Folder").expect("room for a folder");
-        assert!(!doc.set_symmetry_settings(folder, Symmetry::X), "a folder took settings");
+        assert!(doc.set_symmetry_settings(folder, Symmetry::X).is_none(), "a folder took settings");
         doc.set_symmetry_settings(body, Symmetry::OFF);
         doc.set_symmetry_frame(body, SymmetryFrame::IDENTITY);
         assert!(doc.frames.frames.is_empty());

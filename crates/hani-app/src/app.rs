@@ -823,6 +823,9 @@ pub struct Hani {
     /// The folder in hand for the gizmo, and its session. See
     /// `app/group_gizmo.rs`.
     group_gizmo: group_gizmo::GroupGizmo,
+    /// The body and its symmetry before a drag of Radial copies, for the one
+    /// undo step the drag makes. See `app/symmetry_frame.rs`.
+    symmetry_drag: Option<(NodeId, Symmetry)>,
     /// The soft join's slider mid-drag. See `app/booleans.rs`.
     soft_drag: booleans::SoftDrag,
     /// Whether the welcome screen is up. See [`crate::welcome`].
@@ -2380,6 +2383,7 @@ impl Hani {
             gizmo_base: None,
             gizmo_baked: None,
             group_gizmo: Default::default(),
+            symmetry_drag: None,
             soft_drag: Default::default(),
             welcome: false,
             preferences: false,
@@ -5165,9 +5169,9 @@ impl Hani {
         // The active body's own. See `app/symmetry_frame.rs`.
         let settings = self.symmetry_settings();
         if settings.axis(axis) {
-            self.set_symmetry(settings.with_axis(axis, false));
+            self.set_symmetry_recorded(settings.with_axis(axis, false));
         } else if self.mirror_straddles(axis) {
-            self.set_symmetry(settings.with_axis(axis, true));
+            self.set_symmetry_recorded(settings.with_axis(axis, true));
         } else {
             self.status = self.mirror_refusal(axis, "refused");
         }
@@ -8296,6 +8300,9 @@ impl Hani {
     /// invalidated in three more places. Over-prompting costs a click;
     /// under-prompting costs the sculpt.
     fn undo(&mut self) {
+        // A drag of Radial copies still open is a step first. See
+        // `app/symmetry_frame.rs`.
+        self.finish_symmetry_drag();
         let shown = self.saved_nodes();
         let before = self.body_ids();
         match self.history.undo(&mut self.doc, &shown) {
@@ -8306,6 +8313,8 @@ impl Hani {
     }
 
     fn redo(&mut self) {
+        // See `app/symmetry_frame.rs`.
+        self.finish_symmetry_drag();
         let shown = self.saved_nodes();
         let before = self.body_ids();
         match self.history.redo(&mut self.doc, &shown) {
@@ -12884,6 +12893,11 @@ mod tests {
         key(&mut app, "2", bare());
         assert_eq!(app.brush.kind, BrushKind::ALL[1], "the digit did not reach the brush");
 
+        // The mirror is the last step now, an undo step of its own (see
+        // `app/symmetry_frame.rs`), so the first ctrl+Z takes it back and the
+        // second the stroke.
+        key(&mut app, "z", command());
+        assert!(!app.symmetry_settings().axis(MirrorAxis::X), "ctrl+Z did not undo the mirror");
         key(&mut app, "z", command());
         assert_ne!(
             app.doc.active_volume().sample_world(front),

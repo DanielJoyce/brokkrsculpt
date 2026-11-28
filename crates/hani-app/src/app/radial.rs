@@ -26,6 +26,8 @@ pub enum RadialMessage {
     Copies(f32),
     /// The axis they turn about.
     Axis(MirrorAxis),
+    /// The copies' slider let go: the drag is one undo step.
+    CopiesDone,
     /// The active body's planes back through the middle of the room. See
     /// `app/symmetry_frame.rs`.
     ResetFrame,
@@ -35,6 +37,8 @@ impl Hani {
     pub(super) fn radial_changed(&mut self, message: RadialMessage) {
         let settings = self.symmetry_settings();
         let (copies, axis) = (settings.radial(), settings.radial_axis());
+        // Each a step, a drag of the copies one step. See
+        // `app/symmetry_frame.rs`.
         let next = match message {
             RadialMessage::Copies(count) => {
                 let count = count.round().clamp(1.0, f32::from(Symmetry::MAX_RADIAL)) as u8;
@@ -42,9 +46,12 @@ impl Hani {
             }
             RadialMessage::Axis(next) => settings.with_radial(copies, next),
             RadialMessage::ResetFrame => return self.reset_frame(),
+            RadialMessage::CopiesDone => return self.finish_symmetry_drag(),
         };
-        // The active body's own. See `app/symmetry_frame.rs`.
-        self.set_symmetry(next);
+        match message {
+            RadialMessage::Copies(_) => self.set_symmetry_dragged(next),
+            _ => self.set_symmetry_recorded(next),
+        }
         self.status = format!("symmetry: {}", next.label());
         // Not round an axis that misses the body. See `app/symmetry_frame.rs`.
         self.refuse_radial_off_axis("refused");
@@ -86,6 +93,7 @@ impl Hani {
             )
             .step(1.0)
             .shown(if copies == 1 { "off".to_string() } else { copies.to_string() })
+            .on_release(Message::Radial(RadialMessage::CopiesDone))
             .tip("Copies of every stroke turned evenly round the axis; 1 is off"),
             row![
                 text("Round").size(theme::LABEL_SIZE).color(theme::TEXT_DIM),
