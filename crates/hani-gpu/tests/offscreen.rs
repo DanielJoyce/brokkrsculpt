@@ -54,15 +54,17 @@ const VOXEL_SIZE: f32 = 0.5;
 /// **Found on CI, where this binary died with SIGSEGV on most runs from
 /// 2026-11-27**, after twenty-odd tests had passed and always while the
 /// longest ones (every brush, every pattern, the sculpt loop) were still in
-/// flight. It never reproduced on a four-core container with the same Mesa
-/// (lavapipe, 25.2.8) over six runs at eight threads. What the runner does
+/// flight. It never reproduced on a four-core container with an older Mesa
+/// (lavapipe, 25.2.8 with LLVM 20; the runner had 26.0.8 with LLVM 21) over
+/// six runs at eight threads. What the runner does
 /// differently is run several tests at once on fewer cores, each with its
 /// own Vulkan instance and device on lavapipe, whose devices share LLVM's
 /// compiler state across threads; the crash landed in the stretch where the
 /// most shader compiles and device teardowns overlap. With the lock no two
-/// devices are ever alive at once. It costs this binary its parallelism:
-/// measured on that container, 35 to 39 s for the 36 tests against 13 s
-/// without the lock, three runs each.
+/// devices are ever alive at once, and the first CI run with the lock ran
+/// all 36 in 45 s. It costs this binary its parallelism: measured on that
+/// container, 35 to 39 s for the 36 tests against 13 s without the lock,
+/// three runs each.
 static ONE_DEVICE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 struct Harness {
