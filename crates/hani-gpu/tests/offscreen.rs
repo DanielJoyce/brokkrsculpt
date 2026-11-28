@@ -48,6 +48,23 @@ const THUMBNAIL_FORMATS: [wgpu::TextureFormat; 2] =
 const MODEL_RADIUS: f32 = 30.0;
 const VOXEL_SIZE: f32 = 0.5;
 
+/// One harness at a time in this process: every test holds it for as long
+/// as its device lives.
+///
+/// **Found on CI, where this binary died with SIGSEGV on most runs from
+/// 2026-11-27**, after twenty-odd tests had passed and always while the
+/// longest ones (every brush, every pattern, the sculpt loop) were still in
+/// flight. It never reproduced on a four-core container with the same Mesa
+/// (lavapipe, 25.2.8) over six runs at eight threads. What the runner does
+/// differently is run several tests at once on fewer cores, each with its
+/// own Vulkan instance and device on lavapipe, whose devices share LLVM's
+/// compiler state across threads; the crash landed in the stretch where the
+/// most shader compiles and device teardowns overlap. With the lock no two
+/// devices are ever alive at once. It costs this binary its parallelism:
+/// measured on that container, 35 to 39 s for the 36 tests against 13 s
+/// without the lock, three runs each.
+static ONE_DEVICE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct Harness {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -57,6 +74,10 @@ struct Harness {
     padded_row_bytes: u32,
     /// The matrix the frames are rendered with, so culling and the shader agree.
     view_projection: glam::Mat4,
+    /// This test's turn on the GPU. Last, so it is let go after the device
+    /// and everything made from it are dropped: fields drop in the order
+    /// they are declared. See [`ONE_DEVICE_AT_A_TIME`].
+    _turn: std::sync::MutexGuard<'static, ()>,
 }
 
 impl Harness {
@@ -67,6 +88,9 @@ impl Harness {
     }
 
     fn in_format(format: wgpu::TextureFormat) -> Option<Self> {
+        // A test that panicked while holding it poisons it; the next one may
+        // still have its turn.
+        let turn = ONE_DEVICE_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
         let adapter =
             pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
@@ -106,6 +130,7 @@ impl Harness {
             readback,
             padded_row_bytes,
             view_projection: view_projection(MODEL_RADIUS * 3.0),
+            _turn: turn,
         })
     }
 
