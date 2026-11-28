@@ -486,8 +486,11 @@ true of it too, and what it adds is this.
   sockets at six clearances and a peg, because how tight a fit your
   printer makes is something only a print can say.
 - **Painting in colour.** The paint brush lays a colour: any colour, at any
-  opacity, with a soft edge. *Paint* covers, *Glaze* tints what is under it
-  without hiding it, *Erase* takes paint off. Put on *Loaded*; as a *Wash*,
+  opacity, with a soft edge. *Paint* covers, on a Normal layer; *Glaze*
+  tints every layer under it, on a Glaze layer of its own; *Erase* takes
+  paint off the layer in hand. The layer follows the brush: choosing a
+  way of painting, a touch or a paint makes the layer suit it, or a new
+  one over it, in one undo step. Put on *Loaded*; as a *Wash*,
   which runs into the creases and off the edges; with a *Drybrush*, which
   catches only what stands up, and tints what it would catch under the
   brush before you press, with or without bristle marks; with a *Sponge*,
@@ -554,14 +557,16 @@ true of it too, and what it adds is this.
   contrast a layer of its own blend.
 - **Layers of paint.** LAYERS, at the top of the Paint mode's settings:
   up to sixteen a body, each with a name, a blend (*Normal*, *Multiply*,
-  *Screen*, *Glaze*, a *Wash* that pools in the creases, a *Contrast*
-  that tints by how light what is under it is), an opacity, an eye and a
-  lock. Strokes go on the active layer; new, duplicate, up, down, merge
+  *Screen*, and three films that what is under them is seen through, as
+  light through paint: a thin *Glaze*, a *Wash* that runs off the flats
+  and pools in the creases, and a *Contrast* that over white is its own
+  colour and over anything else tints it, deeper in the creases and
+  thinner on the edges), an opacity, an eye and a lock. Strokes go on the active layer; new, duplicate, up, down, merge
   down, flatten and delete are each an undo step. The layers are saved
   with the project and go with the model when it is moved, bulked,
   split or turned.
-  *Pooling*, under them, sets how strongly a wash or a contrast pools
-  into the recesses, from none to twice the usual.
+  *Pooling*, under them, sets how strongly a glaze, a wash or a contrast
+  pools into the recesses, from none to a third more than the usual.
 - **Filaments.** Painting by filament slot is gone: paint is colour, and
   a 3MF prints each part in the loaded filament nearest its colour. A
   document painted by slot opens with its slots laid into colour paint, in

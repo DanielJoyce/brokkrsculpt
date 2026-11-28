@@ -248,6 +248,105 @@ pub(super) fn handle(
 
 #[cfg(test)]
 mod tests {
+    /// Pictures of the stack's arithmetic, to be looked at: each kind of
+    /// paint on the slapchopped ball, and each translucent blend over each
+    /// of a row of undercoats, across a cell from an edge to a crease.
+    /// `HANI_PAINT_CHART=/some/dir cargo test -p hani-app
+    /// charts_of_the_paints -- --ignored`.
+    #[test]
+    #[ignore = "pictures, written to a directory"]
+    fn charts_of_the_paints() {
+        use hani_core::paint::layers::{Blend, over_undercoat};
+        let Ok(to) = std::env::var("HANI_PAINT_CHART") else {
+            return;
+        };
+        let to = std::path::PathBuf::from(to);
+        let paints: [(&str, [u8; 3]); 8] = [
+            ("red", [150, 20, 25]),
+            ("blue", [30, 50, 150]),
+            ("yellow", [240, 200, 30]),
+            ("green", [40, 120, 50]),
+            ("purple", [110, 40, 130]),
+            ("flesh", [200, 120, 90]),
+            ("sepia", [90, 60, 35]),
+            ("black", [30, 25, 22]),
+        ];
+        // The balls: a row a kind, a column a paint.
+        let kinds = [Kind::Paint, Kind::Stain, Kind::Wash, Kind::Contrast];
+        let ball = 128usize;
+        let mut sheet = image::RgbaImage::from_pixel(
+            (ball * paints.len()) as u32,
+            (ball * kinds.len()) as u32,
+            image::Rgba([40, 40, 44, 255]),
+        );
+        for (row, kind) in kinds.iter().enumerate() {
+            for (column, (_, colour)) in paints.iter().enumerate() {
+                let pixels = super::pixels(*colour, *kind, false, ball, POOLING);
+                for (index, pixel) in pixels.as_chunks::<4>().0.iter().enumerate() {
+                    if pixel[3] == 0 {
+                        continue;
+                    }
+                    let (x, y) = (index % ball + column * ball, index / ball + row * ball);
+                    sheet.put_pixel(
+                        x as u32,
+                        y as u32,
+                        image::Rgba([pixel[0], pixel[1], pixel[2], 255]),
+                    );
+                }
+            }
+        }
+        sheet.save(to.join("balls.png")).expect("the balls are written");
+
+        // The flats: a column an undercoat, a row a blend and a paint, and
+        // across each cell the surface from an edge to a crease.
+        let unders: [[u8; 3]; 10] = [
+            [245, 245, 240],
+            [190, 190, 190],
+            [128, 128, 128],
+            [52, 52, 56],
+            [12, 12, 12],
+            [235, 205, 50],
+            [185, 35, 35],
+            [35, 65, 165],
+            [45, 135, 65],
+            [222, 172, 142],
+        ];
+        let (w, h) = (64usize, 40usize);
+        let blends = [Blend::Glaze, Blend::Wash, Blend::Contrast];
+        let rows = 1 + blends.len() * paints.len();
+        let mut sheet = image::RgbaImage::from_pixel(
+            (w * (unders.len() + 1)) as u32,
+            (h * rows) as u32,
+            image::Rgba([40, 40, 44, 255]),
+        );
+        let mut fill = |column: usize, row: usize, colour: &dyn Fn(f32) -> [u8; 3]| {
+            for x in 2..w - 2 {
+                let crease = (x - 2) as f32 / (w - 5) as f32 * 2.0 - 1.0;
+                let [r, g, b] = colour(crease);
+                for y in 2..h - 2 {
+                    sheet.put_pixel(
+                        (column * w + x) as u32,
+                        (row * h + y) as u32,
+                        image::Rgba([r, g, b, 255]),
+                    );
+                }
+            }
+        };
+        for (column, under) in unders.iter().enumerate() {
+            fill(column + 1, 0, &|_| *under);
+        }
+        for (b, blend) in blends.iter().enumerate() {
+            for (p, (_, paint)) in paints.iter().enumerate() {
+                let row = 1 + b * paints.len() + p;
+                fill(0, row, &|_| *paint);
+                for (column, under) in unders.iter().enumerate() {
+                    fill(column + 1, row, &|crease| over_undercoat(*under, *paint, *blend, crease));
+                }
+            }
+        }
+        sheet.save(to.join("flats.png")).expect("the flats are written");
+    }
+
     use super::*;
     use hani_core::paint::occlusion::POOLING;
 

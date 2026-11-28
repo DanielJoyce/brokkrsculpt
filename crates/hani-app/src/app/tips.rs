@@ -22,9 +22,9 @@ use crate::message::{ExportFormat, MaskGenerator, PaintMode, PaintTouch, TopMenu
 
 pub(super) fn paint_mode(mode: PaintMode) -> &'static str {
     match mode {
-        PaintMode::Paint => "Covers what is under it",
-        PaintMode::Glaze => "Tints what is under it in the paint's hue, without hiding it",
-        PaintMode::Erase => "Takes paint off, back toward the clay",
+        PaintMode::Paint => "Covers what is under it, on a Normal layer",
+        PaintMode::Glaze => "Tints every layer under it, on a Glaze layer of its own",
+        PaintMode::Erase => "Takes paint off the active layer, back toward what is under it",
     }
 }
 
@@ -35,7 +35,7 @@ pub(super) fn touch(touch: PaintTouch) -> &'static str {
         PaintTouch::Sponge => "Dabbed with a sponge: specks, more on edges",
         PaintTouch::Fill => "Poured: runs over a panel until a crease, an edge or a paint stops it",
         PaintTouch::Wash => "A thin wash on a layer of its own that pools in the recesses",
-        PaintTouch::Contrast => "A contrast paint: strong over light, pools in recesses",
+        PaintTouch::Contrast => "A contrast paint on a layer of its own: tints, pools in recesses",
         PaintTouch::Airbrush => "Sprayed while held, building up by flow and pressure",
         PaintTouch::Decal => "A picture dabbed on where you click",
     }
@@ -81,9 +81,9 @@ pub(super) fn blend(blend: Blend) -> &'static str {
         Blend::Normal => "Covers what is under it",
         Blend::Multiply => "Darkens what is under it by its colour",
         Blend::Screen => "Lightens what is under it",
-        Blend::Glaze => "Tints what is under it in its hue",
-        Blend::Wash => "Darkens, more in the creases and less on the edges",
-        Blend::Contrast => "Strong over light, faint over dark, pools in the creases",
+        Blend::Glaze => "A thin film that tints what is under it, deeper in the creases",
+        Blend::Wash => "A film that runs off the flats and edges and pools in the creases",
+        Blend::Contrast => "A coat that tints what is under it: strong over light, pools",
         Blend::Varnish => "Lays no colour: changes how shiny what is under it is",
     }
 }

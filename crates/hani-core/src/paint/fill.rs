@@ -810,7 +810,7 @@ mod tests {
     const RED: [u8; 3] = [200, 30, 20];
 
     fn paint(colour: [u8; 3], opacity: f32) -> Pigment {
-        Pigment { colour, opacity, mode: crate::paint::stroke::Mode::Paint, ..Pigment::default() }
+        Pigment { colour, opacity, mode: crate::paint::stroke::Mode::Paint }
     }
 
     /// Every paintable voxel of the fixture, with where it is and its
@@ -905,20 +905,12 @@ mod tests {
         let edit = volume.end_stroke().expect("a fill that painted");
         assert!(half.voxels > 10_000);
         assert!(paints(&volume).iter().all(|(_, rgba)| *rgba == [200, 30, 20, 128]));
-        // A glaze over that darkens it, and leaves a thin coat of itself
-        // on the half of the clay the red did not cover; an eraser takes
-        // all of it off again.
-        let glaze = Pigment {
-            colour: [128, 128, 128],
-            opacity: 1.0,
-            mode: Mode::Glaze,
-            ..Pigment::default()
-        };
-        volume.fill_colour(ON_THE_TOP, glaze, 0, fill(0));
-        let glazed = paints(&volume)[0].1;
-        assert!(glazed[3] == 192 && glazed[0] < 200, "a glaze left {glazed:?}");
-        assert!(paints(&volume).iter().all(|(_, rgba)| *rgba == glazed));
-        let eraser = Pigment { colour: RED, opacity: 1.0, mode: Mode::Erase, ..Pigment::default() };
+        // A full coat of grey over that covers it, the red and the clay
+        // the red left bare alike; an eraser takes all of it off again.
+        let grey = Pigment { colour: [128, 128, 128], opacity: 1.0, mode: Mode::Paint };
+        volume.fill_colour(ON_THE_TOP, grey, 0, fill(0));
+        assert!(paints(&volume).iter().all(|(_, rgba)| *rgba == [128, 128, 128, 255]));
+        let eraser = Pigment { colour: RED, opacity: 1.0, mode: Mode::Erase };
         volume.fill_colour(ON_THE_TOP, eraser, 0, fill(0));
         assert!(
             paints(&volume).iter().all(|(_, rgba)| *rgba == [0; 4]),

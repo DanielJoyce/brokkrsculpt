@@ -45,6 +45,26 @@ difference anywhere is 4 levels of 255, measured on a test ball.
 Lights you can move, and other materials for the clay (grey plastic, green
 stuff, pewter, resin), come next.
 
+### Fixed: glazes and contrast paints now tint what is under them
+
+A glaze, a wash and a contrast paint now behave as thin coats of paint you
+see the layers under through. A contrast over a white undercoat is the
+colour on the pot; over a yellow, a blue contrast comes out darker and
+greener than over white, as it would on a model; over black a little of
+its colour still shows. A glaze tints every layer under it, and a black
+glaze darkens white instead of turning it pale. All three run thin off the edges and gather deeper in
+the recesses, glazes included, and the recesses pull them in harder than
+before (*Pooling* now starts higher; a value you had set is kept).
+
+*Glaze* puts you on a Glaze layer of its own over your paint, *Paint* on a
+plain layer that covers, and choosing a wash or a contrast does the same
+for theirs, so the paint under a glaze is never painted over by mistake.
+Going back to an ordinary brush after a contrast now covers again. The
+*Keeps light* setting is gone. A drybrush after a contrast now goes on a
+plain layer; to drybrush a contrast, set the layer to *Contrast* in
+LAYERS. Glaze layers in a saved project now gather in the recesses too,
+so they may look deeper there than they did.
+
 ### Changed: the strength sets how fast clay builds up
 
 With *Builds up* on, Clay, Clay strips and the brushes made like them

@@ -83,9 +83,9 @@ stack is put together, not baked into the layer:
 |---|---|---|
 | Normal | Covers what is under it by its coverage | Paint, metallic, primer, base coat, the zenithal, the spongechop's colours, a decal |
 | Multiply | Darkens what is under it by its colour | A wash's tint, shading |
-| Wash | Multiply, thicker in recesses and thinner on edges, by the cavity | Washes |
-| Contrast | Tints by the value of what is under it: strong over light, nearly gone over dark; pools in recesses, thins on edges | Contrast and speed paints |
-| Glaze | A film of the colour's hue over everything, that gives back half the lightness it takes: the hue shows over white, and over a colour the two mix as light through a film. A glaze stroke's share is its **Keeps light** setting | Stains, inks, glazes |
+| Wash | A film with nearly no body of its own: hardly there on a flat, most of two coats deep in a crease, and run off an edge | Washes |
+| Contrast | A film a full coat thick on a flat, which over white is the paint's own colour and over any other undercoat is light through both, so the undercoat's light, dark and hue show through it; a little of itself over black; nearly two coats deep in a crease and under half on an edge, where the undercoat shows as a highlight | Contrast and speed paints |
+| Glaze | A thin film, a third of a contrast's coat on a flat, with more body than a contrast: it tints every layer under it, darker in a crease and lighter on an edge. A black glaze over white is a grey | Stains, inks, glazes |
 | Screen | Lightens | Glows, a highlight |
 
 A paint's kind (section 4) picks the layer's blend when a coat is made or
@@ -217,6 +217,192 @@ a glazed blue layer over it, and the eye taking the blue off again.
   has no graphics card. By arithmetic it is a pass over the 32,768 voxels
   of each dirty brick for each shown layer with paint there.
 - Painting by filament slot is not on layers (open question 8).
+
+### Glazes, washes and contrasts as films, as built (2026-11-27)
+
+Asked for by the maintainer: *"I want you to dig around the paint engine
+and fix it. It's been a mess for a while. I don't know if we need to jump
+to some PBR rendering to get the quality I want. Mostly I want contrast
+paints and glazes to work properly tinting / covering paint underneath."*
+And the same day: *"The contrast paints and glazes need to pool more
+around details. The default AO level I think needs to be higher."*
+
+**What was wrong.** The three blends that are seen through each had
+arithmetic of its own, on sRGB values, and none of them was a film of
+paint:
+
+- A **wash** multiplied what was under it by its colour.
+- A **contrast** laid its colour scaled by how *light* what was under it
+  was, and never read its hue: a blue contrast over a yellow undercoat
+  stayed blue.
+- A **glaze** took only the hue of its colour (the colour over its
+  brightest channel) and then gave back half the lightness it had taken,
+  so a dark glaze over white came out pale: the charts' black, (30, 25,
+  22), over white was (255, 240, 232), a peach, and a pure black (188,
+  188, 188), lighter than a mid grey. Worked out with the old rule's
+  arithmetic.
+- And a glaze was also a **way of laying paint**, the *Glaze* button, that
+  tinted only the paint already on the active layer, in place, and over a
+  voxel that layer had nothing on laid half a coat of the clay so tinted.
+  On a layer over a base coat, which is how anyone glazes, that half coat
+  *covered* the base coat. That is the heart of "glazes do not tint what
+  is underneath".
+
+Seen first in pictures of the arithmetic, made by the ignored test
+`charts_of_the_paints` (`app/paint_preview.rs`): eight paints as a glaze,
+a wash and a contrast over ten undercoats, each across a cell from an
+edge to a crease, and each kind of paint on the slapchopped ball. Before:
+the glaze rows were flat, with no edge or crease at all, and pastel over
+the light undercoats; over the black undercoat every glaze and contrast
+was black; the Stain balls were bright, saturated and flat, the
+slapchop's dark and light gone under them.
+
+**The film.** One model for all three (`paint/layers.rs`, `Film`), in
+linear light. A film of pigment over what is under it does two things:
+it **tints**, light going down through it, off what is under it and back
+up, by Beer and Lambert; and it **covers**, by the body of its pigment,
+which sends some light back before it reaches what is under it. A coat
+of thickness `t`, body `b` and colour `colour` (what one coat looks like
+over white, which is what a pot of contrast paint is sold by), over
+`under`:
+
+```text
+hidden = 1 - (1 - b) ^ t
+seen   = (1 - hidden) * under * colour ^ t  +  hidden * colour
+```
+
+The thickness is the kind's own on a flat, more in a crease and less on
+an edge, by the crease the occlusion gives (`crease` from -1, an edge, to
+1, shut in):
+
+| Film | On a flat | More in a full crease | Less on a full edge | Body |
+|---|---|---|---|---|
+| Glaze | 0.35 | 0.7 | 0.15 | 0.15 |
+| Wash | 0.2 | 1.5 | 0.15 | 0.05 |
+| Contrast | 1.0 | 0.9 | 0.55 | 0.12 |
+
+A colour with nothing in a channel is taken to pass 0.002 of it, in
+light, so that it still has a thickness to be thinner at on an edge.
+
+Less than a full coat (a soft brush edge, half the opacity) is that share
+of the way from what is under it to a full coat, as every other blend is
+put together; at a full coat it is the film exactly.
+
+Some of what that gives, worked out with this arithmetic and not
+measured: the charts' black glaze over white is (126, 120, 116) on a
+flat, (27, 22, 19) in a full crease and (171, 166, 164) on an edge, and a
+pure black glaze (92, 92, 92). The charts' red contrast, (150, 20, 25),
+over white is itself on a flat, (107, 5, 7) in a crease and (199, 90, 96)
+on an edge, and over black (54, 3, 4): a little of itself, where the old
+rule gave nearly black. The charts' blue contrast over their yellow
+undercoat is (27, 40, 60), what both let through, where the old rule
+gave (45, 57, 114), a blue.
+
+**A glaze is a layer's blend and nothing else.** The *Glaze* way of
+laying paint is gone from the core (`Mode::Glaze`, its tint and its thin
+coat over bare clay), and with it the *Keeps light* setting, which was
+the glaze stroke's share and was never kept in a settings file. A stroke
+lays as *Paint* or *Erase*. The three buttons stay, and **the layer
+follows the brush**: *Paint* covers and wants a Normal layer; *Glaze*
+tints and wants a Glaze layer; the *Wash* and *Contrast* touches want
+their own; *Erase* takes paint off the active layer whatever it is, and
+changes no layer. When a way of painting, a touch or a paint of the rack
+is chosen, an empty unlocked active layer takes the blend wanted, and one
+with paint on it gets a new layer over it that has it, one undo step; a
+layer that has it already is left as it is, metal or not
+(`suit_the_layer_to_the_brush`, `app/layers.rs`). A stain from the rack
+puts the button to *Glaze*; any other paint puts a *Glaze* back to
+*Paint*. *Paint* or *Glaze* chosen while a wash's or a contrast's touch
+is in hand puts the touch back to *Loaded*, as a plain paint from the
+rack does, so that the button pressed is the brush. A Varnish layer is
+left as it is by *Paint* and by an ordinary touch, since a stroke on it
+lays its finish; a paint taken up from the rack moves off it. The button lit follows a layer chosen by hand in LAYERS: *Glaze*
+on a Glaze layer. This also mends a second trap: after a wash or a
+contrast, choosing an ordinary touch went on painting on the wash's or
+the contrast's layer, so paint came out as a film and did not cover.
+
+One thing changes on purpose that was meant before: a drybrush chosen
+after a contrast paint now goes on a Normal layer. A contrast
+drybrushed is a layer set to Contrast by hand in LAYERS.
+
+**Pooling.** A glaze pools now too, less than a contrast, as asked. The
+default *Pooling* is 2.25, from 1.5 (`occlusion::POOLING`); a value the
+user has set and kept in `paint.conf` is kept. A Glaze layer is now one
+whose look reads the shape, so a merge down or a flatten keeps it at no
+crease, as a wash's and a contrast's already were.
+
+**Tried and dropped.**
+
+- The glaze's history: first a plain multiply at full strength (a red
+  over a mid grey was a dark brown; the maintainer: "just seems to make
+  everything darker without the color taking effect"), then the lightness
+  under it kept channel by channel (a dark blue over white went cyan),
+  then a film of the hue alone giving back half the lightness (a black
+  glaze over white pale peach). What was wrong with the first was its
+  thickness, not the idea: a glaze is a *thin* film, a third of a coat,
+  and has some body.
+- A film with no body, Beer and Lambert alone: a contrast over black is
+  then exactly black, and a glaze can only ever darken.
+- Laying less than a full coat as a thinner film, which is the exact
+  physics: the target then has to be extrapolated where the coverage is
+  small, and leaves the gamut. Less coverage is instead that share of the
+  way to the full coat, which is monotone and exact at a full coat.
+- Glazes that do not pool: asked for otherwise by the maintainer the
+  same day.
+
+**Is a physically based renderer needed?** My finding, not the
+maintainer's: no, not for this. What was wrong was the arithmetic by
+which one paint lies over another, and that is worked out on the CPU, in
+`composite_voxel`, before the renderer sees a colour. A physically based
+renderer would have drawn the same wrong colours well. Where one would
+earn its place is metallics, gloss and varnish, which today are a matcap
+and a highlight in `hani-gpu/src/shaders/sculpt.wgsl`; that is a separate
+piece of work, not started here.
+
+**Tested.** In the core, worked fixtures: over white a full coat of a
+contrast on a flat is its own colour to two levels; a contrast over a
+yellow and over a blue as light as it differ by more than 30 levels in a
+channel (the old rule made them the same); a black glaze over white is
+below a mid grey and grey; a contrast over black is not black and less
+than half as light as over white; a glaze, a wash and a contrast are
+deeper in a crease than on a flat. Properties, over any colours: a film
+never makes a channel lighter than both the undercoat and the paint are
+in it, to two levels; over an undercoat lighter than the paint every film
+is darker in a crease and lighter on an edge than on a flat, to a level a
+channel; less coverage is less of the film, each channel between the
+undercoat and the fuller coat. In the application, by its messages:
+*Glaze* over a painted body makes a Glaze layer over it, a stroke there
+leaves the layer under it the same to the byte and makes what is seen
+bluer with the grey still showing; *Paint* after it makes a Normal layer
+that covers; over an empty layer the layer itself takes the blend and
+gives it back; each layer change is one undo step and undo takes them
+back; after a wash or a contrast an ordinary touch covers; a stain from
+the rack puts the mode to *Glaze*; *Erase* changes no layer whatever
+touch is chosen and takes paint off the active layer only; the button
+lit follows a layer chosen by hand. The pictures, after: the glazes
+graduate from edge to crease; the black glaze over white is a grey; over
+the black undercoat a contrast is a dark version of itself; the blue
+contrast over the yellow goes from an olive, (90, 96, 52), at its edge to
+a dark blue, (10, 21, 74), in the crease; the Stain balls show the
+slapchop through a tint, deep in the creases. Read off the picture: over
+the near-black undercoat a contrast is lighter in a crease than on an
+edge, the red (72, 5, 7) against (38, 2, 3), because more of its body
+lies there. Over an undercoat lighter than the paint, which is how a
+contrast is used, the crease is the darker.
+
+**Not done.**
+
+- Seen only in the charts, not in the application's window: the desktop
+  session was locked.
+- A channel a paint has nearly none of (below about 16 levels) comes out
+  up to 7 levels light over white, by the 0.002 the film is taken to
+  pass: a pure black contrast over white is (7, 7, 7), worked out.
+- What the occlusion costs for a Glaze layer, which now reads the shape,
+  is not measured; it is the same pass a wash's costs.
+- A glaze laid by the old *Glaze* stroke is in its layer's colour and
+  stays as it was laid. A Glaze layer in an older document now pools, so
+  it is darker in its creases than it was.
+- Metallics, gloss and varnish under a physically based renderer: above.
 
 ## 2. The paint index
 
@@ -405,13 +591,14 @@ blend its layer takes (section 1). The user can still change either.
 | Paint, Air | Opaque, builds in one or two coats | No | No | Matte |
 | Metallic | Opaque | No | No | Metallic |
 | Wash | Thin over flats | Pools in creases, by the cavity | Runs off | Satin (most washes dry with a sheen) |
-| Stain | Even tint over everything, what is under it shows | Slightly | No | Gloss to satin |
-| Contrast / speed | Tints by what is under it: bright over a light undercoat, nearly gone over dark | Pools strongly | Thins on edges, so the undercoat shows as a highlight | Satin |
+| Stain | A thin film of its colour over everything: what is under it shows through, tinted | Pools, less than a contrast | A little thinner | Gloss to satin |
+| Contrast / speed | A film: its own colour over a white undercoat, the two together over a colour, a little of itself over black | Pools strongly | Thins on edges, so the undercoat shows as a highlight | Satin |
 | Primer | Opaque, one coat | No | No | Matte |
 | Effect | As paint, flagged | | | As made |
 
 The contrast blend is what makes a spongechop or a zenithal under it
-worth doing: its colour multiplies the value of what is under it.
+worth doing: light goes through its film and back off what is under it,
+so the undercoat's light and dark, and its hue, show through.
 
 ## 5. Tools
 

@@ -32,7 +32,7 @@ fn rgba() -> impl Strategy<Value = Rgba> {
 }
 
 fn mode() -> impl Strategy<Value = Mode> {
-    prop_oneof![Just(Mode::Paint), Just(Mode::Glaze), Just(Mode::Erase)]
+    prop_oneof![Just(Mode::Paint), Just(Mode::Erase)]
 }
 
 fn pigment() -> impl Strategy<Value = Pigment> {
@@ -40,7 +40,6 @@ fn pigment() -> impl Strategy<Value = Pigment> {
         colour,
         opacity,
         mode,
-        ..Pigment::default()
     })
 }
 
@@ -103,7 +102,7 @@ proptest! {
     }
 
     /// What is laid is stored as paint is stored, and coverage moves one
-    /// way: paint and glaze never take any off, an eraser never adds any
+    /// way: paint never takes any off, an eraser never adds any
     /// and never changes the colour of what it leaves.
     #[test]
     fn coverage_moves_one_way(before in rgba(), pigment in pigment(), amount in 0.0_f32..=1.0) {
@@ -116,7 +115,7 @@ proptest! {
                     prop_assert_eq!(&after[..3], &before[..3]);
                 }
             }
-            Mode::Paint | Mode::Glaze => prop_assert!(after[3] >= before[3]),
+            Mode::Paint => prop_assert!(after[3] >= before[3]),
         }
     }
 
@@ -132,14 +131,14 @@ proptest! {
         let more = laid(before, pigment, one.max(other))[3];
         match pigment.mode {
             Mode::Erase => prop_assert!(more <= less),
-            Mode::Paint | Mode::Glaze => prop_assert!(more >= less),
+            Mode::Paint => prop_assert!(more >= less),
         }
     }
 
     /// All of a paint, at full opacity, is the paint: whatever was there.
     #[test]
     fn a_full_coat_is_the_colour(before in rgba(), colour in any::<[u8; 3]>()) {
-        let all = laid(before, Pigment { colour, opacity: 1.0, mode: Mode::Paint, ..Pigment::default() }, 1.0);
+        let all = laid(before, Pigment { colour, opacity: 1.0, mode: Mode::Paint }, 1.0);
         prop_assert_eq!(all, [colour[0], colour[1], colour[2], 255]);
     }
 
@@ -148,33 +147,6 @@ proptest! {
     fn opacity_scales_the_amount(before in rgba(), pigment in pigment(), amount in 0.0_f32..=1.0) {
         let at_full = Pigment { opacity: 1.0, ..pigment };
         prop_assert_eq!(laid(before, pigment, amount), laid(before, at_full, amount * pigment.opacity));
-    }
-
-    /// A glaze over a full coat hides none of it, and is never lighter than
-    /// it: it is a film of its hue that gives back some of the lightness
-    /// it takes (`stroke.rs`'s `tinted`). A channel may rise; the whole
-    /// may not.
-    #[test]
-    fn a_glaze_never_lightens(
-        under in any::<[u8; 3]>(),
-        colour in any::<[u8; 3]>(),
-        amount in 0.0_f32..=1.0,
-    ) {
-        let glaze = Pigment { colour, opacity: 1.0, mode: Mode::Glaze, ..Pigment::default() };
-        let after = laid([under[0], under[1], under[2], 255], glaze, amount);
-        prop_assert_eq!(after[3], 255);
-        let luma = |c: [u8; 3]| {
-            let c = crate::paint::linear(c);
-            0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
-        };
-        // A byte's worth of rounding either way.
-        prop_assert!(
-            luma([after[0], after[1], after[2]]) <= luma(under) + 0.01,
-            "{:?} over {:?} came out lighter: {:?}",
-            colour,
-            under,
-            after
-        );
     }
 
     /// Paint comes back from a file's section as it went in, for any
@@ -408,7 +380,7 @@ proptest! {
         let coat = laid(under, pigment, 1.0);
         let thicker = |was: u8, now: u8| match pigment.mode {
             Mode::Erase => now <= was,
-            Mode::Paint | Mode::Glaze => now >= was,
+            Mode::Paint => now >= was,
         };
         for coord in forwards.paint().bricks().keys() {
             let origin = coord.origin();

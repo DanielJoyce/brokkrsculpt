@@ -296,9 +296,10 @@ fn shell(volume: &Volume) -> Vec<IVec3> {
     cells
 }
 
-/// A blend that does not read the shape, so a flatten keeps it exactly.
+/// A blend that does not read the shape, so a flatten keeps it exactly. A
+/// glaze pools since 2026-11-27, as a wash and a contrast do, and is not one.
 fn flat_blend() -> impl Strategy<Value = Blend> {
-    prop_oneof![Just(Blend::Normal), Just(Blend::Multiply), Just(Blend::Screen), Just(Blend::Glaze)]
+    prop_oneof![Just(Blend::Normal), Just(Blend::Multiply), Just(Blend::Screen)]
 }
 
 proptest! {
