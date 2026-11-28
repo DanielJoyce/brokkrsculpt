@@ -55,6 +55,9 @@ mod net;
 mod paint_index;
 mod palette;
 mod paths;
+// The pen from the compositor, as a pointer for the whole interface. See
+// `pen.rs`.
+mod pen;
 mod printer;
 // Reading HID devices on macOS and on Windows, the way `input_watch` reads
 // them on Linux. Both the pen and the puck come through whichever applies.
@@ -148,6 +151,10 @@ fn main() -> iced::Result {
         );
         let _ = std::io::stdout().flush();
         print!("{}", tablet::listen(TABLET_LISTEN));
+        // Under Wayland none of the above is how the pen is read. See `pen.rs`.
+        if let Some(note) = pen::session_note() {
+            println!("{note}");
+        }
         return Ok(());
     }
     // Likewise for the puck: "it is plugged in and nothing happens" is

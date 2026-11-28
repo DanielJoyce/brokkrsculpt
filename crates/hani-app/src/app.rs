@@ -93,6 +93,8 @@ mod shelf;
 mod snip;
 mod tips;
 mod touch;
+// A pen's samples, beside the moves they belong to. See `app/pen.rs`.
+mod pen;
 // Where a frame's time goes. See `app/phases.rs`.
 mod phases;
 mod presets;
@@ -709,6 +711,8 @@ pub struct Hani {
     /// Pointer moves that have come in since the last frame, to be handled
     /// together on the next. See [`Hani::pointer_in`].
     moves: Vec<PointerEvent>,
+    /// How the pen was held at each of them. See `app/pen.rs`.
+    pen: pen::PenTrail,
     /// Set while all but the last of those moves are handled: the remesh,
     /// the pick for the ring and the ring itself wait for the last.
     batching: bool,
@@ -2360,6 +2364,7 @@ impl Hani {
             doc_stats: VolumeStats::default(),
             measures_stale: false,
             moves: Vec::new(),
+            pen: pen::PenTrail::default(),
             batching: false,
             history_stats: HistoryStats::default(),
             status: String::new(),
@@ -3732,8 +3737,11 @@ impl Hani {
         let last = moves.len() - 1;
         for (index, event) in moves.drain(..).enumerate() {
             self.batching = index < last;
+            // The pen as it was at this move. See `app/pen.rs`.
+            self.pen_at_move(index);
             self.on_pointer(event);
         }
+        self.pen_after_moves();
         self.batching = false;
         self.note_a_stroke();
         // The allocation goes back for the next frame's moves.
@@ -10002,6 +10010,12 @@ impl Hani {
     /// typing in the field", and that is a question about the message, asked
     /// once, before the message is acted on. See [`keeps_the_rename_open`].
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        // How a pen was held, which is no action and passes every guard
+        // below. See `app/pen.rs`.
+        if let Message::PenSample(state) = message {
+            self.pen_sample(state);
+            return Task::none();
+        }
         // A number's slider and its field send what they set inside a
         // `FieldSet`, which says which draft to let go. Unwrapped first, so
         // every guard below meets the message it carries and not the wrapper.
@@ -10160,7 +10174,13 @@ impl Hani {
                 self.phases.end_frame();
                 // The monitor's size, once there is a window on one. See
                 // `app/ui_scale.rs`.
-                return Task::batch([self.ask_the_monitor(), self.replay_frame()]);
+                // And the compositor for the pen, as that is asked: once.
+                // See `app/pen.rs`.
+                return Task::batch([
+                    self.ask_the_monitor(),
+                    self.ask_for_the_pen(),
+                    self.replay_frame(),
+                ]);
             }
             Message::BrushKindChanged(kind) => {
                 // Remember what the outgoing brush was set to, and restore what
@@ -11086,6 +11106,8 @@ impl Hani {
             Message::PressureCurveChanged(curve) => self.pressure_curve = curve,
             Message::TiltToggled(on) => self.tilt_enabled = on,
             Message::ResetPressurePeak => self.tablet.reset_peak(),
+            // Taken at the top, past the guards. See `app/pen.rs`.
+            Message::PenSample(state) => self.pen_sample(state),
             Message::Undo => self.undo(),
             Message::Redo => self.redo(),
             Message::Export(format) => {

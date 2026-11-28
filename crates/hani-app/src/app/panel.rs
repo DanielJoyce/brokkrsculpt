@@ -162,6 +162,8 @@ impl Hani {
     pub fn view(&self) -> Element<'_, Message> {
         let timed = self.phases.enter(super::phases::Phase::View);
         let built = self.build_view();
+        // Everything takes a pen as it takes a mouse. See `pen.rs`.
+        let built = crate::pen::layer(built, self.interface_scale(), Message::PenSample);
         self.phases.leave(timed);
         built
     }
@@ -3538,13 +3540,18 @@ impl Hani {
         let diagnosis = self.tablet.diagnosis();
         let status: Element<'_, Message> = match devices.first() {
             Some(device) => {
-                let mut lines = column![
-                    text(device.name.clone()).size(theme::LABEL_SIZE).color(theme::OK),
-                    text(format!("{} levels", device.pressure_max))
-                        .size(theme::LABEL_SIZE)
-                        .color(theme::TEXT_MUTE),
-                ]
-                .spacing(1);
+                let mut lines =
+                    column![text(device.name.clone()).size(theme::LABEL_SIZE).color(theme::OK)]
+                        .spacing(1);
+                // A tablet the compositor lists does not say what it counts
+                // pressure in. See `pen.rs`.
+                if device.pressure_max > 0 {
+                    lines = lines.push(
+                        text(format!("{} levels", device.pressure_max))
+                            .size(theme::LABEL_SIZE)
+                            .color(theme::TEXT_MUTE),
+                    );
+                }
                 // **A named device over a silent pipe is the one state this
                 // panel must not leave unsaid.** The name and the level count
                 // come from the descriptor and are true whether or not a

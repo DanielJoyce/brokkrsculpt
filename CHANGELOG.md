@@ -23,6 +23,22 @@ before it, see the
 
 ## Unreleased
 
+### Fixed: the pen under Wayland
+
+On a Wayland desktop a pen had no pressure unless you had added yourself to
+the `input` group, and under GNOME it did nothing over the window at all. The
+pen is now read from the compositor, which needs no group and no setting:
+pressure, tilt and the eraser end work as soon as the tablet does anywhere
+else, and the pen works every button, slider and menu as the mouse does. The
+lower button on the barrel is the right button and the upper is the middle.
+Strokes are also truer: every sample the pen sends presses its own part of
+the stroke, where several used to share one pressure.
+
+Seen working with a Wacom Intuos on KDE. Not yet tried on GNOME. With a pen
+you cannot yet drag the window by its title bar or resize it by its edge;
+use the mouse for those. Under X11, and on Windows and macOS, nothing has
+changed.
+
 ### Fixed: models tore apart in the macOS viewport
 
 On a Mac, a model of more than about 65,000 vertices -- which is nearly every

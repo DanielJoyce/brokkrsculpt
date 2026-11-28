@@ -17,7 +17,7 @@ one of them has produced a confident wrong conclusion here.
 
 | | |
 |---|---|
-| `scripts/drive.py` | virtual pointer and keyboard over `/dev/uinput` |
+| `scripts/drive.py` | virtual pointer, keyboard and pen over `/dev/uinput` |
 | `scripts/shot.sh` | screenshot the window, refusing anything it cannot prove is ours |
 | `scripts/drive.py --geometry` | where the window is right now |
 
@@ -54,6 +54,46 @@ screenshot you did not read is not evidence.
 ./scripts/shot.sh /tmp/out.png
 ```
 
+## A pen
+
+The `pen` commands of `drive.py` make a second device, a tablet with one pen,
+which the compositor hands to the window over the tablet protocol as it does
+a real one. It is the only way to drive `src/pen.rs`.
+
+```bash
+cat > /tmp/pen.txt <<'SCRIPT'
+pentilt 0.5 -0.25                       # lean, each -1 to 1
+pendrag 300 700 600 700 0.1 1.0 12      # a stroke, pressure 0.1 rising to 1
+penbutton upper down                    # the middle button: orbits
+pen 500 760
+penbutton upper up
+eraser on                               # the other end, from the next `pen`
+pen 480 500 0.5
+penout
+SCRIPT
+RUST_LOG=hanisculpt::pen=debug ./target/release/hanisculpt 2> /tmp/pen.log &
+scripts/drive.py /tmp/pen.txt
+grep 'pen:' /tmp/pen.log
+```
+
+The log says each step as the application took it: what it stood for, where
+in the window's pixels, the pressure, the lean and which end. Seen on
+2026-11-27: every place within half a pixel of where it was aimed.
+
+**A tablet is laid over one output, not the desktop.** KWin lays it over the
+output the active window is on, unless the tablet's settings say another,
+and `drive.py` works the pen's coordinates out against that output. If the
+pen lands elsewhere, look at what `hani-pen` is mapped to in System Settings.
+
+**A pen that is still has not left.** libinput takes a pen quiet for 50 ms
+to have gone, until the tablet has once said so itself. `drive.py` has the
+pen leave once as it is made, so a `sleep` with the pen over a button is a
+pen over a button.
+
+**Somebody's real pen is the same pointer.** With a real tablet plugged in
+and its pen in range, the two are taken for one pen and the last to move has
+the pointer.
+
 ## Converting a capture position into a drive coordinate
 
 `shot.sh` captures at the output's scale factor, **1.5** on this desktop: a
@@ -86,7 +126,16 @@ had touched. If it refuses, something took focus back; do not work around it.
 
 **Absolute, never relative.** libinput accelerates relative motion, so a delta
 of 500 does not travel 500 pixels. The device is absolute over the logical
-desktop union, read from `kscreen-doctor`.
+desktop union, read from `kscreen-doctor`: of the outputs that are on. One
+that is off is listed too, with a place, and counting it put every
+coordinate short of where it aimed.
+
+**How KWin answers.** A KWin script cannot return anything. Its `print` goes
+to the journal on some desktops and nowhere on others, where every question
+came back empty and the application "was not running". `drive.py` has the
+script call it back over the session bus instead, where Python has D-Bus,
+and `shot.sh` asks through `drive.py --ask`. Qt's D-Bus tool is found by
+either of its names, `qdbus6` or Fedora's `qdbus-qt6`.
 
 **A drag is many small steps.** An application tells a drag from a click by
 travel; one jump reads as neither. `drag` emits 24 steps by default.
