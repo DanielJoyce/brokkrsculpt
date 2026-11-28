@@ -3992,7 +3992,22 @@ fn the_default_rig_draws_todays_picture() {
             pixel(&new, at.0, at.1)
         );
         assert!(drawn > 40_000, "{name}: only {drawn} pixels drawn");
-        assert!(worst <= 6, "{name}: {worst} levels from today's picture at {at:?}");
+        // A handful of pixels may be further off, and no more than a
+        // handful: on the two software rasterisers CI's Linux and Windows
+        // runners draw with (llvmpipe and the Basic Render Driver) three
+        // pixels of the 89,201 were 7 or more levels off, the worst 14, at
+        // the foot of a bump where the normal turns fastest, while a
+        // graphics card (and CI's macOS runner) has none over 4. The matcap
+        // is a picture looked up between its texels and the lights are
+        // worked out at the pixel, and how a rasteriser carries the normal
+        // across so steep a turn is its own. One pixel in ten thousand is
+        // allowed, and none further off than could be seen as a fault.
+        assert!(
+            counts[7] * 10_000 <= drawn,
+            "{name}: {} of {drawn} pixels are 7 levels or more from today's picture",
+            counts[7]
+        );
+        assert!(worst <= 24, "{name}: {worst} levels from today's picture at {at:?}");
         assert!(over_two * 100 < drawn, "{name}: {over_two} of {drawn} pixels over 3 levels off");
         worst_overall = worst_overall.max(worst);
     }
